@@ -15,4 +15,6 @@ then
     jupyter lab --allow-root --no-browser --app_dir=/workspace --port=8888 --ip=* --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* &
 fi
 
+echo "pod started"
+
 sleep infinity
