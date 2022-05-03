@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=runpod/stack:20.04-base
+ARG BASE_IMAGE=runpod/stack:20.04
 
 FROM ${BASE_IMAGE} as dev-base
 
