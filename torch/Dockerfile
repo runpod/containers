@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=runpod/stack:20.04
+ARG BASE_IMAGE=pytorch/pytorch
 
 FROM ${BASE_IMAGE} as dev-base
 
@@ -16,6 +16,7 @@ RUN apt-get update --yes && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 RUN pip install jupyterlab
+RUN pip install ipywidgets
 
 ADD start.sh .
 
