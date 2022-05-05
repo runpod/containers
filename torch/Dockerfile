@@ -18,9 +18,9 @@ RUN apt-get update --yes && \
 RUN pip install jupyterlab
 RUN pip install ipywidgets
 
-ADD start.sh .
+ADD start.sh /
 
-RUN chmod +x start.sh
+RUN chmod +x /start.sh
 
-CMD [ "./start.sh" ]
+CMD [ "/start.sh" ]
 

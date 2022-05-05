@@ -7,12 +7,14 @@ then
     cd ~/.ssh
     echo $PUBLIC_KEY >> authorized_keys
     chmod 700 -R ~/.ssh
+    cd /
     service ssh start
 fi
 
 if [[ $LAUNCH_JUPYTER ]]
 then
-    jupyter lab --allow-root --no-browser --app_dir=/workspace --port=8888 --ip=* --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* &
+    cd /
+    jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &
 fi
 
 echo "pod started"
