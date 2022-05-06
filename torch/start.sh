@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [[ $LAUNCH_SSHD ]]
+if [[ $PUBLIC_KEY ]]
 then
     mkdir -p ~/.ssh
     chmod 700 ~/.ssh
@@ -11,7 +11,7 @@ then
     service ssh start
 fi
 
-if [[ $LAUNCH_JUPYTER ]]
+if [[ $JUPYTER_PASSWORD ]]
 then
     cd /
     jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &
