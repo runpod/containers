@@ -20,6 +20,8 @@ RUN apt-get update --yes && \
 RUN /usr/bin/python3 -m pip install --upgrade pip
 RUN pip install jupyterlab
 RUN pip install ipywidgets
+RUN mkdir /workspace
+
 
 ADD start.sh /
 
