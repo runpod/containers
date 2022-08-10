@@ -11,12 +11,16 @@ RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt install --yes --no-install-recommends\
     wget\
+    curl\
+    git\
     bash\
     openssh-server &&\
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 RUN pip install jupyterlab
 RUN pip install ipywidgets
+RUN pip install jupyter-archive
+RUN jupyter nbextension enable --py widgetsnbextension
 
 ADD start.sh /
 
