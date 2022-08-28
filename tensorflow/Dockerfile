@@ -13,6 +13,8 @@ RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt install --yes --no-install-recommends\
     wget\
+    curl\
+    git\
     bash\
     openssh-server &&\
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
