@@ -10,6 +10,7 @@ RUN apt-get update --yes && \
     #   the ubuntu base image is rebuilt too seldom sometimes (less than once a month)
     apt-get upgrade --yes && \
     apt install --yes --no-install-recommends\
+    git\
     wget\
     bash\
     openssh-server &&\
