@@ -31,7 +31,7 @@ RUN jupyter nbextension enable --py widgetsnbextension
 
 
 ADD start.sh /start.sh
-RUN chmod +x start.sh
+RUN chmod a+x /start.sh
 
 ADD welcome-banner.txt /root/welcome-banner.txt
 COPY examples /examples

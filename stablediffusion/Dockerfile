@@ -22,7 +22,8 @@ RUN conda env create -f environment.yaml
 
 RUN mkdir -p /root/.cache/huggingface && mkdir -p /workspace/out
 ADD ./sd.ckpt /weights/
+
 ADD start.sh /start.sh
-RUN chmod +x start.sh
+RUN chmod a+x /start.sh
 
 CMD [ "/start.sh" ]
