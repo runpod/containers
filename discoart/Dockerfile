@@ -48,8 +48,10 @@ WORKDIR /
 RUN pip install discoart==0.12.0
 RUN git clone https://github.com/Run-Pod/discoart-ui.git
 WORKDIR /discoart-ui
-RUN  yarn && yarn build
-RUN  yarn global add pm2
+RUN curl -sL https://dl.yarnpkg.com/debian/pubkey.gpg | gpg --dearmor | tee /usr/share/keyrings/yarnkey.gpg >/dev/null
+RUN echo "deb [signed-by=/usr/share/keyrings/yarnkey.gpg] https://dl.yarnpkg.com/debian stable main" | tee /etc/apt/sources.list.d/yarn.list
+RUN yarn && yarn build
+RUN yarn global add pm2
 
 RUN rm -Rf /root/.cache && mkdir -p /models/.cache && ln -s /models/.cache /root
 CMD [ "/start.sh" ]
