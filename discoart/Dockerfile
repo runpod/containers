@@ -31,6 +31,8 @@ RUN jupyter nbextension enable --py widgetsnbextension
 
 
 ADD start.sh /start.sh
+RUN chmod +x start.sh
+
 ADD welcome-banner.txt /root/welcome-banner.txt
 COPY examples /examples
 ADD welcome.ipynb /root/welcome.ipynb
@@ -48,8 +50,8 @@ WORKDIR /
 RUN pip install discoart==0.12.0
 RUN git clone https://github.com/Run-Pod/discoart-ui.git
 WORKDIR /discoart-ui
-RUN curl -sL https://dl.yarnpkg.com/debian/pubkey.gpg | gpg --dearmor | tee /usr/share/keyrings/yarnkey.gpg >/dev/null
-RUN echo "deb [signed-by=/usr/share/keyrings/yarnkey.gpg] https://dl.yarnpkg.com/debian stable main" | tee /etc/apt/sources.list.d/yarn.list
+RUN apt install nodejs
+RUN npm install --global yarn
 RUN yarn && yarn build
 RUN yarn global add pm2
 
