@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=pytorch/pytorch
+ARG BASE_IMAGE=pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel
 
 FROM ${BASE_IMAGE} as dev-base
 
