@@ -36,11 +36,15 @@ git clone https://github.com/CompVis/taming-transformers.git repositories/taming
 git clone https://github.com/sczhou/CodeFormer.git repositories/CodeFormer && \
 git clone https://github.com/salesforce/BLIP.git repositories/BLIP && \
 git clone https://github.com/crowsonkb/k-diffusion.git repositories/k-diffusion && \
-git clone https://github.com/Stability-AI/stablediffusion.git  repositories/stable-diffusion-stability-ai
+git clone https://github.com/Stability-AI/stablediffusion.git  repositories/stable-diffusion-stability-ai && \
+cd extensions && \
+git clone https://github.com/d8ahazard/sd_dreambooth_extension.git && \
+git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser.git && \
+cd sd_dreambooth_extension && git fetch && cd .. && \
+cd stable-diffusion-webui-images-browser && git fetch && cd ..
 
 COPY --from=build /venv /venv
 COPY --from=build /models/v1-5-pruned-emaonly.ckpt /workspace/stable-diffusion-webui/v1-5-pruned-emaonly.ckpt
-COPY --from=build /models/GFPGANv1.3.pth /workspace/stable-diffusion-webui/GFPGANv1.3.pth
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
 
 SHELL ["/bin/bash", "-c"]

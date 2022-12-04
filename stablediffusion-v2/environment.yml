@@ -18,8 +18,8 @@ dependencies:
     - clip
     - torchsde
     - basicsr
-    - diffusers==0.7.2
-    - fairscale==0.4.4
+    - diffusers
+    - fairscale
     - fonts
     - font-roboto
     - invisible-watermark
@@ -31,7 +31,7 @@ dependencies:
     - realesrgan
     - scikit-image>=0.19
     - timm==0.4.12
-    - transformers==4.22.1
+    - transformers
     - einops
     - jsonmerge
     - clean-fid
@@ -54,5 +54,6 @@ dependencies:
     - gradio==3.9
     - modelcards==0.1.6
     - tensorboard==2.11.0
-    - tqdm==4.64.1 
-    - open_clip_torch    
+    - tqdm    
+    - open_clip_torch
+    - safetensors 

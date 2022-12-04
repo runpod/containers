@@ -1,4 +1,4 @@
-FROM runpod/stable-diffusion:base-v2 as build
+FROM runpod/stable-diffusion-models:2 as build
 
 WORKDIR /
 RUN rm -rf /stable-diffusion
@@ -36,7 +36,12 @@ git clone https://github.com/CompVis/taming-transformers.git repositories/taming
 git clone https://github.com/sczhou/CodeFormer.git repositories/CodeFormer && \
 git clone https://github.com/salesforce/BLIP.git repositories/BLIP && \
 git clone https://github.com/crowsonkb/k-diffusion.git repositories/k-diffusion && \
-git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser extensions/stable-diffusion-webui-images-browser 
+git clone https://github.com/Stability-AI/stablediffusion.git  repositories/stable-diffusion-stability-ai && \
+cd extensions && \
+git clone https://github.com/d8ahazard/sd_dreambooth_extension.git && \
+git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser.git && \
+cd sd_dreambooth_extension && git fetch && cd .. && \
+cd stable-diffusion-webui-images-browser && git fetch && cd ..
 
 COPY --from=build /venv /venv
 RUN rm /venv/bin/ffmpeg
