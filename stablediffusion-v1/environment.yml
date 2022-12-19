@@ -18,7 +18,7 @@ dependencies:
     - clip
     - torchsde
     - basicsr
-    - diffusers
+    - diffusers[torch]==0.10.0 
     - fairscale
     - fonts
     - font-roboto
@@ -31,7 +31,7 @@ dependencies:
     - realesrgan
     - scikit-image>=0.19
     - timm==0.4.12
-    - transformers
+    - transformers==4.25.1
     - einops
     - jsonmerge
     - clean-fid

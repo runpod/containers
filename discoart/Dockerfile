@@ -36,6 +36,7 @@ RUN chmod a+x /start.sh
 ADD welcome-banner.txt /root/welcome-banner.txt
 COPY examples /examples
 ADD welcome.ipynb /root/welcome.ipynb
+RUN wget https://raw.githubusercontent.com/jina-ai/discoart/main/discoart/resources/models.yml -O /models.yaml
 
 RUN echo 'cat ~/welcome-banner.txt' >> ~/.bashrc &&\
     echo 'cd /workspace' >> ~/.bashrc

@@ -1,12 +1,8 @@
 #!/bin/bash
 echo "Container Started"
-
-# Use FD model list
-export DISCOART_MODELS_YAML='/models.yaml'
-
-# Start service
-cd /discoart-ui
-yarn start &
+source /venv/bin/activate
+cd /workspace/stable-diffusion-webui
+python relauncher.py &
 
 if [[ $PUBLIC_KEY ]]
 then

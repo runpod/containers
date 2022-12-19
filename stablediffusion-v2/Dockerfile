@@ -1,4 +1,4 @@
-FROM runpod/stable-diffusion-models:2 as build
+FROM runpod/stable-diffusion:base-v2.1 as build
 
 WORKDIR /
 RUN rm -rf /stable-diffusion
@@ -45,8 +45,8 @@ cd stable-diffusion-webui-images-browser && git fetch && cd ..
 
 COPY --from=build /venv /venv
 RUN rm /venv/bin/ffmpeg
-COPY --from=build /models/768-v-ema.ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/768-v-ema.ckpt
-COPY --from=build /models/768-v-ema.yaml /workspace/stable-diffusion-webui/models/Stable-diffusion/768-v-ema.yaml
+COPY --from=build /models/v2-1_768-ema-pruned.ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.ckpt
+COPY --from=build /models/v2-1_768-ema-pruned.yaml /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.yaml
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
 
 SHELL ["/bin/bash", "-c"]
@@ -55,6 +55,7 @@ ENV PATH="${PATH}:/venv/bin"
 RUN mkdir -p /root/.cache/huggingface
 RUN mkdir -p /workspace/outputs
 
+ADD ui-config.json /workspace/stable-diffusion-webui/ui-config.json
 ADD relauncher.py .
 ADD start.sh /start.sh
 RUN chmod a+x /start.sh
