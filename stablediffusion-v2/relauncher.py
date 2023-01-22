@@ -6,7 +6,7 @@ while True:
     print('Relauncher: Launching...')
     if n > 0:
         print(f'\tRelaunch count: {n}')
-    launch_string = "python webui.py --port 3000 --xformers --ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.ckpt --opt-split-attention --listen --enable-insecure-extension-access 2> /workspace/sd_logs"
+    launch_string = "python webui.py --port 3000 --xformers --ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.ckpt --opt-split-attention --listen --enable-insecure-extension-access"
     if gradio_auth:
         launch_string += " --gradio-auth " + gradio_auth
     os.system(launch_string)

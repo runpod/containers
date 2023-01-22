@@ -11,12 +11,16 @@ SHELL ["conda", "run", "-n", "ldm", "/bin/bash", "-c"]
 
 RUN conda install -c conda-forge conda-pack
 RUN conda-pack --ignore-missing-files -n ldm -o /tmp/env.tar --ignore-editable-packages && \
-    mkdir /venv && cd /venv && tar xf /tmp/env.tar && \
+    mkdir /workspace/venv && cd /workspace/venv && tar xf /tmp/env.tar && \
     rm /tmp/env.tar
 
-RUN /venv/bin/conda-unpack
+RUN /workspace/venv/bin/conda-unpack
 
 FROM debian:buster AS runtime
+
+COPY --from=build /workspace/venv /workspace/venv
+SHELL ["/bin/bash", "-c"]
+ENV PATH="${PATH}:/workspace/venv/bin"
 
 # Build with some basic utilities
 RUN apt update && apt install -y \
@@ -29,6 +33,8 @@ WORKDIR /workspace
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
 WORKDIR /workspace/stable-diffusion-webui
 RUN git pull
+RUN git checkout 3e22e294135ed0327ce9d9738655ff03c53df3c0
+RUN pip install -r requirements.txt
 
 RUN mkdir repositories; \
 git clone https://github.com/CompVis/stable-diffusion.git repositories/stable-diffusion && \
@@ -38,21 +44,18 @@ git clone https://github.com/salesforce/BLIP.git repositories/BLIP && \
 git clone https://github.com/crowsonkb/k-diffusion.git repositories/k-diffusion && \
 git clone https://github.com/Stability-AI/stablediffusion.git  repositories/stable-diffusion-stability-ai && \
 cd extensions && \
-git clone https://github.com/d8ahazard/sd_dreambooth_extension.git && \
 git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser.git && \
-cd sd_dreambooth_extension && git fetch && cd .. && \
-cd stable-diffusion-webui-images-browser && git fetch && cd ..
+cd stable-diffusion-webui-images-browser && git fetch && cd .. && \
+git clone https://github.com/d8ahazard/sd_dreambooth_extension.git && \
+cd sd_dreambooth_extension && git fetch && git checkout c5cb58328c555ac27679422b1da940a9b19de6f2 && \
+pip install -r requirements.txt && cd ..
 
-COPY --from=build /venv /venv
 COPY --from=build /models/v1-5-pruned-emaonly.ckpt /workspace/stable-diffusion-webui/v1-5-pruned-emaonly.ckpt
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
 
-SHELL ["/bin/bash", "-c"]
-ENV PATH="${PATH}:/venv/bin"
-
 RUN mkdir -p /root/.cache/huggingface
 RUN mkdir -p /workspace/outputs
-RUN rm /venv/bin/ffmpeg
+RUN rm /workspace/venv/bin/ffmpeg
 
 ADD relauncher.py .
 ADD start.sh /start.sh

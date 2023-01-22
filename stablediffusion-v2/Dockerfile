@@ -11,10 +11,10 @@ SHELL ["conda", "run", "-n", "ldm", "/bin/bash", "-c"]
 
 RUN conda install -c conda-forge conda-pack
 RUN conda-pack --ignore-missing-files -n ldm -o /tmp/env.tar --ignore-editable-packages && \
-    mkdir /venv && cd /venv && tar xf /tmp/env.tar && \
+    mkdir /workspace/venv && cd /workspace/venv && tar xf /tmp/env.tar && \
     rm /tmp/env.tar
 
-RUN /venv/bin/conda-unpack
+RUN /workspace/venv/bin/conda-unpack
 
 FROM debian:buster AS runtime
 
@@ -38,19 +38,17 @@ git clone https://github.com/salesforce/BLIP.git repositories/BLIP && \
 git clone https://github.com/crowsonkb/k-diffusion.git repositories/k-diffusion && \
 git clone https://github.com/Stability-AI/stablediffusion.git  repositories/stable-diffusion-stability-ai && \
 cd extensions && \
-git clone https://github.com/d8ahazard/sd_dreambooth_extension.git && \
 git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser.git && \
-cd sd_dreambooth_extension && git fetch && cd .. && \
 cd stable-diffusion-webui-images-browser && git fetch && cd ..
 
-COPY --from=build /venv /venv
-RUN rm /venv/bin/ffmpeg
+COPY --from=build /workspace/venv /workspace/venv
+RUN rm /workspace/venv/bin/ffmpeg
 COPY --from=build /models/v2-1_768-ema-pruned.ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.ckpt
 COPY --from=build /models/v2-1_768-ema-pruned.yaml /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.yaml
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
 
 SHELL ["/bin/bash", "-c"]
-ENV PATH="${PATH}:/venv/bin"
+ENV PATH="${PATH}:/workspace/venv/bin"
 
 RUN mkdir -p /root/.cache/huggingface
 RUN mkdir -p /workspace/outputs

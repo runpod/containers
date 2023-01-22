@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Stable Diffusion
+Exec=python webui.py --xformers --ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.ckpt --opt-split-attention --enable-insecure-extension-access 
+Icon=xfce4-color-settings
+Path=/home/kasm-user/Desktop/stable-diffusion-webui
+Terminal=true
+StartupNotify=false
+Comment=
