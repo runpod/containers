@@ -16,7 +16,16 @@ RUN conda-pack --ignore-missing-files -n ldm -o /tmp/env.tar --ignore-editable-p
 
 RUN /workspace/venv/bin/conda-unpack
 
-FROM debian:buster AS runtime
+FROM debian:buster-slim AS runtime
+
+COPY --from=build /workspace/venv /workspace/venv
+RUN rm /workspace/venv/bin/ffmpeg
+COPY --from=build /models/v2-1_768-ema-pruned.ckpt /workspace/v2-1_768-ema-pruned.ckpt
+COPY --from=build /models/v2-1_768-ema-pruned.yaml /workspace/v2-1_768-ema-pruned.yaml
+COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
+
+SHELL ["/bin/bash", "-c"]
+ENV PATH="${PATH}:/workspace/venv/bin"
 
 # Build with some basic utilities
 RUN apt update && apt install -y \
@@ -24,11 +33,12 @@ RUN apt update && apt install -y \
     apt clean && rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-WORKDIR /workspace
-
-RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
+RUN cd /workspace && \ 
+rm -rf stable-diffusion-webui && \
+git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
+cd /workspace/stable-diffusion-webui && \
+git pull
 WORKDIR /workspace/stable-diffusion-webui
-RUN git pull
 
 RUN mkdir repositories; \
 git clone https://github.com/CompVis/stable-diffusion.git repositories/stable-diffusion && \
@@ -41,21 +51,12 @@ cd extensions && \
 git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser.git && \
 cd stable-diffusion-webui-images-browser && git fetch && cd ..
 
-COPY --from=build /workspace/venv /workspace/venv
-RUN rm /workspace/venv/bin/ffmpeg
-COPY --from=build /models/v2-1_768-ema-pruned.ckpt /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.ckpt
-COPY --from=build /models/v2-1_768-ema-pruned.yaml /workspace/stable-diffusion-webui/models/Stable-diffusion/v2-1_768-ema-pruned.yaml
-COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
-
-SHELL ["/bin/bash", "-c"]
-ENV PATH="${PATH}:/workspace/venv/bin"
-
-RUN mkdir -p /root/.cache/huggingface
-RUN mkdir -p /workspace/outputs
-
 ADD ui-config.json /workspace/stable-diffusion-webui/ui-config.json
 ADD relauncher.py .
+ADD webui-user.sh .
 ADD start.sh /start.sh
-RUN chmod a+x /start.sh
+RUN chmod a+x /start.sh && \
+chmod +x webui.sh
+
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]

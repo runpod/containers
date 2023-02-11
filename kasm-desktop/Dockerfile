@@ -1,6 +1,7 @@
-FROM kasmweb/desktop-deluxe:1.12.0-rolling
+FROM kasmweb/ubuntu-focal-desktop:1.12.0
 USER root
-RUN apt-get update \
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys AA16FCBCA621E701 \
+    && apt-get update \
     && apt-get install -y sudo \
     && echo 'kasm-user ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers \
     && rm -rf /var/lib/apt/list/*

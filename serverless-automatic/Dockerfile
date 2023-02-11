@@ -1,4 +1,4 @@
-FROM runpod/stable-diffusion:web-automatic-1.5.6
+FROM runpod/stable-diffusion:web-automatic-1.5.15
 
 SHELL ["/bin/bash", "-c"]
 
@@ -8,9 +8,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /
 
-RUN pip install aiohttp python-dotenv requests
+RUN pip install runpod
 
-ADD ./runpod /runpod
 ADD handler.py .
-SHELL ["/bin/bash", "--login", "-c"]
-CMD ["python", "-u", "handler.py" ]
+
+CMD [ "/start.sh" ]

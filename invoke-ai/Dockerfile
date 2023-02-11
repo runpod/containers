@@ -1,6 +1,6 @@
 FROM ghcr.io/ebr/invokeai:latest-cuda as builder
 
-FROM library/ubuntu:22.04 AS runtime
+FROM library/ubuntu:20.04 AS runtime
 
 WORKDIR /workspace
 

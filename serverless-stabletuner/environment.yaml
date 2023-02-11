@@ -1,0 +1,32 @@
+name: ldm
+channels:
+  - nvidia/label/cuda-11.6.2
+  - pytorch
+  - defaults
+dependencies:
+  - git
+  - python=3.10
+  - pip
+  - cudatoolkit
+  - pytorch=1.12.1
+  - torchvision
+  - numpy
+  - xformers/label/dev::xformers
+  - pip:
+    - diffusers[torch]
+    - pynvml
+    - bitsandbytes
+    - ftfy
+    - aiohttp
+    - tensorboard>=2.11.0
+    - protobuf
+    - wandb
+    - pyre-extensions
+    - pytorch-lightning
+    - OmegaConf
+    - numpy
+    - colorama
+    - ninja
+    - triton
+    - requests
+    - transformers

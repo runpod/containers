@@ -2,14 +2,20 @@ import runpod
 import subprocess
 ## Load models into VRAM here so they can be warm between requests
 import requests
-from threading import Thread
 
-def start_server():
-    subprocess.run(["python", "/workspace/stable-diffusion-webui/webui.py", "--port", "3000", "--xformers", "--ckpt", "/workspace/stable-diffusion-webui/v1-5-pruned-emaonly.ckpt", "--opt-split-attention", "--listen", "--api", "--nowebui"])
+def check_api_availability(host):
+    while True:
+        try:
+            response = requests.get(host)
+            if response.status_code == 200:
+                print(f"API is available at {host}")
+                return
+        except requests.exceptions.RequestException as e:
+            print(f"API is not available, retrying in 200ms... ({e})")
 
-thread = Thread(target=start_server)
+        time.sleep(200/1000)
 
-thread.start()
+check_api_availability("http://127.0.0.1:3000")
 
 def handler(event):
     '''

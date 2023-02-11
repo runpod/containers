@@ -16,9 +16,14 @@ RUN conda-pack --ignore-missing-files -n ldm -o /tmp/env.tar --ignore-editable-p
 
 RUN /workspace/venv/bin/conda-unpack
 
-FROM debian:buster AS runtime
+FROM debian:buster-slim AS runtime
 
 COPY --from=build /workspace/venv /workspace/venv
+COPY --from=build /models/v1-5-pruned-emaonly.ckpt /workspace/v1-5-pruned-emaonly.ckpt
+COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
+
+RUN mkdir -p /root/.cache/huggingface && mkdir -p /workspace/outputs &&  rm /workspace/venv/bin/ffmpeg
+
 SHELL ["/bin/bash", "-c"]
 ENV PATH="${PATH}:/workspace/venv/bin"
 
@@ -30,11 +35,12 @@ RUN apt update && apt install -y \
 
 WORKDIR /workspace
 
-RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
+RUN cd /workspace && \
+rm -rf stable-diffusion-webui && \
+git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
+cd /workspace/stable-diffusion-webui && \
+git pull
 WORKDIR /workspace/stable-diffusion-webui
-RUN git pull
-RUN git checkout 3e22e294135ed0327ce9d9738655ff03c53df3c0
-RUN pip install -r requirements.txt
 
 RUN mkdir repositories; \
 git clone https://github.com/CompVis/stable-diffusion.git repositories/stable-diffusion && \
@@ -45,20 +51,13 @@ git clone https://github.com/crowsonkb/k-diffusion.git repositories/k-diffusion 
 git clone https://github.com/Stability-AI/stablediffusion.git  repositories/stable-diffusion-stability-ai && \
 cd extensions && \
 git clone https://github.com/yfszzx/stable-diffusion-webui-images-browser.git && \
-cd stable-diffusion-webui-images-browser && git fetch && cd .. && \
-git clone https://github.com/d8ahazard/sd_dreambooth_extension.git && \
-cd sd_dreambooth_extension && git fetch && git checkout c5cb58328c555ac27679422b1da940a9b19de6f2 && \
-pip install -r requirements.txt && cd ..
-
-COPY --from=build /models/v1-5-pruned-emaonly.ckpt /workspace/stable-diffusion-webui/v1-5-pruned-emaonly.ckpt
-COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
-
-RUN mkdir -p /root/.cache/huggingface
-RUN mkdir -p /workspace/outputs
-RUN rm /workspace/venv/bin/ffmpeg
+cd stable-diffusion-webui-images-browser && git fetch && cd ..
 
 ADD relauncher.py .
+ADD webui-user.sh .
 ADD start.sh /start.sh
-RUN chmod a+x /start.sh
+RUN chmod a+x /start.sh && \
+chmod +x webui.sh
+
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]
