@@ -1,26 +1,28 @@
 import runpod
 import subprocess
-## Load models into VRAM here so they can be warm between requests
 import requests
+import time
 
 def check_api_availability(host):
     while True:
         try:
             response = requests.get(host)
-            if response.status_code == 200:
-                print(f"API is available at {host}")
-                return
+            return
         except requests.exceptions.RequestException as e:
             print(f"API is not available, retrying in 200ms... ({e})")
-
+        except Exception as e:
+            print('something went wrong')
         time.sleep(200/1000)
 
-check_api_availability("http://127.0.0.1:3000")
+check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
+
+print('run handler')
 
 def handler(event):
     '''
     This is the handler function that will be called by the serverless.
     '''
+    print('got event')
     print(event)
 
     response = requests.post(url=f'http://127.0.0.1:3000/sdapi/v1/txt2img', json=event["input"])
