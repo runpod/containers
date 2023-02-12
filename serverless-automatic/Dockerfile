@@ -6,6 +6,9 @@ ENV PATH="${PATH}:/workspace/venv/bin"
 
 WORKDIR /
 
+RUN rm /workspace/v1-5-pruned-emaonly.ckpt && rm -rf /workspace/stable-diffusion-webui/extensions/*
+RUN wget -O model.safetensors https://civitai.com/api/download/models/5616
+
 RUN pip install runpod
 
 RUN cd /workspace/stable-diffusion-webui/repositories/CodeFormer && \
