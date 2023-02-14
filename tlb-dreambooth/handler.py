@@ -1,44 +1,65 @@
-import runpod
+
 import subprocess
 import requests
 import time
 import subprocess
 
+from dreambooth import dump_only_textenc, train_only_unet
+
+import runpod
+from runpod.serverless.utils import rp_download
+
+
 def check_api_availability(host):
+    '''
+    Check if the API is available, if not, retry in 200ms
+    '''
+    time.sleep(15)  # Buffered time for the API to start up
+
     while True:
         try:
-            response = requests.get(host)
+            requests.get(host, timeout=1)
             return
-        except requests.exceptions.RequestException as e:
-            print(f"API is not available, retrying in 200ms... ({e})")
-        except Exception as e:
+        except requests.exceptions.RequestException as err:
+            print(f"API is not available, retrying in 200ms... ({err})")
+        except Exception:
             print('something went wrong')
         time.sleep(200/1000)
 
-print('run handler')
 
-def run_inference(job):
-    response = requests.post(url=f'http://127.0.0.1:3000/sdapi/v1/txt2img', json=job)
-    json = response.json()
-    return json
+def run_inference(inference_request):
+    '''
+    Run inference on a request.
+    '''
+    response = requests.post(url='http://127.0.0.1:3000/sdapi/v1/txt2img',
+                             json=inference_request, timeout=10)
+    return response.json()
 
-def handler(event):
+
+def handler(job):
     '''
-    This is the handler function that will be called by the serverless.
+    This is the handler function that will be called on every job.
     '''
-    print('got event')
-    print(event)
-    subprocess.Popen(["python", "/workspace/stable-diffusion-webui/webui.py","--port", "3000", "--nowebui", "--api", "--xformers", "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"])
-    
-    time.sleep(15)
+    job_input = job['input']
+    train_input = job_input['train']
+
+    # -------------------------- Download Training Data -------------------------- #
+    downloaded_input = rp_download.file(train_input['data_url'])
+
+    # ----------------------------------- Train ---------------------------------- #
+    dump_only_textenc(trnonltxt)
+
+    # --------------------------------- Inference -------------------------------- #
+    subprocess.Popen([
+        "python", "/workspace/stable-diffusion-webui/webui.py",
+        "--port", "3000",
+        "--nowebui", "--api", "--xformers",
+        "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"
+    ])
 
     check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-    inference_jobs = event['input']['inference_jobs']
-
-    inference_results = map(run_inference, inference_jobs)
-
-    # do the things
+    inference_results = map(run_inference, job_input['inference_jobs'])
 
     print(inference_results)
 
