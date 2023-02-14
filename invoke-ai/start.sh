@@ -1,7 +1,6 @@
 #!/bin/bash
 echo "Container Started"
-cd /invokeai
-python scripts/invoke.py --host 0.0.0.0  --no-nsfw_checker --web 2>/workspace/invoke_logs &
+/opt/invokeai/docker-entrypoint.sh &
 
 if [[ $PUBLIC_KEY ]]
 then
