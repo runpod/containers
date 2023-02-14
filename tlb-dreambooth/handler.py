@@ -47,7 +47,27 @@ def handler(job):
     downloaded_input = rp_download.file(train_input['data_url'])
 
     # ----------------------------------- Train ---------------------------------- #
-    dump_only_textenc(trnonltxt)
+    dump_only_textenc(
+        trnonltxt="",
+        MODELT_NAME="runwayml/stable-diffusion-v1-5",
+        INSTANCE_DIR=downloaded_input,
+        OUTPUT_DIR="TEST_OUTPUT",
+        PT="",
+        Seed=555,
+        precision="fp16",
+        Training_Steps=0
+    )
+
+    dump_only_textenc(
+        trnonltxt="",
+        MODELT_NAME="runwayml/stable-diffusion-v1-5",
+        INSTANCE_DIR=downloaded_input,
+        OUTPUT_DIR="TEST_OUTPUT",
+        PT="",
+        Seed=555,
+        precision="fp16",
+        Training_Steps=0
+    )
 
     # --------------------------------- Inference -------------------------------- #
     subprocess.Popen([
