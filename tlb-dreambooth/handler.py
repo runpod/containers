@@ -9,6 +9,13 @@ from dreambooth import dump_only_textenc, train_only_unet
 import runpod
 from runpod.serverless.utils import rp_download
 
+# ---------------------------------------------------------------------------- #
+#                                    Schemas                                   #
+# ---------------------------------------------------------------------------- #
+TRAIN_SCHEMA = {
+    ''
+}
+
 
 def check_api_availability(host):
     '''
