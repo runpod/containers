@@ -11,6 +11,8 @@ RUN git clone https://github.com/TheLastBen/fast-stable-diffusion.git
 RUN pip install -U xformers
 RUN pip install https://github.com/runpod/runpod-python/archive/main.zip
 
+COPY . /
+
 RUN python model_fetcher.py
 
 ADD handler.py .
