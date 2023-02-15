@@ -14,7 +14,6 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         # Flags
         trnonltxt,
         "--use_8bit_adam",
-        "--gradient_checkpointing",  # Previously set tat the "GC" variable
 
         # Variables
         "--image_captions_filename",
@@ -44,7 +43,6 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "accelerate", "launch", "/content/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
         "--use_8bit_adam",
-        "--gradient_checkpointing",  # Previously set tat the "GCUNET" variable
 
         "--stop_text_encoder_training=stpsv"
         f"--save_n_steps=\'{SESSION_DIR}\'",
