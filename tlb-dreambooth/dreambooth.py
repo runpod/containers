@@ -13,7 +13,6 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         "accelerate", "launch", "/content/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
         trnonltxt,
-        "--use_8bit_adam",
 
         # Variables
         "--image_captions_filename",
@@ -28,10 +27,10 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         f"--mixed_precision=\'{precision}\'",
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",
-        "--learning_rate='txlr'",
+        "--learning_rate=2e-6",
         "--lr_scheduler='linear'",
         "--lr_warmup_steps=0",
-        f"- -max_train_steps=\'{Training_Steps}\'"
+        f"--max_train_steps=\'{Training_Steps}\'"
     ])
 
 
@@ -42,7 +41,6 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
     subprocess.Popen([
         "accelerate", "launch", "/content/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
-        "--use_8bit_adam",
 
         "--stop_text_encoder_training=stpsv"
         f"--save_n_steps=\'{SESSION_DIR}\'",
@@ -55,6 +53,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         f"--mixed_precision=\'{precision}\'",
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",
+        "--learning_rate=2e-6",
         "--lr_scheduler='linear'",
         "--lr_warmup_steps=0",
         f"--max_train_steps=\'{Training_Steps}\'"
