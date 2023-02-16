@@ -50,7 +50,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
     '''
     unet = subprocess.Popen([
         "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
-
+        "--train_only_unet",
         f"--stop_text_encoder_training={stpsv}",
         f"--save_n_steps={stp}",
 
