@@ -44,7 +44,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         "--lr_warmup_steps=0",
         # "--lr_num_cycles",
         # "--lr_power",
-        "--use_8bit_adam",  # ENABLED FOR TESTING
+        # "--use_8bit_adam",  # ENABLED FOR TESTING
         # "--dataloader_num_workers",
         # "--adam_beta1",
         # "--adam_beta2",
@@ -99,7 +99,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "--learning_rate=2e-6",
         "--lr_scheduler='linear'",
         "--lr_warmup_steps=0",
-        f"--max_train_steps={Training_Steps}"
+        f"--max_train_steps={Training_Steps}",
 
         f"--Session_dir={SESSION_DIR}",
     ])
