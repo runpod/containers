@@ -79,7 +79,6 @@ def handler(job):
     )
 
     train_only_unet(
-        stpsv=500,
         stp=500,
         SESSION_DIR="TEST_OUTPUT",
         MODELT_NAME="runwayml/stable-diffusion-v1-5",
@@ -92,28 +91,32 @@ def handler(job):
         num_train_epochs=150
     )
 
+    # Convert to CKPT
+    diffusers_to_ckpt = subprocess.Popen([
+        "python", "/diffusers/scripts/convertosdv2.py",
+        "--fp16",
+        "--model_to_load=TEST_OUTPUT",
+        "--model_to_save=TEST_OUTPUT/converted.ckpt"
+    ])
+    diffusers_to_ckpt.wait()
+
+    # --------------------------------- Inference -------------------------------- #
+    subprocess.Popen([
+        "python", "/workspace/stable-diffusion-webui/webui.py",
+        "--port", "3000",
+        "--nowebui", "--api", "--xformers",
+        "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"
+    ])
+
+    check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
+
+    inference_results = map(run_inference, job_input['inference'])
+
+    print(inference_results)
+
     print("Training done")
     while True:
         time.sleep(1000)
-
-    # --------------------------------- Inference -------------------------------- #
-    # subprocess.Popen([
-    #     "python", "/workspace/stable-diffusion-webui/webui.py",
-    #     "--port", "3000",
-    #     "--nowebui", "--api", "--xformers",
-    #     "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"
-    # ])
-
-    # check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
-
-    # inference_results = map(run_inference, job_input['inference_jobs'])
-
-    # print(inference_results)
-
-    # return the output that you want to be returned like pre-signed URLs to output artifacts
-    # return {
-    #     "inference_results": list(inference_results)
-    # }
 
     return {"test": "test"}
 
