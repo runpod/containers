@@ -13,7 +13,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
     Train only the text encoder.
     '''
     text_encoder = subprocess.Popen([
-        "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
+        "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
 
         f"--pretrained_model_name_or_path={MODELT_NAME}",
         f"--instance_data_dir={INSTANCE_DIR}",
@@ -49,7 +49,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
     Train only the image encoder.
     '''
     unet = subprocess.Popen([
-        "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
+        "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
 
         f"--stop_text_encoder_training={stpsv}",
         f"--save_n_steps={stp}",
