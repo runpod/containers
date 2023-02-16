@@ -9,7 +9,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
     '''
     Train only the text encoder.
     '''
-    subprocess.Popen([
+    text_encoder = subprocess.Popen([
         "accelerate", "launch", "/content/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
         trnonltxt,
@@ -33,12 +33,14 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         f"--max_train_steps=\'{Training_Steps}\'"
     ])
 
+    text_encoder.wait()
+
 
 def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, Res, precision, Training_Steps):
     '''
     Train only the image encoder.
     '''
-    subprocess.Popen([
+    unet = subprocess.Popen([
         "accelerate", "launch", "/content/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
 
@@ -58,3 +60,5 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "--lr_warmup_steps=0",
         f"--max_train_steps=\'{Training_Steps}\'"
     ])
+
+    unet.wait()
