@@ -57,7 +57,7 @@ def handler(job):
     dump_only_textenc(
         trnonltxt="",
         MODELT_NAME="runwayml/stable-diffusion-v1-5",
-        INSTANCE_DIR=downloaded_input,
+        INSTANCE_DIR=downloaded_input['file_path'],
         OUTPUT_DIR="TEST_OUTPUT",
         PT="",
         Seed=555,
@@ -68,7 +68,7 @@ def handler(job):
     dump_only_textenc(
         trnonltxt="",
         MODELT_NAME="runwayml/stable-diffusion-v1-5",
-        INSTANCE_DIR=downloaded_input,
+        INSTANCE_DIR=downloaded_input['file_path'],
         OUTPUT_DIR="TEST_OUTPUT",
         PT="",
         Seed=555,
