@@ -30,7 +30,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         "--learning_rate=2e-6",
         "--lr_scheduler='linear'",
         "--lr_warmup_steps=0",
-        f"--max_train_steps=\'{Training_Steps}\'"
+        f"--max_train_steps={Training_Steps}"
     ])
 
     text_encoder.wait()
@@ -44,7 +44,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
 
-        "--stop_text_encoder_training=stpsv",
+        f"--stop_text_encoder_training={stpsv}",
         f"--save_n_steps=\'{SESSION_DIR}\'",
         f"--pretrained_model_name_or_path=\'{MODELT_NAME}\'",
         f"--instance_data_dir=\'{INSTANCE_DIR}\'",

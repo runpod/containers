@@ -17,8 +17,17 @@ TRAIN_SCHEMA = {
         'type': str,
         'required': True
     },
-
-
+    "steps": {
+        'type': int,
+        'required': False,
+        'default': 4000
+    },
+    "learning_rate": {
+        'type': float,
+        'required': False,
+        'default': 2e-6,
+        'constraints': lambda learning_rate: 0 < learning_rate < 1
+    }
 }
 
 
