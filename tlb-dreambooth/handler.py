@@ -13,7 +13,12 @@ from runpod.serverless.utils import rp_download
 #                                    Schemas                                   #
 # ---------------------------------------------------------------------------- #
 TRAIN_SCHEMA = {
-    ''
+    "data_url": {
+        'type': str,
+        'required': True
+    },
+
+
 }
 
 

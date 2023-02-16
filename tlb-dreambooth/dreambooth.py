@@ -24,7 +24,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         f"--instance_prompt=\'{PT}\'",
         f"--seed={Seed}",
         "--resolution=512",
-        f"--mixed_precision=\'{precision}\'",
+        f"--mixed_precision={precision}",
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",
         "--learning_rate=2e-6",
@@ -44,7 +44,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
         # Flags
 
-        "--stop_text_encoder_training=stpsv"
+        "--stop_text_encoder_training=stpsv",
         f"--save_n_steps=\'{SESSION_DIR}\'",
         f"--pretrained_model_name_or_path=\'{MODELT_NAME}\'",
         f"--instance_data_dir=\'{INSTANCE_DIR}\'",
@@ -53,7 +53,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         f"--instance_prompt=\'{PT}\'",
         f"--seed={Seed}",
         f"--resolution={Res}",
-        f"--mixed_precision=\'{precision}\'",
+        f"--mixed_precision={precision}",
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",
         "--learning_rate=2e-6",
