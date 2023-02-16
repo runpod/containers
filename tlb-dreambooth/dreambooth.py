@@ -8,12 +8,14 @@ import subprocess
 # ---------------------------------------------------------------------------- #
 #                                 Text Encoder                                 #
 # ---------------------------------------------------------------------------- #
-def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, precision, training_steps):
+def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, precision, training_steps):
     '''
-    Train only the text encoder.
+    Train the text encoder first.
     '''
     text_encoder = subprocess.Popen([
         "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
+        "--train_text_encoder",
+        "--dump_only_text_encoder",
 
         f"--pretrained_model_name_or_path={MODELT_NAME}",
         f"--instance_data_dir={INSTANCE_DIR}",
@@ -21,7 +23,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         f"--output_dir={OUTPUT_DIR}",
         f"--seed={Seed}",
         "--resolution=512",
-        "--train_text_encoder",
+
         "--train_batch_size=1",
         f"--max_train_steps={training_steps}",
         "--gradient_accumulation_steps=1",
@@ -32,10 +34,8 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         f"--mixed_precision={precision}",
 
         "--image_captions_filename",
-        "--dump_only_text_encoder",
 
-        # trnonltxt,  # train_only_text_encoder
-        # extrnlcptn,  # external_captions
+
     ])
 
     text_encoder.wait()
