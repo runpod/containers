@@ -4,7 +4,7 @@ SHELL ["/bin/bash", "-c"]
 
 ENV PATH="${PATH}:/workspace/stable-diffusion-webui/venv/bin"
 
-WORKDIR /
+WORKDIR /src
 
 RUN git clone https://github.com/TheLastBen/fast-stable-diffusion.git
 RUN git clone --depth 1 --branch updt https://github.com/TheLastBen/diffusers
@@ -24,7 +24,7 @@ RUN pip install accelerate==0.14.0
 RUN pip install triton==2.0.0.dev20221120
 
 
-COPY . /
+COPY . /src
 
 RUN python model_fetcher.py
 
