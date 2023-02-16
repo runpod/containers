@@ -36,14 +36,14 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         # "--checkpointing_steps",
         # "--resume_from_checkpoint",
         "--gradient_accumulation_steps=1",
-        # "--gradient_checkpointing",
+        "--gradient_checkpointing",  # ENABLED FOR TESTING
         "--learning_rate=1e-6",
         # "--scale_lr",
         "--lr_scheduler=linear",
         "--lr_warmup_steps=0",
         # "--lr_num_cycles",
         # "--lr_power",
-        # "--use_8bit_adam",
+        "--use_8bit_adam",  # ENABLED FOR TESTING
         # "--dataloader_num_workers",
         # "--adam_beta1",
         # "--adam_beta2",
@@ -81,7 +81,6 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
     '''
     unet = subprocess.Popen([
         "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
-        # Flags
 
         f"--stop_text_encoder_training={stpsv}",
         f"--save_n_steps={stp}",
