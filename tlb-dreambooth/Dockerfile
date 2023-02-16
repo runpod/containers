@@ -13,14 +13,15 @@ RUN git clone --depth 1 --branch updt https://github.com/TheLastBen/diffusers
 RUN pip install https://github.com/runpod/runpod-python/archive/main.zip
 
 RUN pip install -U xformers
-RUN pip3 install diffusers==0.12.1
-RUN pip3 install torch==1.13.1 --extra-index-url=https://download.pytorch.org/whl/cu116
-RUN pip3 install ftfy==6.1.1
-RUN pip3 install scipy==1.9.3
-RUN pip3 install transformers==4.25.1
-RUN pip3 install accelerate==0.14.0
-# RUN pip3 install xformers==0.0.16
-RUN pip3 install triton==2.0.0.dev20221120
+RUN pip install bitsandbytes==0.37.0
+RUN pip install diffusers==0.12.1
+RUN pip install torch==1.13.1 --extra-index-url=https://download.pytorch.org/whl/cu116
+RUN pip install ftfy==6.1.1
+RUN pip install scipy==1.9.3
+RUN pip install transformers==4.25.1
+RUN pip install accelerate==0.14.0
+# RUN pip install xformers==0.0.16
+RUN pip install triton==2.0.0.dev20221120
 
 
 COPY . /

@@ -14,6 +14,7 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
     '''
     text_encoder = subprocess.Popen([
         "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
+
         f"--pretrained_model_name_or_path={MODELT_NAME}",
         # "--revision",
         # "--tokenizer_name",
@@ -84,7 +85,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
 
         f"--stop_text_encoder_training={stpsv}",
         f"--save_n_steps={stp}",
-        f"Session_dir={SESSION_DIR}",
+
         f"--pretrained_model_name_or_path={MODELT_NAME}",
         f"--instance_data_dir={INSTANCE_DIR}",
         f"--output_dir={OUTPUT_DIR}",
@@ -99,6 +100,8 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "--lr_scheduler='linear'",
         "--lr_warmup_steps=0",
         f"--max_train_steps={Training_Steps}"
+
+        f"--Session_dir={SESSION_DIR}",
     ])
 
     unet.wait()
