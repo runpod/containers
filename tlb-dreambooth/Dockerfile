@@ -28,6 +28,8 @@ ADD dreambooth.py /src/
 ADD handler.py /src/
 ADD start.sh /src/
 
+ADD test_input.json /src/
+
 RUN chmod +x /src/start.sh
 
 # Run container infinitely
