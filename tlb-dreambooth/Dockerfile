@@ -23,11 +23,10 @@ RUN pip install accelerate==0.14.0
 # RUN pip install xformers==0.0.16
 RUN pip install triton==2.0.0.dev20221120
 
-COPY . /src
-
+ADD model_fetcher.py /src
 RUN python model_fetcher.py
 
-# ADD handler.py
-# ADD start.sh /start.sh
+ADD handler.py /src
+ADD start.sh /src/start.sh
 
 CMD ["sh", "/src/start.sh" ]
