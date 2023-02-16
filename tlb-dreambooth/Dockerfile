@@ -23,6 +23,8 @@ RUN pip install https://github.com/runpod/runpod-python/archive/main.zip
 ADD model_fetcher.py /src/
 RUN python model_fetcher.py
 
+ADD dreambooth.py /src/
+
 ADD handler.py /src/
 ADD start.sh /src/
 
