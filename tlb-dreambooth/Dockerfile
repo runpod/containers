@@ -28,8 +28,8 @@ COPY . /src
 
 RUN python model_fetcher.py
 
-ADD handler.py .
-ADD start.sh /start.sh
+# ADD handler.py
+# ADD start.sh /start.sh
 RUN chmod +x /start.sh
 
 CMD [ "/start.sh" ]
