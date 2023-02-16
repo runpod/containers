@@ -97,7 +97,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",
         "--learning_rate=2e-6",
-        "--lr_scheduler='linear'",
+        "--lr_scheduler=linear",
         "--lr_warmup_steps=0",
         f"--max_train_steps={Training_Steps}",
 
