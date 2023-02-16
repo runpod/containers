@@ -23,7 +23,7 @@ RUN pip install accelerate==0.14.0
 # RUN pip install xformers==0.0.16
 RUN pip install triton==2.0.0.dev20221120
 
-COPY . /
+COPY . /src
 
 RUN python model_fetcher.py
 
