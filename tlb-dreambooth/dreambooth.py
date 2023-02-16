@@ -5,7 +5,10 @@ Trains DreamBooth image encoder then text encoder sequentially.
 import subprocess
 
 
-def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, precision, Training_Steps):
+# ---------------------------------------------------------------------------- #
+#                                 Text Encoder                                 #
+# ---------------------------------------------------------------------------- #
+def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, precision, num_train_epochs, training_steps):
     '''
     Train only the text encoder.
     '''
@@ -28,13 +31,13 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         "--train_text_encoder",
         "--train_batch_size=1",
         # "--sample_batch_size",
-        # "--num_train_epochs",
-        f"--max_train_steps={Training_Steps}",
+        f"--num_train_epochs={num_train_epochs}",
+        # f"--max_train_steps={training_steps}",
         # "--checkpointing_steps",
         # "--resume_from_checkpoint",
         "--gradient_accumulation_steps=1",
         # "--gradient_checkpointing",
-        "--learning_rate=2e-6",
+        "--learning_rate=1e-6",
         # "--scale_lr",
         "--lr_scheduler=linear",
         "--lr_warmup_steps=0",
@@ -69,6 +72,9 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
     text_encoder.wait()
 
 
+# ---------------------------------------------------------------------------- #
+#                                     UNet                                     #
+# ---------------------------------------------------------------------------- #
 def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, Res, precision, Training_Steps):
     '''
     Train only the image encoder.

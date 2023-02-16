@@ -76,7 +76,8 @@ def handler(job):
         PT="",
         Seed=555,
         precision="fp16",
-        Training_Steps=0
+        num_train_epochs=150,
+        training_steps=350
     )
 
     # train_only_unet(
@@ -90,7 +91,7 @@ def handler(job):
     #     Seed=555,
     #     Res=256,
     #     precision="fp16",
-    #     Training_Steps=500
+    #     Training_Steps=4000
     # )
 
     # --------------------------------- Inference -------------------------------- #
