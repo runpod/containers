@@ -77,23 +77,25 @@ def handler(job):
     )
 
     # --------------------------------- Inference -------------------------------- #
-    subprocess.Popen([
-        "python", "/workspace/stable-diffusion-webui/webui.py",
-        "--port", "3000",
-        "--nowebui", "--api", "--xformers",
-        "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"
-    ])
+    # subprocess.Popen([
+    #     "python", "/workspace/stable-diffusion-webui/webui.py",
+    #     "--port", "3000",
+    #     "--nowebui", "--api", "--xformers",
+    #     "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"
+    # ])
 
-    check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
+    # check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-    inference_results = map(run_inference, job_input['inference_jobs'])
+    # inference_results = map(run_inference, job_input['inference_jobs'])
 
-    print(inference_results)
+    # print(inference_results)
 
     # return the output that you want to be returned like pre-signed URLs to output artifacts
-    return {
-        "inference_results": list(inference_results)
-    }
+    # return {
+    #     "inference_results": list(inference_results)
+    # }
+
+    return {"test": "test"}
 
 
 runpod.serverless.start({"handler": handler})
