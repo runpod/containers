@@ -29,4 +29,5 @@ RUN python model_fetcher.py
 ADD handler.py /src
 ADD start.sh /src/start.sh
 
-CMD ["sh", "/src/start.sh" ]
+RUN chmod +x /src/start.sh
+CMD ["/src/start.sh" ]
