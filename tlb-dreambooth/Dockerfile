@@ -27,4 +27,8 @@ ADD handler.py /src/
 ADD start.sh /src/
 
 RUN chmod +x /src/start.sh
-CMD ["/src/start.sh"]
+
+# Run container infinitely
+CMD ["tail", "-f", "/dev/null"]
+
+# CMD ["/src/start.sh"]
