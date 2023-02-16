@@ -45,7 +45,8 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         # Flags
 
         f"--stop_text_encoder_training={stpsv}",
-        f"--save_n_steps=\'{SESSION_DIR}\'",
+        f"--save_n_steps={stp}",
+        f"Session_dir={SESSION_DIR}",
         f"--pretrained_model_name_or_path=\'{MODELT_NAME}\'",
         f"--instance_data_dir=\'{INSTANCE_DIR}\'",
         f"--output_dir=\'{OUTPUT_DIR}\'",

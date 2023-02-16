@@ -79,19 +79,19 @@ def handler(job):
         Training_Steps=0
     )
 
-    train_only_unet(
-        stpsv=500,
-        stp=500,
-        SESSION_DIR="TEST_OUTPUT",
-        MODELT_NAME="runwayml/stable-diffusion-v1-5",
-        INSTANCE_DIR=downloaded_input['file_path'],
-        OUTPUT_DIR="TEST_OUTPUT",
-        PT="",
-        Seed=555,
-        Res=256,
-        precision="fp16",
-        Training_Steps=500
-    )
+    # train_only_unet(
+    #     stpsv=500,
+    #     stp=500,
+    #     SESSION_DIR="TEST_OUTPUT",
+    #     MODELT_NAME="runwayml/stable-diffusion-v1-5",
+    #     INSTANCE_DIR=downloaded_input['file_path'],
+    #     OUTPUT_DIR="TEST_OUTPUT",
+    #     PT="",
+    #     Seed=555,
+    #     Res=256,
+    #     precision="fp16",
+    #     Training_Steps=500
+    # )
 
     # --------------------------------- Inference -------------------------------- #
     # subprocess.Popen([
