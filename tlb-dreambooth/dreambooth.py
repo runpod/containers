@@ -59,8 +59,8 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
         # "--enable_xformers_memory_efficient_attention",
         # "--set_grads_to_none",
 
-        # "--image_captions_filename",
-        # "--dump_only_text_encoder",
+        "--image_captions_filename",
+        "--dump_only_text_encoder",
 
         # trnonltxt,  # train_only_text_encoder
         # extrnlcptn,  # external_captions
