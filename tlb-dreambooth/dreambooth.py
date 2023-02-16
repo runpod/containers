@@ -11,26 +11,59 @@ def dump_only_textenc(trnonltxt, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed
     '''
     text_encoder = subprocess.Popen([
         "accelerate", "launch", "/diffusers/examples/dreambooth/train_dreambooth.py",
-        # Flags
-        trnonltxt,
-
-        # Variables
-        "--image_captions_filename",
-        "--train_text_encoder",
-        "--dump_only_text_encoder",
-        f"--pretrained_model_name_or_path=\'{MODELT_NAME}\'",
-        f"--instance_data_dir=\'{INSTANCE_DIR}\'",
-        f"--output_dir=\'{OUTPUT_DIR}\'",
-        f"--instance_prompt=\'{PT}\'",
+        f"--pretrained_model_name_or_path={MODELT_NAME}",
+        # "--revision",
+        # "--tokenizer_name",
+        f"--instance_data_dir={INSTANCE_DIR}",
+        # "--class_data_dir",
+        f"--instance_prompt={PT}",
+        # "--class_prompt",
+        # "--with_prior_preservation",
+        # "--prior_loss_weight",
+        # "--num_class_images",
+        f"--output_dir={OUTPUT_DIR}",
         f"--seed={Seed}",
         "--resolution=512",
-        f"--mixed_precision={precision}",
+        # "--center_crop",
+        "--train_text_encoder",
         "--train_batch_size=1",
+        # "--sample_batch_size",
+        # "--num_train_epochs",
+        f"--max_train_steps={Training_Steps}",
+        # "--checkpointing_steps",
+        # "--resume_from_checkpoint",
         "--gradient_accumulation_steps=1",
+        # "--gradient_checkpointing",
         "--learning_rate=2e-6",
-        "--lr_scheduler='linear'",
+        # "--scale_lr",
+        "--lr_scheduler=linear",
         "--lr_warmup_steps=0",
-        f"--max_train_steps={Training_Steps}"
+        # "--lr_num_cycles",
+        # "--lr_power",
+        # "--use_8bit_adam",
+        # "--dataloader_num_workers",
+        # "--adam_beta1",
+        # "--adam_beta2",
+        # "--adam_weight_decay",
+        # "--adam_epsilon",
+        # "--max_grad_norm",
+        # "--push_to_hub",
+        # "--hub_token",
+        # "--hub_model_id",
+        # "--logging_dir",
+        # "--allow_tf32",
+        # "--report_to",
+        f"--mixed_precision={precision}",
+        # "--prior_generation_precision",
+        # "--local_rank",
+        # "--enable_xformers_memory_efficient_attention",
+        # "--set_grads_to_none",
+
+        # "--image_captions_filename",
+        # "--dump_only_text_encoder",
+
+        # trnonltxt,  # train_only_text_encoder
+        # extrnlcptn,  # external_captions
     ])
 
     text_encoder.wait()
@@ -47,11 +80,11 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         f"--stop_text_encoder_training={stpsv}",
         f"--save_n_steps={stp}",
         f"Session_dir={SESSION_DIR}",
-        f"--pretrained_model_name_or_path=\'{MODELT_NAME}\'",
-        f"--instance_data_dir=\'{INSTANCE_DIR}\'",
-        f"--output_dir=\'{OUTPUT_DIR}\'",
+        f"--pretrained_model_name_or_path={MODELT_NAME}",
+        f"--instance_data_dir={INSTANCE_DIR}",
+        f"--output_dir={OUTPUT_DIR}",
         # f"--captions_dir=\'{CAPTIONS_DIR}\'",
-        f"--instance_prompt=\'{PT}\'",
+        f"--instance_prompt={PT}",
         f"--seed={Seed}",
         f"--resolution={Res}",
         f"--mixed_precision={precision}",
@@ -60,7 +93,7 @@ def train_only_unet(stpsv, stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_D
         "--learning_rate=2e-6",
         "--lr_scheduler='linear'",
         "--lr_warmup_steps=0",
-        f"--max_train_steps=\'{Training_Steps}\'"
+        f"--max_train_steps={Training_Steps}"
     ])
 
     unet.wait()
