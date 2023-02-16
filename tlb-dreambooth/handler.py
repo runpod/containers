@@ -51,6 +51,46 @@ def check_api_availability(host):
 def run_inference(inference_request):
     '''
     Run inference on a request.
+    {
+        "enable_hr": false,
+        "denoising_strength": 0,
+        "firstphase_width": 0,
+        "firstphase_height": 0,
+        "hr_scale": 2,
+        "hr_upscaler": "string",
+        "hr_second_pass_steps": 0,
+        "hr_resize_x": 0,
+        "hr_resize_y": 0,
+        "prompt": "",
+        "styles": [
+            "A beautiful anime girl"
+        ],
+        "seed": -1,
+        "subseed": -1,
+        "subseed_strength": 0,
+        "seed_resize_from_h": -1,
+        "seed_resize_from_w": -1,
+        "sampler_name": "string",
+        "batch_size": 1,
+        "n_iter": 1,
+        "steps": 50,
+        "cfg_scale": 7,
+        "width": 512,
+        "height": 512,
+        "restore_faces": false,
+        "tiling": false,
+        "negative_prompt": "string",
+        "eta": 0,
+        "s_churn": 0,
+        "s_tmax": 0,
+        "s_tmin": 0,
+        "s_noise": 1,
+        "override_settings": {},
+        "override_settings_restore_afterwards": true,
+        "script_args": [],
+        "sampler_index": "Euler",
+        "script_name": "string"
+        }
     '''
     response = requests.post(url='http://127.0.0.1:3000/sdapi/v1/txt2img',
                              json=inference_request, timeout=10)
@@ -93,10 +133,10 @@ def handler(job):
 
     # Convert to CKPT
     diffusers_to_ckpt = subprocess.Popen([
-        "python", "/diffusers/scripts/convertosdv2.py",
+        "python", "/src/diffusers/scripts/convertosdv2.py",
         "--fp16",
-        "--model_to_load=TEST_OUTPUT",
-        "--model_to_save=TEST_OUTPUT/converted.ckpt"
+        "/src/TEST_OUTPUT",
+        "/src/TEST_OUTPUT/converted.ckpt"
     ])
     diffusers_to_ckpt.wait()
 
@@ -105,7 +145,7 @@ def handler(job):
         "python", "/workspace/stable-diffusion-webui/webui.py",
         "--port", "3000",
         "--nowebui", "--api", "--xformers",
-        "--ckpt", "/workspace/v1-5-pruned-emaonly.ckpt"
+        "--ckpt", "/src/TEST_OUTPUT/converted.ckpt"
     ])
 
     check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")

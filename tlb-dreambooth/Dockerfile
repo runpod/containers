@@ -16,7 +16,7 @@ RUN pip install torch==1.13.1 --extra-index-url=https://download.pytorch.org/whl
 RUN pip install ftfy==6.1.1
 RUN pip install scipy==1.9.3
 RUN pip install transformers==4.25.1
-RUN pip install accelerate==0.14.0
+RUN pip install accelerate==0.12.0
 RUN pip install triton==2.0.0.dev20221120
 RUN pip install https://github.com/runpod/runpod-python/archive/main.zip
 
