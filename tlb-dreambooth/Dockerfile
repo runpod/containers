@@ -24,15 +24,9 @@ ADD model_fetcher.py /src/
 RUN python model_fetcher.py
 
 ADD dreambooth.py /src/
-
 ADD handler.py /src/
 ADD start.sh /src/
-
 ADD test_input.json /src/
 
 RUN chmod +x /src/start.sh
-
-# Run container infinitely
-# CMD ["tail", "-f", "/dev/null"]
-
 CMD ["/src/start.sh"]

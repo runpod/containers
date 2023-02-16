@@ -76,7 +76,6 @@ def handler(job):
         PT="",
         Seed=555,
         precision="fp16",
-        num_train_epochs=150,
         training_steps=350
     )
 
@@ -91,8 +90,12 @@ def handler(job):
         Seed=555,
         Res=256,
         precision="fp16",
-        Training_Steps=4000
+        num_train_epochs=150
     )
+
+    print("Training done")
+    while True:
+        time.sleep(1000)
 
     # --------------------------------- Inference -------------------------------- #
     # subprocess.Popen([
