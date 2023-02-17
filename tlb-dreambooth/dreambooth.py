@@ -34,8 +34,6 @@ def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, seed, precision
         f"--mixed_precision={precision}",
 
         "--image_captions_filename",
-
-
     ])
 
     text_encoder.wait()
