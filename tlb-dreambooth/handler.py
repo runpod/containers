@@ -4,17 +4,19 @@ RunPod | Endpoint | Dreambooth
 This is the handler for the DreamBooth serverless worker.
 '''
 
+import io
 import os
-import subprocess
-import requests
 import time
+import base64
+import requests
 import subprocess
 
-from dreambooth import dump_only_textenc, train_only_unet
+from PIL import Image, PngImagePlugin
 
 import runpod
 from runpod.serverless.utils import rp_download, rp_upload
 from runpod.serverless.utils.rp_validator import validate
+from dreambooth import dump_only_textenc, train_only_unet
 
 # ---------------------------------------------------------------------------- #
 #                                    Schemas                                   #
@@ -378,7 +380,7 @@ def handler(job):
         Seed=555,
         Res=256,
         precision="fp16",
-        num_train_epochs=150
+        num_train_epochs=2  # Testing with 2, 150 is the default
     )
 
     # Convert to CKPT
@@ -393,19 +395,33 @@ def handler(job):
     trained_ckpt = f"/src/job_files/{job['id']}/{job['id']}.ckpt"
 
     # --------------------------------- Inference -------------------------------- #
-    subprocess.Popen([
-        "python", "/workspace/stable-diffusion-webui/webui.py",
-        "--port", "3000",
-        "--nowebui", "--api", "--xformers",
-        "--ckpt", f"/src/job_files/{job['id']}/{job['id']}.ckpt"
-    ])
+    if 'inference' in job_input:
+        os.makedirs(f"job_files/{job['id']}/inference_output", exist_ok=True)
 
-    check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
+        os.environ["COMMANDLINE_ARGS"] = f"--port 3000 --nowebui --api --xformers --ckpt {trained_ckpt}"
+        subprocess.Popen(["/workspace/stable-diffusion-webui/webui.sh", "-f"])
 
-    inference_results = map(run_inference, job_input['inference'])
-    print(list(inference_results))
+        # subprocess.Popen([
+        #     "python", "/workspace/stable-diffusion-webui/webui.py",
+        #     "--port", "3000",
+        #     "--nowebui", "--api", "--xformers",
+        #     "--ckpt", f"/src/job_files/{job['id']}/{job['id']}.ckpt"
+        # ])
 
-    job_output['inference'] = list(inference_results)
+        check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
+
+        inference_results = map(run_inference, job_input['inference'])
+        print(list(inference_results))
+
+        for result in list(inference_results):
+            image = result['image']
+            image = Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[0])))
+            image.save(f"job_files/{job['id']}/inference_output/{result['id']}.png")
+
+            result['image'] = rp_upload.upload_image(
+                job['id'], f"job_files/{job['id']}/inference_output/{result['id']}.png")
+
+        job_output['inference'] = list(inference_results)
 
     # ------------------------------- Upload Files ------------------------------- #
     if 's3Config' in job:
