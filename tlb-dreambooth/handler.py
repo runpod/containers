@@ -7,6 +7,7 @@ This is the handler for the DreamBooth serverless worker.
 import io
 import os
 import time
+import json
 import base64
 import requests
 import subprocess
@@ -317,7 +318,6 @@ def handler(job):
 
     job_output = {}
     job_output['train'] = {}
-    job_output['inference'] = []
 
     # -------------------------------- Validation -------------------------------- #
     # Validate the training input
@@ -420,6 +420,10 @@ def handler(job):
         inference_results = map(run_inference, job_input['inference'])
         print(list(inference_results))
 
+        # Save output to disk
+        with open(f"job_files/{job['id']}/inference_output.json", "w") as f:
+            json.dump(list(inference_results), f)
+
         for result in list(inference_results):
             image = result['image']
             image = Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[0])))
@@ -435,6 +439,10 @@ def handler(job):
         # Upload the checkpoint file
         ckpt_url = rp_upload.file(f"{job['id']}.ckpt", trained_ckpt, s3_config)
         job_output['train']['checkpoint_url'] = ckpt_url
+
+    print(job_output)
+    while True:
+        time.sleep(1)
 
     return job_output
 
