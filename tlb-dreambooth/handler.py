@@ -1,4 +1,10 @@
+'''
+RunPod | Endpoint | Dreambooth
 
+This is the handler for the DreamBooth serverless worker.
+'''
+
+import os
 import subprocess
 import requests
 import time
@@ -7,30 +13,53 @@ import subprocess
 from dreambooth import dump_only_textenc, train_only_unet
 
 import runpod
-from runpod.serverless.utils import rp_download
+from runpod.serverless.utils import rp_download, rp_upload
+from runpod.serverless.utils.rp_validator import validate
 
 # ---------------------------------------------------------------------------- #
 #                                    Schemas                                   #
 # ---------------------------------------------------------------------------- #
 TRAIN_SCHEMA = {
-    "data_url": {
+    'data_url': {
         'type': str,
         'required': True
     },
-    "steps": {
+    # Text Encoder Training Parameters
+    'text_training_steps': {
         'type': int,
         'required': False,
-        'default': 4000
+        'default': 350
     },
-    "learning_rate": {
-        'type': float,
+    'text_training_seed': {
+        'type': int,
         'required': False,
-        'default': 2e-6,
-        'constraints': lambda learning_rate: 0 < learning_rate < 1
+        'default': 555
+    }
+}
+
+S3_SCHEMA = {
+    'accessId': {
+        'type': str,
+        'required': True
+    },
+    'accessSecret': {
+        'type': str,
+        'required': True
+    },
+    'bucketName': {
+        'type': str,
+        'required': True
+    },
+    'endpointUrl': {
+        'type': str,
+        'required': True
     }
 }
 
 
+# ---------------------------------------------------------------------------- #
+#                              Automatic Functions                             #
+# ---------------------------------------------------------------------------- #
 def check_api_availability(host):
     '''
     Check if the API is available, if not, retry in 200ms
@@ -97,25 +126,53 @@ def run_inference(inference_request):
     return response.json()
 
 
+# ---------------------------------------------------------------------------- #
+#                                    Handler                                   #
+# ---------------------------------------------------------------------------- #
 def handler(job):
     '''
     This is the handler function that will be called on every job.
     '''
     job_input = job['input']
+
+    job_output = {}
+    job_output['train'] = {}
+    job_output['inference'] = []
+
+    # -------------------------------- Validation -------------------------------- #
+    # Validate the training input
+    if 'train' not in job_input:
+        return {"error": "Missing training input."}
     train_input = job_input['train']
+
+    validated_train_input = validate(job_input['train'], TRAIN_SCHEMA)
+    if 'errors' in validated_train_input:
+        return {"error": validated_train_input['errors']}
+    train_input = validated_train_input['validated_input']
+
+    # Validate the S3 config, if provided
+    s3_config = None
+    if 's3Config' in job:
+        validated_s3_config = validate(job['s3Config'], S3_SCHEMA)
+        if 'errors' in validated_s3_config:
+            return {"error": validated_s3_config['errors']}
+        s3_config = validated_s3_config['validated_input']
 
     # -------------------------- Download Training Data -------------------------- #
     downloaded_input = rp_download.file(train_input['data_url'])
+
+    os.makedirs(f"job_files/{job['id']}", exist_ok=True)
+    os.makedirs(f"job_files/{job['id']}/model", exist_ok=True)
 
     # ----------------------------------- Train ---------------------------------- #
     dump_only_textenc(
         MODELT_NAME="runwayml/stable-diffusion-v1-5",
         INSTANCE_DIR=downloaded_input['extracted_path'],
-        OUTPUT_DIR="TEST_OUTPUT",
+        OUTPUT_DIR=f"job_files/{job['id']}/model",
+        training_steps=train_input['text_training_steps'],
         PT="",
-        Seed=555,
-        precision="fp16",
-        training_steps=350
+        seed=train_input['text_training_seed'],
+        precision="fp16"
     )
 
     train_only_unet(
@@ -123,7 +180,7 @@ def handler(job):
         SESSION_DIR="TEST_OUTPUT",
         MODELT_NAME="runwayml/stable-diffusion-v1-5",
         INSTANCE_DIR=downloaded_input['extracted_path'],
-        OUTPUT_DIR="TEST_OUTPUT",
+        OUTPUT_DIR=f"job_files/{job['id']}/model",
         PT="",
         Seed=555,
         Res=256,
@@ -135,17 +192,19 @@ def handler(job):
     diffusers_to_ckpt = subprocess.Popen([
         "python", "/src/diffusers/scripts/convertosdv2.py",
         "--fp16",
-        "/src/TEST_OUTPUT",
-        "/src/TEST_OUTPUT/converted.ckpt"
+        f"/src/job_files/{job['id']}/model",
+        f"/src/job_files/{job['id']}/{job['id']}.ckpt"
     ])
     diffusers_to_ckpt.wait()
+
+    trained_ckpt = f"/src/job_files/{job['id']}/{job['id']}.ckpt"
 
     # --------------------------------- Inference -------------------------------- #
     subprocess.Popen([
         "python", "/workspace/stable-diffusion-webui/webui.py",
         "--port", "3000",
         "--nowebui", "--api", "--xformers",
-        "--ckpt", "/src/TEST_OUTPUT/converted.ckpt"
+        "--ckpt", f"/src/job_files/{job['id']}/{job['id']}.ckpt"
     ])
 
     check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
@@ -154,11 +213,13 @@ def handler(job):
 
     print(inference_results)
 
-    print("Training done")
-    while True:
-        time.sleep(1000)
+    # ------------------------------- Upload Files ------------------------------- #
+    if 's3Config' in job:
+        # Upload the checkpoint file
+        ckpt_url = rp_upload.file(f"{job['id']}.ckpt", trained_ckpt, s3_config)
+        job_output['train']['checkpoint_url'] = ckpt_url
 
-    return {"test": "test"}
+    return job_output
 
 
 runpod.serverless.start({"handler": handler})

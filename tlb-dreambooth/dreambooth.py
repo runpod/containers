@@ -8,7 +8,7 @@ import subprocess
 # ---------------------------------------------------------------------------- #
 #                                 Text Encoder                                 #
 # ---------------------------------------------------------------------------- #
-def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, precision, training_steps):
+def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, seed, precision, training_steps):
     '''
     Train the text encoder first.
     '''
@@ -21,7 +21,7 @@ def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, precision
         f"--instance_data_dir={INSTANCE_DIR}",
         f"--instance_prompt={PT}",
         f"--output_dir={OUTPUT_DIR}",
-        f"--seed={Seed}",
+        f"--seed={seed}",
         "--resolution=512",
 
         "--train_batch_size=1",
