@@ -402,11 +402,10 @@ def handler(job):
 
     check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-    for inference_input in job_input['inference']:
-        inference_results = map(run_inference, job_input['inference'])
-        print(list(inference_results))
+    inference_results = map(run_inference, job_input['inference'])
+    print(list(inference_results))
 
-        job_output['inference'] = list(inference_results)
+    job_output['inference'] = list(inference_results)
 
     # ------------------------------- Upload Files ------------------------------- #
     if 's3Config' in job:
