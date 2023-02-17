@@ -419,21 +419,18 @@ def handler(job):
 
         inference_results = map(run_inference, job_input['inference'])
         inference_results = list(inference_results)
-        print(inference_results)
-        print("HERE")
-        print(inference_results)
 
         # Save output to disk
         with open(f"job_files/{job['id']}/inference_output.json", "w") as f:
             json.dump(inference_results, f)
 
-        for result in inference_results:
-            image = result['image']
-            image = Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[0])))
-            image.save(f"job_files/{job['id']}/inference_output/{result['id']}.png")
+        for top_index, results in enumerate(inference_results):
+            for index, image in enumerate(results['images']):
+                image = Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[0])))
+                image.save(f"job_files/{job['id']}/inference_output/{top_index}-{index}.png")
 
-            result['image'] = rp_upload.upload_image(
-                job['id'], f"job_files/{job['id']}/inference_output/{result['id']}.png")
+                inference_results[top_index]['images'][index] = rp_upload.upload_image(
+                    job['id'], f"job_files/{job['id']}/inference_output/{top_index}-{index}.png")
 
         job_output['inference'] = inference_results
 
