@@ -11,7 +11,7 @@ import base64
 import requests
 import subprocess
 
-from PIL import Image, PngImagePlugin
+from PIL import Image
 
 import runpod
 from runpod.serverless.utils import rp_download, rp_upload
@@ -41,6 +41,12 @@ TRAIN_SCHEMA = {
         'type': int,
         'required': False,
         'default': 555
+    },
+    # UNet Training Parameters
+    'unet_training_epochs': {
+        'type': int,
+        'required': False,
+        'default': 150
     }
 }
 
@@ -380,7 +386,7 @@ def handler(job):
         Seed=555,
         Res=256,
         precision="fp16",
-        num_train_epochs=2  # Testing with 2, 150 is the default
+        num_train_epochs=train_input['unet_training_epochs']
     )
 
     # Convert to CKPT
@@ -398,7 +404,8 @@ def handler(job):
     if 'inference' in job_input:
         os.makedirs(f"job_files/{job['id']}/inference_output", exist_ok=True)
 
-        os.environ["COMMANDLINE_ARGS"] = f"--port 3000 --nowebui --api --xformers --ckpt {trained_ckpt}"
+        os.environ["COMMANDLINE_ARGS"] = f"""
+                --install_dir /workspace --port 3000 --nowebui --api --xformers --ckpt {trained_ckpt}"""
         subprocess.Popen(["/workspace/stable-diffusion-webui/webui.sh", "-f"])
 
         # subprocess.Popen([
