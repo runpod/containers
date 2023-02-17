@@ -409,8 +409,7 @@ def handler(job):
 
         check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-        inference_results = map(run_inference, job_input['inference'])
-        inference_results = list(inference_results)
+        inference_results = list(map(run_inference, job_input['inference']))
 
         for top_index, results in enumerate(inference_results):
             for index, image in enumerate(results['images']):
