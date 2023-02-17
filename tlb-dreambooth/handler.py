@@ -149,7 +149,7 @@ INFERENCE_SCHEMA = {
     },
     'width': {
         'type': int,
-        ' required': False,
+        'required': False,
         'default': 512
     },
     'height': {
