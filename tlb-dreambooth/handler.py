@@ -418,9 +418,10 @@ def handler(job):
         check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
         inference_results = map(run_inference, job_input['inference'])
-        print(list(inference_results))
+        inference_results = list(inference_results)
+        print(inference_results)
         print("HERE")
-        print(list(inference_results))
+        print(inference_results)
 
         # Save output to disk
         with open(f"job_files/{job['id']}/inference_output.json", "w") as f:
