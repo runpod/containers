@@ -419,6 +419,8 @@ def handler(job):
 
         inference_results = map(run_inference, job_input['inference'])
         print(list(inference_results))
+        print("HERE")
+        print(list(inference_results))
 
         # Save output to disk
         with open(f"job_files/{job['id']}/inference_output.json", "w") as f:
