@@ -254,7 +254,7 @@ def check_api_availability(host):
             print(f"API is not available, retrying in 200ms... ({err})")
         except Exception:
             print('something went wrong')
-        time.sleep(200/1000)
+        time.sleep(1)
 
 
 def run_inference(inference_request):
@@ -404,8 +404,8 @@ def handler(job):
     if 'inference' in job_input:
         os.makedirs(f"job_files/{job['id']}/inference_output", exist_ok=True)
 
-        os.environ["COMMANDLINE_ARGS"] = f"""
-                --install_dir /workspace --port 3000 --nowebui --api --xformers --ckpt {trained_ckpt}"""
+        os.environ["install_dir"] = "/workspace"
+        os.environ["COMMANDLINE_ARGS"] = f"--port 3000 --nowebui --api --xformers --ckpt {trained_ckpt}"
         subprocess.Popen(["/workspace/stable-diffusion-webui/webui.sh", "-f"])
 
         # subprocess.Popen([
