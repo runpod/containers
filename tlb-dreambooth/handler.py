@@ -47,6 +47,11 @@ TRAIN_SCHEMA = {
         'type': int,
         'required': False,
         'default': 150
+    },
+    'unet_learning_rate': {
+        'type': float,
+        'required': False,
+        'default': 2e-6
     }
 }
 
@@ -385,7 +390,8 @@ def handler(job):
         Seed=555,
         Res=256,
         precision="fp16",
-        num_train_epochs=train_input['unet_training_epochs']
+        num_train_epochs=train_input['unet_training_epochs'],
+        learning_rate=train_input['unet_learning_rate']
     )
 
     # Convert to CKPT
@@ -427,6 +433,7 @@ def handler(job):
         ckpt_url = rp_upload.file(f"{job['id']}.ckpt", trained_ckpt, s3_config)
         job_output['train']['checkpoint_url'] = ckpt_url
 
+    job_output['refresh_worker'] = True  # Refresh the worker after the job is done
     return job_output
 
 
