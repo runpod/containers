@@ -213,7 +213,7 @@ INFERENCE_SCHEMA = {
     'script_name': {
         'type': str,
         'required': False,
-        'default': 'string'
+        'default': None
     }
 }
 
