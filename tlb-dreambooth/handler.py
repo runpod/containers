@@ -24,6 +24,11 @@ TRAIN_SCHEMA = {
         'type': str,
         'required': True
     },
+    'concept_name': {
+        'type': str,
+        'required': False,
+        'default': None
+    },
     # Text Encoder Training Parameters
     'text_training_steps': {
         'type': int,
@@ -34,6 +39,173 @@ TRAIN_SCHEMA = {
         'type': int,
         'required': False,
         'default': 555
+    }
+}
+
+INFERENCE_SCHEMA = {
+    'enable_hr': {
+        'type': bool,
+        'required': False,
+        'default': False
+    },
+    'denoising_strength': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'firstphase_width': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'firstphase_height': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'hr_scale': {
+        'type': int,
+        'required': False,
+        'default': 2
+    },
+    'hr_upscaler': {
+        'type': str,
+        'required': False,
+        'default': 'string'
+    },
+    'hr_second_pass_steps': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'hr_resize_x': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'hr_resize_y': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'prompt': {
+        'type': str,
+        'required': True
+    },
+    'styles': {
+        'type': list,
+        'required': False,
+        'default': []
+    },
+    'seed': {
+        'type': int,
+        'required': False,
+        'default': -1
+    },
+    'subseed': {
+        'type': int,
+        'required': False,
+        'default': -1
+    },
+    'subseed_strength': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'seed_resize_from_h': {
+        'type': int,
+        'required': False,
+        'default': -1
+    },
+    'seed_resize_from_w': {
+        'type': int,
+        'required': False,
+        'default': -1
+    },
+    'sampler_name': {
+        'type': str,
+        'required': False,
+        'default': 'string'
+    },
+    'batch_size': {
+        'type': int,
+        'required': False,
+        'default': 1
+    },
+    'n_iter': {
+        'type': int,
+        'required': False,
+        'default': 1
+    },
+    'steps': {
+        'type': int,
+        'required': False,
+        'default': 50
+    },
+    'cfg_scale': {
+        'type': int,
+        'required': False,
+        'default': 7
+    },
+    'width': {
+        'type': int,
+        ' required': False,
+        'default': 512
+    },
+    'height': {
+        'type': int,
+        'required': False,
+        'default': 512
+    },
+    'restore_faces': {
+        'type': bool,
+        'required': False,
+        'default': False
+    },
+    'tiling': {
+        'type': bool,
+        'required': False,
+        'default': False
+    },
+    'negative_prompt': {
+        'type': str,
+        'required': False,
+        'default': None
+    },
+    'eta': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    's_churn': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    's_tmax': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    's_tmin': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    's_noise': {
+        'type': int,
+        'required': False,
+        'default': 0
+    },
+    'sampler_index': {
+        'type': str,
+        'required': False,
+        'default': 'Euler',
+    },
+    'script_name': {
+        'type': str,
+        'required': False,
+        'default': 'string'
     }
 }
 
@@ -150,6 +322,16 @@ def handler(job):
         return {"error": validated_train_input['errors']}
     train_input = validated_train_input['validated_input']
 
+    # Validate the inference input
+    if 's3Config' not in job and 'inference' not in job_input:
+        return {"error": "Please provide either an inference input or an S3 config."}
+    if 'inference' in job_input:
+        for index, inference_input in enumerate(job_input['inference']):
+            validated_inf_input = validate(inference_input, INFERENCE_SCHEMA)
+            if 'errors' in validated_inf_input:
+                return {"error": validated_inf_input['errors']}
+            job_input['inference'][index] = validated_inf_input['validated_input']
+
     # Validate the S3 config, if provided
     s3_config = None
     if 's3Config' in job:
@@ -160,6 +342,17 @@ def handler(job):
 
     # -------------------------- Download Training Data -------------------------- #
     downloaded_input = rp_download.file(train_input['data_url'])
+
+    # Rename the files to the concept name, if provided.
+    if train_input['concept_name'] is not None:
+        concept_images = os.listdir(downloaded_input)
+        for index, image in enumerate(concept_images):
+            file_type = image.split(".")[-1]
+            os.rename(
+                os.path.join(downloaded_input, image),
+                os.path.join(downloaded_input,
+                             f"{train_input['concept_name']} ({index}).{file_type}")
+            )
 
     os.makedirs(f"job_files/{job['id']}", exist_ok=True)
     os.makedirs(f"job_files/{job['id']}/model", exist_ok=True)
@@ -209,15 +402,18 @@ def handler(job):
 
     check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-    inference_results = map(run_inference, job_input['inference'])
-
-    print(inference_results)
+    for inference_input in job_input['inference']:
+        inference_results = map(run_inference, job_input['inference'])
+        print(inference_results)
 
     # ------------------------------- Upload Files ------------------------------- #
     if 's3Config' in job:
         # Upload the checkpoint file
         ckpt_url = rp_upload.file(f"{job['id']}.ckpt", trained_ckpt, s3_config)
         job_output['train']['checkpoint_url'] = ckpt_url
+
+    while True:
+        time.sleep(1)
 
     return job_output
 
