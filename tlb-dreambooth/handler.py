@@ -425,9 +425,9 @@ def handler(job):
 
         # Save output to disk
         with open(f"job_files/{job['id']}/inference_output.json", "w") as f:
-            json.dump(list(inference_results), f)
+            json.dump(inference_results, f)
 
-        for result in list(inference_results):
+        for result in inference_results:
             image = result['image']
             image = Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[0])))
             image.save(f"job_files/{job['id']}/inference_output/{result['id']}.png")
@@ -435,7 +435,7 @@ def handler(job):
             result['image'] = rp_upload.upload_image(
                 job['id'], f"job_files/{job['id']}/inference_output/{result['id']}.png")
 
-        job_output['inference'] = list(inference_results)
+        job_output['inference'] = inference_results
 
     # ------------------------------- Upload Files ------------------------------- #
     if 's3Config' in job:
