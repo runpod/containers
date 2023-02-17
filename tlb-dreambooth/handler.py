@@ -404,16 +404,15 @@ def handler(job):
 
     for inference_input in job_input['inference']:
         inference_results = map(run_inference, job_input['inference'])
-        print(inference_results)
+        print(list(inference_results))
+
+        job_output['inference'] = list(inference_results)
 
     # ------------------------------- Upload Files ------------------------------- #
     if 's3Config' in job:
         # Upload the checkpoint file
         ckpt_url = rp_upload.file(f"{job['id']}.ckpt", trained_ckpt, s3_config)
         job_output['train']['checkpoint_url'] = ckpt_url
-
-    while True:
-        time.sleep(1)
 
     return job_output
 
