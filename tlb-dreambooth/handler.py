@@ -416,6 +416,7 @@ def handler(job):
         for inference in job_input['inference']:
             passback = inference['passback']
             inference = inference.pop('passback')
+            print(inference)
             inference = run_inference(inference)
             inference['passback'] = passback
             inference_results.append(inference)
