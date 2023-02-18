@@ -8,7 +8,9 @@ import subprocess
 # ---------------------------------------------------------------------------- #
 #                                 Text Encoder                                 #
 # ---------------------------------------------------------------------------- #
-def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, seed, precision, training_steps):
+def dump_only_textenc(
+        model_name, concept_dir, ouput_dir, PT, seed,
+        precision, training_steps, learning_rate, lr_scheduler):
     '''
     Train the text encoder first.
     '''
@@ -16,23 +18,20 @@ def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, seed, precision
         "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
         "--train_text_encoder",
         "--dump_only_text_encoder",
-
-        f"--pretrained_model_name_or_path={MODELT_NAME}",
-        f"--instance_data_dir={INSTANCE_DIR}",
+        f"--pretrained_model_name_or_path={model_name}",
+        f"--instance_data_dir={concept_dir}",
         f"--instance_prompt={PT}",
-        f"--output_dir={OUTPUT_DIR}",
+        f"--output_dir={ouput_dir}",
         f"--seed={seed}",
         "--resolution=512",
-
         "--train_batch_size=1",
         f"--max_train_steps={training_steps}",
         "--gradient_accumulation_steps=1",
-        "--gradient_checkpointing",  # ENABLED FOR TESTING
-        "--learning_rate=1e-6",
-        "--lr_scheduler=linear",
+        "--gradient_checkpointing",
+        f"--learning_rate={learning_rate}",
+        f"--lr_scheduler={lr_scheduler}",
         "--lr_warmup_steps=0",
         f"--mixed_precision={precision}",
-
         "--image_captions_filename",
     ])
 
@@ -42,7 +41,9 @@ def dump_only_textenc(MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, seed, precision
 # ---------------------------------------------------------------------------- #
 #                                     UNet                                     #
 # ---------------------------------------------------------------------------- #
-def train_only_unet(stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT, Seed, Res, precision, num_train_epochs, learning_rate):
+def train_only_unet(
+        stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR,
+        PT, seed, res, precision, num_train_epochs, learning_rate, lr_scheduler):
     '''
     Train only the image encoder.
     '''
@@ -54,15 +55,14 @@ def train_only_unet(stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR, PT,
         f"--pretrained_model_name_or_path={MODELT_NAME}",
         f"--instance_data_dir={INSTANCE_DIR}",
         f"--output_dir={OUTPUT_DIR}",
-        # f"--captions_dir=\'{CAPTIONS_DIR}\'",
         f"--instance_prompt={PT}",
-        f"--seed={Seed}",
-        f"--resolution={Res}",
+        f"--seed={seed}",
+        f"--resolution={res}",
         f"--mixed_precision={precision}",
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",
         f"--learning_rate={learning_rate}",
-        "--lr_scheduler=linear",
+        f"--lr_scheduler={lr_scheduler}",
         "--lr_warmup_steps=0",
 
         f"--num_train_epochs={num_train_epochs}",

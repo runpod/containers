@@ -32,18 +32,39 @@ TRAIN_SCHEMA = {
         'default': None
     },
     # Text Encoder Training Parameters
-    'text_training_steps': {
+    'text_steps': {
         'type': int,
         'required': False,
         'default': 350
     },
-    'text_training_seed': {
+    'text_seed': {
         'type': int,
         'required': False,
         'default': 555
     },
+    'text_learning_rate': {
+        'type': float,
+        'required': False,
+        'default': 1e-6
+    },
+    'text_lr_scheduler': {
+        'type': str,
+        'required': False,
+        'default': 'linear',
+        'constraints': lambda scheduler: scheduler in ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup']
+    },
     # UNet Training Parameters
-    'unet_training_epochs': {
+    'unet_seed': {
+        'type': int,
+        'required': False,
+        'default': 555
+    },
+    'unet_resolution': {
+        'type': int,
+        'required': False,
+        'default': 256
+    },
+    'unet_epochs': {
         'type': int,
         'required': False,
         'default': 150
@@ -52,7 +73,13 @@ TRAIN_SCHEMA = {
         'type': float,
         'required': False,
         'default': 2e-6
-    }
+    },
+    'unet_lr_scheduler': {
+        'type': str,
+        'required': False,
+        'default': 'linear',
+        'constraints': lambda scheduler: scheduler in ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup']
+    },
 }
 
 INFERENCE_SCHEMA = {
@@ -219,6 +246,11 @@ INFERENCE_SCHEMA = {
         'type': str,
         'required': False,
         'default': None
+    },
+    'passback': {
+        'type': str,
+        'required': False,
+        'default': None
     }
 }
 
@@ -331,13 +363,15 @@ def handler(job):
 
     # ----------------------------------- Train ---------------------------------- #
     dump_only_textenc(
-        MODELT_NAME="runwayml/stable-diffusion-v1-5",
-        INSTANCE_DIR=downloaded_input['extracted_path'],
-        OUTPUT_DIR=f"job_files/{job['id']}/model",
-        training_steps=train_input['text_training_steps'],
+        model_name="runwayml/stable-diffusion-v1-5",
+        concept_dir=downloaded_input['extracted_path'],
+        ouput_dir=f"job_files/{job['id']}/model",
+        training_steps=train_input['text_steps'],
         PT="",
-        seed=train_input['text_training_seed'],
-        precision="fp16"
+        seed=train_input['text_seed'],
+        precision="fp16",
+        learning_rate=train_input['text_learning_rate'],
+        lr_scheduler=train_input['text_lr_scheduler']
     )
 
     train_only_unet(
@@ -347,11 +381,12 @@ def handler(job):
         INSTANCE_DIR=downloaded_input['extracted_path'],
         OUTPUT_DIR=f"job_files/{job['id']}/model",
         PT="",
-        Seed=555,
-        Res=256,
+        seed=train_input['unet_seed'],
+        res=train_input['unet_res'],
         precision="fp16",
-        num_train_epochs=train_input['unet_training_epochs'],
-        learning_rate=train_input['unet_learning_rate']
+        num_train_epochs=train_input['unet_epochs'],
+        learning_rate=train_input['unet_learning_rate'],
+        lr_scheduler=train_input['unet_lr_scheduler'],
     )
 
     # Convert to CKPT
@@ -375,7 +410,15 @@ def handler(job):
 
         check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-        inference_results = list(map(run_inference, job_input['inference']))
+        # inference_results = list(map(run_inference, job_input['inference']))
+
+        inference_results = []
+        for inference in job_input['inference']:
+            passback = inference['passback']
+            inference = inference.pop('passback')
+            inference = run_inference(inference)
+            inference['passback'] = passback
+            inference_results.append(inference)
 
         for top_index, results in enumerate(inference_results):
             for index, image in enumerate(results['images']):
