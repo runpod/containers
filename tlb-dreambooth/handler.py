@@ -349,12 +349,12 @@ def handler(job):
 
     # Rename the files to the concept name, if provided.
     if train_input['concept_name'] is not None:
-        concept_images = os.listdir(downloaded_input)
+        concept_images = os.listdir(downloaded_input['extracted_path'])
         for index, image in enumerate(concept_images):
             file_type = image.split(".")[-1]
             os.rename(
-                os.path.join(downloaded_input, image),
-                os.path.join(downloaded_input,
+                os.path.join(downloaded_input['extracted_path'], image),
+                os.path.join(downloaded_input['extracted_path'],
                              f"{train_input['concept_name']} ({index}).{file_type}")
             )
 
