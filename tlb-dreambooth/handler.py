@@ -329,17 +329,12 @@ def handler(job):
     # Validate the inference input
     if 's3Config' not in job and 'inference' not in job_input:
         return {"error": "Please provide either an inference input or an S3 config."}
-
-    print(job_input['inference'])
-
     if 'inference' in job_input:
         for index, inference_input in enumerate(job_input['inference']):
             validated_inf_input = validate(inference_input, INFERENCE_SCHEMA)
             if 'errors' in validated_inf_input:
                 return {"error": validated_inf_input['errors']}
             job_input['inference'][index] = validated_inf_input['validated_input']
-
-    print(job_input['inference'])
 
     # Validate the S3 config, if provided
     s3_config = None
@@ -418,9 +413,12 @@ def handler(job):
         # inference_results = list(map(run_inference, job_input['inference']))
 
         inference_results = []
+        print("HERE")
         for inference in job_input['inference']:
+            print(inference)
             passback = inference['passback']
             inference = inference.pop('passback')
+            print("HERE2")
             print(inference)
             inference = run_inference(inference)
             inference['passback'] = passback
