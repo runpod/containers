@@ -43,7 +43,7 @@ def dump_only_textenc(
 # ---------------------------------------------------------------------------- #
 def train_only_unet(
         stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR,
-        PT, seed, res, precision, num_train_epochs, learning_rate, lr_scheduler):
+        PT, seed, resolution, precision, num_train_epochs, learning_rate, lr_scheduler):
     '''
     Train only the image encoder.
     '''
@@ -57,7 +57,7 @@ def train_only_unet(
         f"--output_dir={OUTPUT_DIR}",
         f"--instance_prompt={PT}",
         f"--seed={seed}",
-        f"--resolution={res}",
+        f"--resolution={resolution}",
         f"--mixed_precision={precision}",
         "--train_batch_size=1",
         "--gradient_accumulation_steps=1",

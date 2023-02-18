@@ -382,7 +382,7 @@ def handler(job):
         OUTPUT_DIR=f"job_files/{job['id']}/model",
         PT="",
         seed=train_input['unet_seed'],
-        res=train_input['unet_res'],
+        resolution=train_input['unet_resolution'],
         precision="fp16",
         num_train_epochs=train_input['unet_epochs'],
         learning_rate=train_input['unet_learning_rate'],
