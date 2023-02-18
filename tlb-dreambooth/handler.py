@@ -413,13 +413,9 @@ def handler(job):
         # inference_results = list(map(run_inference, job_input['inference']))
 
         inference_results = []
-        print("HERE")
         for inference in job_input['inference']:
-            print(inference)
             passback = inference['passback']
             inference.pop('passback')
-            print("HERE2")
-            print(inference)
             inference = run_inference(inference)
             inference['passback'] = passback
             inference_results.append(inference)
