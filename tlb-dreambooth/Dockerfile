@@ -23,6 +23,7 @@ RUN pip install https://github.com/runpod/runpod-python/archive/main.zip
 # ADD model_fetcher.py /src/
 # RUN python model_fetcher.py
 
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
 RUN apt-get install git-lfs -y
 ADD model_fetcher.sh /src/
 RUN sh /src/model_fetcher.sh
