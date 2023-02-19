@@ -363,7 +363,7 @@ def handler(job):
 
     # ----------------------------------- Train ---------------------------------- #
     dump_only_textenc(
-        model_name="runwayml/stable-diffusion-v1-5",
+        model_name="/src/stable-diffusion-v1-5",
         concept_dir=downloaded_input['extracted_path'],
         ouput_dir=f"job_files/{job['id']}/model",
         training_steps=train_input['text_steps'],
@@ -377,7 +377,7 @@ def handler(job):
     train_only_unet(
         stp=500,
         SESSION_DIR="TEST_OUTPUT",
-        MODELT_NAME="runwayml/stable-diffusion-v1-5",
+        MODELT_NAME="/src/stable-diffusion-v1-5",
         INSTANCE_DIR=downloaded_input['extracted_path'],
         OUTPUT_DIR=f"job_files/{job['id']}/model",
         PT="",
