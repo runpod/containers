@@ -436,9 +436,6 @@ def handler(job):
         ckpt_url = rp_upload.file(f"{job['id']}.ckpt", trained_ckpt, s3_config)
         job_output['train']['checkpoint_url'] = ckpt_url
 
-    while True:
-        time.sleep(10)
-
     job_output['refresh_worker'] = True  # Refresh the worker after the job is done
     return job_output
 
