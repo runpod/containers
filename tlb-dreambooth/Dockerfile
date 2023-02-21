@@ -9,8 +9,7 @@ WORKDIR /src
 RUN git clone https://github.com/TheLastBen/fast-stable-diffusion.git
 RUN git clone --depth 1 --branch updt https://github.com/TheLastBen/diffusers
 
-RUN apt-get install python3-setuptools -y
-
+RUN pip install setuptools
 RUN pip install xformers==0.0.16
 RUN pip install bitsandbytes==0.37.0
 RUN pip install diffusers==0.12.1
