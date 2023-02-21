@@ -1,4 +1,5 @@
-FROM runpod/pytorch:3.10-1.13.1-116
+# FROM runpod/pytorch:3.10-1.13.1-116
+FROM runpod/stable-diffusion:web-automatic-1.5.16
 
 SHELL ["/bin/bash", "-c"]
 
