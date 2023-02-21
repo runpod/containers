@@ -9,6 +9,8 @@ WORKDIR /src
 RUN git clone https://github.com/TheLastBen/fast-stable-diffusion.git
 RUN git clone --depth 1 --branch updt https://github.com/TheLastBen/diffusers
 
+RUN apt-get install python3-setuptools -y
+
 RUN pip install xformers==0.0.16
 RUN pip install bitsandbytes==0.37.0
 RUN pip install diffusers==0.12.1
@@ -18,7 +20,7 @@ RUN pip install scipy==1.9.3
 RUN pip install transformers==4.21.1
 RUN pip install accelerate==0.12.0
 RUN pip install triton==2.0.0.dev20221120
-RUN pip install https://github.com/runpod/runpod-python/archive/main.zip
+RUN pip install runpod==0.9.0
 
 # ADD model_fetcher.py /src/
 # RUN python model_fetcher.py
