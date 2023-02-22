@@ -410,7 +410,7 @@ def handler(job):
         # subprocess.Popen(["/workspace/sd/stable-diffusion-webui/webui.sh", "-f"])
 
         subprocess.Popen([
-            "python", "/workspace/stable-diffusion-webui/webui.py",
+            "python", "/workspace/sd/stable-diffusion-webui/webui.py",
             "--port", "3000",
             "--nowebui", "--api", "--xformers",
             "--ckpt", f"{trained_ckpt}"
