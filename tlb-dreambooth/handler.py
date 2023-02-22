@@ -404,11 +404,6 @@ def handler(job):
     if 'inference' in job_input:
         os.makedirs(f"job_files/{job['id']}/inference_output", exist_ok=True)
 
-        # os.environ["install_dir"] = "/workspace/sd"
-        # os.environ[
-        #     "COMMANDLINE_ARGS"] = f"--no-half-vae --port 3000 --nowebui --api --xformers --ckpt {trained_ckpt}"
-        # subprocess.Popen(["/workspace/sd/stable-diffusion-webui/webui.sh", "-f"])
-
         subprocess.Popen([
             "python", "/workspace/sd/stable-diffusion-webui/webui.py",
             "--port", "3000",
@@ -418,13 +413,14 @@ def handler(job):
 
         check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
-        # inference_results = list(map(run_inference, job_input['inference']))
-
         inference_results = []
         for inference in job_input['inference']:
             passback = inference['passback']
             inference.pop('passback')
-            inference = run_inference(inference)
+            try:
+                inference = run_inference(inference)
+            except Exception as e:
+                inference['error'] = str(e)
             inference['passback'] = passback
             inference_results.append(inference)
 
