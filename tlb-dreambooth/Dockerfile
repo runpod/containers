@@ -22,9 +22,6 @@ RUN pip install accelerate==0.12.0
 RUN pip install triton==2.0.0.dev20221120
 RUN pip install runpod==0.9.0
 
-# ADD model_fetcher.py /src/
-# RUN python model_fetcher.py
-
 RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash
 RUN apt-get install git-lfs -y
 ADD model_fetcher.sh /src/
