@@ -5,6 +5,8 @@ FROM ubuntu:22.04 AS runtime
 COPY --from=build /models/v1-5-pruned-emaonly.ckpt /workspace/v1-5-pruned-emaonly.ckpt
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
 
+RUN rm -rf /root/.cache/pip
+
 RUN mkdir -p /root/.cache/huggingface
 
 ENV DEBIAN_FRONTEND noninteractive
