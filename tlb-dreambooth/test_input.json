@@ -1,7 +1,7 @@
 {
     "input": {
         "train": {
-            "data_url": "https://firebasestorage.googleapis.com/v0/b/lakshna-ai-nala.appspot.com/o/output.zip?alt=media&token=4c192837-d24b-46da-b7e9-0f89a071a888",
+            "data_url": "https://firebasestorage.googleapis.com/v0/b/lakshna-ai-nala.appspot.com/o/DAITON.zip?alt=media&token=9c27d4cd-cb79-4f1c-aa45-7bfbcaf41cf7",
             "text_steps": 2,
             "unet_epochs": 1
         },
