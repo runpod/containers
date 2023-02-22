@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvidia/cuda:11.6.1-cudnn8-devel-ubuntu20.04
+ARG BASE_IMAGE=nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04
 
 FROM ${BASE_IMAGE} as dev-base
 
@@ -19,14 +19,13 @@ RUN apt-get update --yes && \
     curl\
     git\
     bash\
-    python3.9-distutils\ 
     software-properties-common\
     openssh-server
 RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt install python3.9 -y --no-install-recommends && \
-	ln -s /usr/bin/python3.9 /usr/bin/python && \
+RUN apt install python3.10 -y --no-install-recommends && \
+	ln -s /usr/bin/python3.10 /usr/bin/python && \
 	rm /usr/bin/python3 && \
-	ln -s /usr/bin/python3.9 /usr/bin/python3
+	ln -s /usr/bin/python3.10 /usr/bin/python3
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 RUN python get-pip.py
 RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
