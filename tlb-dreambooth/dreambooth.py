@@ -14,7 +14,7 @@ def dump_only_textenc(
     '''
     Train the text encoder first.
     '''
-    text_encoder = subprocess.Popen([
+    text_options = [
         "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
         "--train_text_encoder",
         "--dump_only_text_encoder",
@@ -32,9 +32,13 @@ def dump_only_textenc(
         f"--lr_scheduler={lr_scheduler}",
         "--lr_warmup_steps=0",
         f"--mixed_precision={precision}",
-        "--image_captions_filename",
-        "--use_8bit_adam" if enable_adam else "",
-    ])
+        "--image_captions_filename"
+    ]
+
+    if enable_adam:
+        text_options.append("--use_8bit_adam")
+
+    text_encoder = subprocess.Popen(text_options)
 
     text_encoder.wait()
 
@@ -48,7 +52,7 @@ def train_only_unet(
     '''
     Train only the image encoder.
     '''
-    unet = subprocess.Popen([
+    unet_options = [
         "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
         "--train_only_unet",
         f"--save_n_steps={stp}",
@@ -68,8 +72,12 @@ def train_only_unet(
 
         f"--num_train_epochs={num_train_epochs}",
 
-        f"--Session_dir={SESSION_DIR}",
-        "--use_8bit_adam" if enable_adam else "",
-    ])
+        f"--Session_dir={SESSION_DIR}"
+    ]
+
+    if enable_adam:
+        unet_options.append("--use_8bit_adam")
+
+    unet = subprocess.Popen(unet_options)
 
     unet.wait()
