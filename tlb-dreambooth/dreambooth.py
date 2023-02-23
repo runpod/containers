@@ -27,7 +27,7 @@ def dump_only_textenc(
         "--train_batch_size=1",
         f"--max_train_steps={training_steps}",
         "--gradient_accumulation_steps=1",
-        "--gradient_checkpointing",
+        # "--gradient_checkpointing",
         f"--learning_rate={learning_rate}",
         f"--lr_scheduler={lr_scheduler}",
         "--lr_warmup_steps=0",
