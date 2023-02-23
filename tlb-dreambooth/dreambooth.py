@@ -33,7 +33,7 @@ def dump_only_textenc(
         "--lr_warmup_steps=0",
         f"--mixed_precision={precision}",
         "--image_captions_filename",
-        f"{'--use_8bit_adam' if enable_adam else '' }",
+        "--use_8bit_adam" if enable_adam else "",
     ])
 
     text_encoder.wait()
@@ -69,7 +69,7 @@ def train_only_unet(
         f"--num_train_epochs={num_train_epochs}",
 
         f"--Session_dir={SESSION_DIR}",
-        f"{'--use_8bit_adam' if enable_adam else '' }",
+        "--use_8bit_adam" if enable_adam else "",
     ])
 
     unet.wait()
