@@ -19,7 +19,7 @@ from runpod.serverless.utils.rp_validator import validate
 from dreambooth import dump_only_textenc, train_only_unet
 
 automatic_session = requests.Session()
-retries = Retry(total=6, backoff_factor=10, status_forcelist=[ 502, 503, 504 ])
+retries = Retry(total=6, backoff_factor=10, status_forcelist=[502, 503, 504])
 automatic_session.mount('http://', HTTPAdapter(max_retries=retries))
 
 # ---------------------------------------------------------------------------- #
@@ -291,30 +291,12 @@ S3_SCHEMA = {
 # ---------------------------------------------------------------------------- #
 #                              Automatic Functions                             #
 # ---------------------------------------------------------------------------- #
-def check_api_availability(host):
-    '''
-    Check if the API is available, if not, retry in 200ms
-    '''
-    automatic_session.get(host, timeout=60)
-    # time.sleep(15)  # Buffered time for the API to start up
-
-    # while True:
-    #     try:
-    #         requests.get(host, timeout=1)
-    #         return
-    #     except requests.exceptions.RequestException as err:
-    #         print(f"API is not available, retrying in 200ms... ({err})")
-    #     except Exception:
-    #         print('something went wrong')
-    #     time.sleep(1)
-
-
 def run_inference(inference_request):
     '''
     Run inference on a request.
     '''
-    response = requests.post(url='http://127.0.0.1:3000/sdapi/v1/txt2img',
-                             json=inference_request, timeout=600)
+    response = automatic_session.post(url='http://127.0.0.1:3000/sdapi/v1/txt2img',
+                                      json=inference_request, timeout=600)
     return response.json()
 
 
@@ -427,8 +409,6 @@ def handler(job):
             "--nowebui", "--api", "--xformers",
             "--ckpt", f"{trained_ckpt}"
         ])
-
-        check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
         inference_results = []
         for inference in job_input['inference']:
