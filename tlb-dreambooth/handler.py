@@ -6,10 +6,10 @@ This is the handler for the DreamBooth serverless worker.
 
 import io
 import os
-import time
 import base64
 import requests
 import subprocess
+from requests.adapters import HTTPAdapter, Retry
 
 from PIL import Image
 
@@ -17,6 +17,10 @@ import runpod
 from runpod.serverless.utils import rp_download, rp_upload
 from runpod.serverless.utils.rp_validator import validate
 from dreambooth import dump_only_textenc, train_only_unet
+
+automatic_session = requests.Session()
+retries = Retry(total=6, backoff_factor=10, status_forcelist=[ 502, 503, 504 ])
+automatic_session.mount('http://', HTTPAdapter(max_retries=retries))
 
 # ---------------------------------------------------------------------------- #
 #                                    Schemas                                   #
@@ -291,7 +295,7 @@ def check_api_availability(host):
     '''
     Check if the API is available, if not, retry in 200ms
     '''
-    requests.get(host, timeout=60)
+    automatic_session.get(host, timeout=60)
     # time.sleep(15)  # Buffered time for the API to start up
 
     # while True:
