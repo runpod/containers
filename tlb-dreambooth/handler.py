@@ -53,6 +53,11 @@ TRAIN_SCHEMA = {
         'default': 'linear',
         'constraints': lambda scheduler: scheduler in ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup']
     },
+    'text_8_bit_adam': {
+        'type': bool,
+        'required': False,
+        'default': False
+    },
     # UNet Training Parameters
     'unet_seed': {
         'type': int,
@@ -80,6 +85,11 @@ TRAIN_SCHEMA = {
         'default': 'linear',
         'constraints': lambda scheduler: scheduler in ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup']
     },
+    'unet_8_bit_adam': {
+        'type': bool,
+        'required': False,
+        'default': False
+    }
 }
 
 INFERENCE_SCHEMA = {
@@ -371,7 +381,8 @@ def handler(job):
         seed=train_input['text_seed'],
         precision="fp16",
         learning_rate=train_input['text_learning_rate'],
-        lr_scheduler=train_input['text_lr_scheduler']
+        lr_scheduler=train_input['text_lr_scheduler'],
+        enable_adam=train_input['text_8_bit_adam'],
     )
 
     train_only_unet(
@@ -387,6 +398,7 @@ def handler(job):
         num_train_epochs=train_input['unet_epochs'],
         learning_rate=train_input['unet_learning_rate'],
         lr_scheduler=train_input['unet_lr_scheduler'],
+        enable_adam=train_input['unet_8_bit_adam'],
     )
 
     # Convert to CKPT

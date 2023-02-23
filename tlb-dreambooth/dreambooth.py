@@ -10,7 +10,7 @@ import subprocess
 # ---------------------------------------------------------------------------- #
 def dump_only_textenc(
         model_name, concept_dir, ouput_dir, PT, seed,
-        precision, training_steps, learning_rate, lr_scheduler):
+        precision, training_steps, learning_rate, lr_scheduler, enable_adam):
     '''
     Train the text encoder first.
     '''
@@ -33,6 +33,7 @@ def dump_only_textenc(
         "--lr_warmup_steps=0",
         f"--mixed_precision={precision}",
         "--image_captions_filename",
+        if enable_adam: "--use_8bit_adam",
     ])
 
     text_encoder.wait()
@@ -43,7 +44,7 @@ def dump_only_textenc(
 # ---------------------------------------------------------------------------- #
 def train_only_unet(
         stp, SESSION_DIR, MODELT_NAME, INSTANCE_DIR, OUTPUT_DIR,
-        PT, seed, resolution, precision, num_train_epochs, learning_rate, lr_scheduler):
+        PT, seed, resolution, precision, num_train_epochs, learning_rate, lr_scheduler, enable_adam):
     '''
     Train only the image encoder.
     '''
@@ -68,6 +69,7 @@ def train_only_unet(
         f"--num_train_epochs={num_train_epochs}",
 
         f"--Session_dir={SESSION_DIR}",
+        if enable_adam: "--use_8bit_adam",
     ])
 
     unet.wait()
