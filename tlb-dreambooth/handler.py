@@ -193,9 +193,9 @@ INFERENCE_SCHEMA = {
         'default': 50
     },
     'cfg_scale': {
-        'type': int,
+        'type': float,
         'required': False,
-        'default': 7
+        'default': 7.0
     },
     'width': {
         'type': int,
