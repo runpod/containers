@@ -54,6 +54,7 @@ def train_only_unet(
     '''
     unet_options = [
         "accelerate", "launch", "/src/diffusers/examples/dreambooth/train_dreambooth.py",
+        "--image_captions_filename",
         "--train_only_unet",
         f"--save_n_steps={stp}",
 
