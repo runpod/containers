@@ -125,7 +125,7 @@ INFERENCE_SCHEMA = {
     'hr_upscaler': {
         'type': str,
         'required': False,
-        'default': 'string'
+        'default': None
     },
     'hr_second_pass_steps': {
         'type': int,
@@ -229,7 +229,7 @@ INFERENCE_SCHEMA = {
     'eta': {
         'type': int,
         'required': False,
-        'default': 0
+        'default': None
     },
     's_churn': {
         'type': int,
