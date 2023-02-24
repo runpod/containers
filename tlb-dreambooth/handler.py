@@ -239,7 +239,7 @@ INFERENCE_SCHEMA = {
     's_tmax': {
         'type': int,
         'required': False,
-        'default': 0
+        'default': None
     },
     's_tmin': {
         'type': int,
@@ -249,7 +249,7 @@ INFERENCE_SCHEMA = {
     's_noise': {
         'type': int,
         'required': False,
-        'default': 0
+        'default': 1
     },
     'sampler_index': {
         'type': str,
