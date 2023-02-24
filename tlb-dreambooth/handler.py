@@ -414,10 +414,9 @@ def handler(job):
         for inference in job_input['inference']:
             passback = inference['passback']
             inference.pop('passback')
-            try:
-                inference = run_inference(inference)
-            except Exception as e:
-                inference['error'] = str(e)
+
+            inference = run_inference(inference)
+
             inference['passback'] = passback
             inference_results.append(inference)
 
