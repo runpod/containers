@@ -179,7 +179,7 @@ INFERENCE_SCHEMA = {
     'sampler_name': {
         'type': str,
         'required': False,
-        'default': 'string'
+        'default': 'Euler'
     },
     'batch_size': {
         'type': int,
