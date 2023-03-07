@@ -17,7 +17,6 @@ RUN apt-get update --yes && \
     git\
     wget\
     curl\
-    git\
     bash\
     software-properties-common\
     openssh-server
