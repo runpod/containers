@@ -2,7 +2,9 @@ FROM runpod/stable-diffusion-models:1.5 as build
 
 FROM ubuntu:22.04 AS runtime
 
-COPY --from=build /models/v1-5-pruned-emaonly.ckpt /workspace/v1-5-pruned-emaonly.ckpt
+RUN gdown --fuzzy https://drive.google.com/file/d/1QxckuraM8G_bOvRsk_0h9MTtSpGRHgkz/view?usp=sharing
+RUN gdown --fuzzy https://drive.google.com/file/d/1-D3JCHM8zYlQFwK4RAb8exs80YS_KZqO/view?usp=sharing
+
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
 
 RUN rm -rf /root/.cache/pip

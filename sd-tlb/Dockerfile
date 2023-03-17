@@ -15,12 +15,10 @@ RUN gdown --fuzzy https://drive.google.com/file/d/1-D3JCHM8zYlQFwK4RAb8exs80YS_K
 
 WORKDIR /workspace
 
-ADD RNPD-A1111.ipynb .
-ADD RNPD-Dreambooth-v1.ipynb .
-ADD RNPD-Dreambooth-v2.ipynb .
-
 ADD start.sh /start.sh
 RUN chmod a+x /start.sh
+
+ADD jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
 
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]

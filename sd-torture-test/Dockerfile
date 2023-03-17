@@ -4,9 +4,9 @@ FROM ubuntu:22.04 AS runtime
 
 RUN rm -rf /workspace && mkdir /workspace && mkdir -p /root/.cache/huggingface
 
-COPY --from=build /models/v2-1_768-ema-pruned.ckpt /workspace/v2-1_768-ema-pruned.ckpt
-COPY --from=build /models/v2-1_768-ema-pruned.yaml /workspace/v2-1_768-ema-pruned.yaml
 COPY --from=build /root/.cache/huggingface /root/.cache/huggingface
+ADD SDv2-768.ckpt /
+ADD SDv1-5.ckpt /
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -21,27 +21,27 @@ libxrender1 \
 libxext6 \
 ffmpeg \
 wget \
-gdown \
 curl \
+psmisc \
+stress-ng \
 python3-pip python3 python3.10-venv \
 apt-transport-https ca-certificates && \
 update-ca-certificates
 
 WORKDIR /workspace
 
-RUN gdown --fuzzy https://drive.google.com/file/d/1QxckuraM8G_bOvRsk_0h9MTtSpGRHgkz/view?usp=sharing
-RUN gdown --fuzzy https://drive.google.com/file/d/1-D3JCHM8zYlQFwK4RAb8exs80YS_KZqO/view?usp=sharing
-
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
 
 WORKDIR /workspace/stable-diffusion-webui
+
+RUN mv /SDv* /workspace/stable-diffusion-webui/models/Stable-diffusion/
 
 RUN python3 -m venv /workspace/stable-diffusion-webui/venv
 ENV PATH="/workspace/stable-diffusion-webui/venv/bin:$PATH"
 
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 RUN python get-pip.py
-RUN pip install -U jupyterlab ipywidgets jupyter-archive
+RUN pip install -U jupyterlab ipywidgets jupyter-archive gdown
 RUN jupyter nbextension enable --py widgetsnbextension
 
 ADD install.py .
@@ -50,11 +50,11 @@ RUN python -m install --skip-torch-cuda-test
 RUN apt clean && rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-ADD ui-config.json /workspace/stable-diffusion-webui/ui-config.json
 ADD relauncher.py .
 ADD webui-user.sh .
 ADD start.sh /start.sh
 RUN chmod a+x /start.sh
+ADD test.py /test.py
 
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]
