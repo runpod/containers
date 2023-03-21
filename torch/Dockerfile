@@ -18,6 +18,7 @@ RUN apt-get update --yes && \
     wget\
     curl\
     bash\
+    libgl1\
     software-properties-common\
     openssh-server
 RUN add-apt-repository ppa:deadsnakes/ppa
