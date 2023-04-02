@@ -7,8 +7,8 @@ from tqdm import tqdm
 # -------------------------------- Print Test -------------------------------- #
 print("Test 1001 single line prints")
 
-for index, _ in enumerate(range(1000000000)):
-    print(f"Test print {index}")
+for index, _ in enumerate(range(1000)):
+    print(f"Test print {index}/1001")
 
 # --------------------------------- tqdm Test -------------------------------- #
 print("Test tqdm bar")
