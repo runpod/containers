@@ -22,13 +22,13 @@ RUN apt-get update --yes && \
     software-properties-common\
     openssh-server
 RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt install python3.10 -y --no-install-recommends && \
+RUN apt install python3.10-dev python3.10-venv -y --no-install-recommends && \
 	ln -s /usr/bin/python3.10 /usr/bin/python && \
 	rm /usr/bin/python3 && \
 	ln -s /usr/bin/python3.10 /usr/bin/python3
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 RUN python get-pip.py
-RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
+RUN pip install torch torchvision torchaudio
 RUN pip install -U jupyterlab ipywidgets jupyter-archive
 RUN jupyter nbextension enable --py widgetsnbextension
 

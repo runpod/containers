@@ -37,7 +37,7 @@ RUN bash -c "source $HOME/.nvm/nvm.sh && \
     npm install --location=global pm2"
 
 RUN mkdir -p /root/.bittensor/
-RUN git clone https://github.com/opentensor/bittensor.git && cd bittensor && git checkout release/3.7.0
+RUN git clone https://github.com/opentensor/bittensor.git && cd bittensor
 RUN mv ./bittensor/ /root/.bittensor/
 RUN cd /root/.bittensor/bittensor && python3 -m pip install .
 RUN python3 -m pip install https://github.com/opentensor/cubit/releases/download/v1.1.2/cubit-1.1.2-cp310-cp310-linux_x86_64.whl
