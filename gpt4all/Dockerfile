@@ -6,6 +6,7 @@ WORKDIR /src
 RUN git clone --recurse-submodules https://github.com/nomic-ai/gpt4all.git
 RUN cd gpt4all && git submodule update --init
 
+RUN mkdir -p /opt/gpt4all
 RUN cp gpt4all/chat/gpt4all-* /opt/gpt4all/
 
 # Python Client
