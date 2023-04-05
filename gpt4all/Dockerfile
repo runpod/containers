@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE} as dev-base
 WORKDIR /src
 
 RUN git clone --recurse-submodules https://github.com/nomic-ai/gpt4all.git
-RUN git submodule update --init
+RUN cd gpt4all && git submodule update --init
 
 RUN cp gpt4all/chat/gpt4all-* /opt/gpt4all/
 
