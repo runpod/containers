@@ -11,7 +11,7 @@ RUN cp gpt4all/chat/gpt4all-* /opt/gpt4all/
 
 # Python Client
 RUN git clone https://github.com/nomic-ai/nomic.git
-RUN cd nomic-ai && pip install .[GPT4All]
+RUN cd nomic && pip install .[GPT4All]
 RUN pip install nomic
 
 # If gpt4all-lora-quantized.bin exists in chat dir, comment out below
