@@ -3,6 +3,8 @@ FROM ${BASE_IMAGE} as dev-base
 
 WORKDIR /src
 
+RUN pip install torch transformers accelerate
+
 RUN git clone --recurse-submodules https://github.com/nomic-ai/gpt4all.git
 RUN cd gpt4all && git submodule update --init
 
@@ -24,6 +26,4 @@ RUN cd nomic/bin && pip wheel peft-0.3.0.dev0-py3-none-any.whl && \
     pip install transformers-4.28.0.dev0-py3-none-any.whl
 
 
-
-# Keep container running
-CMD tail -f /dev/null
+CMD [ "/start.sh" ]
