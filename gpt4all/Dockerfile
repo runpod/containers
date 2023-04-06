@@ -24,7 +24,7 @@ RUN apt update \
 # CMD ["./gpt4all-lora-quantized-linux-x86", "-m", "./gpt4all-lora-quantized.bin"]
 
 RUN echo 'echo "welcome to gpt4all"' > /etc/profile.d/welcome.sh
-ENTRYPOINT ["/bin/bash", "-l", "-c"]
+
 
 # Keep container running
 CMD tail -f /dev/null
