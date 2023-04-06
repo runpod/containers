@@ -20,6 +20,9 @@ RUN apt update \
 RUN git clone https://github.com/nomic-ai/nomic.git
 RUN cd nomic && pip install .[GPT4All]
 RUN pip install nomic
+RUN cd nomic/bin && pip wheel peft-0.3.0.dev0-py3-none-any.whl && \
+    pip install transformers-4.28.0.dev0-py3-none-any.whl
+
 
 
 # Keep container running
