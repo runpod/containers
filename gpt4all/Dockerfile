@@ -25,5 +25,9 @@ RUN pip install nomic
 RUN cd nomic/bin && pip wheel peft-0.3.0.dev0-py3-none-any.whl && \
     pip install transformers-4.28.0.dev0-py3-none-any.whl
 
+RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
+    && echo 'cd /opt/gpt4all' >> /usr/local/bin/gpt4all \
+    && echo './gpt4all-lora-quantized-linux-x86 -m ./gpt4all-lora-quantized.bin' >> /usr/local/bin/gpt4all \
+    && chmod +x /usr/local/bin/gpt4all
 
-CMD [ "/start.sh" ]
+# CMD [ "/start.sh" ]
