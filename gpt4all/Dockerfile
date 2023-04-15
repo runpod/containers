@@ -1,17 +1,6 @@
 ARG BASE_IMAGE=runpod/pytorch:3.10-2.0.0-117
 FROM ${BASE_IMAGE} as dev-base
 
-# Update Python to 3.11
-RUN apt remove python3-apt -y
-RUN apt autoremove -y
-RUN apt autoclean -y
-RUN apt-get install software-properties-common -y
-RUN apt install wget build-essential libncursesw5-dev libssl-dev \
-    libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
-RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt install python3.11 -y
-RUN pip install virtualenv
-
 WORKDIR /src
 
 RUN pip install torch transformers accelerate
@@ -28,6 +17,18 @@ RUN apt update \
     && cd /opt/gpt4all \
     && wget https://the-eye.eu/public/AI/models/nomic-ai/gpt4all/gpt4all-lora-quantized.bin
 
+
+# Update Python to 3.11
+RUN apt remove python3-apt -y
+RUN apt autoremove -y
+RUN apt autoclean -y
+RUN apt install python3-apt -y
+RUN apt-get install software-properties-common -y
+RUN apt install wget build-essential libncursesw5-dev libssl-dev \
+    libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
+RUN add-apt-repository ppa:deadsnakes/ppa
+RUN apt install python3.11 -y
+RUN pip install virtualenv
 
 # Python Client
 RUN git clone https://github.com/nomic-ai/nomic.git
