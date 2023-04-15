@@ -17,7 +17,7 @@ if [[ $JUPYTER_PASSWORD ]]
 then
     cd /src/gpt4all-ui
     source /src/gpt4all-ui/env/bin/activate
-    python3 app.py --port 9600 --host "0.0.0.0" &
+    python3 app.py --model "gpt4all-lora-quantized-ggml.bin" --port 9600 --host "0.0.0.0" &
 
     cd /
     jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace
