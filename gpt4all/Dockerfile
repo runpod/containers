@@ -49,6 +49,6 @@ RUN cd gpt4all-ui && bash ./install.sh
 RUN cp /opt/gpt4all/gpt4all-lora-quantized.bin /src/gpt4all-ui/models/gpt4all-lora-quantized.bin
 
 
-ADD start.sh /
-RUN chmod +x /start.sh
-CMD [ "/start.sh" ]
+ADD start.sh /src
+RUN chmod +x /src/start.sh
+CMD [ "/src/start.sh" ]
