@@ -44,11 +44,11 @@ RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
 
 
 # GUI
-
 RUN git clone https://github.com/nomic-ai/gpt4all-ui
 RUN cd gpt4all-ui && bash ./install.sh
 RUN cp /opt/gpt4all/gpt4all-lora-quantized.bin /src/gpt4all-ui/models/gpt4all-lora-quantized.bin
 
 
 ADD start.sh /
+RUN chmod +x /start.sh
 CMD [ "/start.sh" ]
