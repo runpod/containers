@@ -27,7 +27,7 @@ RUN apt-get install software-properties-common -y
 RUN apt install wget build-essential libncursesw5-dev libssl-dev \
     libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
 RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt install python3.11 ython3.11-venv -y
+RUN apt install python3.11 python3.11-venv -y
 RUN pip install virtualenv
 
 # Python Client
