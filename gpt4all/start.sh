@@ -15,10 +15,12 @@ fi
 
 if [[ $JUPYTER_PASSWORD ]]
 then
+    cd /src/gpt4all-ui
+    source /src/gpt4all-ui/env/bin/activate
+    python3 app.py &
+
     cd /
     jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace
-    cd /src/gpt4all-ui
-    python3 app.py
 else
     sleep infinity
 fi
