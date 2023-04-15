@@ -32,10 +32,10 @@ RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
 
 
 # GUI
+RUN apt install python3-apt --reinstall -y
 RUN apt install wget build-essential libncursesw5-dev libssl-dev \
     libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
 RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt-get remove python3-apt -y
 RUN apt install python3.11 -y
 RUN git clone https://github.com/nomic-ai/gpt4all-ui
 RUN cd gpt4all-ui && bash ./install.sh
