@@ -32,7 +32,10 @@ RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
 
 
 # GUI
-RUN apt remove python3-apt && apt autoremove && apt autoclean && apt install python3-apt -y
+RUN apt remove python3-apt -y
+RUN apt autoremove -yes
+RUN apt autoclean -y
+RUN apt install python3-apt -y
 RUN apt install wget build-essential libncursesw5-dev libssl-dev \
     libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
 RUN add-apt-repository ppa:deadsnakes/ppa
