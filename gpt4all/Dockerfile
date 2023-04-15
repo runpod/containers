@@ -33,7 +33,7 @@ RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
 
 # GUI
 RUN apt remove python3-apt -y
-RUN apt autoremove -yes
+RUN apt autoremove -y
 RUN apt autoclean -y
 RUN apt install python3-apt -y
 RUN apt install wget build-essential libncursesw5-dev libssl-dev \
