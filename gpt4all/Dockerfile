@@ -30,4 +30,12 @@ RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
     && echo './gpt4all-lora-quantized-linux-x86 -m ./gpt4all-lora-quantized.bin' >> /usr/local/bin/gpt4all \
     && chmod +x /usr/local/bin/gpt4all
 
-# CMD [ "/start.sh" ]
+
+# GUI
+RUN git clone https://github.com/nomic-ai/gpt4all-ui
+RUN cd gpt4all-ui && bash ./install.sh
+RUN cp /opt/gpt4all/gpt4all-lora-quantized.bin /src/gpt4all-ui/models/gpt4all-lora-quantized.bin
+
+
+ADD start.sh /
+CMD [ "/start.sh" ]
