@@ -33,9 +33,9 @@ RUN echo '#!/bin/bash' > /usr/local/bin/gpt4all \
 
 # GUI
 RUN apt install wget build-essential libncursesw5-dev libssl-dev \
-    libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev
+    libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
 RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt install python3.11
+RUN apt install python3.11 -y
 RUN git clone https://github.com/nomic-ai/gpt4all-ui
 RUN cd gpt4all-ui && bash ./install.sh
 RUN cp /opt/gpt4all/gpt4all-lora-quantized.bin /src/gpt4all-ui/models/gpt4all-lora-quantized.bin
