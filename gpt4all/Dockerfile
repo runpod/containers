@@ -23,7 +23,7 @@ RUN apt remove python3-apt -y
 RUN apt autoremove -y
 RUN apt autoclean -y
 RUN apt install python3-apt -y
-RUN apt-get install software-properties-common -y
+RUN apt-get install software-properties-common build-essential -y
 RUN apt install wget build-essential libncursesw5-dev libssl-dev \
     libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev -y
 RUN add-apt-repository ppa:deadsnakes/ppa
