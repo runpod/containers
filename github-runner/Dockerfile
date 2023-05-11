@@ -5,6 +5,7 @@ WORKDIR /
 #input GitHub runner version argument
 ARG RUNNER_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
+ENV RUNNER_ALLOW_RUNASROOT=1
 
 # LABEL Author="Marcel L"
 # LABEL Email="pwd9000@hotmail.co.uk"
