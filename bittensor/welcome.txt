@@ -1,5 +1,4 @@
 ------------------------
-
 /root is the default volume mount for this template. 
 All your work should get saved there!
 Please note that you should run 

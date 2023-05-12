@@ -2,10 +2,8 @@
 
 echo "pod started"
 
-export PYTHONUNBUFFERED=1
-source /workspace/venv/bin/activate
-cd /workspace/ComfyUI
-python main.py --listen --port 3000 &
+echo "syncing stable diffusion to workspace, please wait"
+rsync -au --remove-source-files /invokeai/* /workspace/invokeai
 
 if [[ $PUBLIC_KEY ]]
 then

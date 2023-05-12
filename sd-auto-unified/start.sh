@@ -1,7 +1,14 @@
 #!/bin/bash
 echo "Container Started"
 export PYTHONUNBUFFERED=1
-source /workspace/stable-diffusion-webui/venv/bin/activate
+source /venv/bin/activate
+
+echo "syncing venv to workspace, please wait"
+rsync -au --remove-source-files /venv/ /workspace/venv/
+
+echo "syncing stable diffusion to workspace, please wait"
+rsync -au --remove-source-files /stable-diffusion-webui/ /workspace/stable-diffusion-webui/
+ln -s /sd-models/* /workspace/stable-diffusion-webui/models/Stable-diffusion/
 
 if [[ $RUNPOD_STOP_AUTO ]]
 then

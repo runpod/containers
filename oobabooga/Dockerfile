@@ -19,22 +19,23 @@ RUN apt-get update --yes && \
     wget\
     bash\
     openssh-server &&\
-    apt-get clean && rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 RUN /usr/bin/python3 -m pip install --upgrade pip
 RUN pip install jupyterlab
 RUN pip install ipywidgets
 
-#RUN mkdir /workspace && 
 RUN cd /workspace && git clone https://github.com/oobabooga/text-generation-webui.git && cd /workspace/text-generation-webui && pip install -r requirements.txt
 RUN cd /workspace/text-generation-webui && python download-model.py PygmalionAI/pygmalion-6b
-#RUN cd /workspace/text-generation-webui && python download-model.py EleutherAI/gpt-j-6B
 
 ADD start_chatbot_server.sh /workspace/text-generation-webui/
 ADD start_textgen_server.sh /workspace/text-generation-webui/
 
 RUN chmod +x /workspace/text-generation-webui/start_chatbot_server.sh
 RUN chmod +x /workspace/text-generation-webui/start_textgen_server.sh
+
+RUN mv /workspace/text-generation-webui /text-generation-webui
+
+RUN apt install -y rsync
 
 ADD start.sh /
 RUN chmod +x /start.sh

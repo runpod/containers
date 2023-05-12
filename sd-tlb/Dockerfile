@@ -1,4 +1,12 @@
-FROM runpod/pytorch:3.10-2.0.0-117
+FROM runpod/stable-diffusion:models-1.0.0 as sd-models
+FROM runpod/stable-diffusion-models:2.1 as hf-cache
+FROM runpod/pytorch:3.10-2.0.0-117 as runtime
+
+RUN mkdir -p /root/.cache/huggingface && mkdir /auto-models
+
+COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
+COPY --from=sd-models /SDv1-5.ckpt /auto-models/SDv1-5.ckpt
+COPY --from=sd-models /SDv2-768.ckpt /auto-models/SDv2-768.ckpt
 
 ENV PYTHONUNBUFFERED=1
 
@@ -10,15 +18,6 @@ RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependenci
     apt update && apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev && dpkg -i *.deb && rm -rf *.deb
 
 RUN pip install gdown && pip install xformers==0.0.18
-
-WORKDIR /workspace
-
-RUN mkdir /workspace/auto-models
-
-WORKDIR /workspace/auto-models
-
-ADD SDv1-5.ckpt . 
-ADD SDv2-768.ckpt .
 
 WORKDIR /workspace
 

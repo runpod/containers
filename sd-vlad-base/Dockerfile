@@ -18,17 +18,14 @@ curl \
 psmisc \
 rsync \
 vim \
-pkg-config \
-libcairo2-dev \
-libgoogle-perftools4 libtcmalloc-minimal4 \
 apt-transport-https ca-certificates && \
 update-ca-certificates
 
 WORKDIR /workspace
 
-RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
+RUN git clone https://github.com/vladmandic/automatic.git
 
-WORKDIR /workspace/stable-diffusion-webui
+WORKDIR /workspace/automatic
 
 RUN python -m venv /workspace/venv
 ENV PATH="/workspace/venv/bin:$PATH"
@@ -36,8 +33,7 @@ ENV PATH="/workspace/venv/bin:$PATH"
 RUN pip install -U jupyterlab ipywidgets jupyter-archive gdown
 RUN jupyter nbextension enable --py widgetsnbextension
 
-WORKDIR /workspace/stable-diffusion-webui
+WORKDIR /workspace/automatic
 
 ADD install.py .
-RUN python -m install --skip-torch-cuda-test
-RUN pip install xformers
+RUN python -m install
