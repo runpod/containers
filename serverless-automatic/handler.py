@@ -14,6 +14,7 @@ def check_api_availability(host):
             print('something went wrong')
         time.sleep(200/1000)
 
+time.sleep(3)
 check_api_availability("http://127.0.0.1:3000/sdapi/v1/txt2img")
 
 print('run handler')
