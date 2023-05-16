@@ -13,6 +13,10 @@ then
     service ssh start
 fi
 
+# Duplicate ENV variables to /etc/rp_environment
+printenv | grep -E '^RUNPOD_POD_ID=|^RUNPOD_GPU_COUNT=|^RUNPOD_PUBLIC_IP=|^RUNPOD_HOSTNAME=|^RUNPOD_TCP_PORT=|^RUNPOD_API_KEY=|^PATH=|^_=' | sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
+echo 'source /etc/rp_environment' >> ~/.bashrc
+
 if [[ $JUPYTER_PASSWORD ]]
 then
     cd /
