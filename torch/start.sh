@@ -15,8 +15,7 @@ fi
 
 # Export specific ENV variables to /etc/rp_environment
 echo "Exporting environment variables..."
-printenv | grep -E '^RUNPOD_POD_ID=|^RUNPOD_GPU_COUNT=|^RUNPOD_PUBLIC_IP=|^RUNPOD_HOSTNAME=|^RUNPOD_TCP_PORT=|^RUNPOD_API_KEY=|^PATH=|^_=' | \
-sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
+printenv | grep -E '^RUNPOD_|^PATH=|^_=' | sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
 echo 'source /etc/rp_environment' >> ~/.bashrc
 
 # Start Jupyter lab if JUPYTER_PASSWORD is set, otherwise sleep
