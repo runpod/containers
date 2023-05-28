@@ -1,5 +1,6 @@
-# containers
-stuff to build runpod containers
+# RunPod Containers
+
+This repository contains the Dockerfiles for the RunPod containers used for our official templates. Resulting containers are available on [Docker Hub](https://hub.docker.com/u/runpod).
 
 ## Changes
 
