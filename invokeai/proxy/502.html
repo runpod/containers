@@ -2,12 +2,53 @@
 <html>
 
 <head>
-    <title>Service Unavailable</title>
+    <title>502 Error</title>
+    <style>
+        body {
+            background-color: #f5f8fa;
+            font-family: Arial, sans-serif;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #007BFF;
+            margin-bottom: 20px;
+        }
+
+        p {
+            line-height: 1.6;
+        }
+
+        a {
+            color: #007BFF;
+        }
+
+    </style>
 </head>
 
 <body>
-    <h1>Service Unavailable</h1>
-    <p>Your service is not currently running. Please follow these instructions to get it started...</p>
+    <div class="container">
+        <h1>Official Invoke AI RunPod Template</h1>
+        <p><b>This template does not automatically launch invoke!!</b></p>
+        <p>Please open a terminal window and run:</p>
+        <p><code>invokeai-configure</code></p>
+        <p>This will lead you through configuring the invokeai template to your liking.</p>
+        <p>After it's done configuring, make sure to run the invokeai command with --host 0.0.0.0 as follows, or it will not listen on the correct interfaces and won't work!</p>
+        <p><code>invokeai --web --host 0.0.0.0</code></p>
+        <p>Please wait for pod CPU utilization % to hit 0 before attempting to connect. CPU utilization generally means that your pod is working hard to get ready for you. You will probably get a 502 error if you don't!</p>
+        <p><a href="https://blog.runpod.io/guide">Blog post with a more detailed guide</a></p>
+        <p><a href="https://www.youtube.com/watch?v=example">Here's a cool video showcasing what you can do with invoke</a></p>
+        <p><a href="https://www.youtube.com/watch?v=example">Invoke AI Basics</a></p>
+        <p>Note that you can generally skip the first half of these videos as all of the install steps are already done for you :)</p>
+    </div>
 </body>
 
 </html>
