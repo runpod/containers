@@ -21,7 +21,7 @@ RUN mv /workspace/invokeai /invokeai
 # Copy nginx.conf, proxy_update.sh, and start.sh
 COPY proxy/nginx.conf /etc/nginx/nginx.conf
 COPY proxy/proxy_update.sh /proxy_update.sh
-COPY proxy/502.html /usr/share/nginx/html/503.html
+COPY proxy/502.html /usr/share/nginx/html/502.html
 COPY start.sh /
 
 RUN chmod +x /start.sh /proxy_update.sh
