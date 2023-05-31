@@ -16,6 +16,10 @@ then
     service ssh start
 fi
 
+# Start nginx and the proxy update script
+nohup nginx &
+nohup /proxy_update.sh &
+
 if [[ $JUPYTER_PASSWORD ]]
 then
     cd /
