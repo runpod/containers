@@ -1,7 +1,7 @@
 FROM runpod/pytorch:3.10-2.0.0-117
 
 RUN apt update && \
-    apt-get install -y rsync build-essential  python3-opencv libopencv-dev nginx lsof && \
+    apt-get install -y nano rsync build-essential  python3-opencv libopencv-dev nginx lsof && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +21,7 @@ RUN mv /workspace/invokeai /invokeai
 # Copy nginx.conf, proxy_update.sh, and start.sh
 COPY proxy/nginx.conf /etc/nginx/nginx.conf
 COPY proxy/proxy_update.sh /proxy_update.sh
-COPY proxy/503.html /usr/share/nginx/html/503.html
+COPY proxy/502.html /usr/share/nginx/html/503.html
 COPY start.sh /
 
 RUN chmod +x /start.sh /proxy_update.sh
