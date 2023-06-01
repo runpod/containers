@@ -1,6 +1,9 @@
 FROM runpod/pytorch:3.10-2.0.0-117
 
-RUN apt update && apt install -y rsync build-essential && apt install -y python3-opencv libopencv-dev
+RUN apt update && \
+    apt-get install -y nano rsync build-essential  python3-opencv libopencv-dev nginx lsof && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 ENV INVOKEAI_ROOT=/workspace/invokeai
 
@@ -9,13 +12,22 @@ ENV PATH="/workspace/invokeai/venv/bin:$PATH"
 
 WORKDIR /workspace/invokeai
 
-RUN python -m pip install --upgrade pip
-RUN pip install "InvokeAI[xformers]" --use-pep517 --extra-index-url https://download.pytorch.org/whl/cu117 && pip install pypatchmatch
+RUN python -m pip install --upgrade pip && \
+    pip install "InvokeAI[xformers]" --use-pep517 --extra-index-url https://download.pytorch.org/whl/cu117 && \
+    pip install pypatchmatch
 
 RUN mv /workspace/invokeai /invokeai
 
-ADD start.sh /
+# NGINX Proxy
+COPY container-template/proxy/nginx.conf /etc/nginx/nginx.conf
+COPY container-template/proxy/readme.html /usr/share/nginx/html/readme.html
 
-RUN chmod +x /start.sh
+# Copy the README.md
+COPY invokeai/README.md /usr/share/nginx/html/README.md
+
+# Start Scripts
+COPY invokeai/pre_start.sh /pre_start.sh
+COPY container-template/start.sh /
+RUN chmod +x /start.sh && chmod +x /pre_start.sh
 
 CMD [ "/start.sh" ]
