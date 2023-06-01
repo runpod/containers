@@ -45,7 +45,7 @@
         // Instantiate Showdown
         var converter = new showdown.Converter();
 
-        fetch('path_to_your_markdown_file.md')
+        fetch('/README.md')
             .then(response => response.text())
             .then(text => {
                 // Convert markdown to HTML
