@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Start Nginx service
+echo "Starting Nginx service..."
+service nginx start
+
 # ---------------------------------------------------------------------------- #
 #                               Pre-Start Script                               #
 # ---------------------------------------------------------------------------- #
@@ -28,10 +32,6 @@ fi
 echo "Exporting environment variables..."
 printenv | grep -E '^RUNPOD_|^PATH=|^_=' | sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
 echo 'source /etc/rp_environment' >> ~/.bashrc
-
-# Start Nginx service
-echo "Starting Nginx service..."
-service nginx start
 
 # ---------------------------------------------------------------------------- #
 #                               Post-Start Script                              #
