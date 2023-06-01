@@ -29,6 +29,19 @@ echo "Exporting environment variables..."
 printenv | grep -E '^RUNPOD_|^PATH=|^_=' | sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
 echo 'source /etc/rp_environment' >> ~/.bashrc
 
+# Start Nginx service
+echo "Starting Nginx service..."
+service nginx start
+
+# ---------------------------------------------------------------------------- #
+#                               Post-Start Script                              #
+# ---------------------------------------------------------------------------- #
+if [[ -x /post_start.sh ]]
+then
+    echo "Running post-start script..."
+    /post_start.sh
+fi
+
 # Start Jupyter lab if JUPYTER_PASSWORD is set, otherwise sleep
 if [[ $JUPYTER_PASSWORD ]]
 then
@@ -38,13 +51,4 @@ then
 else
     echo "JUPYTER_PASSWORD not set. Going to sleep mode..."
     sleep infinity
-fi
-
-# ---------------------------------------------------------------------------- #
-#                               Post-Start Script                              #
-# ---------------------------------------------------------------------------- #
-if [[ -x /post_start.sh ]]
-then
-    echo "Running post-start script..."
-    /post_start.sh
 fi
