@@ -1,14 +1,16 @@
 # syntax=docker/dockerfile:1
 FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
 
+ARG VERSION=5.0.0
+
 LABEL bittensor.image.authors="bittensor.com" \
-	bittensor.image.vendor="Bittensor" \
-	bittensor.image.title="bittensor/bittensor" \
-	bittensor.image.description="Bittensor: Incentivized Peer to Peer Neural Networks" \
-	bittensor.image.source="https://github.com/opentensor/bittensor.git" \
-	bittensor.image.revision="${VCS_REF}" \
-	bittensor.image.created="${BUILD_DATE}" \
-	bittensor.image.documentation="https://app.gitbook.com/@opentensor/s/bittensor/"
+    bittensor.image.vendor="Bittensor" \
+    bittensor.image.title="bittensor/bittensor" \
+    bittensor.image.description="Bittensor: Incentivized Peer to Peer Neural Networks" \
+    bittensor.image.source="https://github.com/opentensor/bittensor.git" \
+    bittensor.image.revision="${VCS_REF}" \
+    bittensor.image.created="${BUILD_DATE}" \
+    bittensor.image.documentation="https://app.gitbook.com/@opentensor/s/bittensor/"
 LABEL bittensor.dependencies.versions.torch="1.13.1"
 LABEL bittensor.dependencies.versions.cuda="11.6"
 ARG DEBIAN_FRONTEND=noninteractive
@@ -23,14 +25,14 @@ RUN apt update && apt upgrade -y
 ## Install dependencies
 RUN apt install -y rsync curl sudo nano git htop netcat wget unzip python3-dev python3-pip tmux apt-utils cmake build-essential
 ## Upgrade pip
-RUN pip3 install --upgrade pip
+RUN pip3 install --upgrade --no-cache-dir pip
 
 ENV PM2_HOME="/root/.pm2"
 
 # Install nvm and pm2
 RUN curl -o install_nvm.sh https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh && \
-	echo 'fabc489b39a5e9c999c7cab4d281cdbbcbad10ec2f8b9a7f7144ad701b6bfdc7 install_nvm.sh' | sha256sum --check && \
-	bash install_nvm.sh
+    echo 'fabc489b39a5e9c999c7cab4d281cdbbcbad10ec2f8b9a7f7144ad701b6bfdc7 install_nvm.sh' | sha256sum --check && \
+    bash install_nvm.sh
 
 RUN bash -c "source $HOME/.nvm/nvm.sh && \
     # use node 16
@@ -38,22 +40,28 @@ RUN bash -c "source $HOME/.nvm/nvm.sh && \
     # install pm2
     npm install --location=global pm2"
 
-RUN mkdir -p /root/.bittensor/
-RUN git clone https://github.com/opentensor/bittensor.git && cd bittensor
-RUN mv ./bittensor/ /root/.bittensor/
-RUN cd /root/.bittensor/bittensor && python3 -m pip install .
-RUN python3 -m pip install https://github.com/opentensor/cubit/releases/download/v1.1.2/cubit-1.1.2-cp310-cp310-linux_x86_64.whl
+WORKDIR /
 
-ADD start.sh /start.sh
-RUN chmod a+x /start.sh
-ADD welcome.txt /welcome.txt
+RUN mkdir -p /root/.bittensor/ && \
+    git clone https://github.com/opentensor/bittensor.git && \
+    cd bittensor && git checkout v$VERSION && \
+    mv /bittensor /root/.bittensor/ && \
+    cd /root/.bittensor/bittensor && ls . && \
+    python3 -m pip install --no-cache-dir . && \
+    python3 -m pip install --no-cache-dir https://github.com/opentensor/cubit/releases/download/v1.1.2/cubit-1.1.2-cp310-cp310-linux_x86_64.whl
 
 RUN mkdir -p /runpod_bittensor_tmp && mv /root/.bittensor /runpod_bittensor_tmp/ && mv /root/.npm /runpod_bittensor_tmp/ && mv /root/.nvm /runpod_bittensor_tmp/
 
+
+ADD .bashrc /.bashrc
+ADD welcome.txt /welcome.txt
+
 WORKDIR /root
 
-RUN echo 'cat /welcome.txt' >> ~/.bashrc &&\
-    echo 'cd /root' >> ~/.bashrc
+# Start Scripts
+COPY pre_start.sh /pre_start.sh
+COPY --from=scripts start.sh /
+RUN chmod +x /start.sh && chmod +x /pre_start.sh
 
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]

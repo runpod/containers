@@ -1,12 +1,10 @@
 #!/bin/bash
-echo "Container Started"
-export PYTHONUNBUFFERED=1
 
+# Sync files from /runpod_bittensor_tmp to /root
 echo "*** syncing files, please wait ***"
 mv /runpod_bittensor_tmp/.bittensor/ /root/.bittensor/
 mv /runpod_bittensor_tmp/.nvm/ /root/.nvm/
 mv /runpod_bittensor_tmp/.npm/ /root/.npm/
-
 echo "*** file sync complete ***"
 
 export NVM_DIR="/root/.nvm"
@@ -15,5 +13,3 @@ export NVM_DIR="/root/.nvm"
 
 pm2 list
 pm2 resurrect
-
-sleep infinity
