@@ -2,7 +2,7 @@ variable "VERSION" {
     default = "5.0.0"
 }
 
-target "bittensor" {
+target "default" {
     dockerfile = "Dockerfile"
     tags = ["runpod/bittensor:${VERSION}"]
     contexts = {
