@@ -15,7 +15,7 @@ RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependenci
     wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/rename_1.10-1_all.deb && \
     wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zip_3.0-11build1_amd64.deb && \
     wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/unzip_6.0-25ubuntu1.1_amd64.deb && \
-    apt update && apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev && dpkg -i *.deb && rm -rf *.deb
+    apt update && apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev nginx && dpkg -i *.deb && rm -rf *.deb
 
 RUN pip install gdown && pip install xformers==0.0.18
 
@@ -25,6 +25,19 @@ ADD start.sh /start.sh
 RUN chmod a+x /start.sh
 
 ADD jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
+
+
+# NGINX Proxy
+COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
+COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
+
+# Copy the README.md
+COPY README.md /usr/share/nginx/html/README.md
+
+# Start Scripts
+COPY pre_start.sh /pre_start.sh
+COPY --from=scripts start.sh /
+RUN chmod +x /start.sh && chmod +x /pre_start.sh
 
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]
