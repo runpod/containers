@@ -23,7 +23,7 @@ if [[ $PUBLIC_KEY ]]
 then
     echo "Setting up SSH..."
     mkdir -p ~/.ssh
-    echo $PUBLIC_KEY >> ~/.ssh/authorized_keys
+    echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
     chmod 700 -R ~/.ssh
     service ssh start
 fi
