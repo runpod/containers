@@ -63,6 +63,13 @@ WORKDIR /root
 COPY .bashrc /.bashrc
 COPY welcome.txt /welcome.txt
 
+# NGINX Proxy
+COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
+COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
+
+# Copy the README.md
+COPY README.md /usr/share/nginx/html/README.md
+
 # Start Scripts
 COPY pre_start.sh /pre_start.sh
 COPY --from=scripts start.sh /

@@ -7,6 +7,7 @@ target "default" {
     tags = ["runpod/bittensor:${VERSION}"]
     contexts = {
         scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
     }
     args = {
         VERSION = "${VERSION}"
