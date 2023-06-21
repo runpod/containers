@@ -21,9 +21,6 @@ RUN pip install gdown && pip install xformers==0.0.18
 
 WORKDIR /workspace
 
-ADD start.sh /start.sh
-RUN chmod a+x /start.sh
-
 ADD jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
 
 
