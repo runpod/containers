@@ -9,14 +9,14 @@ ENV VSCODE_SERVE_MODE=remote
 # Install System Packages
 RUN apt-get update -y && \
     apt-get upgrade -y && \
-    add-apt-repository ppa:deadsnakes/ppa && \
     apt-get install -y --no-install-recommends \
     git \
     tzdata \
     openssh-server \
     build-essential \
+    add-apt-repository ppa:deadsnakes/ppa && \
     python3.10-dev python3.10-venv \
-    gnome-keyring wget curl python3-minimal ca-certificates \
+    gnome-keyring wget curl ca-certificates \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
 # Set up Python and pip
