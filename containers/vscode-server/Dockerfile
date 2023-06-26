@@ -3,18 +3,19 @@ FROM nvidia/cuda:11.7.1-cudnn8-runtime-ubuntu20.04
 WORKDIR /
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV VSCODE_SERVE_MODE=remote
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     tzdata \
     openssh-server \
+    build-essential \
     gnome-keyring wget curl python3-minimal ca-certificates \
-    # development tools
-    git build-essential \
-    # clean up
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
+RUN pip3 install --upgrade pip && pip3 install jupyterlab
+
 # install vscode-server
-# hadolint ignore=DL4006
 RUN wget -q -O- https://aka.ms/install-vscode-server/setup.sh | sh
 
 # copy scripts
