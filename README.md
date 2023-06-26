@@ -8,6 +8,12 @@ The containers `serverless-automatic` and `sd-auto-abdbarho` have been removed f
 
 ## Container Requirements
 
+### Dependencies
+
+The following dependencies are required as part of RunPod platform functionality.
+
+- `openssh-server` - Required for SSH access to the container.
+
 ### runpod.yaml
 
 Each container foulder needs to have a runpod.yaml file. This file will contain version info as well as services to be ran. The runpod.yaml file should be formatted as follows:
@@ -28,6 +34,13 @@ services:
 Every container folder needs to have its own README.md file, this file will be displayed both on the Docker Hub as well as the README section of the template on the RunPod website. Additionally, if the container is opening a port other than 8888 that is passed through the proxy and the service is not running yet, the README will be displayed to the user.
 
 ## Building Containers
+
+buildx bake
+
+```BASH
+docker buildx bake
+```
+
 
 docker build should be ran from the root of the repository, not from the container folder. The build command should be ran as follows:
 

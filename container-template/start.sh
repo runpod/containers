@@ -10,6 +10,7 @@ service nginx start
 if [[ -x /pre_start.sh ]]
 then
     echo "Running pre-start script..."
+    chmod +x /pre_start.sh
     /pre_start.sh
 fi
 
@@ -33,22 +34,22 @@ echo "Exporting environment variables..."
 printenv | grep -E '^RUNPOD_|^PATH=|^_=' | sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
 echo 'source /etc/rp_environment' >> ~/.bashrc
 
+# Start Jupyter lab if JUPYTER_PASSWORD is set
+if [[ $JUPYTER_PASSWORD ]]
+then
+    echo "Starting Jupyter Lab..."
+    cd /
+    nohup jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &
+fi
+
 # ---------------------------------------------------------------------------- #
 #                               Post-Start Script                              #
 # ---------------------------------------------------------------------------- #
 if [[ -x /post_start.sh ]]
 then
     echo "Running post-start script..."
+    chmod +x /post_start.sh
     /post_start.sh
 fi
 
-# Start Jupyter lab if JUPYTER_PASSWORD is set, otherwise sleep
-if [[ $JUPYTER_PASSWORD ]]
-then
-    echo "Starting Jupyter Lab..."
-    cd /
-    jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace
-else
-    echo "JUPYTER_PASSWORD not set. Going to sleep mode..."
-    sleep infinity
-fi
+sleep infinity
