@@ -1,5 +1,7 @@
 FROM nvidia/cuda:11.7.1-cudnn8-runtime-ubuntu20.04
 
+WORKDIR /
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 # hadolint ignore=DL3008
@@ -19,9 +21,6 @@ RUN wget -q -O- https://aka.ms/install-vscode-server/setup.sh | sh
 
 # copy scripts
 COPY src/* /usr/local/bin/
-
-# entrypoint
-ENTRYPOINT [ "start-vscode" ]
 
 # expose port
 EXPOSE 8000

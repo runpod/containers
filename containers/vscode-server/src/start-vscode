@@ -1,4 +1,5 @@
 #!/bin/bash
+
 set -o pipefail -o nounset
 : "${VSCODE_KEYRING_PASS:?Variable not set or empty}"
 

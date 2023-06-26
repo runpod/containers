@@ -1,3 +1,3 @@
 #! /bin/bash
 
-start-vscode &
+start-vscode
