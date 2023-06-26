@@ -13,7 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnome-keyring wget curl python3-minimal ca-certificates \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --upgrade pip && pip3 install jupyterlab
+# Set up Python and pip
+RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
+    rm /usr/bin/python3 && \
+    ln -s /usr/bin/python3.10 /usr/bin/python3 && \
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python get-pip.py
+
+RUN pip install --upgrade pip && pip3 install jupyterlab
 
 # install vscode-server
 RUN wget -q -O- https://aka.ms/install-vscode-server/setup.sh | sh
