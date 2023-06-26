@@ -4,11 +4,9 @@ WORKDIR /
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # support env timezones
     tzdata \
-    # vscode requirements
+    openssh-server \
     gnome-keyring wget curl python3-minimal ca-certificates \
     # development tools
     git build-essential \

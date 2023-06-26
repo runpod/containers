@@ -13,6 +13,7 @@ The containers `serverless-automatic` and `sd-auto-abdbarho` have been removed f
 The following dependencies are required as part of RunPod platform functionality.
 
 - `openssh-server` - Required for SSH access to the container.
+- 'pip install jupyterlab' - Required for JupyterLab access to the container.
 
 ### runpod.yaml
 
