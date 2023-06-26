@@ -34,6 +34,7 @@ COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
+COPY post_Start.sh /post_Start.sh
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
