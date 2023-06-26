@@ -1,15 +1,21 @@
-FROM nvidia/cuda:11.7.1-cudnn8-runtime-ubuntu20.04
+FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04
 
 WORKDIR /
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV VSCODE_SERVE_MODE=remote
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+
+# Install System Packages
+RUN apt-get update -y && \
+    apt-get upgrade -y && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get install -y --no-install-recommends \
     git \
     tzdata \
     openssh-server \
     build-essential \
+    python3.10-dev python3.10-venv \
     gnome-keyring wget curl python3-minimal ca-certificates \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
@@ -20,7 +26,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python get-pip.py
 
-RUN pip install --upgrade pip && pip3 install jupyterlab
+RUN pip install --upgrade pip && pip install jupyterlab
 
 # install vscode-server
 RUN wget -q -O- https://aka.ms/install-vscode-server/setup.sh | sh
