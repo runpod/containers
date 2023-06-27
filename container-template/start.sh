@@ -38,7 +38,8 @@ echo 'source /etc/rp_environment' >> ~/.bashrc
 if [[ $JUPYTER_PASSWORD ]]
 then
     echo "Starting Jupyter Lab..."
-    cd /
+    mkdir -p /workspace && \
+    cd / && \
     nohup jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &
 fi
 
