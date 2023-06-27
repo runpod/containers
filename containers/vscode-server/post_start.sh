@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/bash
 
 chmod +x /usr/local/bin/start-vscode
 chmod +x /usr/local/bin/init
