@@ -1,7 +1,5 @@
 #!/usr/bin/expect -f
 
-echo "Starting code-server remote..."
-
 spawn   code-server \
             --accept-server-license-terms \
             --disable-telemetry \
