@@ -45,6 +45,11 @@ COPY src/* /usr/local/bin/
 EXPOSE 8000
 
 # NGINX Proxy
+RUN wget -O init-deb.sh https://www.linode.com/docs/assets/660-init-deb.sh && \
+    mv init-deb.sh /etc/init.d/nginx && \
+    chmod +x /etc/init.d/nginx && \
+    /usr/sbin/update-rc.d -f nginx defaults
+
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
 COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 
