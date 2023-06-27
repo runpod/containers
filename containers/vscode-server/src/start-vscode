@@ -1,7 +1,7 @@
 #!/bin/bash
 
-set -o pipefail -o nounset
-: "${VSCODE_KEYRING_PASS:?Variable not set or empty}"
+# set -o pipefail -o nounset
+# : "${VSCODE_KEYRING_PASS:?Variable not set or empty}"
 
 # determine which mode to run in
 [[ $VSCODE_SERVE_MODE = "remote" ]] && CMD="serve-remote" || CMD="serve-local"
