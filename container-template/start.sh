@@ -1,57 +1,65 @@
 #!/bin/bash
-
-# Start Nginx service
-echo "Starting Nginx service..."
-service nginx start
+set -e  # Exit the script if any statement returns a non-true return value
 
 # ---------------------------------------------------------------------------- #
-#                               Pre-Start Script                               #
+#                          Function Definitions                                #
 # ---------------------------------------------------------------------------- #
-if [[ -f /pre_start.sh ]]
-then
-    echo "Running pre-start script..."
-    chmod +x /pre_start.sh
-    /pre_start.sh
-fi
+
+# Start nginx service
+start_nginx() {
+    echo "Starting Nginx service..."
+    service nginx start
+}
+
+# Execute script if exists
+execute_script() {
+    local script_path=$1
+    local script_msg=$2
+    if [[ -f ${script_path} ]]; then
+        echo "${script_msg}"
+        chmod +x ${script_path}
+        ./${script_path}
+    fi
+}
+
+# Setup ssh
+setup_ssh() {
+    if [[ $PUBLIC_KEY ]]; then
+        echo "Setting up SSH..."
+        mkdir -p ~/.ssh
+        echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
+        chmod 700 -R ~/.ssh
+        service ssh start
+    fi
+}
+
+# Export env vars
+export_env_vars() {
+    echo "Exporting environment variables..."
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=' | awk -F = '{ print "export " $1 "=\"" $2 "\"" }' >> /etc/rp_environment
+    echo 'source /etc/rp_environment' >> ~/.bashrc
+}
+
+# Start jupyter lab
+start_jupyter() {
+    if [[ $JUPYTER_PASSWORD ]]; then
+        echo "Starting Jupyter Lab..."
+        mkdir -p /workspace && \
+        cd / && \
+        nohup jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &> /jupyter.log &
+        echo "Jupyter Lab started"
+    fi
+}
 
 # ---------------------------------------------------------------------------- #
-#                                 Start Script                                 #
+#                               Main Program                                   #
 # ---------------------------------------------------------------------------- #
+
+start_nginx
+execute_script "/pre_start.sh" "Running pre-start script..."
 echo "Pod Started"
-
-# SSH setup
-if [[ $PUBLIC_KEY ]]
-then
-    echo "Setting up SSH..."
-    mkdir -p ~/.ssh
-    echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
-    chmod 700 -R ~/.ssh
-    service ssh start
-fi
-
-# Export specific ENV variables to /etc/rp_environment
-echo "Exporting environment variables..."
-printenv | grep -E '^RUNPOD_|^PATH=|^_=' | sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >> /etc/rp_environment
-echo 'source /etc/rp_environment' >> ~/.bashrc
-
-# Start Jupyter lab if JUPYTER_PASSWORD is set
-if [[ $JUPYTER_PASSWORD ]]
-then
-    echo "Starting Jupyter Lab..."
-    mkdir -p /workspace && \
-    cd / && \
-    nohup  jupyter lab --allow-root --no-browser --port=8888 --ip=* --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --ServerApp.token=$JUPYTER_PASSWORD --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &
-    echo "Jupyter Lab started"
-fi
-
-# ---------------------------------------------------------------------------- #
-#                               Post-Start Script                              #
-# ---------------------------------------------------------------------------- #
-if [[ -f /post_start.sh ]]
-then
-    echo "Running post-start script..."
-    chmod +x /post_start.sh
-    /post_start.sh
-fi
-
+setup_ssh
+export_env_vars
+start_jupyter
+execute_script "/post_start.sh" "Running post-start script..."
 sleep infinity
