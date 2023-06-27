@@ -15,10 +15,11 @@ RUN apt-get update -y && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update -y && \
     apt-get install -y --no-install-recommends \
-    git \
-    nginx \
-    tzdata \
-    openssh-server \
+    git             \
+    nginx           \
+    tzdata          \
+    expect          \
+    openssh-server  \
     build-essential \
     python3.10-dev python3.10-venv \
     gnome-keyring wget curl ca-certificates \

@@ -1,8 +1,16 @@
-#!/bin/bash
+#!/usr/bin/expect -f
 
 echo "Starting code-server remote..."
 
-code-server serve \
-  --disable-telemetry \
-  --accept-server-license-terms \
-  --name "$RUNPOD_POD_ID"
+spawn   code-server \
+            --accept-server-license-terms \
+            --disable-telemetry \
+            serve
+
+expect {
+  "What would you like to call this machine?" {
+    send -- "$RUNPOD_POD_ID\r"
+    exp_continue
+  }
+  eof
+}
