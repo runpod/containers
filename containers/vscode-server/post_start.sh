@@ -5,4 +5,4 @@ chmod +x /usr/local/bin/init
 chmod +x /usr/local/bin/serve-remote
 chmod +x /usr/local/bin/serve-local
 
-start-vscode
+start-vscode &
