@@ -5,4 +5,4 @@ echo "Starting code-server remote..."
 code-server serve \
   --disable-telemetry \
   --accept-server-license-terms \
-  --name $RUNPOD_POD_ID
+  --name "$RUNPOD_POD_ID"

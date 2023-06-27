@@ -6,5 +6,5 @@ code-server serve-local \
   --disable-telemetry \
   --without-connection-token \
   --accept-server-license-terms \
-  --name $RUNPOD_POD_ID \
+  --name  "$RUNPOD_POD_ID" \
   --host 0.0.0.0
