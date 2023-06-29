@@ -30,9 +30,6 @@ RUN pip install \
 RUN jupyter nbextension enable --py widgetsnbextension
 
 
-ADD start.sh /start.sh
-RUN chmod a+x /start.sh
-
 ADD welcome-banner.txt /root/welcome-banner.txt
 COPY examples /examples
 ADD welcome.ipynb /root/welcome.ipynb
@@ -57,4 +54,10 @@ RUN yarn && yarn build
 RUN yarn global add pm2
 
 RUN rm -Rf /root/.cache && mkdir -p /models/.cache && ln -s /models/.cache /root
+
+# Start Scripts
+COPY pre_start.sh /pre_start.sh
+COPY --from=scripts start.sh /
+RUN chmod +x /start.sh
+
 CMD [ "/start.sh" ]
