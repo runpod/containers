@@ -17,8 +17,7 @@ execute_script() {
     local script_msg=$2
     if [[ -f ${script_path} ]]; then
         echo "${script_msg}"
-        chmod +x ${script_path}
-        ./${script_path}
+        bash ${script_path}
     fi
 }
 

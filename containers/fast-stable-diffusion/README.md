@@ -1,4 +1,4 @@
-## RunPod Stable Diffusion Unified Template
+## Fast Stable Diffusion
 
 ### General
 
@@ -27,3 +27,7 @@ The best ways to get your models onto your pod is by using [runpodctl](https://g
 ### Uploading to google drive
 
 If you're done with the pod and would like to send things to google drive, you can use [this colab](https://colab.research.google.com/drive/1ot8pODgystx1D6_zvsALDSvjACBF1cj6) to do it using runpodctl. You run the runpodctl either in a web terminal (found in the pod connect menu), or in a terminal on the desktop
+
+## Template Usage
+
+Requires port `3001` to be open.
