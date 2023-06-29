@@ -25,9 +25,11 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN pip install \
     numpy \
     pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113 \
-    jupyterlab ipywidgets jupyter-archive
+    jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
-RUN jupyter nbextension enable --py widgetsnbextension
+RUN jupyter contrib nbextension install --user && \
+    jupyter nbextension enable varInspector/main && \
+    jupyter nbextension enable --py widgetsnbextension
 
 
 ADD welcome-banner.txt /root/welcome-banner.txt
