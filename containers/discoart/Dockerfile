@@ -11,7 +11,7 @@ WORKDIR /workspace
 RUN apt-get update && apt-get install -y \
     python3-pip \
     apt-utils \
-    git wget curl openssh-server zip unzip &&\
+    git wget curl openssh-server zip unzip nginx &&\
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
