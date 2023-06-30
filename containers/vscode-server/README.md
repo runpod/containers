@@ -2,6 +2,7 @@
 
 This is for the VS Code Server template. It is used to create a container that runs VS Code Server.
 
+Checkout the RunPod blog post for more information. https://blog.runpod.io/visual-studio-code-vs-code-remote/
 
 https://code.visualstudio.com/blogs/2022/07/07/vscode-server
 
