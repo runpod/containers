@@ -1,22 +1,15 @@
+# Import necessary base images
 FROM runpod/stable-diffusion:models-1.0.0 as sd-models
 FROM runpod/stable-diffusion-models:2.1 as hf-cache
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as runtime
 
-# Set the working directory
+# Set working directory and environment variables
 WORKDIR /
+ENV SHELL=/bin/bash \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-# Create necessary directories
-RUN mkdir -p /root/.cache/huggingface && mkdir /auto-models
-
-# Copy necessary files from other images
-COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
-COPY --from=sd-models /SDv1-5.ckpt /auto-models/SDv1-5.ckpt
-COPY --from=sd-models /SDv2-768.ckpt /auto-models/SDv2-768.ckpt
-
-ENV SHELL=/bin/bash
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
-
+# Set up system
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx && \
@@ -32,35 +25,37 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     rm /usr/bin/python3 && \
     ln -s /usr/bin/python3.10 /usr/bin/python3 && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python get-pip.py
+    python get-pip.py && \
+    pip install --upgrade --no-cache-dir pip
 
-RUN pip install --upgrade --no-cache-dir pip
-RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
+# Install necessary Python packages
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions && \
+    jupyter contrib nbextension install --user && \
+    jupyter nbextension enable --py widgetsnbextension && \
+    pip install gdown && pip install xformers==0.0.18
 
-# Set up Jupyter Notebook
-RUN jupyter contrib nbextension install --user && \
-    jupyter nbextension enable --py widgetsnbextension
-
-RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zstd_1.4.4+dfsg-3ubuntu0.1_amd64.deb && \
-    wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/git-lfs_2.3.4-1_amd64.deb && \
-    wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/rename_1.10-1_all.deb && \
-    wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zip_3.0-11build1_amd64.deb && \
-    wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/unzip_6.0-25ubuntu1.1_amd64.deb && \
+# Download and install necessary Debian packages
+RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zstd_1.4.4+dfsg-3ubuntu0.1_amd64.deb \
+    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/git-lfs_2.3.4-1_amd64.deb \
+    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/rename_1.10-1_all.deb \
+    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zip_3.0-11build1_amd64.deb \
+    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/unzip_6.0-25ubuntu1.1_amd64.deb && \
     apt update && \
-    apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev nginx && \
+    apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev && \
     dpkg -i *.deb && \
     rm -rf *.deb && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install python packages
-RUN pip install gdown && pip install xformers==0.0.18
 
-RUN mkdir /workspace
+# Create necessary directories and copy necessary files
+RUN mkdir -p /root/.cache/huggingface && mkdir /auto-models && mkdir /workspace
 WORKDIR /workspace
-
+COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
+COPY --from=sd-models /SDv1-5.ckpt /auto-models/SDv1-5.ckpt
+COPY --from=sd-models /SDv2-768.ckpt /auto-models/SDv2-768.ckpt
 ADD jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
 
 # NGINX Proxy
