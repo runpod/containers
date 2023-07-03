@@ -11,7 +11,7 @@ target "default" {
     }
 }
 
-target "1.13.1-py3.8-cuda11.6.2-devel" {
+target "1-py38-cuda1162-devel" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:1.13.1-py3.8-cuda11.6.2-devel"]
     contexts = {
@@ -24,7 +24,7 @@ target "1.13.1-py3.8-cuda11.6.2-devel" {
     }
 }
 
-target "2.0.1-py3.10-cuda11.7.1-devel" {
+target "201-py310-cuda1171-devel" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:2.0.1-py3.10-cuda11.7.1-devel"]
     contexts = {
@@ -37,7 +37,7 @@ target "2.0.1-py3.10-cuda11.7.1-devel" {
     }
 }
 
-target "2.0.1-py3.10-cuda11.8.0-devel" {
+target "201-py310-cuda1180-devel" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel"]
     contexts = {
@@ -50,7 +50,7 @@ target "2.0.1-py3.10-cuda11.8.0-devel" {
     }
 }
 
-target "2.0.0.nightly-py3.10-cuda12.0.1-devel" {
+target "200.nightly-py310-cuda1201-devel" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:2.0.0.nightly-py3.10-cuda12.0.1-devel"]
     contexts = {
