@@ -1,7 +1,7 @@
 ARG BASE_IMAGE
-ARG TORCH_URL
-
 FROM ${BASE_IMAGE}
+
+ARG TORCH_URL
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -36,7 +36,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
 
 
 RUN pip install --upgrade --no-cache-dir pip
-RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu118
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url ${TORCH_URL}
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
 # Set up Jupyter Notebook
