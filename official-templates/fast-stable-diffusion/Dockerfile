@@ -29,9 +29,8 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     pip install --upgrade --no-cache-dir pip
 
 # Install necessary Python packages
-RUN pip install \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
-    --upgrade --no-cache-dir \
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip install --upgrade --no-cache-dir \
     jupyterlab \
     ipywidgets \
     jupyter-archive \
