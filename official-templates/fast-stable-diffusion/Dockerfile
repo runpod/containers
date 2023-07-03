@@ -29,11 +29,19 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     pip install --upgrade --no-cache-dir pip
 
 # Install necessary Python packages
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions && \
-    jupyter contrib nbextension install --user && \
-    jupyter nbextension enable --py widgetsnbextension && \
-    pip install gdown && pip install xformers==0.0.18
+RUN pip install \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
+    --upgrade --no-cache-dir \
+    jupyterlab \
+    ipywidgets \
+    jupyter-archive \
+    jupyter_contrib_nbextensions \
+    gdown \
+    xformers==0.0.18
+
+# Set up Jupyter Notebook
+RUN jupyter contrib nbextension install --user && \
+    jupyter nbextension enable --py widgetsnbextension
 
 # Download and install necessary Debian packages
 RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zstd_1.4.4+dfsg-3ubuntu0.1_amd64.deb \
