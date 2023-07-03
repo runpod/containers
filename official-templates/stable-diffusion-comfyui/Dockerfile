@@ -12,7 +12,7 @@ ENV SHELL=/bin/bash \
 # Set up system
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
-    apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx && \
+    apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx rsync && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt install python3.10-dev python3.10-venv -y --no-install-recommends && \
     apt-get autoremove -y && \
@@ -29,34 +29,25 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     pip install --upgrade --no-cache-dir pip
 
 # Install necessary Python packages
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions && \
     jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension && \
-    pip install gdown && pip install xformers==0.0.18
+    pip install gdown triton && pip install xformers==0.0.18
 
-# Download and install necessary Debian packages
-RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zstd_1.4.4+dfsg-3ubuntu0.1_amd64.deb \
-    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/git-lfs_2.3.4-1_amd64.deb \
-    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/rename_1.10-1_all.deb \
-    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zip_3.0-11build1_amd64.deb \
-    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/unzip_6.0-25ubuntu1.1_amd64.deb && \
-    apt update && \
-    apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev && \
-    dpkg -i *.deb && \
-    rm -rf *.deb && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+RUN python -m venv /venv
+ENV PATH="/venv/bin:$PATH"
 
+# Install ComfyUI
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
+    cd /ComfyUI && \
+    pip install -r requirements.txt
 
 # Create necessary directories and copy necessary files
-RUN mkdir -p /root/.cache/huggingface && mkdir /auto-models && mkdir /workspace
-WORKDIR /workspace
+RUN mkdir -p /root/.cache/huggingface && mkdir /comfy-models
 COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
-COPY --from=sd-models /SDv1-5.ckpt /auto-models/SDv1-5.ckpt
-COPY --from=sd-models /SDv2-768.ckpt /auto-models/SDv2-768.ckpt
-ADD jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
+COPY --from=sd-models /SDv1-5.ckpt /comfy-models/v1-5-pruned-emaonly.ckpt
+COPY --from=sd-models /SDv2-768.ckpt /comfy-models/SDv2-768.ckpt
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
@@ -70,5 +61,4 @@ COPY pre_start.sh /pre_start.sh
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
-SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]
