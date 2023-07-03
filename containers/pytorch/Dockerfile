@@ -1,6 +1,7 @@
-# Use nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04 as base image
-ARG BASE_IMAGE=nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04
-FROM ${BASE_IMAGE} as dev-base
+ARG BASE_IMAGE
+ARG TORCH_URL
+
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -17,7 +18,7 @@ RUN mkdir /workspace
 # Update, upgrade, install packages and clean up
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
-    apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server && \
+    apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt install python3.10-dev python3.10-venv -y --no-install-recommends && \
     apt-get autoremove -y && \
@@ -34,15 +35,23 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     python get-pip.py
 
 # Install Python libraries
-RUN pip install torch torchvision torchaudio jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url ${TORCH_URL}
+RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
 # Set up Jupyter Notebook
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
 
-# Add start.sh script
-ADD start.sh /
+# NGINX Proxy
+COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
+COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
+
+# Copy the README.md
+COPY README.md /usr/share/nginx/html/README.md
+
+# Start Scripts
+COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
 # Set the default command for the container
