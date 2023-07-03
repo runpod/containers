@@ -50,7 +50,7 @@ target "201-py310-cuda1180-devel" {
     }
 }
 
-target "200.nightly-py310-cuda1201-devel" {
+target "200nightly-py310-cuda1201-devel" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:2.0.0.nightly-py3.10-cuda12.0.1-devel"]
     contexts = {
