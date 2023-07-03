@@ -35,7 +35,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     python get-pip.py
 
 # Install Python libraries
-RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url ${TORCH_URL}
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url $TORCH_URL
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
 # Set up Jupyter Notebook
