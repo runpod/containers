@@ -34,12 +34,9 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python get-pip.py
 
-# Install Python libraries
-RUN echo "BASE_IMAGE: $BASE_IMAGE"
-RUN echo "TORCH_URL: ${TORCH_URL}"
 
 RUN pip install --upgrade --no-cache-dir pip
-RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url "$TORCH_URL"
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu118
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
 # Set up Jupyter Notebook
