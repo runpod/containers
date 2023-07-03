@@ -37,6 +37,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
 # Install Python libraries
 RUN echo "TORCH_URL: ${TORCH_URL}"
 
+RUN pip install --upgrade --no-cache-dir pip
 RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url ${TORCH_URL}
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
