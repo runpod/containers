@@ -77,5 +77,8 @@ COPY pre_start.sh /pre_start.sh
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
+# Force
+RUN pip install --upgrade --force-reinstall  torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]
