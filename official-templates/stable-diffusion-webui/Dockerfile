@@ -14,8 +14,10 @@ WORKDIR /workspace
 
 COPY --from=scripts cache-sd-model.py .
 COPY --from=scripts install-automatic.py .
-COPY --from=models SDv1-5.ckpt /sd-models/SDv1-5.ckpt
-COPY --from=models control_v11p_sd15_canny.pth /cn-models/control_v11p_sd15_canny.pth
+
+RUN wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt
+RUN wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
+
 COPY requirements_dreambooth.txt /requirements_dreambooth.txt
 
 COPY requirements.txt /requirements.txt
@@ -86,11 +88,6 @@ RUN apt update --yes && \
     apt clean && \
     mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui
-
-# COPY --from=models SDv1-5.ckpt /sd-models/SDv1-5.ckpt
-RUN wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt
-# COPY --from=models control_v11p_sd15_canny.pth /cn-models/control_v11p_sd15_canny.pth
-RUN wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
 
 COPY pre_start.sh /pre_start.sh
 COPY relauncher.py webui-user.sh /stable-diffusion-webui/
