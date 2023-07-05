@@ -15,6 +15,7 @@ WORKDIR /workspace
 COPY cache-sd-model.py .
 COPY install-automatic.py .
 
+RUN mkdir /sd-models
 RUN wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt
 RUN wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
 
