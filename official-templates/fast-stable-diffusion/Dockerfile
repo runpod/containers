@@ -15,7 +15,7 @@ RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx && \
     add-apt-repository ppa:deadsnakes/ppa && \
-    apt install python3.10.12-dev python3.10.12-venv -y --no-install-recommends && \
+    apt install python3.10.12-dev python3.10-venv -y --no-install-recommends && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
