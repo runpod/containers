@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:11.8-cudnn8-devel-ubuntu22.04
 
 ARG WEBUI_VERSION=v1.3.2
 ARG DREAMBOOTH_VERSION=1.0.14
@@ -87,8 +87,10 @@ RUN apt update --yes && \
     mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui
 
-COPY --from=models SDv1-5.ckpt /sd-models/SDv1-5.ckpt
-COPY --from=models control_v11p_sd15_canny.pth /cn-models/control_v11p_sd15_canny.pth
+# COPY --from=models SDv1-5.ckpt /sd-models/SDv1-5.ckpt
+RUN wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt
+# COPY --from=models control_v11p_sd15_canny.pth /cn-models/control_v11p_sd15_canny.pth
+RUN wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
 
 COPY pre_start.sh /pre_start.sh
 COPY relauncher.py webui-user.sh /stable-diffusion-webui/
