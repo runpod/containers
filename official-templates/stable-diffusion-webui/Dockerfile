@@ -15,7 +15,7 @@ WORKDIR /workspace
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Copy the Python dependencies
-COPY requirements*.txt ./
+COPY requirements*.txt .
 COPY cache-sd-model.py install-automatic.py ./
 
 # Package installation and setup
@@ -40,8 +40,8 @@ RUN apt update --yes && \
     cd stable-diffusion-webui && \
     git checkout tags/v1.4.0 && \
     mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
-    mv /requirements.txt ./requirements.txt && \
-    mv /requirements_versions.txt ./requirements_versions.txt && \
+    mv /workspace/requirements.txt ./requirements.txt && \
+    mv /workspace/requirements_versions.txt ./requirements_versions.txt && \
     python -m install-automatic --skip-torch-cuda-test && \
     cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
