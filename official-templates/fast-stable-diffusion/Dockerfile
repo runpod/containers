@@ -26,7 +26,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     rm /usr/bin/python3 && \
     ln -s /usr/bin/python3.10 /usr/bin/python3 && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python get-pip.py &&
+    python get-pip.py
 
 # Install necessary Python packages
 COPY requirements.txt /requirements.txt
