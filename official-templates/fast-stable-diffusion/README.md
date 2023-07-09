@@ -1,6 +1,6 @@
 <div style="text-align: center;">
 
-# Fast Stable Diffusion
+<h1> Fast Stable Diffusion </h1>
 
 </div>
 
