@@ -46,7 +46,7 @@ target "201-py310-cuda1180-devel" {
     }
     args = {
         BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu22.04"
-        TORCH = "torch==2.0.0+cu118 torchvision==0.15.1+cu118 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118"
+        TORCH = "torch==2.0.1+cu118 torchvision==0.15.1+cu118 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118"
     }
 }
 
