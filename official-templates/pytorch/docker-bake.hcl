@@ -1,13 +1,13 @@
 target "default" {
     dockerfile = "Dockerfile"
-    tags = ["runpod/pytorch:1.10.0-py3.10-cuda11.8.0-devel"]
+    tags = ["runpod/pytorch:1.10.0-py3.10-cuda11.7.0-devel"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
     }
     args = {
         BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu22.04"
-        TORCH_URL = "https://download.pytorch.org/whl/nightly/cu118"
+        TORCH_URL = "https://download.pytorch.org/whl/nightly/cu117"
         TORCH_VERSION = "1.13.0"
     }
 }
