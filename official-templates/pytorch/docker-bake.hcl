@@ -1,6 +1,6 @@
 target "default" {
     dockerfile = "Dockerfile"
-    tags = ["runpod/pytorch:1.10.0-py3.10.2-cuda11.8.0-devel"]
+    tags = ["runpod/pytorch:1.10.0-py3.10-cuda11.8.0-devel"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
