@@ -8,6 +8,7 @@ target "default" {
     args = {
         BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu22.04"
         TORCH_URL = "https://download.pytorch.org/whl/nightly/cu118"
+        TORCH_VERSION = "1.10.0"
     }
 }
 
