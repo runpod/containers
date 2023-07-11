@@ -12,4 +12,4 @@ COPY check_nccl.sh .
 RUN chmod +x check_nccl.sh
 
 # Start Container
-CMD /bin/bash tail -f /dev/null
+CMD /bin/bash -c tail -f /dev/null
