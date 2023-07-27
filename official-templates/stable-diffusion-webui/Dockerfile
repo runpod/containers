@@ -38,7 +38,7 @@ RUN apt update --yes && \
     pip install -U --no-cache-dir jupyterlab jupyterlab_widgets ipykernel ipywidgets && \
     git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd stable-diffusion-webui && \
-    git checkout tags/v1.4.0 && \
+    git checkout tags/v1.5.1 && \
     mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
     mv /workspace/requirements.txt ./requirements.txt && \
     mv /workspace/requirements_versions.txt ./requirements_versions.txt && \
