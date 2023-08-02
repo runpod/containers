@@ -1,6 +1,6 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
-ARG WEBUI_VERSION=v1.4.0
+ARG WEBUI_VERSION=v1.5.1
 ARG DREAMBOOTH_VERSION=1.0.14
 
 ENV DEBIAN_FRONTEND noninteractive
@@ -65,9 +65,13 @@ RUN apt update --yes && \
     mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui
 
-RUN mkdir /sd-models && mkdir /cn-models
-RUN wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt
-RUN wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
+
+# Cache Models
+RUN mkdir /sd-models && mkdir /cn-models && \
+    wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt && \
+    wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0_0.9vae.safetensors -O /sd-models/SDXLvae.safetensors && \
+    wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0_0.9vae.safetensors -O /sd-models/SDXLvaeRefiner.safetesnors && \
+    wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
 
 
 COPY pre_start.sh /pre_start.sh
