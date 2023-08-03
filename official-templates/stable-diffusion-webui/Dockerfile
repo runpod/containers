@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG WEBUI_VERSION=v1.5.1
 ARG DREAMBOOTH_VERSION=1.0.14
