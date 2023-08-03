@@ -6,6 +6,7 @@ gfpgan==1.3.8
 jsonmerge==1.8.0
 kornia==0.6.7
 numpy==1.23.5
+open-clip-torch==2.20.0
 pytorch_lightning==1.9.4
 realesrgan==0.3.0
 timm==0.6.12

@@ -6,6 +6,7 @@ gfpgan
 jsonmerge
 kornia
 numpy
+open-clip-torch
 pytorch_lightning==1.7.7
 realesrgan
 torch
