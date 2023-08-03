@@ -48,6 +48,8 @@ RUN mkdir -p /root/.cache/huggingface && mkdir /comfy-models
 COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
 COPY --from=sd-models /SDv1-5.ckpt /comfy-models/v1-5-pruned-emaonly.ckpt
 COPY --from=sd-models /SDv2-768.ckpt /comfy-models/SDv2-768.ckpt
+RUN wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors -O /comfy-models/sd_xl_base_1.0.safetensors && \
+    wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors -O /comfy-models/sd_xl_refiner_1.0.safetensors
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
