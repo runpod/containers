@@ -30,7 +30,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
 
 # Install necessary Python packages
 RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install --upgrade --no-cache-dir jupyter jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions && \
+    pip install --upgrade --no-cache-dir notebook jupyter jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions && \
     jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension && \
     pip install gdown triton && pip install xformers==0.0.18
