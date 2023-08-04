@@ -1,6 +1,5 @@
 # Import necessary base images
 FROM runpod/stable-diffusion:models-1.0.0 as sd-models
-FROM runpod/stable-diffusion-models:2.1 as hf-cache
 
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
@@ -57,7 +56,6 @@ RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependenci
 # Create necessary directories and copy necessary files
 RUN mkdir -p /root/.cache/huggingface && mkdir /auto-models && mkdir /workspace
 WORKDIR /workspace
-COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
 COPY --from=sd-models /SDv1-5.ckpt /auto-models/SDv1-5.ckpt
 COPY --from=sd-models /SDv2-768.ckpt /auto-models/SDv2-768.ckpt
 ADD jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
