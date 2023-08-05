@@ -48,6 +48,9 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     cd /ComfyUI && \
     pip install -r requirements.txt
 
+#Re-Install?
+RUN pip install torchvision
+
 # Create necessary directories and copy necessary files
 RUN set -e && mkdir -p /root/.cache/huggingface && mkdir /comfy-models
 COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
