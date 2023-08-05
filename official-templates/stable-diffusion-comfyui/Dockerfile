@@ -36,6 +36,7 @@ RUN pip install --upgrade --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions triton xformers==0.0.18 gdown
 
 # Set up Jupyter Notebook
+RUN pip install notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
