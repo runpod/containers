@@ -49,7 +49,7 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     pip install -r requirements.txt
 
 # Create necessary directories and copy necessary files
-RUN mkdir -p /root/.cache/huggingface && mkdir /comfy-models
+RUN set -e && mkdir -p /root/.cache/huggingface && mkdir /comfy-models
 COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
 COPY --from=sd-models /SDv1-5.ckpt /comfy-models/v1-5-pruned-emaonly.ckpt
 COPY --from=sd-models /SDv2-768.ckpt /comfy-models/SDv2-768.ckpt
