@@ -3,11 +3,14 @@ FROM runpod/stable-diffusion:models-1.0.0 as sd-models
 FROM runpod/stable-diffusion-models:2.1 as hf-cache
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as runtime
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Set working directory and environment variables
+ENV SHELL=/bin/bash
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /
-ENV SHELL=/bin/bash \
-    PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
 
 # Set up system
 RUN apt-get update --yes && \
@@ -29,10 +32,10 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
 
 # Install necessary Python packages
 RUN pip install --upgrade --no-cache-dir pip
-RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip install --upgrade --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions triton xformers==0.0.18 gdown
 
-RUN pip install notebook
+# Set up Jupyter Notebook
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
