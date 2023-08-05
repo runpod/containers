@@ -48,7 +48,7 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     cd /ComfyUI && \
     pip install -r requirements.txt
 
-#Re-Install?
+#Re-Install? TODO: Figure out why it says it is not installed.
 RUN pip install torchvision
 
 # Create necessary directories and copy necessary files
