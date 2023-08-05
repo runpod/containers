@@ -25,12 +25,12 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     rm /usr/bin/python3 && \
     ln -s /usr/bin/python3.10 /usr/bin/python3 && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python get-pip.py && \
-    pip install --upgrade --no-cache-dir pip
+    python get-pip.py
 
 # Install necessary Python packages
-RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions triton xformers==0.0.18 gdown
+RUN pip install --upgrade --no-cache-dir pip
+RUN pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions triton xformers==0.0.18 gdown
 
 RUN pip install notebook
 RUN jupyter contrib nbextension install --user && \
