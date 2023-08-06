@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
 
-ARG VERSION=5.0.0
+ARG BITTENSOR_VERSION=5.3.3
 ARG DEBIAN_FRONTEND=noninteractive
 
 LABEL bittensor.image.authors="bittensor.com"                                           \
@@ -24,7 +24,7 @@ RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/machi
 
 # Update and upgrade the base image, install dependencies, remove unnecessary packages
 RUN apt update && apt upgrade -y && \
-    apt install -y rsync curl sudo nano git htop netcat wget unzip python3-dev python3-pip tmux apt-utils cmake build-essential nginx && \
+    apt install -y rsync curl sudo nano git htop netcat wget unzip python3-dev python3-pip tmux apt-utils cmake build-essential openssh-server nginx && \
     apt autoremove -y && \
     apt clean && \
     rm -rf /var/lib/apt/lists/*
@@ -46,7 +46,7 @@ RUN bash -c "source $HOME/.nvm/nvm.sh && \
 # Clone bittensor and install
 WORKDIR /root/.bittensor/
 RUN git clone https://github.com/opentensor/bittensor.git . && \
-    git checkout v$VERSION && \
+    git checkout v$BITTENSOR_VERSION && \
     python3 -m pip install --no-cache-dir . && \
     python3 -m pip install --no-cache-dir https://github.com/opentensor/cubit/releases/download/v1.1.2/cubit-1.1.2-cp310-cp310-linux_x86_64.whl
 
