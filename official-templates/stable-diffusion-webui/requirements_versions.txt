@@ -23,7 +23,7 @@ scikit-image==0.20.0
 
 # Web Development Libraries
 fastapi==0.94.1
-gradio==3.32.0
+gradio==3.34.0
 httpcore<=0.15
 
 # Utility Libraries
