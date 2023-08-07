@@ -72,6 +72,7 @@ target "191-py310-cuda111-devel" {
     }  
     args = {
         BASE_IMAGE = "nvidia/cuda:11.1.1-cudnn8-devel-ubuntu20.04"
+        PYTHON_VERSION = "3.9"
         TORCH = "torch==1.9.1+cu111 torchvision==0.10.1+cu111 torchaudio==0.9.1 -f https://download.pytorch.org/whl/torch_stable.html"
     }
 }
