@@ -24,7 +24,7 @@ piexif
 scikit-image>=0.19
 
 # Web Development Libraries
-gradio==3.32.0
+gradio==3.34.0
 requests
 
 # Utility Libraries
