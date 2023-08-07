@@ -13,7 +13,7 @@ torch
 torchdiffeq
 torchsde
 timm==0.4.12
-transformers==4.29.2
+transformers==4.30.0
 xformers
 
 # Image Processing Libraries
