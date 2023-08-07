@@ -63,9 +63,9 @@ target "200nightly-py310-cuda1201-devel" {
     }
 }
 
-target "191-py310-cuda111-devel" {
+target "191-py39-cuda111-devel" {
     dockerfile = "Dockerfile"
-    tags = ["runpod/pytorch:1.9.1-py3.10-cuda11.1.1-devel"]
+    tags = ["runpod/pytorch:1.9.1-py3.9-cuda11.1.1-devel"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
