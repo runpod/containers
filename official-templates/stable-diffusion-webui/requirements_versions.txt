@@ -13,7 +13,7 @@ timm==0.6.12
 torch
 torchdiffeq==0.2.3
 torchsde==0.2.5
-transformers==4.29.2
+transformers==4.30.0
 
 # Image Processing Libraries
 blendmodes==2022
