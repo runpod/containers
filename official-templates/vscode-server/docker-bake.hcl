@@ -1,9 +1,9 @@
-variable "IMAGE_NAME" {
-    default = "runpod/vscode-server"
+variable "RELEASE" {
+    default = "0.1.0"
 }
 
-variable "RELEASE" {
-    default = "0.0.0"
+variable "IMAGE_NAME" {
+    default = "runpod/vscode-server"
 }
 
 target "default" {
