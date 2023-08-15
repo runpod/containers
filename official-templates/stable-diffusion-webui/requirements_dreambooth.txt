@@ -4,7 +4,7 @@ dadaptation==3.1
 diffusers~=0.16.1
 discord-webhook~=1.1.0
 fastapi~=0.94.1
-gitpython~=3.1.31
+gitpython~=3.1.32
 lion-pytorch~=0.1.2
 Pillow==9.5.0
 tqdm==4.65.0

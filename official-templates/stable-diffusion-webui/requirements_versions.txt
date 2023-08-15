@@ -28,7 +28,7 @@ httpcore<=0.15
 
 # Utility Libraries
 clean-fid==0.1.35
-GitPython==3.1.31
+GitPython==3.1.32
 inflection==0.5.1
 lark==1.1.2
 omegaconf==2.2.3
