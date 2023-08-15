@@ -1,7 +1,6 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG WEBUI_VERSION=v1.5.1
-ARG DREAMBOOTH_VERSION=1.0.14
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV SHELL=/bin/bash
@@ -41,7 +40,6 @@ RUN apt update --yes && \
     git checkout tags/v1.5.1 && \
     mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
     mv /workspace/requirements.txt ./requirements.txt && \
-    mv /workspace/requirements_versions.txt ./requirements_versions.txt && \
     python -m install-automatic --skip-torch-cuda-test && \
     cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
@@ -51,12 +49,6 @@ RUN apt update --yes && \
     git clone https://github.com/Mikubill/sd-webui-controlnet.git extensions/sd-webui-controlnet && \
     cd extensions/sd-webui-controlnet && \
     pip install -r requirements.txt && \
-    #cd /workspace/stable-diffusion-webui && \
-    #git clone https://github.com/d8ahazard/sd_dreambooth_extension.git extensions/sd_dreambooth_extension && \
-    #cd extensions/sd_dreambooth_extension && \
-    #git checkout dev && \
-    #  git reset ${DREAMBOOTH_VERSION} --hard && \
-    #  mv /requirements_dreambooth.txt ./requirements.txt && pip install -r requirements.txt && \
     cd /workspace/stable-diffusion-webui/ && \
     mv /workspace/cache-sd-model.py /workspace/stable-diffusion-webui/ && \
     python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt && \
