@@ -49,13 +49,15 @@ RUN apt update --yes && \
     git clone https://github.com/Mikubill/sd-webui-controlnet.git extensions/sd-webui-controlnet && \
     cd extensions/sd-webui-controlnet && \
     pip install -r requirements.txt && \
+    pip install xformers && \
     cd /workspace/stable-diffusion-webui/ && \
     mv /workspace/cache-sd-model.py /workspace/stable-diffusion-webui/ && \
     python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt && \
     pip cache purge && \
     apt clean && \
     mv /workspace/venv /venv && \
-    mv /workspace/stable-diffusion-webui /stable-diffusion-webui
+    mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
+    git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
 
 
 # Cache Models
