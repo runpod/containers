@@ -1,7 +1,7 @@
 # Import necessary base images
 FROM runpod/stable-diffusion:models-1.0.0 as sd-models
 FROM runpod/stable-diffusion-models:2.1 as hf-cache
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as runtime
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04 as runtime
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -40,8 +40,8 @@ RUN pip install notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
-RUN python -m venv /venv
-ENV PATH="/venv/bin:$PATH"
+# RUN python -m venv /venv
+# ENV PATH="/venv/bin:$PATH"
 
 # Install ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
@@ -49,7 +49,7 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     pip install -r requirements.txt
 
 #Re-Install? TODO: Figure out why it says it is not installed.
-RUN pip install torchvision
+# RUN pip install torchvision
 
 # Create necessary directories and copy necessary files
 RUN set -e && mkdir -p /root/.cache/huggingface && mkdir /comfy-models
