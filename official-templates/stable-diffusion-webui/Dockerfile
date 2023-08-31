@@ -42,10 +42,9 @@ RUN apt update --yes && \
     mv /workspace/requirements.txt ./requirements.txt && \
     python -m install-automatic --skip-torch-cuda-test && \
     cd /workspace/stable-diffusion-webui && \
-    # Deforum extension is not currently working with v1.6.0
-    #git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
-    #cd extensions/deforum && \
-    #pip install -r requirements.txt && \
+    git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
+    cd extensions/deforum && \
+    pip install -r requirements.txt && \
     cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/Mikubill/sd-webui-controlnet.git extensions/sd-webui-controlnet && \
     cd extensions/sd-webui-controlnet && \
