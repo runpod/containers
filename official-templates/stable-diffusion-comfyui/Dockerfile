@@ -30,11 +30,7 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python get-pip.py
 
-RUN python -m venv /venv && \
-    . /venv/bin/activate && \
-    pip install --upgrade pip && \
-    pip install --upgrade setuptools && \
-    pip install --upgrade wheel
+RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
 # Install necessary Python packages
@@ -71,8 +67,5 @@ COPY README.md /usr/share/nginx/html/README.md
 COPY pre_start.sh /pre_start.sh
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
-
-# Deactivate the virtual environment
-RUN deactivate
 
 CMD [ "/start.sh" ]
