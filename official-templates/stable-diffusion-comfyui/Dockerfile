@@ -72,4 +72,7 @@ COPY pre_start.sh /pre_start.sh
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
+# Deactivate the virtual environment
+RUN deactivate
+
 CMD [ "/start.sh" ]
