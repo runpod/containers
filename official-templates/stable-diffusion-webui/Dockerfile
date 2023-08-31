@@ -1,6 +1,6 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
-ARG WEBUI_VERSION=v1.5.1
+ARG WEBUI_VERSION=v1.6.0
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV SHELL=/bin/bash
@@ -37,14 +37,15 @@ RUN apt update --yes && \
     pip install -U --no-cache-dir jupyterlab jupyterlab_widgets ipykernel ipywidgets && \
     git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd stable-diffusion-webui && \
-    git checkout tags/v1.5.1 && \
+    git checkout tags/${WEBUI_VERSION} && \
     mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
     mv /workspace/requirements.txt ./requirements.txt && \
     python -m install-automatic --skip-torch-cuda-test && \
     cd /workspace/stable-diffusion-webui && \
-    git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
-    cd extensions/deforum && \
-    pip install -r requirements.txt && \
+    # Deforum extension is not currently working with v1.6.0
+    #git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
+    #cd extensions/deforum && \
+    #pip install -r requirements.txt && \
     cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/Mikubill/sd-webui-controlnet.git extensions/sd-webui-controlnet && \
     cd extensions/sd-webui-controlnet && \
