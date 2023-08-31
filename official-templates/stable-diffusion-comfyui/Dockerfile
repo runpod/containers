@@ -30,6 +30,13 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python get-pip.py
 
+RUN python -m venv /venv && \
+    . /venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install --upgrade setuptools && \
+    pip install --upgrade wheel
+ENV PATH="/venv/bin:$PATH"
+
 # Install necessary Python packages
 RUN pip install --upgrade --no-cache-dir pip
 RUN pip install --upgrade --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
@@ -40,16 +47,10 @@ RUN pip install notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
-# RUN python -m venv /venv
-# ENV PATH="/venv/bin:$PATH"
-
 # Install ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     cd /ComfyUI && \
     pip install -r requirements.txt
-
-#Re-Install? TODO: Figure out why it says it is not installed.
-# RUN pip install torchvision
 
 # Create necessary directories and copy necessary files
 RUN set -e && mkdir -p /root/.cache/huggingface && mkdir /comfy-models
