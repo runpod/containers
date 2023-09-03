@@ -59,6 +59,28 @@ RUN echo '#!/bin/bash \n\n\
 
 ENTRYPOINT ["/usr/bin/tf_serving_entrypoint.sh"]
 
+# ------------------------------ Added by RunPod ----------------------------- #
+
+# Update, upgrade, install packages and clean up
+RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
+    apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt install "python${PYTHON_VERSION}-dev" "python${PYTHON_VERSION}-venv" -y --no-install-recommends && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+
+
+# Set up Python and pip
+RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
+    rm /usr/bin/python3 && \
+    ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python get-pip.py
+
+
 # Set up Jupyter Notebook
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
