@@ -1,5 +1,6 @@
 FROM tensorflow/tensorflow:latest-gpu-jupyter
 
+RUN pip install jupyter_contrib_nbextensions notebook
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
