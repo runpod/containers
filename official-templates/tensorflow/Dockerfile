@@ -60,7 +60,7 @@ RUN echo '#!/bin/bash \n\n\
 ENTRYPOINT ["/usr/bin/tf_serving_entrypoint.sh"]
 
 # Set up Jupyter Notebook
-RUN pip install notebook==6.5.5
+RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
