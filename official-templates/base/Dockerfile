@@ -19,6 +19,7 @@ RUN apt-get update --yes && \
     curl \
     git \
     libgl1 \
+    nano \
     nginx \
     openssh-server \
     software-properties-common \
@@ -36,10 +37,16 @@ RUN apt-get update --yes && \
 
     # Image and Video Processing
     apt install --yes --no-install-recommends \
+    ffmpeg \
     libavcodec-dev \
+    libavfilter-dev \
     libavformat-dev \
+    libavresample-dev \
+    libavutil-dev \
     libjpeg-dev \
     libpng-dev \
+    libpostproc-dev \
+    libswresample-dev \
     libswscale-dev \
     libtiff-dev \
     libv4l-dev \
