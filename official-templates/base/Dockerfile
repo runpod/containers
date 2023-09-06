@@ -1,4 +1,5 @@
-FROM 11.1.1-cudnn8-runtime-ubuntu20.04
+FROM nvidia/cuda
+:11.1.1-cudnn8-runtime-ubuntu20.04
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
