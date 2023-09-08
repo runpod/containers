@@ -22,6 +22,7 @@ RUN apt-get update --yes && \
     nano \
     nginx \
     openssh-server \
+    rsync \
     software-properties-common \
     unzip \
     wget \
@@ -101,6 +102,10 @@ RUN python3.8 -m pip install --upgrade pip && \
     python3.10 -m pip install --upgrade pip && \
     python3.11 -m pip install --upgrade pip
 
+
+# Extras
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+RUN brew update && brew install pyenv
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
