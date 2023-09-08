@@ -4,7 +4,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV SHELL=/bin/bash
 ENV DEBIAN_FRONTEND=noninteractive
-ENV HF_DATASETS_CACHE=/runpod_volume/.cache/huggingface/datasets
+ENV HF_DATASETS_CACHE=/runpod-volume/.cache/huggingface/datasets
 
 WORKDIR /
 
