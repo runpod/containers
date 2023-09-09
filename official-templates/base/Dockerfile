@@ -3,6 +3,7 @@ FROM nvidia/cuda:11.1.1-cudnn8-runtime-ubuntu20.04
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV SHELL=/bin/bash
+ENV PYTHONUNBUFFERED=True
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HF_DATASETS_CACHE=/runpod-volume/.cache/huggingface/datasets
 
@@ -19,6 +20,7 @@ RUN apt-get update --yes && \
     curl \
     file \
     git \
+    inotify-tools \
     libgl1 \
     nano \
     nginx \
