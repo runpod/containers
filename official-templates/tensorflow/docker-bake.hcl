@@ -1,5 +1,5 @@
 variable "RELEASE" {
-    default = "1.0.0"
+    default = "1.0.1"
 }
 
 target "default" {
