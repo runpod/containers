@@ -66,4 +66,6 @@ export_env_vars
 
 execute_script "/post_start.sh" "Running post-start script..."
 
+echo "Start script(s) finished, pod is ready to use."
+
 sleep infinity

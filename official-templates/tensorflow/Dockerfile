@@ -25,5 +25,8 @@ COPY README.md /usr/share/nginx/html/README.md
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
+# Custom MOTD
+COPY --from=scripts runpod.txt /etc/motd
+
 # Set the default command for the container
 CMD [ "/start.sh" ]
