@@ -9,4 +9,7 @@ target "default" {
     scripts = "../../container-template"
     proxy = "../../container-template/proxy"
   }
+  args = {
+    WEBUI_VERSION = "v1.6.0"
+  }
 }
