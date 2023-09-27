@@ -19,6 +19,7 @@ RUN apt-get update -y && \
     nginx           \
     tzdata          \
     expect          \
+    ca-certificates \
     openssh-server  \
     build-essential \
     python3.10-dev python3.10-venv \
