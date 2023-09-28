@@ -10,8 +10,7 @@ RUN apt-get update --yes && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Setup Jupyter Notebook
-RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
-RUN pip install notebook==6.5.5
+RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions notebook
 RUN pip install jupyter_contrib_nbextensions
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
