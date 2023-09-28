@@ -4,8 +4,10 @@ FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04
 # Set working directory
 WORKDIR /
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    VSCODE_SERVE_MODE=remote
+ENV DEBIAN_FRONTEND=noninteractive
+
+# VS Code Server Environment Variables
+ENV VSCODE_SERVE_MODE=remote
 
 
 # Install System Packages
@@ -16,6 +18,7 @@ RUN apt-get update -y && \
     apt-get update -y && \
     apt-get install -y --no-install-recommends \
     git             \
+    nano            \
     nginx           \
     tzdata          \
     expect          \
@@ -37,8 +40,13 @@ RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
 RUN pip install --upgrade pip && pip install jupyterlab
 
 # Install vscode-server
-RUN wget -q -O- https://aka.ms/install-vscode-server/setup.sh | sh && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+COPY src/vscode-server-setup.sh /tmp/vscode-server-setup.sh
+RUN chmod +x /tmp/vscode-server-setup.sh && \
+    /tmp/vscode-server-setup.sh && \
+    rm /tmp/vscode-server-setup.sh
+
+# RUN wget -q -O- https://aka.ms/install-vscode-server/setup.sh | sh && \
+#     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # copy scripts
 COPY src/* /usr/local/bin/
