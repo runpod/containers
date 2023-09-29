@@ -1,4 +1,4 @@
-FROM tensorflow/tensorflow:latest-gpu-jupyter
+FROM tensorflow/tensorflow:nightly-gpu-jupyter
 
 # Update, upgrade, install packages and clean up
 RUN apt-get update --yes && \
@@ -12,7 +12,6 @@ RUN apt-get update --yes && \
 # Setup Jupyter Notebook
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 RUN pip install notebook==6.5.5
-RUN pip install jupyter_contrib_nbextensions
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
