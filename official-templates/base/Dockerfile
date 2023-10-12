@@ -27,6 +27,7 @@ RUN apt-get update --yes && \
     openssh-server \
     procps \
     rsync \
+    sudo \
     software-properties-common \
     unzip \
     wget \
