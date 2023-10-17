@@ -77,14 +77,21 @@ RUN apt-get update --yes && \
     # Add the Python PPA and install Python versions
     add-apt-repository ppa:deadsnakes/ppa && \
     apt install --yes --no-install-recommends \
+    python3.7-dev \
+    python3.7-venv \
+    python3.7-distutils \
     python3.8-dev \
     python3.8-venv \
+    python3.8-distutils \
     python3.9-dev \
     python3.9-venv \
+    python3.9-distutils \
     python3.10-dev \
     python3.10-venv \
+    python3.10-distutils \
     python3.11-dev \
-    python3.11-venv && \
+    python3.11-venv \
+    python3.11-distutils && \
 
     # Cleanup
     apt-get autoremove -y && \
@@ -96,13 +103,15 @@ RUN apt-get update --yes && \
 
 # Install pip
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python3.7 get-pip.py && \
     python3.8 get-pip.py && \
     python3.9 get-pip.py && \
     python3.10 get-pip.py && \
     python3.11 get-pip.py
 
 # Get the latest pip for all python versions
-RUN python3.8 -m pip install --upgrade pip && \
+RUN python3.7 -m pip install --upgrade pip && \
+    python3.8 -m pip install --upgrade pip && \
     python3.9 -m pip install --upgrade pip && \
     python3.10 -m pip install --upgrade pip && \
     python3.11 -m pip install --upgrade pip
