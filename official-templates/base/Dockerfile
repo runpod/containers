@@ -116,6 +116,8 @@ RUN python3.7 -m pip install --upgrade pip && \
     python3.10 -m pip install --upgrade pip && \
     python3.11 -m pip install --upgrade pip
 
+# pip bug fix
+RUN rm -r ~/.cache/pip/selfcheck/
 
 # Extras
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
