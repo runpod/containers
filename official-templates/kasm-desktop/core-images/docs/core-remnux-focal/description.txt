@@ -1,1 +1,0 @@
-REMnux base image for Kasm Workspaces
