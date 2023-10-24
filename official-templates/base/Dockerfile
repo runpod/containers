@@ -6,10 +6,12 @@ ENV SHELL=/bin/bash
 ENV PYTHONUNBUFFERED=True
 ENV DEBIAN_FRONTEND=noninteractive
 
-ENV HF_HOME = "/runpod-volume/.cache/huggingface/"
-ENV HF_DATASETS_CACHE = "/runpod-volume/.cache/huggingface/datasets/"
-ENV DEFAULT_HF_METRICS_CACHE = "/runpod-volume/.cache/huggingface/metrics/"
-ENV DEFAULT_HF_MODULES_CACHE = "/runpod-volume/.cache/huggingface/modules/"
+ENV HF_HOME="/runpod-volume/.cache/huggingface/"
+ENV HF_DATASETS_CACHE="/runpod-volume/.cache/huggingface/datasets/"
+ENV DEFAULT_HF_METRICS_CACHE="/runpod-volume/.cache/huggingface/metrics/"
+ENV DEFAULT_HF_MODULES_CACHE="/runpod-volume/.cache/huggingface/modules/"
+ENV HUGGINGFACE_HUB_CACHE="/runpod-volume/.cache/huggingface/hub/"
+ENV HUGGINGFACE_ASSETS_CACHE="/cache/huggingface/assets/"
 
 
 WORKDIR /
