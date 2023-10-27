@@ -143,4 +143,8 @@ COPY README.md /usr/share/nginx/html/README.md
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
+# Message of the Day
+RUN echo "Welcome to the NVIDIA CUDA Docker container!" > /etc/motd
+RUN sed -i 's/PrintMotd no/PrintMotd yes/g' /etc/ssh/sshd_config
+
 CMD ["/start.sh"]
