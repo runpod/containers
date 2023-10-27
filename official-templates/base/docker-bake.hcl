@@ -8,5 +8,6 @@ target "default" {
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
+        logo = "../../container-template"
     }
 }

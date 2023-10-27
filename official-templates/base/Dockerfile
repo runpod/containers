@@ -143,9 +143,9 @@ COPY README.md /usr/share/nginx/html/README.md
 COPY --from=scripts start.sh /
 RUN chmod +x /start.sh
 
-# Message of the Day
-RUN echo "Welcome to the NVIDIA CUDA Docker container!" > /etc/motd
-RUN sed -i 's/PrintMotd no/PrintMotd yes/g' /etc/ssh/sshd_config
-RUN echo 'echo "Welcome to the NVIDIA CUDA Docker container!"' >> /root/.bashrc
+# Welcome Message
+COPY --from=logo runpod.txt /etc/runpod.txt
+RUN echo 'cat /etc/runpod.txt' >> /root/.bashrc
+RUN echo 'echo -e "\nWelcome to RunPod!\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/docs\033[0m\n\n"' >> /root/.bashrc
 
 CMD ["/start.sh"]
