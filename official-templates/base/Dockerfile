@@ -146,5 +146,6 @@ RUN chmod +x /start.sh
 # Message of the Day
 RUN echo "Welcome to the NVIDIA CUDA Docker container!" > /etc/motd
 RUN sed -i 's/PrintMotd no/PrintMotd yes/g' /etc/ssh/sshd_config
+RUN echo 'echo "Welcome to the NVIDIA CUDA Docker container!"' >> /root/.bashrc
 
 CMD ["/start.sh"]
