@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.1.1-cudnn8-runtime-ubuntu20.04
+FROM nvidia/cuda:12.2.2-devel-ubuntu20.04
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -32,7 +32,10 @@ RUN apt-get update --yes && \
     libgl1 \
     nano \
     nginx \
+
+    # Required for SSH access
     openssh-server \
+
     procps \
     rsync \
     sudo \
