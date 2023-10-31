@@ -30,7 +30,9 @@ RUN apt-get update --yes && \
     git \
     inotify-tools \
     libgl1 \
+    vim \
     nano \
+    tmux \
     nginx \
 
     # Required for SSH access
@@ -47,6 +49,7 @@ RUN apt-get update --yes && \
     # Build Tools and Development
     apt install --yes --no-install-recommends \
     build-essential \
+    make \
     cmake \
     gfortran \
     libblas-dev \
@@ -79,6 +82,8 @@ RUN apt-get update --yes && \
     libhdf5-serial-dev \
     libsm6 \
     libssl-dev && \
+    libncurses5-dev \
+    libncursesw5-dev \
 
     # File Systems and Storage
     apt install --yes --no-install-recommends \
