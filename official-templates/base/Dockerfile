@@ -82,8 +82,6 @@ RUN apt-get update --yes && \
     libhdf5-serial-dev \
     libsm6 \
     libssl-dev && \
-    libncurses5-dev \
-    libncursesw5-dev \
 
     # File Systems and Storage
     apt install --yes --no-install-recommends \
