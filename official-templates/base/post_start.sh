@@ -9,6 +9,8 @@ interval=60
 
 # Function to monitor the number of active SSH connections
 monitor_ssh() {
+    sleep $interval
+
     while true; do
         # Using 'ss' to count active SSH connections
         connections=$(ss -tn | grep ':22' | wc -l)
