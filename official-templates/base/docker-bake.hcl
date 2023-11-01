@@ -2,6 +2,10 @@ variable "RELEASE" {
     default = "0.3.1"
 }
 
+group "default" {
+    targets = ["11-1-1", "11-8-0", "12-1-0"]
+}
+
 target "11-1-1" {
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.1.1"]
