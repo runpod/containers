@@ -5,22 +5,19 @@ if [[ -z "${RUNPOD_PROJECT_ID}" ]]; then
     exit 0
 fi
 
-interval=60
+interval=${POD_INACTIVITY_TIMEOUT:-60}
 
 # Function to monitor the number of active SSH connections
 monitor_ssh() {
-    sleep $interval
-
     while true; do
-        # Using 'ss' to count active SSH connections
-        connections=$(ss -tn | grep ':22' | wc -l)
-        if [[ "$connections" -gt 0 ]]; then
-            echo "ssh connections active"
-        else
-            echo "no active ssh connections"
+        sleep $interval
+
+        connections=$(ss -tn state established '( dport = :22 or sport = :22 )' | wc -l)
+
+        if [[ "$connections" -eq 0 ]]; then
             runpodctl remove pod $RUNPOD_POD_ID
         fi
-        sleep $interval
+
     done
 }
 
