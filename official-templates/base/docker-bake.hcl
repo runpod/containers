@@ -2,7 +2,7 @@ variable "RELEASE" {
     default = "0.3.0"
 }
 
-target "default" {
+target "11-1-1" {
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.1.1"]
     contexts = {
@@ -15,7 +15,7 @@ target "default" {
     }
 }
 
-target "11.8.0" {
+target "11-8-0" {
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.8.0"]
     contexts = {
@@ -28,7 +28,7 @@ target "11.8.0" {
     }
 }
 
-target "12.1.0" {
+target "12-1-0" {
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.1.0"]
     contexts = {
