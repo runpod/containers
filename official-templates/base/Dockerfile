@@ -1,4 +1,5 @@
-FROM nvidia/cuda:11.1.1-devel-ubuntu20.04
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -147,7 +148,9 @@ COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
 COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+COPY post_start.sh /
+RUN chmod +x /start.sh && \
+    chmod +x /post_start.sh
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt
