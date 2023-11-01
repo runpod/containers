@@ -24,7 +24,7 @@ target "11-8-0" {
         logo = "../../container-template"
     }
     args = {
-        BASE_IMAGE = "nvidia/11.8.0-devel-ubuntu20.04"
+        BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu20.04"
     }
 }
 
@@ -37,6 +37,6 @@ target "12-1-0" {
         logo = "../../container-template"
     }
     args = {
-        BASE_IMAGE = "nvidia/12.1.0-devel-ubuntu22.04"
+        BASE_IMAGE = "nvidia/cuda:12.1.0-devel-ubuntu22.04"
     }
 }
