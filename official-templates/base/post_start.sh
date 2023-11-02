@@ -14,7 +14,7 @@ monitor_ssh() {
     while true; do
         sleep $interval
 
-        connections=$(ss -tn state established '( dport = :22 or sport = :22 )' | wc -l)
+        connections=$(ss -tn | grep ':22' | wc -l)
 
         if [[ "$connections" -eq 0 ]]; then
             runpodctl remove pod $RUNPOD_POD_ID
