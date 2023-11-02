@@ -9,6 +9,8 @@ interval=${POD_INACTIVITY_TIMEOUT:-60}
 
 # Function to monitor the number of active SSH connections
 monitor_ssh() {
+    echo "Monitoring SSH connections every $interval seconds"
+
     while true; do
         sleep $interval
 
