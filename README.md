@@ -49,6 +49,8 @@ buildx bake
 
 ```BASH
 docker buildx bake
+
+docker buildx bake --push
 ```
 
 
