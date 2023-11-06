@@ -62,7 +62,6 @@ RUN apt-get update --yes && \
     libavcodec-dev \
     libavfilter-dev \
     libavformat-dev \
-    libavresample-dev \
     libavutil-dev \
     libjpeg-dev \
     libpng-dev \
