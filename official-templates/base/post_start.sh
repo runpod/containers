@@ -10,7 +10,7 @@ countdown_time=${POD_INACTIVITY_TIMEOUT:-300}
 
 # Function to monitor the number of active SSH connections
 monitor_ssh() {
-    echo "Monitoring SSH connections every $check_interval seconds"
+    echo "Monitoring SSH connections every $check_interval seconds, with a countdown of $countdown_time seconds."
     countdown=$countdown_time
 
     while true; do

@@ -28,8 +28,28 @@ setup_ssh() {
         mkdir -p ~/.ssh
         echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
         chmod 700 -R ~/.ssh
+
+         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+            ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N ''
+        fi
+
+        if [ ! -f /etc/ssh/ssh_host_dsa_key ]; then
+            ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -N ''
+        fi
+
+        if [ ! -f /etc/ssh/ssh_host_ecdsa_key ]; then
+            ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N ''
+        fi
+
+        if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+            ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ''
+        fi
+
         service ssh start
     fi
+
+    echo "SSH host keys:"
+    cat /etc/ssh/*.pub
 }
 
 # Export env vars

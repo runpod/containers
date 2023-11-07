@@ -45,6 +45,8 @@ RUN pip install notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
+# Remove existing SSH host keys
+RUN rm -f /etc/ssh/ssh_host_*
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
