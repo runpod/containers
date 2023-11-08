@@ -46,10 +46,10 @@ setup_ssh() {
         fi
 
         service ssh start
-    fi
 
-    echo "SSH host keys:"
-    cat /etc/ssh/*.pub
+        echo "SSH host keys:"
+        cat /etc/ssh/*.pub
+    fi
 }
 
 # Export env vars
