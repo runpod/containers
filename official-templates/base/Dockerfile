@@ -137,6 +137,7 @@ RUN rm -r ~/.cache/pip/selfcheck/
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
 RUN brew update && brew install pyenv
+RUN tap filebrowser/tap && brew install filebrowser
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
