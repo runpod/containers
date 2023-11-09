@@ -37,4 +37,4 @@ monitor_ssh() {
 }
 
 monitor_ssh &
-filebrowser -p 4040 -r / &
+filebrowser -a 0.0.0.0 -p 4040 -r / &
