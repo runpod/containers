@@ -26,7 +26,7 @@ setup_ssh() {
     if [[ $PUBLIC_KEY ]]; then
         echo "Setting up SSH..."
         mkdir -p ~/.ssh
-        echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
+        echo "$PUBLIC_KEY" > ~/.ssh/authorized_keys
         chmod 700 -R ~/.ssh
 
          if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
