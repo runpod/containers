@@ -15,6 +15,8 @@ ENV DEFAULT_HF_MODULES_CACHE="/runpod-volume/.cache/huggingface/modules/"
 ENV HUGGINGFACE_HUB_CACHE="/runpod-volume/.cache/huggingface/hub/"
 ENV HUGGINGFACE_ASSETS_CACHE="/runpod-volume/.cache/huggingface/assets/"
 
+# Faster transfer of models from the hub to the container
+ENV HF_HUB_ENABLE_HF_TRANSFER="1"
 
 WORKDIR /
 
