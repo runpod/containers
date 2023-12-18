@@ -16,3 +16,8 @@ docker buildx bake --push
 ## Ports
 
 - 4040 - File Browser
+
+
+## Python Management
+
+https://github.com/pyenv/pyenv
