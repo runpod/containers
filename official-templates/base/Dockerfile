@@ -18,6 +18,10 @@ ENV HUGGINGFACE_ASSETS_CACHE="/runpod-volume/.cache/huggingface/assets/"
 # Faster transfer of models from the hub to the container
 ENV HF_HUB_ENABLE_HF_TRANSFER="1"
 
+# Shared python package cache
+ENV VIRTUALENV_OVERRIDE_APP_DATA="/runpod-volume/.cache/virtualenv/"
+ENV PIP_CACHE_DIR="/runpod-volume/.cache/pip/"
+
 WORKDIR /
 
 # Update, upgrade, install packages and clean up
@@ -134,6 +138,20 @@ RUN python3.7 -m pip install --upgrade pip && \
 
 # pip bug fix
 RUN rm -r ~/.cache/pip/selfcheck/
+
+# Install pipx
+RUN python3.7 -m pip install --user pipx && python3.7 -m pipx ensurepath && \
+    python3.8 -m pip install --user pipx && python3.8 -m pipx ensurepath && \
+    python3.9 -m pip install --user pipx && python3.9 -m pipx ensurepath && \
+    python3.10 -m pip install --user pipx && python3.10 -m pipx ensurepath && \
+    python3.11 -m pip install --user pipx && python3.11 -m pipx ensurepath
+
+# Install virtualenv
+RUN python3.7 -m pipx install virtualenv && \
+    python3.8 -m pipx install virtualenv && \
+    python3.9 -m pipx install virtualenv && \
+    python3.10 -m pipx install virtualenv && \
+    python3.11 -m pipx install virtualenv
 
 # Extras
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
