@@ -21,3 +21,9 @@ docker buildx bake --push
 ## Python Management
 
 https://github.com/pyenv/pyenv
+
+Using:
+https://virtualenv.pypa.io/en/latest/index.html
+
+To add:
+https://virtualenvwrapper.readthedocs.io/en/latest/
