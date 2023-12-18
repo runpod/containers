@@ -1,5 +1,5 @@
 variable "RELEASE" {
-    default = "10.2.1"
+    default = "11.0.0"
 }
 
 target "default" {
@@ -10,6 +10,6 @@ target "default" {
     proxy = "../../container-template/proxy"
   }
   args = {
-    WEBUI_VERSION = "v1.6.0"
+    WEBUI_VERSION = "v1.7.0"
   }
 }
