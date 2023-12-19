@@ -44,8 +44,8 @@ RUN mkdir /sd-models && mkdir /cn-models && \
     wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors -O /sd-models/sd_xl_refiner_1.0.safetensors && \
     wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
 
+# Create a virtual environment
 RUN python -m venv /workspace/venv && \
-    export PATH="/workspace/venv/bin:$PATH" && \
     pip install -U --no-cache-dir jupyterlab jupyterlab_widgets ipykernel ipywidgets
 
 # Install Automatic1111's WebUI
@@ -54,7 +54,7 @@ RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     git checkout tags/${WEBUI_VERSION} && \
     mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
     mv /workspace/requirements.txt ./requirements.txt && \
-    python -c "from launch import prepare_environment; prepare_enviroment()" --skip-torch-cuda-test
+    python -c "from launch import prepare_environment; prepare_environment()" --skip-torch-cuda-test
 
 # Install DeForum
 RUN cd /workspace/stable-diffusion-webui && \
