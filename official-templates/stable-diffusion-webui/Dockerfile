@@ -15,13 +15,6 @@ WORKDIR /workspace
 # Set up shell and update packages
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Cache Models
-RUN mkdir /sd-models && mkdir /cn-models && \
-    wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt && \
-    wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors -O /sd-models/sd_xl_base_1.0.safetensors && \
-    wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors -O /sd-models/sd_xl_refiner_1.0.safetensors && \
-    wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
-
 # Copy the Python dependencies
 COPY requirements*.txt .
 COPY cache-sd-model.py install-automatic.py ./
@@ -43,6 +36,13 @@ RUN add-apt-repository ppa:deadsnakes/ppa && \
     ln -s /usr/bin/python3.10 /usr/bin/python3 && \
     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \python get-pip.py && \
     pip install -U --no-cache-dir pip
+
+# Cache Models
+RUN mkdir /sd-models && mkdir /cn-models && \
+    wget https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt -O /sd-models/v1-5-pruned.ckpt && \
+    wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors -O /sd-models/sd_xl_base_1.0.safetensors && \
+    wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors -O /sd-models/sd_xl_refiner_1.0.safetensors && \
+    wget https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_canny.pth -O /cn-models/control_v11p_sd15_canny.pth
 
 RUN python -m venv /workspace/venv && \
     export PATH="/workspace/venv/bin:$PATH" && \
