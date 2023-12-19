@@ -54,7 +54,7 @@ RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     git checkout tags/${WEBUI_VERSION} && \
     mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
     mv /workspace/requirements.txt ./requirements.txt && \
-    python -c "from launch import prepare_enviroment; prepare_enviroment()" --skip-torch-cuda-test
+    python -c "from launch import prepare_environment; prepare_enviroment()" --skip-torch-cuda-test
 
 # Install DeForum
 RUN cd /workspace/stable-diffusion-webui && \
