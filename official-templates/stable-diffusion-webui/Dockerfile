@@ -70,8 +70,9 @@ RUN cd /workspace/stable-diffusion-webui && \
 
 COPY cache-sd-model.py /workspace/stable-diffusion-webui/
 RUN cd /workspace/stable-diffusion-webui/ && \
-    python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt && \
-    mv /workspace/venv /venv && \
+    python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt
+
+RUN mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
     mkdir /workspace/downloader && git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
 
