@@ -17,7 +17,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Copy the Python dependencies
 COPY requirements*.txt .
-COPY cache-sd-model.py install-automatic.py ./
+
 
 # Install system dependencies
 RUN apt update --yes && \
@@ -52,7 +52,6 @@ RUN python -m venv /workspace/venv && \
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd stable-diffusion-webui && \
     git checkout tags/${WEBUI_VERSION} && \
-    mv /workspace/install-automatic.py /workspace/stable-diffusion-webui/ && \
     mv /workspace/requirements.txt ./requirements.txt && \
     python -c "from launch import prepare_environment; prepare_environment()" --skip-torch-cuda-test
 
@@ -69,14 +68,12 @@ RUN cd /workspace/stable-diffusion-webui && \
     pip install -r requirements.txt && \
     pip install xformers
 
+COPY cache-sd-model.py /workspace/stable-diffusion-webui/
 RUN cd /workspace/stable-diffusion-webui/ && \
-    mv /workspace/cache-sd-model.py /workspace/stable-diffusion-webui/ && \
     python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt && \
-    pip cache purge && \
-    apt clean && \
     mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
-    git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
+    mkdir /workspace/downloader && git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
 
 
 COPY relauncher.py webui-user.sh /stable-diffusion-webui/
