@@ -65,8 +65,7 @@ RUN cd /workspace/stable-diffusion-webui && \
 RUN cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/Mikubill/sd-webui-controlnet.git extensions/sd-webui-controlnet && \
     cd extensions/sd-webui-controlnet && \
-    pip install -r requirements.txt && \
-    pip install xformers
+    pip install -r requirements.txt
 
 COPY cache-sd-model.py /workspace/stable-diffusion-webui/
 RUN cd /workspace/stable-diffusion-webui/ && \
