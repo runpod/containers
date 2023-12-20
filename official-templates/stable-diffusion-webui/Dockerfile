@@ -73,7 +73,8 @@ RUN cd /workspace/stable-diffusion-webui/ && \
 
 # Install the xformers library
 RUN cd /workspace/stable-diffusion-webui && \
-    pip install xformers==0.0.22
+    pip install xformers==0.0.22 && \
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 RUN mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
