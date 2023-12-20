@@ -95,8 +95,8 @@ RUN apt-get update --yes && \
     # File Systems and Storage
     apt install --yes --no-install-recommends \
     cifs-utils \
-    nfs-common && \
-    zstd \
+    nfs-common \
+    zstd &&\
 
     # Add the Python PPA and install Python versions
     add-apt-repository ppa:deadsnakes/ppa && \
