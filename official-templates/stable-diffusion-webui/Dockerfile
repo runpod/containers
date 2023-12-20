@@ -15,10 +15,6 @@ WORKDIR /workspace
 # Set up shell and update packages
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Copy the Python dependencies
-COPY requirements*.txt .
-
-
 # Install system dependencies
 RUN apt update --yes && \
     apt upgrade --yes && \
@@ -74,6 +70,11 @@ RUN cd /workspace/stable-diffusion-webui/ && \
 RUN mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
     mkdir /workspace/downloader && git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
+
+# Additional Python Dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt && \
+    rm requirements.txt
 
 
 COPY relauncher.py webui-user.sh /stable-diffusion-webui/
