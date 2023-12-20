@@ -15,6 +15,10 @@ WORKDIR /workspace
 # Set up shell and update packages
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# Copy the Python dependencies
+COPY requirements*.txt .
+
+
 # Install system dependencies
 RUN apt update --yes && \
     apt upgrade --yes && \
@@ -48,6 +52,7 @@ RUN python -m venv /workspace/venv && \
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd stable-diffusion-webui && \
     git checkout tags/${WEBUI_VERSION} && \
+    mv /workspace/requirements.txt ./requirements.txt && \
     python -c "from launch import prepare_environment; prepare_environment()" --skip-torch-cuda-test
 
 # Install DeForum
@@ -70,10 +75,8 @@ RUN mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
     mkdir /workspace/downloader && git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
 
-# Additional Python Dependencies
-COPY requirements.txt .
-RUN pip install -r requirements.txt && \
-    rm requirements.txt
+# Install the xformers library
+RUN pip install xformers==0.0.22
 
 
 COPY relauncher.py webui-user.sh /stable-diffusion-webui/
