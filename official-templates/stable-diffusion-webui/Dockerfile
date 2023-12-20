@@ -71,12 +71,15 @@ COPY cache-sd-model.py /workspace/stable-diffusion-webui/
 RUN cd /workspace/stable-diffusion-webui/ && \
     python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt
 
+# Install the xformers library
+RUN cd /workspace/stable-diffusion-webui && \
+    pip install xformers==0.0.22
+
 RUN mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
     mkdir /workspace/downloader && git clone https://github.com/jjangga0214/sd-models-downloader.git /workspace/downloader
 
-# Install the xformers library
-RUN pip install xformers==0.0.22
+
 
 
 COPY relauncher.py webui-user.sh /stable-diffusion-webui/
