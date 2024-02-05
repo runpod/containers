@@ -68,7 +68,7 @@ target "210-py310-cuda1180-devel-ubuntu2204" {
     args = {
         BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu22.04"
         PYTHON_VERSION = "3.10"
-        TORCH = "torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+        TORCH = "torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118"
     }
 }
 
@@ -76,6 +76,22 @@ target "210-py310-cuda1180-devel-ubuntu2204" {
 target "211-py310-cuda1211-devel-ubuntu2204" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:2.1.1-py3.10-cuda12.1.1-devel-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.1.1-devel-ubuntu22.04"
+        PYTHON_VERSION = "3.10"
+        TORCH = "torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu121"
+    }
+}
+
+
+target "220-py310-cuda1211-devel-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
