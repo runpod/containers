@@ -39,4 +39,4 @@ monitor_ssh() {
 monitor_ssh &
 
 # Start filebrowser
-filebrowser --address=0.0.0.0 --port=4040 --root=/ --auth.method=noauth &
+filebrowser --address=0.0.0.0 --port=4040 --root=/ --noauth &
