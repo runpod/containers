@@ -1,5 +1,5 @@
 variable "RELEASE" {
-    default = "0.4.4"
+    default = "0.5.0"
 }
 
 group "default" {
@@ -42,5 +42,18 @@ target "12-1-0" {
     }
     args = {
         BASE_IMAGE = "nvidia/cuda:12.1.0-devel-ubuntu22.04"
+    }
+}
+
+target "12-2-0" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/base:${RELEASE}-cuda12.2.0"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.2.0-devel-ubuntu22.04"
     }
 }

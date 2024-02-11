@@ -37,4 +37,6 @@ monitor_ssh() {
 }
 
 monitor_ssh &
-filebrowser -a 0.0.0.0 -p 4040 -r / &
+
+# Start filebrowser
+filebrowser --address=0.0.0.0 --port=4040 --root=/ --auth.method=noauth &
