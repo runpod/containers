@@ -10,7 +10,7 @@ This image contains environment variables to override the default HuggingFace ca
 
 - POD_INACTIVITY_TIMEOUT - The number of seconds to wait before shutting down the pod. Defaults to 60 seconds.
 
-docker buildx bake --push
+`docker buildx bake --push`
 
 
 ## Ports
