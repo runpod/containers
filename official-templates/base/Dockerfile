@@ -40,6 +40,7 @@ RUN apt-get update --yes && \
     git \
     inotify-tools \
     libgl1 \
+    lsof \
     vim \
     nano \
     tmux \
