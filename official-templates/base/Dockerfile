@@ -99,11 +99,6 @@ RUN apt-get update --yes && \
     nfs-common \
     zstd &&\
 
-    # Install database clients
-    # apt install --yes --no-install-recommends \
-    # default-libmysqlclient-dev \
-    # libpq-dev && \
-
     # Add the Python PPA and install Python versions
     add-apt-repository ppa:deadsnakes/ppa && \
     apt install --yes --no-install-recommends \
