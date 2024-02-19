@@ -6,7 +6,7 @@
 
 ## ⚠️ | Notice
 
-Your development API server is launching, please wait a moment before refreshing the page. Your terminal will say **Starting Serverless Worker** when the server is ready.
+Your development API server is launching, please wait a moment before refreshing the page. Your terminal will say **Starting Serverless Worker** when the server is ready. You may also be seeing this message if your handler has any errors, please check your terminal for more information.
 
 ## 🚀 | Usage
 
