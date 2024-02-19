@@ -99,6 +99,12 @@ RUN apt-get update --yes && \
     nfs-common \
     zstd &&\
 
+    # Install database clients
+    apt install --yes --no-install-recommends \
+    libpq-dev \
+    mysql-client \
+    postgresql-client && \
+
     # Add the Python PPA and install Python versions
     add-apt-repository ppa:deadsnakes/ppa && \
     apt install --yes --no-install-recommends \
@@ -117,12 +123,6 @@ RUN apt-get update --yes && \
     python3.11-dev \
     python3.11-venv \
     python3.11-distutils && \
-
-    # Install database clients
-    apt install --yes --no-install-recommends \
-    libpq-dev \
-    mysql-client \
-    postgresql-client && \
 
     # Cleanup
     apt-get autoremove -y && \
