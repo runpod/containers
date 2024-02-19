@@ -101,9 +101,8 @@ RUN apt-get update --yes && \
 
     # Install database clients
     apt install --yes --no-install-recommends \
-    libpq-dev \
-    mysql-client \
-    postgresql-client && \
+    default-libmysqlclient-dev \
+    libpq-dev && \
 
     # Add the Python PPA and install Python versions
     add-apt-repository ppa:deadsnakes/ppa && \
