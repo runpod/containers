@@ -97,7 +97,6 @@ RUN apt-get update --yes && \
     apt install --yes --no-install-recommends \
     cifs-utils \
     nfs-common \
-    mysql-connector \
     zstd &&\
 
     # Add the Python PPA and install Python versions
@@ -118,6 +117,12 @@ RUN apt-get update --yes && \
     python3.11-dev \
     python3.11-venv \
     python3.11-distutils && \
+
+    # Install database clients
+    apt install --yes --no-install-recommends \
+    libpq-dev \
+    mysql-client \
+    postgresql-client && \
 
     # Cleanup
     apt-get autoremove -y && \
