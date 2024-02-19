@@ -1,9 +1,22 @@
 variable "RELEASE" {
-    default = "0.5.0"
+    default = "0.5.1"
 }
 
 group "default" {
-    targets = ["11-1-1", "11-8-0", "12-1-0"]
+    targets = ["cpu", "11-1-1", "11-8-0", "12-1-0", "12-2-0"]
+}
+
+target "cpu" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/base:${RELEASE}-cpu"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "ubuntu:20.04"
+    }
 }
 
 target "11-1-1" {

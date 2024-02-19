@@ -97,6 +97,7 @@ RUN apt-get update --yes && \
     apt install --yes --no-install-recommends \
     cifs-utils \
     nfs-common \
+    mysql-connector \
     zstd &&\
 
     # Add the Python PPA and install Python versions
