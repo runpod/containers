@@ -6,11 +6,11 @@
 
 ## ⚠️ | Notice
 
-Your development API server is launching, please wait a moment before refreshing the page. Your terminal will say **Starting Serverless Worker** when the server is ready. You may also be seeing this message if your handler has any errors, please check your terminal for more information.
+Your development API server is launching, please wait a moment before refreshing the page. Your terminal will say **Starting Serverless Worker** when the server is ready. You might also be seeing this message if your handler has any errors, please check your terminal for more information.
 
 ## 🚀 | Usage
 
-Once the server is ready, you will see the list of endpoints available to start sending requests. You can either send request to these endpoints from the FastAPI web interface, a service such as Postman, with cURL or programmatically from a language of your choice.
+Once the server is ready, you will see the list of endpoints available to start sending requests. You can send requests to these endpoints from the FastAPI web interface, a service such as Postman, with cURL or programmatically from a language of your choice.
 
 <!---
 
