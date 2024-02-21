@@ -39,6 +39,7 @@ RUN apt-get update --yes && \
     file \
     git \
     inotify-tools \
+    js \
     libgl1 \
     lsof \
     vim \
