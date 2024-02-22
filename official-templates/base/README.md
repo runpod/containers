@@ -36,6 +36,7 @@ This image contains environment variables to override the default HuggingFace ca
 - [PyEnv](https://github.com/pyenv/pyenv)
 - [VirtualEnv](https://virtualenv.pypa.io/en/latest/index.html)
 - [VirtualEnvWrapper](https://virtualenvwrapper.readthedocs.io/en/latest/)
+- [uv](https://github.com/astral-sh/uv)
 
 ### Building
 

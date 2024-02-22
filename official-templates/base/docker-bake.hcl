@@ -1,5 +1,5 @@
 variable "RELEASE" {
-    default = "0.5.2"
+    default = "0.6.0"
 }
 
 group "default" {

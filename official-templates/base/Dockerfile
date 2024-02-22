@@ -149,6 +149,9 @@ RUN python3.7 -m pip install virtualenv && \
     python3.10 -m pip install virtualenv && \
     python3.11 -m pip install virtualenv
 
+# Install pip drop-in replacement uv (https://github.com/astral-sh/uv)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Extras
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
