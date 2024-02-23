@@ -15,7 +15,7 @@ target "cpu" {
         logo = "../../container-template"
     }
     args = {
-        BASE_RELEASE_VERSION = ${RELEASE}
+        BASE_RELEASE_VERSION = "${RELEASE}"
         BASE_IMAGE = "ubuntu:20.04"
     }
 }
