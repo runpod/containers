@@ -1,5 +1,5 @@
 variable "RELEASE" {
-    default = "0.6.0"
+    default = "0.6.1"
 }
 
 group "default" {
@@ -15,6 +15,7 @@ target "cpu" {
         logo = "../../container-template"
     }
     args = {
+        BASE_RELEASE_VERSION = ${RELEASE}
         BASE_IMAGE = "ubuntu:20.04"
     }
 }

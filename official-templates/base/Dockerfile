@@ -7,6 +7,10 @@ ENV SHELL=/bin/bash
 ENV PYTHONUNBUFFERED=True
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Set the base release version
+ARG BASE_RELEASE_VERSION
+ENV BASE_RELEASE_VERSION=${BASE_RELEASE_VERSION}
+
 # Override the default huggingface cache directory.
 ENV HF_HOME="/runpod-volume/.cache/huggingface/"
 ENV HF_DATASETS_CACHE="/runpod-volume/.cache/huggingface/datasets/"
