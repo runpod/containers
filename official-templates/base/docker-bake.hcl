@@ -29,6 +29,7 @@ target "11-1-1" {
         logo = "../../container-template"
     }
     args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
         BASE_IMAGE = "nvidia/cuda:11.1.1-devel-ubuntu20.04"
     }
 }
@@ -42,6 +43,7 @@ target "11-8-0" {
         logo = "../../container-template"
     }
     args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
         BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu22.04"
     }
 }
@@ -55,6 +57,7 @@ target "12-1-0" {
         logo = "../../container-template"
     }
     args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
         BASE_IMAGE = "nvidia/cuda:12.1.0-devel-ubuntu22.04"
     }
 }
@@ -68,6 +71,7 @@ target "12-2-0" {
         logo = "../../container-template"
     }
     args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
         BASE_IMAGE = "nvidia/cuda:12.2.0-devel-ubuntu22.04"
     }
 }
