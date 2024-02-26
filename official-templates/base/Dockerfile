@@ -25,6 +25,7 @@ ENV HF_HUB_ENABLE_HF_TRANSFER="1"
 # Shared python package cache
 ENV VIRTUALENV_OVERRIDE_APP_DATA="/runpod-volume/.cache/virtualenv/"
 ENV PIP_CACHE_DIR="/runpod-volume/.cache/pip/"
+ENV UV_CACHE_DIR="/runpod-volume/.cache/uv/"
 
 # Set Default Python Version
 ENV PYTHON_VERSION="3.10"
@@ -161,6 +162,9 @@ RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/instal
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
 RUN brew update && brew install pyenv
 RUN brew tap filebrowser/tap && brew install filebrowser
+
+# Temporary while bash path gets fixed https://github.com/astral-sh/uv/issues/1586
+RUN brew install uv
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
