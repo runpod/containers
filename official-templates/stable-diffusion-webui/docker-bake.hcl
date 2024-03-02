@@ -10,6 +10,7 @@ target "default" {
     proxy = "../../container-template/proxy"
   }
   args = {
-    WEBUI_VERSION = "v1.7.0"
+    WEBUI_VERSION = "v1.8.0"
+    TORCH_VERSION = "2.0.1"
   }
 }
