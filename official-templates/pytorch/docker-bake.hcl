@@ -5,6 +5,7 @@ group "default" {
         "201-py310-cuda1180-devel-ubuntu2204",
         "210-py310-cuda1180-devel-ubuntu2204",
         "211-py310-cuda1211-devel-ubuntu2204",
+        "221-py310-cuda1211-devel-ubuntu2204"
     ]
 }
 
@@ -92,6 +93,21 @@ target "211-py310-cuda1211-devel-ubuntu2204" {
 target "220-py310-cuda1211-devel-ubuntu2204" {
     dockerfile = "Dockerfile"
     tags = ["runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.1.1-devel-ubuntu22.04"
+        PYTHON_VERSION = "3.10"
+        TORCH = "pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0"
+    }
+}
+
+target "221-py310-cuda1211-devel-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
