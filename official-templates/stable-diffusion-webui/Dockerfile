@@ -17,7 +17,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt update --yes && \
     apt upgrade --yes && \
     apt install --yes --no-install-recommends \
-    git openssh-server libglib2.0-0 libsm6 libgl1 libxrender1 libxext6 ffmpeg wget curl psmisc rsync vim nginx \
+    git openssh-server libglib2.0-0 libsm6 libgl1 libxrender1 libxext6 ffmpeg wget curl psmisc rsync vim bc nginx \
     pkg-config libffi-dev libcairo2 libcairo2-dev libgoogle-perftools4 libtcmalloc-minimal4 apt-transport-https \
     software-properties-common ca-certificates && \
     update-ca-certificates
