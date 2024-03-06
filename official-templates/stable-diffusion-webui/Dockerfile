@@ -2,6 +2,7 @@ FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG WEBUI_VERSION
 ARG TORCH_VERSION
+ARG XFORMERS_VERSION
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV SHELL=/bin/bash
@@ -45,7 +46,7 @@ RUN python -m venv /workspace/venv && \
 # Install torch and xformers
 RUN cd /workspace/stable-diffusion-webui && \
     pip install torch===${TORCH_VERSION} torchvision torchaudio --force-reinstall --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install xformers==0.0.22
+    pip install xformers==${XFORMERS_VERSION}
 
 # Install Automatic1111's WebUI
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
@@ -58,6 +59,7 @@ RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
 RUN cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
     cd extensions/deforum && \
+    pip install basicsr && \
     pip install -r requirements.txt
 
 # Install ControlNet
