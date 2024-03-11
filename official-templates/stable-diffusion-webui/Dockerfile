@@ -45,8 +45,8 @@ RUN python -m venv /workspace/venv && \
 
 # Install torch and xformers
 RUN cd /workspace/stable-diffusion-webui && \
-    pip install torch===${TORCH_VERSION} torchvision torchaudio --force-reinstall --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install xformers==${XFORMERS_VERSION}
+    pip install torch===${TORCH_VERSION} torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    pip install xformers==${XFORMERS_VERSION} --index-url https://download.pytorch.org/whl/cu118
 
 # Install Automatic1111's WebUI
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \

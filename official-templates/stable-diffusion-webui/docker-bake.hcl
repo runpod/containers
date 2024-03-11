@@ -11,7 +11,7 @@ target "default" {
   }
   args = {
     WEBUI_VERSION = "v1.8.0"
-    TORCH_VERSION = "2.0.1"
-    XFORMERS_EVRSION = "0.0.22"
+    TORCH_VERSION = "2.1.2+cu118"
+    XFORMERS_EVRSION = "0.0.23.post1+cu118"
   }
 }
