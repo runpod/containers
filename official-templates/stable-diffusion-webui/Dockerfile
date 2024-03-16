@@ -43,17 +43,17 @@ RUN mkdir /sd-models && mkdir /cn-models && \
 RUN python -m venv /workspace/venv && \
     pip install -U --no-cache-dir jupyterlab jupyterlab_widgets ipykernel ipywidgets
 
-# Install torch and xformers
-RUN cd /workspace/stable-diffusion-webui && \
-    pip install torch===${TORCH_VERSION} torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install xformers==${XFORMERS_VERSION} --index-url https://download.pytorch.org/whl/cu118
-
 # Install Automatic1111's WebUI
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd stable-diffusion-webui && \
     git checkout tags/${WEBUI_VERSION} && \
     pip install -r requirements_versions.txt && \
     python -c "from launch import prepare_environment; prepare_environment()" --skip-torch-cuda-test
+
+# Install torch and xformers
+RUN cd /workspace/stable-diffusion-webui && \
+    pip install torch===${TORCH_VERSION} torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    pip install xformers==${XFORMERS_VERSION} --index-url https://download.pytorch.org/whl/cu118
 
 # Install DeForum
 RUN cd /workspace/stable-diffusion-webui && \
