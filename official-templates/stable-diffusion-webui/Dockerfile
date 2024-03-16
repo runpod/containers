@@ -1,29 +1,24 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG WEBUI_VERSION
+ARG TORCH_VERSION
+ARG XFORMERS_VERSION
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV SHELL=/bin/bash
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
 ENV PATH="/workspace/venv/bin:$PATH"
 
-# Used by webui.sh
-ENV TORCH_COMMAND="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
-
 WORKDIR /workspace
 
 # Set up shell and update packages
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Copy the Python dependencies
-COPY requirements*.txt .
-
-
 # Install system dependencies
 RUN apt update --yes && \
     apt upgrade --yes && \
     apt install --yes --no-install-recommends \
-    git openssh-server libglib2.0-0 libsm6 libgl1 libxrender1 libxext6 ffmpeg wget curl psmisc rsync vim nginx \
+    git openssh-server libglib2.0-0 libsm6 libgl1 libxrender1 libxext6 ffmpeg wget curl psmisc rsync vim bc nginx \
     pkg-config libffi-dev libcairo2 libcairo2-dev libgoogle-perftools4 libtcmalloc-minimal4 apt-transport-https \
     software-properties-common ca-certificates && \
     update-ca-certificates
@@ -48,17 +43,23 @@ RUN mkdir /sd-models && mkdir /cn-models && \
 RUN python -m venv /workspace/venv && \
     pip install -U --no-cache-dir jupyterlab jupyterlab_widgets ipykernel ipywidgets
 
+# Install torch and xformers
+RUN cd /workspace/stable-diffusion-webui && \
+    pip install torch===${TORCH_VERSION} torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    pip install xformers==${XFORMERS_VERSION} --index-url https://download.pytorch.org/whl/cu118
+
 # Install Automatic1111's WebUI
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd stable-diffusion-webui && \
     git checkout tags/${WEBUI_VERSION} && \
-    mv /workspace/requirements.txt ./requirements.txt && \
+    pip install -r requirements_versions.txt && \
     python -c "from launch import prepare_environment; prepare_environment()" --skip-torch-cuda-test
 
 # Install DeForum
 RUN cd /workspace/stable-diffusion-webui && \
     git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
     cd extensions/deforum && \
+    pip install basicsr && \
     pip install -r requirements.txt
 
 # Install ControlNet
@@ -70,11 +71,6 @@ RUN cd /workspace/stable-diffusion-webui && \
 COPY cache-sd-model.py /workspace/stable-diffusion-webui/
 RUN cd /workspace/stable-diffusion-webui/ && \
     python cache-sd-model.py --use-cpu=all --ckpt /sd-models/SDv1-5.ckpt
-
-# Install the xformers library
-RUN cd /workspace/stable-diffusion-webui && \
-    pip install torch torchvision torchaudio --force-reinstall --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install xformers==0.0.22
 
 RUN mv /workspace/venv /venv && \
     mv /workspace/stable-diffusion-webui /stable-diffusion-webui && \
