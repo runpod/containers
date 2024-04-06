@@ -3,6 +3,13 @@
 # Uncomment and change the variables below to your need:#
 #########################################################
 
+# Check the value of SKIP_INSTALL and set the flag accordingly
+if [ "${SKIP_INSTALL,,}" = "true" ]; then
+    skip_install_flag="--skip-install"
+else
+    skip_install_flag=""
+fi
+
 # Install directory without trailing slash
 install_dir="/workspace"
 
@@ -10,7 +17,7 @@ install_dir="/workspace"
 #clone_dir="stable-diffusion-webui"
 
 # Commandline arguments for webui.py, for example: export COMMANDLINE_ARGS="--medvram --opt-split-attention"
-export COMMANDLINE_ARGS="--port 3000 --xformers ${SKIP_INSTALL:+--skip-install} --listen --enable-insecure-extension-access"
+export COMMANDLINE_ARGS="--port 3000 --xformers $skip_install_flag --listen --enable-insecure-extension-access"
 #export XFORMERS_PACKAGE="xformers==0.0.17.dev447"
 
 # python3 executable
