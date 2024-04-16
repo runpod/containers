@@ -7,7 +7,7 @@ FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 WORKDIR /
 ENV SHELL=/bin/bash \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
     LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4
 
 # Set up system
