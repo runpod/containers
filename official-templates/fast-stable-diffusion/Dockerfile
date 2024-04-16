@@ -8,6 +8,7 @@ WORKDIR /
 ENV SHELL=/bin/bash \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive
+    LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4
 
 # Set up system
 RUN apt-get update --yes && \
@@ -44,6 +45,8 @@ RUN wget https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependenci
     https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/rename_1.10-1_all.deb \
     https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/zip_3.0-11build1_amd64.deb \
     https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/unzip_6.0-25ubuntu1.1_amd64.deb && \
+    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/libtcmalloc-minimal4_2.5-2.2ubuntu3_amd64.deb && \
+    https://github.com/TheLastBen/fast-stable-diffusion/raw/main/Dependencies/libgoogle-perftools-dev_2.5-2.2ubuntu3_amd64.deb && \
     apt update && \
     apt install -y --no-install-recommends libfontconfig1 libgles2-mesa-dev && \
     dpkg -i *.deb && \
