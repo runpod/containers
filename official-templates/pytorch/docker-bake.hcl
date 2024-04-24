@@ -5,6 +5,7 @@ group "default" {
         "201-py310-cuda1180-devel-ubuntu2204",
         "210-py310-cuda1180-devel-ubuntu2204",
         "211-py310-cuda1211-devel-ubuntu2204",
+        "211-py39-rocm60-ubuntu2004",
         "212-py310-rocm602-ubuntu2204",
         "212-py310-rocm61-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204"
@@ -91,6 +92,33 @@ target "211-py310-cuda1211-devel-ubuntu2204" {
     }
 }
 
+target "212-py310-rocm602-ubuntu2204" {
+    dockerfile = "Dockerfile.rocm"
+    tags = ["runpod/pytorch:2.1.2-py3.10-rocm6.0.2-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "rocm/pytorch:rocm6.0.2_ubuntu22.04_py3.10_pytorch_2.1.2"
+    }
+}
+
+
+target "211-py39-rocm60-ubuntu2004" {
+    dockerfile = "Dockerfile.rocm"
+    tags = ["runpod/pytorch:2.1.1-py3.9-rocm6.0-ubuntu20.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "rocm/pytorch:rocm6.0_ubuntu20.04_py3.9_pytorch_2.1.1"
+    }
+}
+
 
 target "212-py310-rocm61-ubuntu2204" {
     dockerfile = "Dockerfile.rocm"
@@ -105,19 +133,6 @@ target "212-py310-rocm61-ubuntu2204" {
     }
 }
 
-
-target "212-py310-rocm602-ubuntu2204" {
-    dockerfile = "Dockerfile.rocm"
-    tags = ["runpod/pytorch:2.1.2-py3.10-rocm6.0.2-ubuntu22.04"]
-    contexts = {
-        scripts = "../../container-template"
-        proxy = "../../container-template/proxy"
-        logo = "../../container-template"
-    }
-    args = {
-        BASE_IMAGE = "rocm/pytorch:rocm6.0.2_ubuntu22.04_py3.10_pytorch_2.1.2"
-    }
-}
 
 target "220-py310-cuda1211-devel-ubuntu2204" {
     dockerfile = "Dockerfile"
