@@ -219,3 +219,16 @@ target "221-py310-cuda1211-devel-ubuntu2204" {
         TORCH = "torch torchvision torchaudio"
     }
 }
+
+target "212-py10-rocm602-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/pytorch:2.1.2-py3.10-rocm6.0.2-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "rocm/pytorch:rocm6.0.2_ubuntu22.04_py3.10_pytorch_2.1.2"
+    }
+}

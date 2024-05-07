@@ -29,7 +29,6 @@ RUN apt-get update --yes && \
     rm -rf /var/lib/apt/lists/* && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-
 # Set up Python and pip only if PYTHON_VERSION is specified
 RUN if [ -n "${PYTHON_VERSION}" ]; then \
         ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
