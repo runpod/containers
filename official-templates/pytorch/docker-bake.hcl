@@ -143,6 +143,7 @@ target "220-py310-cuda1211-devel-ubuntu2204" {
 target "221-py310-cuda1211-devel-ubuntu2204" {
     dockerfile = "Dockerfile"
     tags = ["${PUBLISHER}/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04"]
+    platforms = ["linux/amd64"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
@@ -152,6 +153,24 @@ target "221-py310-cuda1211-devel-ubuntu2204" {
         BASE_IMAGE = "nvidia/cuda:12.1.1-devel-ubuntu22.04"
         PYTHON_VERSION = "3.10"
         TORCH = "torch torchvision torchaudio"
+    }
+}
+
+target "230-py312-cuda1241-devel-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["${PUBLISHER}/pytorch:2.3.0-py3.12-cuda12.4.1-devel-ubuntu22.04"]
+    platforms = ["linux/amd64"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+        PYTHON_VERSION = "3.12"
+        TORCH = "torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0"
+        JUPYTER_LAB_OR_NOTEBOOK = "lab"
+        INCLUDE_FILEBROWSER = "yes"
     }
 }
 
