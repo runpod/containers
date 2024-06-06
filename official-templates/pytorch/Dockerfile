@@ -4,11 +4,21 @@ FROM ${BASE_IMAGE}
 ARG TORCH
 ARG PYTHON_VERSION
 
+# Set default value for JUPYTER_LAB_OR_NOTEBOOK
+ARG JUPYTER_LAB_OR_NOTEBOOK=notebook
+ARG INCLUDE_FILEBROWSER=no
+
+
+
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV SHELL=/bin/bash
+
+# Use the argument to set the environment variable
+ENV JUPYTER_LAB_OR_NOTEBOOK=${JUPYTER_LAB_OR_NOTEBOOK}
+ENV INCLUDE_FILEBROWSER=${INCLUDE_FILEBROWSER}
 
 # Set the working directory
 WORKDIR /
@@ -44,10 +54,22 @@ RUN pip install --upgrade --no-cache-dir pip
 RUN if [ -n "${TORCH}" ]; then pip install --upgrade --no-cache-dir ${TORCH}; fi 
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 
-# Set up Jupyter Notebook
-RUN pip install notebook==6.5.5
-RUN jupyter contrib nbextension install --user && \
-    jupyter nbextension enable --py widgetsnbextension
+
+
+# Conditional installation based on the value of JUPYTER_LAB_OR_NOTEBOOK
+# Jupyter notebook version 6.5.5 does not work with the latest version of python
+RUN if [ "$JUPYTER_LAB_OR_NOTEBOOK" = "lab" ]; then \
+      pip install jupyterlab; \
+    else \
+      pip install notebook==6.5.5 && \
+      jupyter contrib nbextension install --user && \
+      jupyter nbextension enable --py widgetsnbextension; \
+    fi
+
+## install filebrowser if wanted
+RUN if [ "$INCLUDE_FILEBROWSER" = "yes" ]; then \
+        curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash; \
+    fi
 
 # Remove existing SSH host keys
 RUN rm -f /etc/ssh/ssh_host_*
@@ -70,3 +92,4 @@ RUN echo 'echo -e "\nFor detailed documentation and guides, please visit:\n\033[
 
 # Set the default command for the container
 CMD [ "/start.sh" ]
+

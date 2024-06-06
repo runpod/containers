@@ -81,6 +81,14 @@ start_jupyter() {
     fi
 }
 
+start_filebrowser() {
+    if [[ $INCLUDE_FILEBROWSER == "yes" ]]; then
+        echo "starting filebrowser..."
+        nohup filebrowser --address=0.0.0.0 --port=4040 --root=/ --noauth &
+        echo "File browser started"
+    fi
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                   #
 # ---------------------------------------------------------------------------- #
@@ -93,6 +101,7 @@ echo "Pod Started"
 
 setup_ssh
 start_jupyter
+start_filebrowser
 export_env_vars
 
 execute_script "/post_start.sh" "Running post-start script..."
