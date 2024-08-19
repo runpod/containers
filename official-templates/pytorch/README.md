@@ -1,7 +1,14 @@
-## Build Options
+## Build Instructions
 
-To build with default options, run `docker buildx bake`, to build a specific target, run `docker buildx bake <target>`.
+- To build with the default options, simply run `docker buildx bake`.
+- To build a specific target, use `docker buildx bake <target>`.
+- To specify the platform, use `docker buildx bake <target> --set <target>.platform=linux/amd64`.
 
-## Ports
+Example:
+```bash
+docker buildx bake 240-py311-cuda1240-devel-ubuntu2204 --set 240-py311-cuda1240-devel-ubuntu2204.platform=linux/amd64
+```
+
+## Exposed Ports
 
 - 22/tcp (SSH)
