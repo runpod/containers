@@ -16,6 +16,8 @@ group "default" {
         "211-py310-cuda1211-devel-ubuntu2204",
         "220-py310-cuda1211-devel-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204",
+        # CUDA 12.4.0
+        "240-py311-cuda1240-devel-ubuntu2204",
 
         ### ROCM ###
         # ROCM 5.6
@@ -29,6 +31,7 @@ group "default" {
         # ROCM 6.1
         "201-py39-rocm61-ubuntu2004",
         "212-py310-rocm61-ubuntu2204",
+        "240-py310-rocm610-ubuntu2204",
         # ROCM 6.1.2
         "201-py39-rocm612-ubuntu2004",
         "212-py310-rocm612-ubuntu2204",
@@ -37,12 +40,13 @@ group "default" {
 
 group "rocm" {
     targets = [
-        "201-py38-rocm56-ubuntu2004",
         "201-py310-rocm57-ubuntu2204",
+        "201-py38-rocm56-ubuntu2004",
+        "201-py39-rocm61-ubuntu2004",
         "211-py39-rocm60-ubuntu2004",
         "212-py310-rocm602-ubuntu2204",
-        "201-py39-rocm61-ubuntu2004",
         "212-py310-rocm61-ubuntu2204",
+        "240-py310-rocm610-ubuntu2204",
     ]
 }
 
@@ -55,6 +59,7 @@ group "cuda" {
         "211-py310-cuda1211-devel-ubuntu2204",
         "220-py310-cuda1211-devel-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204",
+        "240-py311-cuda1240-devel-ubuntu2204",
     ]
 }
 
@@ -168,6 +173,21 @@ target "221-py310-cuda1211-devel-ubuntu2204" {
     }
 }
 
+target "240-py311-cuda1240-devel-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["${PUBLISHER}/pytorch:2.4.0-py3.11-cuda12.4.0-devel-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+        PYTHON_VERSION = "3.11"
+        TORCH = "torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124"
+    }
+}
+
 # ROCM
 
 target "201-py38-rocm56-ubuntu2004" {
@@ -272,6 +292,20 @@ target "212-py310-rocm612-ubuntu2204" {
     }
     args = {
         BASE_IMAGE = "rocm/pytorch:rocm6.1.2_ubuntu22.04_py3.10_pytorch_release-2.1.2"
+    }
+}
+
+target "240-py310-rocm610-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["${PUBLISHER}/pytorch:2.4.0-py3.10-rocm6.1.0-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "rocm/pytorch:rocm6.1_ubuntu22.04_py3.10_pytorch_2.4"
+        PYTHON_VERSION = "3.10"
     }
 }
 
