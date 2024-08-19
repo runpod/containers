@@ -16,7 +16,7 @@ group "default" {
         "211-py310-cuda1211-devel-ubuntu2204",
         "220-py310-cuda1211-devel-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204",
-        # CUDA 12.4.0
+        # CUDA 12.4.1
         "240-py311-cuda1241-devel-ubuntu2204",
 
         ### ROCM ###
