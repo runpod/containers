@@ -184,7 +184,7 @@ target "240-py311-cuda1241-devel-ubuntu2204" {
     args = {
         BASE_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
         PYTHON_VERSION = "3.11"
-        TORCH = "torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0"
+        TORCH = "torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
     }
 }
 
