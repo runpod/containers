@@ -38,12 +38,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set environment variables
-        run: |
-          echo "DOCKERHUB_REPO=${{ secrets.DOCKERHUB_REPO }}" >> $GITHUB_ENV
-          echo "DOCKERHUB_IMG=${{ secrets.DOCKERHUB_IMG }}" >> $GITHUB_ENV
-          echo "HUGGINGFACE_ACCESS_TOKEN=${{ secrets.HUGGINGFACE_ACCESS_TOKEN }}" >> $GITHUB_ENV
-
       - name: Build and Push Docker Image
         working-directory: containers/official-templates/stable-diffusion-webui
         uses: docker/bake-action@v2
