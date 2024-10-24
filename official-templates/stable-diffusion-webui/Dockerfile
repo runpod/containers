@@ -1,7 +1,5 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
-ARG WEBUI_VERSION
-
 ENV DEBIAN_FRONTEND noninteractive
 ENV SHELL=/bin/bash
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
@@ -13,13 +11,18 @@ WORKDIR /workspace
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install system dependencies
-RUN apt update --yes && \
-    apt upgrade --yes && \
-    apt install --yes --no-install-recommends \
+RUN rm -f /etc/apt/sources.list.d/*.list && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get update --yes && \
+    apt-get upgrade --yes && \
+    apt-get install --yes --no-install-recommends \
     git openssh-server libglib2.0-0 libsm6 libgl1 libxrender1 libxext6 ffmpeg wget curl psmisc rsync vim bc nginx \
     pkg-config libffi-dev libcairo2 libcairo2-dev libgoogle-perftools4 libtcmalloc-minimal4 apt-transport-https \
     software-properties-common ca-certificates && \
-    update-ca-certificates
+    update-ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Python 3.10
 RUN add-apt-repository ppa:deadsnakes/ppa && \
@@ -35,6 +38,8 @@ RUN python -m venv /workspace/venv && \
     pip install -U --no-cache-dir jupyterlab jupyterlab_widgets ipykernel ipywidgets
 
 WORKDIR /
+
+ARG WEBUI_VERSION
 
 # Install Automatic1111's WebUI
 RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
