@@ -46,17 +46,17 @@ RUN git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git && \
     cd /stable-diffusion-webui && \
     git checkout tags/${WEBUI_VERSION} && \
     pip install httpx>=0.25.0 xformers && \
-    pip install --no-cache-dir --no-deps -r requirements_versions.txt && \
+    pip install --no-cache-dir -r requirements_versions.txt && \
     python -c "from launch import prepare_environment; prepare_environment()" --skip-torch-cuda-test
 
 WORKDIR /stable-diffusion-webui
 
 # Apply hotfix to replace `pytorch_lightning.utilities.distributed` with `pytorch_lightning.utilities.rank_zero`
 # see https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues/11458#issuecomment-1609900319
-RUN sed -i 's/pytorch_lightning.utilities.distributed/pytorch_lightning.utilities.rank_zero/g' \
-    repositories/stable-diffusion-stability-ai/ldm/models/diffusion/ddpm.py && \
-    sed -i 's/pytorch_lightning.utilities.distributed/pytorch_lightning.utilities.rank_zero/g' \
-    extensions-builtin/LDSR/sd_hijack_ddpm_v1.py
+# RUN sed -i 's/pytorch_lightning.utilities.distributed/pytorch_lightning.utilities.rank_zero/g' \
+#     repositories/stable-diffusion-stability-ai/ldm/models/diffusion/ddpm.py && \
+#     sed -i 's/pytorch_lightning.utilities.distributed/pytorch_lightning.utilities.rank_zero/g' \
+#     extensions-builtin/LDSR/sd_hijack_ddpm_v1.py
 
 # Install DeForum
 RUN git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum && \
@@ -67,6 +67,7 @@ RUN git clone https://github.com/deforum-art/sd-webui-deforum extensions/deforum
 # Install ControlNet
 RUN git clone https://github.com/Mikubill/sd-webui-controlnet.git extensions/sd-webui-controlnet && \
     cd extensions/sd-webui-controlnet && \
+    pip install opencv-python-headless>=4.9.0 && \
     pip install -r requirements.txt
 
 WORKDIR / 
