@@ -10,7 +10,7 @@ target "default" {
     proxy = "../../container-template/proxy"
   }
   args = {
-    WEBUI_VERSION = "v1.9.0"
+    WEBUI_VERSION = "v1.10.0"
   }
   platforms = ["linux/amd64"]
 }
