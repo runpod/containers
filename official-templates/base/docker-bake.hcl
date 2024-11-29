@@ -3,7 +3,7 @@ variable "RELEASE" {
 }
 
 group "default" {
-    targets = ["cpu", "11-1-1", "11-8-0", "12-1-0", "12-2-0"]
+    targets = ["cpu", "11-1-1", "11-8-0", "12-1-0", "12-2-0", "12-4-1", "12-5-1", "12-6-2"]
 }
 
 target "cpu" {
@@ -73,5 +73,47 @@ target "12-2-0" {
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
         BASE_IMAGE = "nvidia/cuda:12.2.0-devel-ubuntu22.04"
+    }
+}
+
+target "12-4-1" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/base:${RELEASE}-cuda12.4.1"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
+        BASE_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+    }
+}
+
+target "12-5-1" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/base:${RELEASE}-cuda12.5.1"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
+        BASE_IMAGE = "nvidia/cuda:12.5.1-devel-ubuntu22.04"
+    }
+}
+
+target "12-6-2" {
+    dockerfile = "Dockerfile"
+    tags = ["runpod/base:${RELEASE}-cuda12.6.2"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_RELEASE_VERSION = "${RELEASE}"
+        BASE_IMAGE = "nvidia/cuda:12.6.2-devel-ubuntu22.04"
     }
 }
