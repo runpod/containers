@@ -134,22 +134,19 @@ RUN apt-get update --yes && \
 
 # Install pip
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.7 get-pip.py && \
     python3.8 get-pip.py && \
     python3.9 get-pip.py && \
     python3.10 get-pip.py && \
     python3.11 get-pip.py
 
 # Get the latest pip for all python versions
-RUN python3.7 -m pip install --upgrade pip && \
-    python3.8 -m pip install --upgrade pip && \
+RUN python3.8 -m pip install --upgrade pip && \
     python3.9 -m pip install --upgrade pip && \
     python3.10 -m pip install --upgrade pip && \
     python3.11 -m pip install --upgrade pip
 
 # Install virtualenv
-RUN python3.7 -m pip install virtualenv && \
-    python3.8 -m pip install virtualenv && \
+RUN python3.8 -m pip install virtualenv && \
     python3.9 -m pip install virtualenv && \
     python3.10 -m pip install virtualenv && \
     python3.11 -m pip install virtualenv
@@ -158,13 +155,19 @@ RUN python3.7 -m pip install virtualenv && \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Extras
+# Create a non-root user for brew install
+RUN useradd -m brewuser && \
+    echo "brewuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# Switch to the non-root user
+USER brewuser
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
 RUN brew update && brew install pyenv
 RUN brew tap filebrowser/tap && brew install filebrowser
-
 # Temporary while bash path gets fixed https://github.com/astral-sh/uv/issues/1586
 RUN brew install uv
+# Switch back to root 
+USER root
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
