@@ -1,5 +1,5 @@
 variable "RELEASE" {
-    default = "12.0.0"
+    default = "13.0.0"
 }
 
 target "default" {
@@ -10,8 +10,7 @@ target "default" {
     proxy = "../../container-template/proxy"
   }
   args = {
-    WEBUI_VERSION = "v1.8.0"
-    TORCH_VERSION = "2.1.2+cu118"
-    XFORMERS_VERSION = "0.0.23.post1+cu118"
+    WEBUI_VERSION = "v1.10.0"
   }
+  platforms = ["linux/amd64"]
 }

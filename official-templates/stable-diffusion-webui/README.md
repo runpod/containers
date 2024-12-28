@@ -1,29 +1,75 @@
-## 🚀 RunPod Automatic1111 Stable Diffusion Template
+# Automatic1111 Stable Diffusion WebUI Template
 
-### 📝 General
+A ready-to-use template for running Stable Diffusion WebUI (AUTOMATIC1111) on RunPod.
 
-⚠️ **Please note, this doesn't work out-of-the-box with encrypted volumes!**
+## Quick Start
 
-This is a RunPod packaged template for stable diffusion using the Automatic1111 repository. RunPod does not maintain the code for this repo, we merely package it for easier use.
+1. Wait for the pod to fully initialize (GPU Utilization should be 0%)
+2. Access the WebUI through port 3000
+3. Start creating!
 
-If you need help with settings, etc., feel free to ask us, but remember we're not stable diffusion experts! 😅 We'll do our best to assist, but the RunPod community or automatic/stable diffusion communities might be more effective in helping you.
+⚠️ **Note**: You may encounter a 502 error if you try to connect before initialization is complete.
 
-🔵 **Please wait until the GPU Utilization % is 0 before attempting to connect. You'll likely encounter a 502 error if the pod is still getting ready for use.**
+## Pre-installed Models
 
-### ⚙️ Changing Launch Parameters
+The following models are automatically mounted and ready to use:
 
-You might be used to altering a different file for your launch parameters. In our case, we use `relauncher.py` located in the `webui` directory to manage the launch flags like `--xformers`. Feel free to edit this file, and then restart your pod via the hamburger menu for the changes to take effect. `--xformers` and `--api` are commonly inquired about.
+### Stable Diffusion Models
 
-### 📥 Using Your Own Models
+- [Stable Diffusion XL Base 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/sd_xl_base_1.0.safetensors)
+- [Stable Diffusion XL Refiner 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/blob/main/sd_xl_refiner_1.0.safetensors)
+- [Stable Diffusion 1.5](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/blob/main/v1-5-pruned-emaonly.safetensors)
 
-The best ways to introduce your models to your pod is by using [runpodctl](https://github.com/runpod/runpodctl/blob/main/README.md) or by uploading them to Google Drive or another cloud storage provider and downloading them to your pod from there.
+### ControlNet Models
 
-### 🚚 Uploading to Google Drive
+- Canny (control_v11p_sd15_canny.pth)
 
-If you're finished with the pod and want to transfer things to Google Drive, [this colab](https://colab.research.google.com/drive/1ot8pODgystx1D6_zvsALDSvjACBF1cj6) can assist you using `runpodctl`. You can run `runpodctl` in a web terminal (found in the pod connect menu), or in a terminal on the desktop.
+## Network Ports
 
-## 🔌 Template Ports
+| Application            | Port | Protocol | Description                         |
+| ---------------------- | ---- | -------- | ----------------------------------- |
+| Stable Diffusion WebUI | 3000 | HTTP     | Main interface for Stable Diffusion |
+| Jupyter Lab            | 8888 | HTTP     | Python notebook interface           |
+| SSH                    | 22   | TCP      | Secure shell access                 |
 
-- **3001** | HTTP - This is the WebUI port that gets proxied to the internal 3000 port.
-- **8888** | HTTP - This is the JupyterLab port that gets proxied to the internal 8888 port.
-- **22** | TCP  - This is the SSH port that gets proxied to the internal 22 port.
+## Customization
+
+### Modifying Launch Parameters
+
+Launch parameters are configured in `webui-user.sh`. To modify them:
+
+1. Edit the file in the workspace
+2. Restart the pod to apply changes
+
+Current default parameters include:
+
+- `--xformers` for optimized memory usage
+- `--listen` for network access
+- `--enable-insecure-extension-access` for extension support
+
+## Adding Custom Models
+
+You have two options for adding your own models:
+
+1. Using [runpodctl](https://github.com/runpod/runpodctl/blob/main/README.md)
+2. Downloading from cloud storage (Google Drive, etc.)
+
+## Backing Up Your Work
+
+To save your work to Google Drive:
+
+1. Use [this Google Colab notebook](https://colab.research.google.com/drive/1ot8pODgystx1D6_zvsALDSvjACBF1cj6)
+2. Follow the instructions to transfer files using `runpodctl`
+
+You can run `runpodctl` either through:
+
+- The web terminal (in pod connect menu)
+- The desktop terminal
+
+## Important Notes
+
+- This template doesn't support encrypted volumes
+- For technical support, consider:
+  - [RunPod Community on Discord](https://discord.gg/cUpRmau42V)
+  - [Automatic1111 GitHub Issues](https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues)
+  - [Stable Diffusion on Reddit](https://www.reddit.com/r/StableDiffusion/)
