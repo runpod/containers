@@ -1,5 +1,5 @@
 variable "PUBLISHER" {
-    default = "runpod"
+    default = "mnb3000"
 }
 
 group "default" {
@@ -64,6 +64,9 @@ group "cuda" {
     ]
 }
 
+
+// GitHub Action metadata (tags)
+target "docker-metadata-action" {}
 
 target "191-py39-cuda111-devel-ubuntu2004" {
     dockerfile = "Dockerfile"
@@ -190,8 +193,9 @@ target "240-py311-cuda1241-devel-ubuntu2204" {
 }
 
 target "251-py311-cuda1241-devel-ubuntu2204" {
+    inherits = ["docker-metadata-action"]
     dockerfile = "Dockerfile"
-    tags = ["${PUBLISHER}/pytorch:2.5.1-py3.11-cuda12.4.1-devel-ubuntu22.04"]
+    tags = ["${PUBLISHER}/runpod-pytorch:2.5.1-py3.11-cuda12.4.1-devel-ubuntu22.04"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
@@ -200,7 +204,8 @@ target "251-py311-cuda1241-devel-ubuntu2204" {
     args = {
         BASE_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
         PYTHON_VERSION = "3.11"
-        TORCH = "torch torchvision torchaudio"
+        TORCH = "torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+        XFORMERS = "xformers==0.0.28.post3 --index-url https://download.pytorch.org/whl/cu124"
     }
 }
 
