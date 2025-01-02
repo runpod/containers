@@ -53,8 +53,9 @@ jobs:
       - name: Build and push
         uses: docker/bake-action@v5
         with:
+          workdir: ./official-templates/pytorch
           files: |
-            ./official-templates/pytorch/docker-bake.hcl
+            ./docker-bake.hcl
             ${{ steps.meta.outputs.bake-file }}
           targets: 251-py311-cuda1241-devel-ubuntu2204
           push: true
