@@ -1,7 +1,5 @@
-# Import necessary base images
-FROM runpod/stable-diffusion:models-1.0.0 as sd-models
-FROM runpod/stable-diffusion-models:2.1 as hf-cache
-FROM nvidia/cuda:11.8.0-base-ubuntu22.04 as runtime
+# Import necessary base image
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -37,11 +35,9 @@ ENV PATH="/venv/bin:$PATH"
 RUN pip install --upgrade --no-cache-dir pip && \
     pip install --upgrade setuptools && \
     pip install --upgrade wheel
-RUN pip install --upgrade --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
-RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions triton xformers==0.0.22 gdown
 
-# Set up Jupyter Notebook
-RUN pip install notebook==6.5.5
+# Install Jupyter and related packages
+RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
 
@@ -53,13 +49,8 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     cd custom_nodes/ComfyUI-Manager && \
     pip install -r requirements.txt
 
-# Create necessary directories and copy necessary files
-RUN set -e && mkdir -p /root/.cache/huggingface && mkdir /comfy-models
-COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
-COPY --from=sd-models /SDv1-5.ckpt /comfy-models/v1-5-pruned-emaonly.ckpt
-COPY --from=sd-models /SDv2-768.ckpt /comfy-models/SDv2-768.ckpt
-RUN wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors -O /comfy-models/sd_xl_base_1.0.safetensors && \
-    wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors -O /comfy-models/sd_xl_refiner_1.0.safetensors
+# Create necessary directories
+RUN mkdir -p /comfy-models
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
