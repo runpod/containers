@@ -31,8 +31,9 @@ RUN cd /ComfyUI && \
 # Create user directory to store logs
 RUN mkdir -p /ComfyUI/user
 
-# Copy the README.md and start script
+# Copy the README.md, extra_model_paths.yml and start script
 COPY README.md /usr/share/nginx/html/README.md
+COPY extra_model_paths.yml /ComfyUI/extra_model_paths.yml
 COPY pre_start.sh /pre_start.sh
 RUN chmod +x /pre_start.sh
 

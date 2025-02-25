@@ -12,6 +12,21 @@ The following models are already included:
 - [Stable Diffusion 1.5](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive)
 - [Stable Diffusion 2.1](https://huggingface.co/stabilityai/stable-diffusion-2-1)
 
+## Custom Models
+
+You can add your own models by placing them in the appropriate directories under `/workspace/comfyui/models/`:
+
+- Checkpoints: `/workspace/comfyui/models/checkpoints/`
+- VAE: `/workspace/comfyui/models/vae/`
+- LoRA: `/workspace/comfyui/models/loras/`
+- Controlnet: `/workspace/comfyui/models/controlnet/`
+- Upscalers: `/workspace/comfyui/models/upscale_models/`
+- Embeddings: `/workspace/comfyui/models/embeddings/`
+- CLIP: `/workspace/comfyui/models/clip/`
+- CLIP Vision: `/workspace/comfyui/models/clip_vision/`
+
+These paths are configured in ComfyUI's `extra_model_paths.yml` file, so models placed in these directories will be automatically detected by ComfyUI.
+
 ## Ports
 
 | Application | Port | Type |
