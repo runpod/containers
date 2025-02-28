@@ -14,14 +14,9 @@ variable "DOCKERHUB_IMG" {
     default = "stable-diffusion"
 }
 
-// Single variable for tag version - can be a release number or branch name with any prefix
-variable "TAG_VERSION" {
-    default = "6.0.0"
-}
-
 target "default" {
     dockerfile = "Dockerfile"
-    tags = ["${DOCKERHUB_REPO}/${DOCKERHUB_IMG}:comfy-ui-${TAG_VERSION}"]
+    tags = ["${DOCKERHUB_REPO}/${DOCKERHUB_IMG}:comfy-ui-${RELEASE}"]
     platforms = ["linux/amd64"]
     contexts = {
         scripts = "../../container-template"
@@ -29,5 +24,6 @@ target "default" {
     }
     args = {
         COMFYUI_VERSION = "${COMFYUI_VERSION}"
+        RELEASE = "${RELEASE}"
     }
 }
