@@ -40,6 +40,8 @@ jobs:
           BRANCH_NAME=$(echo ${GITHUB_REF##refs/heads/} | sed 's/\//-/g')
           # Add dev- prefix to the branch name
           echo "RELEASE=dev-${BRANCH_NAME}" >> $GITHUB_ENV
+          # Set environment variable to disable entitlements checks
+          echo "BUILDX_BAKE_ENTITLEMENTS_FS=0" >> $GITHUB_ENV
 
       - name: Build and push the images to Docker Hub
         uses: docker/bake-action@v2
