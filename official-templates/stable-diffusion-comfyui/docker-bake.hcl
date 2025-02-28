@@ -21,7 +21,7 @@ variable "GITHUB_WORKSPACE" {
 }
 
 target "default" {
-    dockerfile = "Dockerfile"
+    dockerfile = "${GITHUB_WORKSPACE}/official-templates/stable-diffusion-comfyui/Dockerfile"
     tags = ["${DOCKERHUB_REPO}/${DOCKERHUB_IMG}:comfy-ui-${RELEASE}"]
     platforms = ["linux/amd64"]
     contexts = {
