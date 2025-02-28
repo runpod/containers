@@ -50,4 +50,4 @@ jobs:
           push: true
           set: |
             *.args.RELEASE=${{ env.RELEASE }}
-            *.GITHUB_WORKSPACE=${{ github.workspace }}
+            *.args.GITHUB_WORKSPACE=${{ github.workspace }}

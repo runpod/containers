@@ -31,5 +31,6 @@ target "default" {
     args = {
         COMFYUI_VERSION = "${COMFYUI_VERSION}"
         RELEASE = "${RELEASE}"
+        GITHUB_WORKSPACE = "${GITHUB_WORKSPACE}"
     }
 }
