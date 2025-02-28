@@ -15,13 +15,18 @@ variable "DOCKERHUB_IMG" {
     default = "stable-diffusion"
 }
 
+// For GitHub Actions compatibility
+variable "GITHUB_WORKSPACE" {
+    default = "."
+}
+
 target "default" {
     dockerfile = "Dockerfile"
     tags = ["${DOCKERHUB_REPO}/${DOCKERHUB_IMG}:comfy-ui-${RELEASE}"]
     platforms = ["linux/amd64"]
     contexts = {
-        scripts = "../../container-template"
-        proxy = "../../container-template/proxy"
+        scripts = "${GITHUB_WORKSPACE}/container-template"
+        proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
     }
     args = {
         COMFYUI_VERSION = "${COMFYUI_VERSION}"
