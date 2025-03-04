@@ -27,6 +27,8 @@ You can add your own models by placing them in the appropriate directories under
 
 These paths are configured in ComfyUI's `extra_model_paths.yml` file, so models placed in these directories will be automatically detected by ComfyUI.
 
+**Note:** data stored in `/workspace/comfyui` will be deleted when the Pod is deleted, unless you're using a [network volume](https://docs.runpod.io/pods/storage/create-network-volumes).
+
 ## Ports
 
 | Application | Port | Type |
@@ -37,7 +39,7 @@ These paths are configured in ComfyUI's `extra_model_paths.yml` file, so models 
 
 ## Important Notes
 
-- Jupyter Lab requires a password, set via `JUPYTER_PASSWORD` environment variable
+- We automatically set the password for Jupyter Lab when creating the pod, but if you want to set it yourself, you have to do so via the `JUPYTER_PASSWORD` environment variable
 - For technical support, consider:
   - [RunPod Community on Discord](https://discord.gg/cUpRmau42V)
   - [ComfyUI GitHub Issues](https://github.com/comfyanonymous/ComfyUI/issues)
