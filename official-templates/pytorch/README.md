@@ -7,7 +7,7 @@ Ready-to-use PyTorch + Python development environment with JupyterLab and common
 - Pre-configured workspace directory
 - SSH access
 - NGINX server
-- Development tools (git, wget, curl)
+- Development tools
 
 ## Ports
 
