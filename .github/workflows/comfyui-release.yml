@@ -50,6 +50,9 @@ jobs:
           fi
           # Set environment variable to disable entitlements checks
           echo "BUILDX_BAKE_ENTITLEMENTS_FS=0" >> $GITHUB_ENV
+          # Set Docker Hub repo and image name
+          echo "DOCKERHUB_REPO=runpod" >> $GITHUB_ENV
+          echo "DOCKERHUB_IMG=stable-diffusion" >> $GITHUB_ENV
 
       - name: Build and push the images to Docker Hub
         uses: docker/bake-action@v2
@@ -60,3 +63,11 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
             ${{ github.event_name == 'workflow_dispatch' && format('*.args.COMFYUI_VERSION={0}', env.COMFYUI_VERSION) || '' }}
             *.args.GITHUB_WORKSPACE=${{ github.workspace }}
+
+      - name: Update description on Docker Hub
+        uses: peter-evans/dockerhub-description@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_REPO }}/${{ env.DOCKERHUB_IMG }}
+          readme-filepath: ./official-templates/stable-diffusion-comfyui/README.md
