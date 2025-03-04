@@ -13,4 +13,5 @@ Ready-to-use PyTorch + Python development environment with JupyterLab and common
 
 | Application | Port | Type |
 | ----------- | ---- | ---- |
+| Jupyter     | 8888 | HTTP |
 | SSH         | 22   | TCP  |
