@@ -1,15 +1,17 @@
-## Build Instructions
+# PyTorch Environment
 
-- To build with the default options, simply run `docker buildx bake`.
-- To build a specific target, use `docker buildx bake <target>`.
-- To specify the platform, use `docker buildx bake <target> --set <target>.platform=linux/amd64`.
+Ready-to-use PyTorch + Python development environment with JupyterLab and common development tools pre-installed:
 
-Example:
+- Jupyter Notebook 6.5.5
+- JupyterLab with widgets and extensions
+- Pre-configured workspace directory
+- SSH access
+- NGINX server
+- Development tools
 
-```bash
-docker buildx bake 240-py311-cuda1241-devel-ubuntu2204 --set 240-py311-cuda1241-devel-ubuntu2204.platform=linux/amd64
-```
+## Ports
 
-## Exposed Ports
-
-- 22/tcp (SSH)
+| Application | Port | Type |
+| ----------- | ---- | ---- |
+| Jupyter     | 8888 | HTTP |
+| SSH         | 22   | TCP  |
