@@ -15,6 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
+      - name: Update template README on RunPod
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        uses: ./.github/actions/update-readme
+        with:
+          template_id: "runpod-comfy"
+          template_path: "official-templates/stable-diffusion-comfyui"
+
       - name: Clear space to remove unused folders
         run: |
           rm -rf /usr/share/dotnet
