@@ -119,7 +119,13 @@ RUN apt-get update --yes && \
     python3.10-distutils \
     python3.11-dev \
     python3.11-venv \
-    python3.11-distutils && \
+    python3.11-distutils \
+    python3.12-dev \
+    python3.12-venv \
+    python3.12-distutils \
+    python3.13-dev \
+    python3.13-venv \
+    python3.13-distutils && \
 
     # Cleanup
     apt-get autoremove -y && \
@@ -135,19 +141,25 @@ RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python3.9 get-pip.py && \
     python3.10 get-pip.py && \
     python3.11 get-pip.py && \
+    python3.12 get-pip.py && \
+    python3.13 get-pip.py && \
     rm get-pip.py
 
 # Get the latest pip for all python versions
 RUN python3.8 -m pip install --upgrade pip && \
     python3.9 -m pip install --upgrade pip && \
     python3.10 -m pip install --upgrade pip && \
-    python3.11 -m pip install --upgrade pip
+    python3.11 -m pip install --upgrade pip && \
+    python3.12 -m pip install --upgrade pip && \
+    python3.13 -m pip install --upgrade pip
 
 # Install virtualenv
 RUN python3.8 -m pip install virtualenv && \
     python3.9 -m pip install virtualenv && \
     python3.10 -m pip install virtualenv && \
-    python3.11 -m pip install virtualenv
+    python3.11 -m pip install virtualenv && \
+    python3.12 -m pip install virtualenv && \
+    python3.13 -m pip install virtualenv
 
 # Install Jupyter and related packages (always with Python 3.10)
 RUN python3.10 -m pip install --upgrade --no-cache-dir \
