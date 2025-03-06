@@ -32,12 +32,12 @@ ENV PYTHON_VERSION="3.10"
 
 WORKDIR /
 
-# Update, upgrade, install packages and clean up
+# Update and upgrade
 RUN apt-get update --yes && \
-    apt-get upgrade --yes && \
+    apt-get upgrade --yes
 
-    # Basic Utilities
-    apt install --yes --no-install-recommends \
+# Install basic utilities
+RUN apt install --yes --no-install-recommends \
     bash \
     ca-certificates \
     curl \
@@ -51,29 +51,26 @@ RUN apt-get update --yes && \
     nano \
     tmux \
     nginx \
-
-    # Required for SSH access
     openssh-server \
-
     procps \
     rsync \
     sudo \
     software-properties-common \
     unzip \
     wget \
-    zip && \
+    zip
 
-    # Build Tools and Development
-    apt install --yes --no-install-recommends \
+# Install build tools and development packages
+RUN apt install --yes --no-install-recommends \
     build-essential \
     make \
     cmake \
     gfortran \
     libblas-dev \
-    liblapack-dev && \
+    liblapack-dev
 
-    # Image and Video Processing
-    apt install --yes --no-install-recommends \
+# Install image and video processing libraries
+RUN apt install --yes --no-install-recommends \
     ffmpeg \
     libavcodec-dev \
     libavfilter-dev \
@@ -89,25 +86,27 @@ RUN apt-get update --yes && \
     libx264-dev \
     libxext6 \
     libxrender-dev \
-    libxvidcore-dev && \
+    libxvidcore-dev
 
-    # Deep Learning Dependencies and Miscellaneous
-    apt install --yes --no-install-recommends \
+# Install deep learning dependencies and miscellaneous
+RUN apt install --yes --no-install-recommends \
     libatlas-base-dev \
     libffi-dev \
     libhdf5-serial-dev \
     libsm6 \
-    libssl-dev && \
+    libssl-dev
 
-    # File Systems and Storage
-    apt install --yes --no-install-recommends \
+# Install file systems and storage
+RUN apt install --yes --no-install-recommends \
     cifs-utils \
     nfs-common \
-    zstd &&\
+    zstd
 
-    # Add the Python PPA and install Python versions
-    add-apt-repository ppa:deadsnakes/ppa && \
-    apt install --yes --no-install-recommends \
+# Add the Python PPA
+RUN add-apt-repository ppa:deadsnakes/ppa
+
+# Install Python 3.8-3.11 with distutils
+RUN apt install --yes --no-install-recommends \
     python3.8-dev \
     python3.8-venv \
     python3.8-distutils \
@@ -119,21 +118,22 @@ RUN apt-get update --yes && \
     python3.10-distutils \
     python3.11-dev \
     python3.11-venv \
-    python3.11-distutils \
+    python3.11-distutils
+
+# Install Python 3.12-3.13 (distutils is included in dev package for newer versions)
+RUN apt install --yes --no-install-recommends \
     python3.12-dev \
     python3.12-venv \
-    python3.12-distutils \
     python3.13-dev \
-    python3.13-venv \
-    python3.13-distutils && \
+    python3.13-venv
 
-    # Cleanup
-    apt-get autoremove -y && \
+# Cleanup
+RUN apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /var/lib/apt/lists/*
 
-    # Set locale
-    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+# Set locale
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Install pip
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
