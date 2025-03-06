@@ -25,7 +25,7 @@ You can add your own models by placing them in the appropriate directories under
 
 These paths are configured in ComfyUI's `extra_model_paths.yml` file, so models placed in these directories will be automatically detected by ComfyUI.
 
-**Note:** data stored in `/workspace/comfyui` will be deleted when the Pod is deleted, unless you're using a [network volume](https://docs.runpod.io/pods/storage/create-network-volumes).
+> **Note:** data stored in `/workspace/comfyui` will be deleted when the Pod is deleted, unless you're using a [network volume](https://docs.runpod.io/pods/storage/create-network-volumes).
 
 ## Ports
 
