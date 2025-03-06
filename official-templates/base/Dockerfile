@@ -192,7 +192,7 @@ COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
 COPY --from=scripts start.sh /
-COPY post_start.sh /
+COPY --from=base post_start.sh /
 RUN chmod +x /start.sh && \
     chmod +x /post_start.sh
 

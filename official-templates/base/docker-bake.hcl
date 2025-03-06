@@ -17,6 +17,7 @@ target "cpu" {
         scripts = "${GITHUB_WORKSPACE}/container-template"
         proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
         logo = "${GITHUB_WORKSPACE}/container-template"
+        base = "${GITHUB_WORKSPACE}/official-templates/base"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -31,6 +32,7 @@ target "11-1-1" {
         scripts = "${GITHUB_WORKSPACE}/container-template"
         proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
         logo = "${GITHUB_WORKSPACE}/container-template"
+        base = "${GITHUB_WORKSPACE}/official-templates/base"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -45,6 +47,7 @@ target "11-8-0" {
         scripts = "${GITHUB_WORKSPACE}/container-template"
         proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
         logo = "${GITHUB_WORKSPACE}/container-template"
+        base = "${GITHUB_WORKSPACE}/official-templates/base"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -59,6 +62,7 @@ target "12-1-0" {
         scripts = "${GITHUB_WORKSPACE}/container-template"
         proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
         logo = "${GITHUB_WORKSPACE}/container-template"
+        base = "${GITHUB_WORKSPACE}/official-templates/base"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -73,6 +77,7 @@ target "12-2-0" {
         scripts = "${GITHUB_WORKSPACE}/container-template"
         proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
         logo = "${GITHUB_WORKSPACE}/container-template"
+        base = "${GITHUB_WORKSPACE}/official-templates/base"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
