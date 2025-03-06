@@ -11,7 +11,7 @@ group "default" {
 }
 
 target "cpu" {
-    dockerfile = "Dockerfile"
+    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
     tags = ["runpod/base:${RELEASE}-cpu"]
     contexts = {
         scripts = "${GITHUB_WORKSPACE}/container-template"
@@ -25,7 +25,7 @@ target "cpu" {
 }
 
 target "11-1-1" {
-    dockerfile = "Dockerfile"
+    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.1.1"]
     contexts = {
         scripts = "${GITHUB_WORKSPACE}/container-template"
@@ -39,7 +39,7 @@ target "11-1-1" {
 }
 
 target "11-8-0" {
-    dockerfile = "Dockerfile"
+    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.8.0"]
     contexts = {
         scripts = "${GITHUB_WORKSPACE}/container-template"
@@ -53,7 +53,7 @@ target "11-8-0" {
 }
 
 target "12-1-0" {
-    dockerfile = "Dockerfile"
+    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.1.0"]
     contexts = {
         scripts = "${GITHUB_WORKSPACE}/container-template"
@@ -67,7 +67,7 @@ target "12-1-0" {
 }
 
 target "12-2-0" {
-    dockerfile = "Dockerfile"
+    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.2.0"]
     contexts = {
         scripts = "${GITHUB_WORKSPACE}/container-template"
