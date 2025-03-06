@@ -172,16 +172,22 @@ RUN python3.10 -m pip install --upgrade --no-cache-dir \
     jupyter nbextension enable --py widgetsnbextension
 
 # Install pip drop-in replacement uv (https://github.com/astral-sh/uv)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /etc/profile.d/uv.sh && \
+    chmod +x /etc/profile.d/uv.sh && \
+    . /etc/profile.d/uv.sh && \
+    uv --version
 
-# Extras
-RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-ENV PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
-RUN brew update && brew install pyenv
-RUN brew tap filebrowser/tap && brew install filebrowser
+# Install additional tools that were previously installed via Homebrew
+# Install pyenv via git
+RUN git clone https://github.com/pyenv/pyenv.git /opt/pyenv && \
+    echo 'export PYENV_ROOT="/opt/pyenv"' >> /etc/profile.d/pyenv.sh && \
+    echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> /etc/profile.d/pyenv.sh && \
+    echo 'if command -v pyenv 1>/dev/null 2>&1; then eval "$(pyenv init -)"; fi' >> /etc/profile.d/pyenv.sh && \
+    chmod +x /etc/profile.d/pyenv.sh
 
-# Temporary while bash path gets fixed https://github.com/astral-sh/uv/issues/1586
-RUN brew install uv
+# Install filebrowser
+RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
