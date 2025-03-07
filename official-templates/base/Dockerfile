@@ -173,9 +173,9 @@ RUN python3.10 -m pip install --upgrade --no-cache-dir \
 
 # Install pip drop-in replacement uv (https://github.com/astral-sh/uv)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /etc/profile.d/uv.sh && \
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile.d/uv.sh && \
     chmod +x /etc/profile.d/uv.sh && \
-    . /etc/profile.d/uv.sh && \
+    export PATH="$HOME/.local/bin:$PATH" && \
     uv --version
 
 # Install additional tools that were previously installed via Homebrew
