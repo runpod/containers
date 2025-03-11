@@ -42,5 +42,6 @@ This image contains environment variables to override the default HuggingFace ca
 
 ```bash
 docker buildx bake --push
+docker buildx bake 12-4-1 --set 12-4-1.platform=linux/amd64
 ```
 -->
