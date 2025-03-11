@@ -1,76 +1,40 @@
-# Import necessary base images
-FROM runpod/stable-diffusion:models-1.0.0 as sd-models
-FROM runpod/stable-diffusion-models:2.1 as hf-cache
-FROM nvidia/cuda:11.8.0-base-ubuntu22.04 as runtime
+FROM runpod/base:0.6.3-cuda11.8.0
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG COMFYUI_VERSION
 
-# Set working directory and environment variables
-ENV SHELL=/bin/bash
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
+# Create model directories and download models first (this layer will be cached)
+RUN mkdir -p /ComfyUI/models/{checkpoints,clip,clip_vision,controlnet,diffusers,embeddings,loras,upscale_models,vae} && \
+    cd /ComfyUI/models/checkpoints && \
+    wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors && \
+    wget -O sd_xl_refiner_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors && \
+    wget -O v1-5-pruned-emaonly.safetensors https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly.safetensors && \
+    wget -O v2-1_768-ema-pruned.ckpt https://huggingface.co/stabilityai/stable-diffusion-2-1/resolve/main/v2-1_768-ema-pruned.ckpt && \
+    wget -O flux1-schnell-fp8.safetensors https://huggingface.co/Comfy-Org/flux1-schnell/resolve/main/flux1-schnell-fp8.safetensors
 
-WORKDIR /
-
-# Set up system
-RUN apt-get update --yes && \
-    apt-get upgrade --yes && \
-    apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx rsync && \
-    add-apt-repository ppa:deadsnakes/ppa && \
-    apt install python3.10-dev python3.10-venv -y --no-install-recommends && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
-
-# Set up Python and pip
-RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
-    rm /usr/bin/python3 && \
-    ln -s /usr/bin/python3.10 /usr/bin/python3 && \
-    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python get-pip.py
-
-RUN python -m venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Install necessary Python packages
-RUN pip install --upgrade --no-cache-dir pip && \
-    pip install --upgrade setuptools && \
-    pip install --upgrade wheel
-RUN pip install --upgrade --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
-RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions triton xformers==0.0.22 gdown
-
-# Set up Jupyter Notebook
-RUN pip install notebook==6.5.5
-RUN jupyter contrib nbextension install --user && \
-    jupyter nbextension enable --py widgetsnbextension
+# Setup Python and pip symlinks
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
+    python -m pip install --upgrade pip && \
+    ln -sf /usr/local/bin/pip3.10 /usr/local/bin/pip
 
 # Install ComfyUI and ComfyUI Manager
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
-    cd /ComfyUI && \
+RUN cd /ComfyUI && \
+    git init && \
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
+    git fetch --depth 1 origin tag ${COMFYUI_VERSION} && \
+    git checkout FETCH_HEAD && \
     pip install -r requirements.txt && \
     git clone https://github.com/ltdrdata/ComfyUI-Manager.git custom_nodes/ComfyUI-Manager && \
     cd custom_nodes/ComfyUI-Manager && \
     pip install -r requirements.txt
 
-# Create necessary directories and copy necessary files
-RUN set -e && mkdir -p /root/.cache/huggingface && mkdir /comfy-models
-COPY --from=hf-cache /root/.cache/huggingface /root/.cache/huggingface
-COPY --from=sd-models /SDv1-5.ckpt /comfy-models/v1-5-pruned-emaonly.ckpt
-COPY --from=sd-models /SDv2-768.ckpt /comfy-models/SDv2-768.ckpt
-RUN wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors -O /comfy-models/sd_xl_base_1.0.safetensors && \
-    wget https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors -O /comfy-models/sd_xl_refiner_1.0.safetensors
+# Create user directory to store logs
+RUN mkdir -p /ComfyUI/user
 
-# NGINX Proxy
-COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
-COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
-
-# Copy the README.md
+# Copy the README.md, extra_model_paths.yml and start script
 COPY README.md /usr/share/nginx/html/README.md
-
-# Start Scripts
+COPY extra_model_paths.yml /ComfyUI/extra_model_paths.yml
 COPY pre_start.sh /pre_start.sh
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+RUN chmod +x /pre_start.sh
 
 CMD [ "/start.sh" ]
