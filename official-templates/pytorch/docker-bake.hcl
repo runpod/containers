@@ -19,6 +19,8 @@ group "default" {
         # CUDA 12.4.1
         "240-py311-cuda1241-devel-ubuntu2204",
         "251-py311-cuda1241-devel-ubuntu2204",
+        # CUDA 12.6.0
+        "260-py311-cuda1260-cudnn-devel-ubuntu2204",
 
         ### ROCM ###
         # ROCM 5.6
@@ -61,6 +63,7 @@ group "cuda" {
         "220-py310-cuda1211-devel-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204",
         "240-py311-cuda1241-devel-ubuntu2204",
+        "260-py311-cuda1260-cudnn-devel-ubuntu2204",
     ]
 }
 
@@ -204,6 +207,21 @@ target "251-py311-cuda1241-devel-ubuntu2204" {
     }
 }
 
+target "260-py311-cuda1260-cudnn-devel-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["${PUBLISHER}/pytorch:2.6.0-py3.11-cuda12.6.0-cudnn-devel-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.6.0-cudnn-devel-ubuntu22.04"
+        PYTHON_VERSION = "3.11"
+        TORCH = "torch==2.6.0 torchvision==0.13.0 torchaudio==0.12.0"
+    }
+}
+    
 # ROCM
 
 target "201-py38-rocm56-ubuntu2004" {
