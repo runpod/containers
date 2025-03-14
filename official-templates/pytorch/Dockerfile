@@ -48,6 +48,7 @@ RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive j
 RUN pip install notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
     jupyter nbextension enable --py widgetsnbextension
+COPY jupyter/shortcuts.jupyterlab-settings /root/.jupyter/lab/user-settings/@jupyterlab/shortcuts-extension/shortcuts.jupyterlab-settings
 
 # Remove existing SSH host keys
 RUN rm -f /etc/ssh/ssh_host_*
