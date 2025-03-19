@@ -18,6 +18,8 @@ group "default" {
         "221-py310-cuda1211-devel-ubuntu2204",
         # CUDA 12.4.1
         "240-py311-cuda1241-devel-ubuntu2204",
+        # CUDA 12.8.1
+        "260-py311-cuda1281-devel-ubuntu2204",
 
         ### ROCM ###
         # ROCM 5.6
@@ -60,6 +62,7 @@ group "cuda" {
         "220-py310-cuda1211-devel-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204",
         "240-py311-cuda1241-devel-ubuntu2204",
+        "260-py311-cuda1281-devel-ubuntu2204",
     ]
 }
 
@@ -185,6 +188,22 @@ target "240-py311-cuda1241-devel-ubuntu2204" {
         BASE_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
         PYTHON_VERSION = "3.11"
         TORCH = "torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+    }
+}
+
+target "260-py311-cuda1281-devel-ubuntu2204" {
+    dockerfile = "Dockerfile"
+    tags = ["${PUBLISHER}/pytorch:2.6.0-py3.11-cuda:12.8.1-cudnn-devel-ubuntu22.04"]
+    contexts = {
+        scripts = "../../container-template"
+        proxy = "../../container-template/proxy"
+        logo = "../../container-template"
+    }
+    
+    args = {
+        BASE_IMAGE = "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04"
+        PYTHON_VERSION = "3.11"
+        TORCH = "torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128"
     }
 }
 
