@@ -1,0 +1,33 @@
+name: "Update Template README"
+description: "Updates a RunPod template README via the API"
+inputs:
+  template_id:
+    description: "RunPod Template ID"
+    required: true
+  template_path:
+    description: "Path to the template directory"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check if README exists
+      id: check_readme
+      shell: bash
+      run: |
+        if [ -f "${{ inputs.template_path }}/README.md" ]; then
+          echo "skip=false" >> $GITHUB_OUTPUT
+        else
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "README.md not found at ${{ inputs.template_path }}/README.md, skipping update"
+        fi
+
+    - name: Make script executable
+      if: steps.check_readme.outputs.skip != 'true'
+      shell: bash
+      run: chmod +x ${{ github.workspace }}/scripts/update-template-readme.sh
+
+    - name: Update template README
+      if: steps.check_readme.outputs.skip != 'true'
+      shell: bash
+      run: ${{ github.workspace }}/scripts/update-template-readme.sh "${{ inputs.template_id }}" "${{ inputs.template_path }}"
