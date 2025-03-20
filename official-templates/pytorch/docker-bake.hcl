@@ -20,7 +20,7 @@ group "default" {
         "240-py311-cuda1241-devel-ubuntu2204",
         "251-py311-cuda1241-devel-ubuntu2204",
         # CUDA 12.8.1
-        "280-py311-cuda1281-devel-ubuntu2204",
+        "280-py311-cuda1281-cudnn-devel-ubuntu2204",
 
         ### ROCM ###
         # ROCM 5.6
@@ -63,7 +63,7 @@ group "cuda" {
         "220-py310-cuda1211-devel-ubuntu2204",
         "221-py310-cuda1211-devel-ubuntu2204",
         "240-py311-cuda1241-devel-ubuntu2204",
-        "280-py311-cuda1281-devel-ubuntu2204",
+        "280-py311-cuda1281-cudnn-devel-ubuntu2204",
     ]
 }
 
@@ -208,7 +208,7 @@ target "251-py311-cuda1241-devel-ubuntu2204" {
     }
 }
 
-target "280-py311-cuda1281-devel-ubuntu2204" {
+target "280-py311-cuda1281-cudnn-devel-ubuntu2204" {
     dockerfile = "Dockerfile"
     tags = ["${PUBLISHER}/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"]    
     contexts = {
