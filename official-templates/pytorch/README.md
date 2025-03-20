@@ -7,7 +7,9 @@
 Example:
 
 ```bash
-docker buildx bake 240-py311-cuda1241-devel-ubuntu2204 --set 240-py311-cuda1241-devel-ubuntu2204.platform=linux/amd64
+cd containers/official-templates/pytorch
+
+docker buildx bake 280-py311-cuda1281-cudnn-devel-ubuntu2204 --set 280-py311-cuda1281-cudnn-devel-ubuntu2204.platform=linux/amd64
 ```
 
 ## Exposed Ports
