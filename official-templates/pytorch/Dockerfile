@@ -21,8 +21,8 @@ RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt install --yes --no-install-recommends git wget curl bash libgl1 software-properties-common openssh-server nginx && \
     if [ -n "${PYTHON_VERSION}" ]; then \
-        add-apt-repository ppa:deadsnakes/ppa && \
-        apt install "python${PYTHON_VERSION}-dev" "python${PYTHON_VERSION}-venv" -y --no-install-recommends; \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt install "python${PYTHON_VERSION}-dev" "python${PYTHON_VERSION}-venv" -y --no-install-recommends; \
     fi && \
     apt-get autoremove -y && \
     apt-get clean && \
@@ -31,23 +31,21 @@ RUN apt-get update --yes && \
 
 # Set up Python and pip only if PYTHON_VERSION is specified
 RUN if [ -n "${PYTHON_VERSION}" ]; then \
-        ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
-        rm /usr/bin/python3 && \
-        ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
-        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-        python get-pip.py; \
+    ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
+    rm /usr/bin/python3 && \
+    ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python get-pip.py; \
     fi
 
 
 RUN pip install --upgrade --no-cache-dir pip
 # Install PyTorch only if TORCH is specified
 RUN if [ -n "${TORCH}" ]; then pip install --upgrade --no-cache-dir ${TORCH}; fi 
-RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
+RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive 
 
 # Set up Jupyter Notebook
-RUN pip install notebook==6.5.5
-RUN jupyter contrib nbextension install --user && \
-    jupyter nbextension enable --py widgetsnbextension
+RUN pip install notebook==7.3.3
 
 # Remove existing SSH host keys
 RUN rm -f /etc/ssh/ssh_host_*
