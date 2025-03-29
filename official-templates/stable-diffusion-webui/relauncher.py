@@ -1,25 +1,18 @@
-import os
 import time
+import subprocess
 
 
-def relaunch_process(launch_counter=0):
-    '''
-
-    '''
+def relaunch_process():
+    """Relaunches the web UI process in a loop"""
     while True:
-        print('Relauncher: Launching...')
-        if launch_counter > 0:
-            print(f'\tRelaunch count: {launch_counter}')
-
+        print("Relauncher: Launching...")
         try:
-            launch_string = "/workspace/stable-diffusion-webui/webui.sh -f"
-            os.system(launch_string)
+            webui_path = "/workspace/stable-diffusion-webui/webui.sh"
+            subprocess.run(f"bash {webui_path} -f", shell=True, check=True)
         except Exception as err:
             print(f"An error occurred: {err}")
-        finally:
-            print('Relauncher: Process is ending. Relaunching in 2s...')
-            launch_counter += 1
-            time.sleep(2)
+        print("Relauncher: Process is ending. Relaunching in 2s...")
+        time.sleep(2)
 
 
 if __name__ == "__main__":
