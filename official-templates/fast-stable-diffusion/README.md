@@ -1,35 +1,101 @@
-<div style="text-align: center;">
+# Fast Stable Diffusion Template
 
-<h1> Fast Stable Diffusion </h1>
+This template provides a Fast Stable Diffusion environment with Automatic1111 Web UI.
 
-</div>
+## Features
 
-## 📖 About
+- Automatic1111 Web UI
+- Fast Stable Diffusion optimizations
+- CUDA 11.8 support
+- Python 3.10
+- Jupyter Notebook support
+- Dreambooth training support
 
-This is a packaged template for Fast Stable Diffusion, RunPod does not maintain the code for this repo, we just package it so that it's easier for you to use.
+## Included Models
 
-If you need help with settings, etc. You can feel free to ask us, but just keep in mind that we're not experts at stable diffusion! We'll try our best to help, but the RP community or automatic/stable diffusion communities may be better at helping you.
+The following models will be automatically mounted into the Pod:
 
-**Note: This does not work out of the box with encrypted volumes!**
+- [Stable Diffusion XL Base 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/sd_xl_base_1.0.safetensors)
+- [Stable Diffusion XL Refiner 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/blob/main/sd_xl_refiner_1.0.safetensors)
+- [Stable Diffusion 1.5](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/blob/main/v1-5-pruned-emaonly.safetensors)
+- [Stable Diffusion 2.1 (768)](https://huggingface.co/stabilityai/stable-diffusion-2-1/blob/main/v2-1_768-ema-pruned.ckpt)
 
-## 🚀 Usage
+## Usage Instructions
 
-Start by connecting to jupyter lab. From there you will have the option to run the automatic1111 notebook, which will launch the UI for automatic, or you can directly train dreambooth using one of the dreambooth notebooks.
+1. Connect to JupyterLab through port 8888
+2. Open the RNPD-A1111.ipynb notebook
+3. Run the notebook to start the Automatic1111 Web UI
+4. Access the UI through port 3001
 
-### Changing launch parameters
+### Customizing Launch Parameters
 
-There is a "Start Stable-Diffusion" cell in the RNPD-A1111.ipynb notebook. You can feel free to change the launch params by changing this line `!python /workspace/sd/stable-diffusion-webui/webui.py $configf`.
+You can modify the launch parameters in the "Start Stable-Diffusion" cell of the RNPD-A1111.ipynb notebook by editing this line:
 
-### Using your own models
+```python
+!python /workspace/sd/stable-diffusion-webui/webui.py $configf
+```
 
-The best ways to get your models onto your pod is by using [runpodctl](https://github.com/runpod/runpodctl/blob/main/README.md) or by uploading them to google drive or other cloud storage and downloading them to your pod from there. You should put models that you want to use with auto in the /workspace/auto-models directory.
+### Using Custom Models
 
-### Uploading to google drive
+There are several ways to add your own models:
 
-If you're done with the pod and would like to send things to google drive, you can use [this colab](https://colab.research.google.com/drive/1ot8pODgystx1D6_zvsALDSvjACBF1cj6) to do it using runpodctl. You run the runpodctl either in a web terminal (found in the pod connect menu), or in a terminal on the desktop
+1. Using [runpodctl](https://github.com/runpod/runpodctl):
 
-## 🔌 Template Ports
+   - Install runpodctl following the [installation guide](https://github.com/runpod/runpodctl/blob/main/README.md)
+   - Use runpodctl to upload your models to the pod
+   - Place models in `/workspace/auto-models` directory
 
-- **3001** | HTTP - This is the interface port that gets proxied to the internal 3000 port.
-- **8888** | HTTP - This is the JupyterLab port that gets proxied to the internal 8888 port.
-- **22** | TCP  - This is the SSH port that gets proxied to the internal 22 port.
+2. Cloud Storage Method:
+
+   - Upload your models to Google Drive or other cloud storage
+   - Download them to your pod using wget or curl
+   - Move them to `/workspace/auto-models` directory
+
+3. Direct Upload:
+   - Use the JupyterLab interface to upload models
+   - Navigate to `/workspace/auto-models` in JupyterLab
+   - Upload your models directly through the interface
+
+### Training with Dreambooth
+
+1. Open one of the Dreambooth notebooks in JupyterLab
+2. Follow the notebook instructions for training setup
+3. Models trained with Dreambooth will be saved in the specified output directory
+
+## Saving Your Work
+
+### Uploading to Google Drive
+
+1. Use [this colab notebook](https://colab.research.google.com/drive/1ot8pODgystx1D6_zvsALDSvjACBF1cj6) for Google Drive transfers
+2. Run runpodctl through either:
+   - Web terminal (found in pod connect menu)
+   - Desktop terminal
+
+### Local Backup
+
+- Use runpodctl to download your files locally
+- Important directories to backup:
+  - `/workspace/auto-models` - Custom models
+  - `/workspace/outputs` - Generated images
+  - Any custom training data or fine-tuned models
+
+## Important Notes
+
+- This template doesn't support encrypted volumes
+- The UI does not auto-launch on startup - you must start it through the notebook
+
+## Network Ports
+
+| Application      | Port | Type |
+| ---------------- | ---- | ---- |
+| Automatic1111 UI | 3001 | HTTP |
+| Jupyter Notebook | 8888 | HTTP |
+| SSH              | 22   | TCP  |
+
+## Getting Help
+
+For technical support, consider:
+
+- [RunPod Community on Discord](https://discord.gg/cUpRmau42V)
+- [Automatic1111 GitHub Issues](https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues)
+- [Stable Diffusion on Reddit](https://www.reddit.com/r/StableDiffusion/)
