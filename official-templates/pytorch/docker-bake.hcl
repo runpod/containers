@@ -152,7 +152,7 @@ target "211-py310-cuda1211-devel-ubuntu2204" {
 
 target "220-py310-cuda1211-devel-ubuntu2204" {
     dockerfile = "Dockerfile"
-    tags = ["${PUBLISHER}/pytorch:2.2.0-py3.10-cuda12.1.2511-devel-ubuntu22.04"]
+    tags = ["${PUBLISHER}/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04"]
     contexts = {
         scripts = "../../container-template"
         proxy = "../../container-template/proxy"
