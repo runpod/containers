@@ -26,7 +26,7 @@ The following dependencies are required as part of RunPod platform functionality
 
 ### runpod.yaml
 
-Each container foulder needs to have a runpod.yaml file. This file will contain version info as well as services to be ran. The runpod.yaml file should be formatted as follows:
+Each container folder needs to have a runpod.yaml file. This file will contain version info as well as services to be ran. The runpod.yaml file should be formatted as follows:
 
 ```yaml
 version: '1.0.0'
