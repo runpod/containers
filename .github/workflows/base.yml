@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest-public-m
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Clear space to remove unused folders
         run: |
@@ -56,10 +56,12 @@ jobs:
           fi
 
       - name: Build and push the images to Docker Hub
-        uses: docker/bake-action@v2
+        uses: docker/bake-action@v6
         with:
+          source: .
           files: ./official-templates/base/docker-bake.hcl
           push: true
           set: |
+            allow=fs.read=/home/runner/work
             ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
             *.args.GITHUB_WORKSPACE=${{ github.workspace }}
