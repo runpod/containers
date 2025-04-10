@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest-public-m
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Clear space to remove unused folders
         run: |
