@@ -5,6 +5,9 @@ on:
     paths:
       - "official-templates/base/**"
 
+env:
+  BUILDX_BAKE_ENTITLEMENTS_FS: 0
+
 jobs:
   build:
     runs-on: ubuntu-latest-public-m
@@ -42,9 +45,6 @@ jobs:
 
       - name: Set environment variables
         run: |
-          # Set environment variable to disable entitlements checks
-          echo "BUILDX_BAKE_ENTITLEMENTS_FS=0" >> $GITHUB_ENV
-
           # Only set RELEASE for development builds
           # For production, we'll use the default from docker-bake.hcl
           if [[ "${{ steps.build_type.outputs.is_production }}" != "true" ]]; then
@@ -62,6 +62,5 @@ jobs:
           files: ./official-templates/base/docker-bake.hcl
           push: true
           set: |
-            allow=fs.read=/home/runner/work
             ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
             *.args.GITHUB_WORKSPACE=${{ github.workspace }}
