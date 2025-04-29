@@ -1,16 +1,21 @@
-variable "IMAGE_NAME" {
-    default = "runpod/discoart"
+variable "RELEASE" {
+  default = "0.0.0"
 }
 
-variable "RELEASE" {
-    default = "0.0.0"
+variable "IMAGE_NAME" {
+  default = "runpod/discoart"
+}
+
+variable "GITHUB_WORKSPACE" {
+  default = "."
 }
 
 target "default" {
-    dockerfile = "Dockerfile"
-    tags = ["${IMAGE_NAME}:${RELEASE}"]
-    contexts = {
-        scripts = "../../container-template"
-        proxy = "../../container-template/proxy"
-    }
+  context = "${GITHUB_WORKSPACE}/official-templates/discoart"
+  dockerfile = "Dockerfile"
+  tags = ["runpod/discoart:${RELEASE}"]
+  contexts = {
+    scripts = "container-template"
+    proxy = "container-template/proxy"
+  }
 }

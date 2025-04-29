@@ -1,4 +1,4 @@
-ARG BASE_IMAGE
+ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
 ARG TORCH
@@ -58,8 +58,7 @@ COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+COPY --chmod=755 --from=scripts start.sh /
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt

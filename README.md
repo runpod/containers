@@ -22,11 +22,11 @@ The following dependencies are required as part of RunPod platform functionality
 
 - `nginx` - Required for proxying ports to the user.
 - `openssh-server` - Required for SSH access to the container.
-- 'pip install jupyterlab' - Required for JupyterLab access to the container.
+- `pip install jupyterlab` - Required for JupyterLab access to the container.
 
 ### runpod.yaml
 
-Each container foulder needs to have a runpod.yaml file. This file will contain version info as well as services to be ran. The runpod.yaml file should be formatted as follows:
+Each container folder needs to have a runpod.yaml file. This file will contain version info as well as services to be ran. The runpod.yaml file should be formatted as follows:
 
 ```yaml
 version: '1.0.0'

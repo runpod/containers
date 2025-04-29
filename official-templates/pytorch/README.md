@@ -7,7 +7,7 @@
 Example:
 
 ```bash
-cd containers/official-templates/pytorch
+cd official-templates/pytorch
 
 docker buildx bake 280-py311-cuda1281-cudnn-devel-ubuntu2204 --set 280-py311-cuda1281-cudnn-devel-ubuntu2204.platform=linux/amd64
 ```

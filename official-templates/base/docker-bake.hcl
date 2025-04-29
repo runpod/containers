@@ -11,13 +11,13 @@ group "default" {
 }
 
 target "cpu" {
-    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
+    dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cpu"]
     contexts = {
-        scripts = "${GITHUB_WORKSPACE}/container-template"
-        proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
-        logo = "${GITHUB_WORKSPACE}/container-template"
-        base = "${GITHUB_WORKSPACE}/official-templates/base"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -26,13 +26,13 @@ target "cpu" {
 }
 
 target "11-1-1" {
-    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
+    dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.1.1"]
     contexts = {
-        scripts = "${GITHUB_WORKSPACE}/container-template"
-        proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
-        logo = "${GITHUB_WORKSPACE}/container-template"
-        base = "${GITHUB_WORKSPACE}/official-templates/base"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -41,13 +41,13 @@ target "11-1-1" {
 }
 
 target "11-8-0" {
-    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
+    dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda11.8.0"]
     contexts = {
-        scripts = "${GITHUB_WORKSPACE}/container-template"
-        proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
-        logo = "${GITHUB_WORKSPACE}/container-template"
-        base = "${GITHUB_WORKSPACE}/official-templates/base"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -56,13 +56,13 @@ target "11-8-0" {
 }
 
 target "12-1-0" {
-    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
+    dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.1.0"]
     contexts = {
-        scripts = "${GITHUB_WORKSPACE}/container-template"
-        proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
-        logo = "${GITHUB_WORKSPACE}/container-template"
-        base = "${GITHUB_WORKSPACE}/official-templates/base"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -71,13 +71,13 @@ target "12-1-0" {
 }
 
 target "12-2-0" {
-    dockerfile = "${GITHUB_WORKSPACE}/official-templates/base/Dockerfile"
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
+    dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.2.0"]
     contexts = {
-        scripts = "${GITHUB_WORKSPACE}/container-template"
-        proxy = "${GITHUB_WORKSPACE}/container-template/proxy"
-        logo = "${GITHUB_WORKSPACE}/container-template"
-        base = "${GITHUB_WORKSPACE}/official-templates/base"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -86,12 +86,13 @@ target "12-2-0" {
 }
 
 target "12-4-1" {
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.4.1"]
     contexts = {
-        scripts = "../../container-template"
-        proxy = "../../container-template/proxy"
-        logo = "../../container-template"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -100,12 +101,13 @@ target "12-4-1" {
 }
 
 target "12-5-1" {
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.5.1"]
     contexts = {
-        scripts = "../../container-template"
-        proxy = "../../container-template/proxy"
-        logo = "../../container-template"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"
@@ -114,12 +116,13 @@ target "12-5-1" {
 }
 
 target "12-6-2" {
+    context = "${GITHUB_WORKSPACE}/official-templates/base"
     dockerfile = "Dockerfile"
     tags = ["runpod/base:${RELEASE}-cuda12.6.2"]
     contexts = {
-        scripts = "../../container-template"
-        proxy = "../../container-template/proxy"
-        logo = "../../container-template"
+        scripts = "container-template"
+        proxy = "container-template/proxy"
+        logo = "container-template"
     }
     args = {
         BASE_RELEASE_VERSION = "${RELEASE}"

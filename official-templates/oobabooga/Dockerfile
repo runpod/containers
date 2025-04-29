@@ -1,7 +1,7 @@
 # start from runpod pytorch container
 ARG BASE_IMAGE=runpod/pytorch:3.10-1.13.1-116
 
-FROM ${BASE_IMAGE} as dev-base
+FROM ${BASE_IMAGE} AS dev-base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -37,7 +37,6 @@ COPY README.md /usr/share/nginx/html/README.md
 # Start Scripts
 COPY pre_start.sh /pre_start.sh
 COPY post_start.sh /post_start.sh
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+COPY --chmod=755 --from=scripts start.sh /
 
 CMD [ "/start.sh" ]

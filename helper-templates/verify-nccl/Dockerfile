@@ -14,8 +14,7 @@ RUN git clone https://github.com/NVIDIA/cuda-samples.git && \
     cd cuda-samples/Samples/0_Introduction/simpleP2P && \
     make
 
-COPY check_nccl.sh .
-RUN chmod +x check_nccl.sh
+COPY --chmod=755 check_nccl.sh .
 
 # Start Container
 CMD tail -f /dev/null

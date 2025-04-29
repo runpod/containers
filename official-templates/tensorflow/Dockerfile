@@ -10,6 +10,7 @@ RUN apt-get update --yes && \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Setup Jupyter Notebook
+RUN pip install --upgrade --no-cache-dir pip
 RUN pip install --upgrade --no-cache-dir jupyterlab ipywidgets jupyter-archive jupyter_contrib_nbextensions
 RUN pip install notebook==6.5.5
 RUN jupyter contrib nbextension install --user && \
@@ -23,8 +24,7 @@ COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+COPY --from=scripts --chmod=755 start.sh /
 
 # Custom MOTD
 COPY --from=scripts runpod.txt /etc/motd

@@ -1,8 +1,8 @@
 FROM entmike/discoart:preload
 
 # Set bash as default shell, non-interactive
-ENV DEBIAN_FRONTEND noninteractive\
-    SHELL=/bin/bash
+ENV DEBIAN_FRONTEND noninteractive
+ENV SHELL=/bin/bash
 
 # Create workspace working directory
 WORKDIR /workspace
@@ -59,7 +59,6 @@ RUN rm -Rf /root/.cache && mkdir -p /models/.cache && ln -s /models/.cache /root
 
 # Start Scripts
 COPY pre_start.sh /pre_start.sh
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+COPY --chmod=755 --from=scripts start.sh /
 
 CMD [ "/start.sh" ]

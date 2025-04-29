@@ -1,5 +1,5 @@
 # Import necessary base images
-FROM runpod/stable-diffusion:models-1.0.0 as sd-models
+FROM runpod/stable-diffusion:models-1.0.0 AS sd-models
 
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
@@ -72,8 +72,7 @@ COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
 COPY pre_start.sh /pre_start.sh
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh
+COPY --chmod=755 --from=scripts start.sh /
 
 # Force
 RUN pip install --upgrade --force-reinstall  torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118

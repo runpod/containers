@@ -1,4 +1,4 @@
-ARG BASE_IMAGE
+ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -197,10 +197,8 @@ COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
-COPY --from=scripts start.sh /
-COPY --from=base post_start.sh /
-RUN chmod +x /start.sh && \
-    chmod +x /post_start.sh
+COPY --from=scripts --chmod=755 start.sh /
+COPY --chmod=755 post_start.sh /
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt
