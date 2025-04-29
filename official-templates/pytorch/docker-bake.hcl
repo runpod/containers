@@ -8,14 +8,6 @@ variable "GITHUB_WORKSPACE" {
 
 group "default" {
     targets = [
-        ### CUDA ###
-        # CUDA 11.1
-        "191-py39-cuda111-devel-ubuntu2004",
-        # CUDA 11.7.1
-        "1131-py38-cuda1171-devel-ubuntu2204",
-        # CUDA 11.8.0
-        "201-py310-cuda1180-devel-ubuntu2204",
-        "210-py310-cuda1180-devel-ubuntu2204",
         # CUDA 12.1.1
         "211-py310-cuda1211-devel-ubuntu2204",
         "220-py310-cuda1211-devel-ubuntu2204",
@@ -206,7 +198,6 @@ target "240-py311-cuda1241-devel-ubuntu2204" {
         TORCH = "torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124"
     }
 }
-
 
 target "251-py311-cuda1241-devel-ubuntu2204" {
     context = "${GITHUB_WORKSPACE}/official-templates/pytorch"

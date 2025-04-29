@@ -7,7 +7,7 @@ variable "GITHUB_WORKSPACE" {
 }
 
 group "default" {
-    targets = ["cpu", "11-1-1", "11-8-0", "12-1-0", "12-2-0", "12-4-1", "12-5-1", "12-6-2"]
+    targets = ["cpu", "12-1-0", "12-2-0", "12-4-1", "12-5-1", "12-6-2"]
 }
 
 target "cpu" {
