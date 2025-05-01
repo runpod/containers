@@ -2,10 +2,6 @@ variable "RELEASE" {
   default = "0.0.0"
 }
 
-variable "IMAGE_NAME" {
-  default = "runpod/discoart"
-}
-
 variable "GITHUB_WORKSPACE" {
   default = "."
 }
