@@ -105,11 +105,8 @@ RUN apt install --yes --no-install-recommends \
 # Add the Python PPA
 RUN add-apt-repository ppa:deadsnakes/ppa
 
-# Install Python 3.8-3.11 with distutils
+# Install Python 3.9-3.11 with distutils
 RUN apt install --yes --no-install-recommends \
-    python3.8-dev \
-    python3.8-venv \
-    python3.8-distutils \
     python3.9-dev \
     python3.9-venv \
     python3.9-distutils \
@@ -137,7 +134,6 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Install pip
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.8 get-pip.py && \
     python3.9 get-pip.py && \
     python3.10 get-pip.py && \
     python3.11 get-pip.py && \
@@ -146,16 +142,14 @@ RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     rm get-pip.py
 
 # Get the latest pip for all python versions
-RUN python3.8 -m pip install --upgrade pip && \
-    python3.9 -m pip install --upgrade pip && \
+RUN python3.9 -m pip install --upgrade pip && \
     python3.10 -m pip install --upgrade pip && \
     python3.11 -m pip install --upgrade pip && \
     python3.12 -m pip install --upgrade pip && \
     python3.13 -m pip install --upgrade pip
 
 # Install virtualenv
-RUN python3.8 -m pip install virtualenv && \
-    python3.9 -m pip install virtualenv && \
+RUN python3.9 -m pip install virtualenv && \
     python3.10 -m pip install virtualenv && \
     python3.11 -m pip install virtualenv && \
     python3.12 -m pip install virtualenv && \
