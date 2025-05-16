@@ -86,9 +86,8 @@ COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 COPY README.md /usr/share/nginx/html/README.md
 
 # Start Scripts
-COPY pre_start.sh /pre_start.sh
-COPY --from=scripts start.sh /
-RUN chmod +x /start.sh && chmod +x /pre_start.sh
+COPY --chmod=755 pre_start.sh /pre_start.sh
+COPY --chmod=755 --from=scripts start.sh /
 
 SHELL ["/bin/bash", "--login", "-c"]
 CMD [ "/start.sh" ]
