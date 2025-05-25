@@ -33,7 +33,7 @@ RUN mkdir -p /ComfyUI/user
 
 # Copy the README.md, extra_model_paths.yml and start script
 COPY README.md /usr/share/nginx/html/README.md
-COPY extra_model_paths.yml /ComfyUI/extra_model_paths.yml
+COPY extra_model_paths.yaml /ComfyUI/extra_model_paths.yaml
 COPY --chmod=755 pre_start.sh /pre_start.sh
 
 CMD [ "/start.sh" ]
