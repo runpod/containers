@@ -1,13 +1,13 @@
-# RunPod Containers
+# Runpod Containers
 
-This repository contains the Dockerfiles for the RunPod containers used for our official templates. Resulting containers are available on [Docker Hub](https://hub.docker.com/u/runpod).
+This repository contains the Dockerfiles for the Runpod containers used for our official templates. Resulting containers are available on [Docker Hub](https://hub.docker.com/u/runpod).
 
-| Container             | RunPod Template              | Description |
+| Container             | Runpod Template              | Description |
 |-----------------------|------------------------------|-------------|
-| fast-stable-diffusion | RunPod Fast Stable Diffusion |             |
-| kasm-desktop          | RunPod Desktop               |             |
-| vscode-server         | RunPod VS Code Server        |             |
-| discoart              | RunPod Disco Diffusion       |             |
+| fast-stable-diffusion | Runpod Fast Stable Diffusion |             |
+| kasm-desktop          | Runpod Desktop               |             |
+| vscode-server         | Runpod VS Code Server        |             |
+| discoart              | Runpod Disco Diffusion       |             |
 
 
 ## Changes
@@ -18,7 +18,7 @@ The containers `serverless-automatic` and `sd-auto-abdbarho` have been removed f
 
 ### Dependencies
 
-The following dependencies are required as part of RunPod platform functionality.
+The following dependencies are required as part of Runpod platform functionality.
 
 - `nginx` - Required for proxying ports to the user.
 - `openssh-server` - Required for SSH access to the container.
@@ -41,7 +41,7 @@ services:
 
 ### README
 
-Every container folder needs to have its own README.md file, this file will be displayed both on the Docker Hub as well as the README section of the template on the RunPod website. Additionally, if the container is opening a port other than 8888 that is passed through the proxy and the service is not running yet, the README will be displayed to the user.
+Every container folder needs to have its own README.md file, this file will be displayed both on the Docker Hub as well as the README section of the template on the Runpod website. Additionally, if the container is opening a port other than 8888 that is passed through the proxy and the service is not running yet, the README will be displayed to the user.
 
 ## Building Containers
 
