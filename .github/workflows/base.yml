@@ -71,7 +71,9 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
         with:
           source: .
-          files: "official-templates/base/docker-bake.hcl" #${{ steps.changed_files_csv.outputs.files }}
+          files: |
+            "official-templates/shared/versions.hcl" 
+            ${{ steps.changed_files_csv.outputs.files }}
           push: true
           set: |
             ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}

@@ -1,6 +1,6 @@
 <div style="text-align: center;">
 
-<h1> RunPod Base </h1>
+<h1> Runpod Base </h1>
 
 </div>
 
@@ -14,7 +14,7 @@ Once the server is ready, you will see the list of endpoints available to start 
 
 <!---
 
-# RunPod Base Container Image
+# Runpod Base Container Image
 
 This base image is intended to provide the essential runtime system dependencies for most applications. It is by no means optimized and more likely than not includes many packages that you might not need for your use case.
 

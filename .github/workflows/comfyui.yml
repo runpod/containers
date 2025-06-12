@@ -64,7 +64,7 @@ jobs:
             ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
             *.args.GITHUB_WORKSPACE=${{ github.workspace }}
 
-      - name: Update template README on RunPod
+      - name: Update template README on Runpod
         if: steps.build_type.outputs.is_production == 'true'
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}

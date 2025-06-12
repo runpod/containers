@@ -1,12 +1,12 @@
-# RunPod Containers
+# Runpod Containers
 
-This repository contains the Dockerfiles for the RunPod containers used for our official templates. Built containers are available on the [Docker Hub](https://hub.docker.com/u/runpod).
+This repository contains the Dockerfiles for the Runpod containers used for our official templates. Built containers are available on the [Docker Hub](https://hub.docker.com/u/runpod).
 
 ## Container Requirements
 
 ### Dependencies
 
-The following dependencies are required for all images for RunPod platform functionality.
+The following dependencies are required for all images for Runpod platform functionality.
 
 - `nginx` - Required for proxying ports to the user.
 - `openssh-server` - Required for SSH access to the container.
@@ -14,7 +14,7 @@ The following dependencies are required for all images for RunPod platform funct
 
 ### README
 
-Every container folder has its own README.md file, this file is displayed on the Docker Hub and the README section of the template on the RunPod website. Additionally, if the container opens a port other than 8888 that is passed through the proxy and the service is not running yet, the README will be displayed to the user to guide them.
+Every container folder has its own README.md file, this file is displayed on the Docker Hub and the README section of the template on the Runpod website. Additionally, if the container opens a port other than 8888 that is passed through the proxy and the service is not running yet, the README will be displayed to the user to guide them.
 
 ## Building Containers
 
