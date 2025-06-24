@@ -3,6 +3,7 @@ name: Base Image Build and Release
 on:
   push:
     paths:
+      - "./github/workflows/base.yml"
       - "official-templates/base/**"
   workflow_dispatch:
 
