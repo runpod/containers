@@ -1,3 +1,4 @@
 # runpod/pytorch
 
-Also available as: `runpod/nvidia` and `runpod/cuda`.
+Please also see [../base/README.md](../base/README.md)
+

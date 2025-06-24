@@ -99,7 +99,6 @@ target "pytorch-matrix" {
   
   tags = [
     "runpod/pytorch:${RELEASE_VERSION}-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}",
-    "runpod/pytorch:${RELEASE_VERSION}-cuda${build.cuda_version}-${build.ubuntu_name}-torch${build.torch}",
-    "runpod/pytorch:${RELEASE_VERSION}-torch${build.torch}-${build.ubuntu_name}-cuda${build.cuda_version}"
+    "runpod/pytorch:${RELEASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }

@@ -1,47 +1,84 @@
-<div style="text-align: center;">
-
-<h1> Runpod Base </h1>
-
-</div>
+<h1>Runpod Base</h1>
 
 ## ⚠️ | Notice
 
-Your development API server is launching, please wait a moment before refreshing the page. Your terminal will say **Starting Serverless Worker** when the server is ready. You might also be seeing this message if your handler has any errors, please check your terminal for more information.
+Your Pod is launching, please wait a moment before refreshing the page. You might also be seeing this message if your handler has any errors, please check your terminal for more information.
 
 ## 🚀 | Usage
 
 Once the server is ready, you will see the list of endpoints available to start sending requests. You can send requests to these endpoints from the FastAPI web interface, a service such as Postman, with cURL or programmatically from a language of your choice.
 
-<!---
+## Generated Images
 
-# Runpod Base Container Image
+<div class="base-images">
 
-This base image is intended to provide the essential runtime system dependencies for most applications. It is by no means optimized and more likely than not includes many packages that you might not need for your use case.
+### Operating Systems:
+- Ubuntu 20.04:
+    - `runpod/base:0.7.0`
+    - `runpod/base:0.7.0-ubuntu2004`
+- Ubuntu 22.04:
+    - `runpod/base:0.7.0-ubuntu2204`
+    - `runpod/base:0.7.0-jammy`
+- Ubuntu 24.04:
+    - `runpod/base:0.7.0-ubuntu2404`
+    - `runpod/base:0.7.0-noble`
 
-## HuggingFace Cache
-
-This image contains environment variables to override the default HuggingFace cache directory. It will use `/runpod-volume/` as the root path. If you are using network attached storage it is recommended to mount a volume to this path to avoid downloading models on every run.
-
-## Environment Variables
-
-- `POD_INACTIVITY_TIMEOUT`: The number of seconds to wait before shutting down the pod. Defaults to 60 seconds.
-
-## Ports
-
-- **4040**: File Browser
-- **7270**: FastAPI Server
-
-## Python Management
-
-- [PyEnv](https://github.com/pyenv/pyenv)
-- [VirtualEnv](https://virtualenv.pypa.io/en/latest/index.html)
-- [VirtualEnvWrapper](https://virtualenvwrapper.readthedocs.io/en/latest/)
-- [uv](https://github.com/astral-sh/uv)
-
-### Building
-
-```bash
-docker buildx bake --push
-docker buildx bake 12-4-1 --set 12-4-1.platform=linux/amd64
-```
--->
+### CUDA Versions:
+- 12.4.1:
+    - Ubuntu 20.04:
+        - `runpod/base:0.7.0-cuda1241`
+        - `runpod/base:0.7.0-cuda1241-ubuntu2004`
+        - `runpod/base:0.7.0-focal-cuda1241`
+    - Ubuntu 22.04:
+        - `runpod/base:0.7.0-cuda1241`
+        - `runpod/base:0.7.0-cuda1241-ubuntu2204`
+        - `runpod/base:0.7.0-jammy-cuda1241`
+- 12.5.1:
+    - Ubuntu 20.04:
+        - `runpod/base:0.7.0-cuda1251`
+        - `runpod/base:0.7.0-cuda1251-ubuntu2004`
+        - `runpod/base:0.7.0-focal-cuda1251`
+    - Ubuntu 22.04:
+        - `runpod/base:0.7.0-cuda1251`
+        - `runpod/base:0.7.0-cuda1251-ubuntu2204`
+        - `runpod/base:0.7.0-jammy-cuda1251`
+- 12.6.3:
+    - Ubuntu 20.04:
+        - `runpod/base:0.7.0-cuda1263`
+        - `runpod/base:0.7.0-cuda1263-ubuntu2004`
+        - `runpod/base:0.7.0-focal-cuda1263`
+    - Ubuntu 22.04:
+        - `runpod/base:0.7.0-cuda1263`
+        - `runpod/base:0.7.0-cuda1263-ubuntu2204`
+        - `runpod/base:0.7.0-jammy-cuda1263`
+    - Ubuntu 24.04:
+        - `runpod/base:0.7.0-cuda1263`
+        - `runpod/base:0.7.0-cuda1263-ubuntu2404`
+        - `runpod/base:0.7.0-noble-cuda1263`
+- 12.8.1:
+    - Ubuntu 20.04:
+        - `runpod/base:0.7.0-cuda1281`
+        - `runpod/base:0.7.0-cuda1281-ubuntu2004`
+        - `runpod/base:0.7.0-focal-cuda1281`
+    - Ubuntu 22.04:
+        - `runpod/base:0.7.0-cuda1281`
+        - `runpod/base:0.7.0-cuda1281-ubuntu2204`
+        - `runpod/base:0.7.0-jammy-cuda1281`
+    - Ubuntu 24.04:
+        - `runpod/base:0.7.0-cuda1281`
+        - `runpod/base:0.7.0-cuda1281-ubuntu2404`
+        - `runpod/base:0.7.0-noble-cuda1281`
+- 12.9.0:
+    - Ubuntu 20.04:
+        - `runpod/base:0.7.0-cuda1290`
+        - `runpod/base:0.7.0-cuda1290-ubuntu2004`
+        - `runpod/base:0.7.0-focal-cuda1290`
+    - Ubuntu 22.04:
+        - `runpod/base:0.7.0-cuda1290`
+        - `runpod/base:0.7.0-cuda1290-ubuntu2204`
+        - `runpod/base:0.7.0-jammy-cuda1290`
+    - Ubuntu 24.04:
+        - `runpod/base:0.7.0-cuda1290`
+        - `runpod/base:0.7.0-cuda1290-ubuntu2404`
+        - `runpod/base:0.7.0-noble-cuda1290`
+</div>

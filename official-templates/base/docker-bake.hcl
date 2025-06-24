@@ -29,9 +29,7 @@ target "cpu-ubuntu2004" {
   inherits = ["common-base"]
   tags = [
     "runpod/base:${RELEASE_VERSION}",
-    "runpod/base:${RELEASE_VERSION}-cpu",
     "runpod/base:${RELEASE_VERSION}-ubuntu2004",
-    "runpod/base:${RELEASE_VERSION}-ubuntu2004-cpu"
   ]
   args = {
     BASE_IMAGE = "ubuntu:20.04"
@@ -42,9 +40,7 @@ target "cpu-ubuntu2204" {
   inherits = ["common-base"]
   tags = [
     "runpod/base:${RELEASE_VERSION}-ubuntu2204",
-    "runpod/base:${RELEASE_VERSION}-ubuntu2204-cpu",
     "runpod/base:${RELEASE_VERSION}-jammy",
-    "runpod/base:${RELEASE_VERSION}-jammy-cpu"
   ]
   args = {
     BASE_IMAGE = "ubuntu:22.04"
@@ -55,9 +51,7 @@ target "cpu-ubuntu2404" {
   inherits = ["common-base"]
   tags = [
     "runpod/base:${RELEASE_VERSION}-ubuntu2404",
-    "runpod/base:${RELEASE_VERSION}-ubuntu2404-cpu",
     "runpod/base:${RELEASE_VERSION}-noble",
-    "runpod/base:${RELEASE_VERSION}-noble-cpu"
   ]
   args = {
     BASE_IMAGE = "ubuntu:24.04"
