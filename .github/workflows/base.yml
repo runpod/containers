@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/base.yml"
       - "official-templates/base/**"
+      - "official-templates/pytorch/**"
   workflow_dispatch:
 
 jobs:
