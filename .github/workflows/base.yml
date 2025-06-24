@@ -72,7 +72,7 @@ jobs:
         with:
           source: .
           files: |
-            "./official-templates/shared/versions.hcl" 
+            official-templates/shared/versions.hcl
             ${{ steps.changed_files_csv.outputs.files }}
           push: true
           set: |
