@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,7 +30,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: useblacksmith/build-push-action@v1.1
+        uses: useblacksmith/build-push-action@v1.2
         with:
           setup-only: true
   
