@@ -89,5 +89,3 @@ target "cuda-matrix" {
     BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-runtime-ubuntu${combo.ubuntu_version}"
   }
 }
-
-# this is the line we change to make our runners work
