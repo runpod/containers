@@ -3,7 +3,7 @@
 import subprocess
 import re
 from collections import defaultdict
-from typing import List, Dict
+from typing import List
 
 
 def normalize_cuda(cuda_raw: str) -> str:

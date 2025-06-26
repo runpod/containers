@@ -100,6 +100,9 @@ COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
 COPY --from=proxy snippets /etc/nginx/snippets
 COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 
+# Remove existing SSH host keys
+RUN rm -f /etc/ssh/ssh_host_*
+
 # Copy the README.md
 COPY README.md /usr/share/nginx/html/README.md
 
