@@ -86,6 +86,6 @@ target "cuda-matrix" {
   ]
   
   args = {
-    BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-runtime-ubuntu${combo.ubuntu_version}"
+    BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-devel-ubuntu${combo.ubuntu_version}"
   }
 }
