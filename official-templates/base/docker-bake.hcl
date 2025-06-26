@@ -89,3 +89,5 @@ target "cuda-matrix" {
     BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-devel-ubuntu${combo.ubuntu_version}"
   }
 }
+
+# this is the line we add to force ci 
