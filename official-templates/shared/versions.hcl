@@ -1,4 +1,4 @@
-RELEASE_VERSION = "0.7.3-dev"
+RELEASE_VERSION = "0.7.4-dev"
 
 UBUNTU_VERSIONS = [
   {
