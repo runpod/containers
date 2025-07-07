@@ -54,6 +54,7 @@ jobs:
         with:
           files_yaml: |
             base:
+              - official-templates/shared/**
               - official-templates/base/**
             pytorch:
               - official-templates/pytorch/**
