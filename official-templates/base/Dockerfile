@@ -7,22 +7,22 @@ ENV SHELL=/bin/bash
 ENV PYTHONUNBUFFERED=True
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Override the default huggingface cache directory.
-ENV HF_HOME="/runpod-volume/.cache/huggingface/"
-ENV HF_DATASETS_CACHE="/runpod-volume/.cache/huggingface/datasets/"
-ENV DEFAULT_HF_METRICS_CACHE="/runpod-volume/.cache/huggingface/metrics/"
-ENV DEFAULT_HF_MODULES_CACHE="/runpod-volume/.cache/huggingface/modules/"
-ENV HUGGINGFACE_HUB_CACHE="/runpod-volume/.cache/huggingface/hub/"
-ENV HUGGINGFACE_ASSETS_CACHE="/runpod-volume/.cache/huggingface/assets/"
+# Set the default workspace directory
+ENV RP_WORKSPACE=/workspace
 
-# Faster transfer of models from the hub to the container
-ENV HF_HUB_ENABLE_HF_TRANSFER="1"
+# Override the default huggingface cache directory.
+ENV HF_HOME="${RP_WORKSPACE}/.cache/huggingface/"
 
 # Shared python package cache
-ENV VIRTUALENV_OVERRIDE_APP_DATA="/runpod-volume/.cache/virtualenv/"
-ENV PIP_CACHE_DIR="/runpod-volume/.cache/pip/"
-ENV UV_CACHE_DIR="/runpod-volume/.cache/uv/"
+ENV VIRTUALENV_OVERRIDE_APP_DATA="${RP_WORKSPACE}/.cache/virtualenv/"
+ENV PIP_CACHE_DIR="${RP_WORKSPACE}/.cache/pip/"
+ENV UV_CACHE_DIR="${RP_WORKSPACE}/.cache/uv/"
 
+# Faster transfer of models from the hub to the container
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_XET_HIGH_PERFORMANCE=1
+
+# modern pip workarounds
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV PIP_ROOT_USER_ACTION=ignore
 
@@ -64,11 +64,11 @@ RUN apt-get install --yes --no-install-recommends \
 
 # Install pip
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.9  get-pip.py --root-user-action ignore && \
-    python3.10 get-pip.py --root-user-action ignore && \
-    python3.11 get-pip.py --root-user-action ignore && \
-    python3.12 get-pip.py --root-user-action ignore && \
-    python3.13 get-pip.py --root-user-action ignore && \
+    python3.9  get-pip.py && \
+    python3.10 get-pip.py && \
+    python3.11 get-pip.py && \
+    python3.12 get-pip.py && \
+    python3.13 get-pip.py && \
     rm get-pip.py
 
 # ensurepip (it's there, we just installed it^) and install virtualenv

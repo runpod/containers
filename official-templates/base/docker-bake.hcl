@@ -6,12 +6,8 @@ group "cpu" {
   targets = ["cpu-ubuntu2004", "cpu-ubuntu2204", "cpu-ubuntu2404"]
 }
 
-group "cuda" {
-  targets = ["cuda-matrix"]
-}
-
 group "default" {
-  targets = ["cpu", "cuda"]
+  targets = ["cpu", "cuda-matrix"]
 }
 
 target "common-base" {
@@ -61,17 +57,16 @@ target "cpu-ubuntu2404" {
 target "cuda-matrix" {
   inherits = ["common-base"]
   
-  name = "cuda-${combo.ubuntu_name}-${combo.cuda_code}"
+  name = "cuda-${combo.ubuntu_name}-${replace(combo.cuda_version, ".", "")}"
   
   matrix = {
     combo = flatten([
       for cuda in CUDA_VERSIONS: [
         for ubuntu in UBUNTU_VERSIONS: {
           ubuntu_version = ubuntu.version
-          ubuntu_code = ubuntu.code
           ubuntu_name = ubuntu.name
           ubuntu_alias = ubuntu.alias
-          cuda_code = cuda.code
+          cuda_code = replace(cuda.version, ".", "")
           cuda_version = cuda.version
         } if contains(cuda.ubuntu, ubuntu.version)
       ]
@@ -79,10 +74,10 @@ target "cuda-matrix" {
   }
   
   tags = [
-    "runpod/base:${RELEASE_VERSION}-cuda${combo.cuda_version}-${combo.ubuntu_name}",
-    "runpod/base:${RELEASE_VERSION}-cuda${combo.cuda_version}-${combo.ubuntu_alias}",
-    "runpod/base:${RELEASE_VERSION}-${combo.ubuntu_name}-cuda${combo.cuda_version}",
-    "runpod/base:${RELEASE_VERSION}-${combo.ubuntu_alias}-cuda${combo.cuda_version}"
+    "runpod/base:${RELEASE_VERSION}-cuda${combo.cuda_code}-${combo.ubuntu_name}",
+    "runpod/base:${RELEASE_VERSION}-cuda${combo.cuda_code}-${combo.ubuntu_alias}",
+    "runpod/base:${RELEASE_VERSION}-${combo.ubuntu_name}-cuda${combo.cuda_code}",
+    "runpod/base:${RELEASE_VERSION}-${combo.ubuntu_alias}-cuda${combo.cuda_code}"
   ]
   
   args = {

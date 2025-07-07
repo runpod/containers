@@ -53,8 +53,8 @@ variable "COMPATIBLE_BUILDS" {
           ubuntu_version = ubuntu.version
           ubuntu_name    = ubuntu.name
           ubuntu_alias   = ubuntu.alias
-          cuda_code      = cuda.code
           cuda_version   = cuda.version
+          cuda_code      = replace(cuda.version, ".", "")
           wheel_src      = combo.whl_src
           torch          = combo.torch
           torch_code     = replace(combo.torch, ".", "")
@@ -72,7 +72,7 @@ group "dev" {
 group "default" {
   targets = [
     for build in COMPATIBLE_BUILDS:
-      "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
+      "pytorch-${build.ubuntu_name}-cu${replace(build.cuda_version, ".", "")}-torch${build.torch_code}"
   ]
 }
 

@@ -47,12 +47,15 @@ jobs:
             echo "is_production=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Get changed docker-bake.hcl files
+      - name: Get changed files
         id: changed_files
         uses: tj-actions/changed-files@v46
         with:
-          files: |
-            **/docker-bake.hcl
+          files_yaml: |
+            base:
+              - official-templates/base/**
+            pytorch:
+              - official-templates/pytorch/**
 
       - name: Set Environment Variables
         if: steps.build_type.outputs.is_production != 'true'
@@ -60,14 +63,30 @@ jobs:
           BRANCH_NAME=$(echo ${GITHUB_REF##refs/heads/} | sed 's/\//-/g')
           echo "RELEASE=dev-${BRANCH_NAME}" >> $GITHUB_ENV
 
-      - name: Convert changed files to CSV format
-        if: steps.changed_files.outputs.any_changed == 'true'
-        id: changed_files_csv
+      - name: Determine build files
+        id: build_files
         run: |
-          echo "files=${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' ',' >> $GITHUB_OUTPUT
+          BUILD_FILES=()
+          
+          # If base changed, build both base and pytorch
+          if [[ "${{ steps.changed_files.outputs.base_any_changed }}" == "true" ]]; then
+            BUILD_FILES+=("official-templates/base/docker-bake.hcl")
+            BUILD_FILES+=("official-templates/pytorch/docker-bake.hcl")
+          # If only pytorch changed, build only pytorch
+          elif [[ "${{ steps.changed_files.outputs.pytorch_any_changed }}" == "true" ]]; then
+            BUILD_FILES+=("official-templates/pytorch/docker-bake.hcl")
+          fi
+          
+          if [ ${#BUILD_FILES[@]} -gt 0 ]; then
+            BUILD_FILES_CSV=$(IFS=,; echo "${BUILD_FILES[*]}")
+            echo "files=${BUILD_FILES_CSV}" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and push images
-        if: steps.changed_files.outputs.any_changed == 'true'
+        if: steps.build_files.outputs.should_build == 'true'
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
@@ -75,7 +94,7 @@ jobs:
           source: .
           files: |
             official-templates/shared/versions.hcl
-            ${{ steps.changed_files_csv.outputs.files }}
+            ${{ steps.build_files.outputs.files }}
           push: true
           set: |
             ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
