@@ -9,6 +9,10 @@ on:
       - "official-templates/shared/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-base:
     runs-on: blacksmith-8vcpu-ubuntu-2204
