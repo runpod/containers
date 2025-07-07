@@ -1,11 +1,12 @@
-name: Base Image Build and Release
+name: Docker Image Build and Release
 
 on:
   push:
     paths:
       - ".github/workflows/base.yml"
-      - "official-templates/base/**"
-      - "official-templates/pytorch/**"
+      - "official-templates/*/docker-bake.hcl"
+      - "official-templates/*/Dockerfile"
+      - "official-templates/shared/**"
   workflow_dispatch:
 
 jobs:
@@ -63,30 +64,8 @@ jobs:
           BRANCH_NAME=$(echo ${GITHUB_REF##refs/heads/} | sed 's/\//-/g')
           echo "RELEASE=dev-${BRANCH_NAME}" >> $GITHUB_ENV
 
-      - name: Determine build files
-        id: build_files
-        run: |
-          BUILD_FILES=()
-          
-          # If base changed, build both base and pytorch
-          if [[ "${{ steps.changed_files.outputs.base_any_changed }}" == "true" ]]; then
-            BUILD_FILES+=("official-templates/base/docker-bake.hcl")
-            BUILD_FILES+=("official-templates/pytorch/docker-bake.hcl")
-          # If only pytorch changed, build only pytorch
-          elif [[ "${{ steps.changed_files.outputs.pytorch_any_changed }}" == "true" ]]; then
-            BUILD_FILES+=("official-templates/pytorch/docker-bake.hcl")
-          fi
-          
-          if [ ${#BUILD_FILES[@]} -gt 0 ]; then
-            BUILD_FILES_CSV=$(IFS=,; echo "${BUILD_FILES[*]}")
-            echo "files=${BUILD_FILES_CSV}" >> $GITHUB_OUTPUT
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build and push images
-        if: steps.build_files.outputs.should_build == 'true'
+      - name: Build base images
+        if: steps.changed_files.outputs.base_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
@@ -94,7 +73,22 @@ jobs:
           source: .
           files: |
             official-templates/shared/versions.hcl
-            ${{ steps.build_files.outputs.files }}
+            official-templates/base/docker-bake.hcl
+          push: true
+          set: |
+            ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
+            *.args.GITHUB_WORKSPACE=${{ github.workspace }}
+
+      - name: Build pytorch images
+        if: steps.changed_files.outputs.base_any_changed == 'true' || steps.changed_files.outputs.pytorch_any_changed == 'true'
+        uses: docker/bake-action@v6
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch/docker-bake.hcl
           push: true
           set: |
             ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
