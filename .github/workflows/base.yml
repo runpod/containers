@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Check if base files changed
+      - name: Check if build is needed
         uses: tj-actions/changed-files@v46
         id: changes
         with:
@@ -32,6 +32,7 @@ jobs:
               - 'official-templates/base/**'
 
       - name: Setup Docker
+        if: steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -50,12 +51,12 @@ jobs:
             official-templates/base/docker-bake.hcl
           push: true
           set: |
-            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE={0}', steps.setup.outputs.release-suffix) || '' }}
+            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}
             *.args.GITHUB_WORKSPACE=${{ github.workspace }}
 
   build-pytorch:
     needs: build-base
-    # always() forces job run even if the dependant is skipped (but not if it failed  )
+    # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
@@ -64,17 +65,17 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Check if pytorch or base files changed
+      - name: Check if build is needed
         uses: tj-actions/changed-files@v46
         id: changes
         with:
           files_yaml: |
             pytorch:
-              - 'official-templates/pytorch/**'
               - 'official-templates/shared/**'
-              - 'official-templates/base/**'
+              - 'official-templates/pytorch/**'
 
       - name: Setup Docker
+        if: steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -93,5 +94,5 @@ jobs:
             official-templates/pytorch/docker-bake.hcl
           push: true
           set: |
-            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE={0}', steps.setup.outputs.release-suffix) || '' }}
+            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}
             *.args.GITHUB_WORKSPACE=${{ github.workspace }}
