@@ -6,6 +6,7 @@ on:
       - ".github/workflows/rocm.yml"
       - "official-templates/rocm/**"
       - "official-templates/shared/**"
+      - "official-templates/base/Dockerfile"
   workflow_dispatch:
 
 permissions:
