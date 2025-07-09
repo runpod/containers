@@ -1,0 +1,16 @@
+services:
+  comfyui:
+    image: runpod/stable-diffusion:comfy-ui-6.0.0
+    ports:
+      - "3001:3000" # ComfyUI
+      - "8888:8888" # Jupyter
+      - "4040:4040" # Filebrowser
+    environment:
+      - JUPYTER_PASSWORD=thisismypassword
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

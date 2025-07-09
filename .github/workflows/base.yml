@@ -1,78 +1,87 @@
-name: Base Image Build and Release
+name: Docker Image Build and Release
 
 on:
   push:
     paths:
-      - "official-templates/base/**"
+      - ".github/workflows/base.yml"
+      - "official-templates/base/docker-bake.hcl"
+      - "official-templates/base/Dockerfile"
+      - "official-templates/pytorch/docker-bake.hcl"
+      - "official-templates/pytorch/Dockerfile"
+      - "official-templates/shared/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  build:
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+  build-base:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Clear space to remove unused folders
-        run: |
-          rm -rf /usr/share/dotnet
-          rm -rf /opt/ghc
-          rm -rf "/usr/local/share/boost"
-          rm -rf "$AGENT_TOOLSDIRECTORY"
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: useblacksmith/build-push-action@v1.1
-        with:
-          setup-only: true
-  
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Determine if this is a production build
-        id: build_type
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "is_production=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_production=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Get changed docker-bake.hcl files
-        id: changed_files
-        uses: tj-actions/changed-files@v46
-        with:
-          files: |
-            **/docker-bake.hcl
-
-      - name: Set Environment Variables
-        if: steps.build_type.outputs.is_production != 'true'
-        run: |
-          BRANCH_NAME=$(echo ${GITHUB_REF##refs/heads/} | sed 's/\//-/g')
-          echo "RELEASE=dev-${BRANCH_NAME}" >> $GITHUB_ENV
-
-      - name: Convert changed files to CSV format
-        if: steps.changed_files.outputs.any_changed == 'true'
-        id: changed_files_csv
-        run: |
-          echo "files=${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' ',' >> $GITHUB_OUTPUT
-
-      - name: Build and push images
-        if: steps.changed_files.outputs.any_changed == 'true'
+      - name: Build base images
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
         with:
           source: .
-          files: "official-templates/base/docker-bake.hcl" #${{ steps.changed_files_csv.outputs.files }}
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/base/docker-bake.hcl
           push: true
           set: |
-            ${{ steps.build_type.outputs.is_production != 'true' && format('*.args.RELEASE={0}', env.RELEASE) || '' }}
-            *.args.GITHUB_WORKSPACE=${{ github.workspace }}
+            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}
+
+  build-pytorch:
+    needs: build-base
+    # always() forces job run even if the dependant is skipped (but not if it failed)
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check if build is needed
+        uses: tj-actions/changed-files@v46
+        id: changes
+        with:
+          files_yaml: |
+            pytorch:
+              - 'official-templates/shared/**'
+              - 'official-templates/pytorch/**'
+
+      - name: Setup Docker
+        if: steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build pytorch images
+        if: steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: docker/bake-action@v6
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch/docker-bake.hcl
+          push: true
+          set: |
+            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}

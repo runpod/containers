@@ -1,131 +1,84 @@
-variable "RELEASE" {
-    default = "0.6.3"
-}
-
-variable "GITHUB_WORKSPACE" {
-    default = "."
+group "cpu" {
+  targets = ["cpu-ubuntu2004", "cpu-ubuntu2204", "cpu-ubuntu2404"]
 }
 
 group "default" {
-    targets = ["cpu", "12-1-0", "12-2-0", "12-4-1", "12-5-1", "12-6-2"]
+  targets = ["cpu", "cuda-matrix"]
 }
 
-target "cpu" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cpu"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "ubuntu:20.04"
-    }
+target "common-base" {
+  context = "official-templates/base"
+  dockerfile = "Dockerfile"
+  platforms = ["linux/amd64"]
+  contexts = {
+    scripts = "container-template"
+    proxy   = "container-template/proxy"
+    logo    = "container-template"
+  }
 }
 
-target "11-1-1" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda11.1.1"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:11.1.1-devel-ubuntu20.04"
-    }
+target "cpu-ubuntu2004" {
+  inherits = ["common-base"]
+  tags = [
+    "runpod/base:${RELEASE_VERSION}",
+    "runpod/base:${RELEASE_VERSION}-ubuntu2004",
+  ]
+  args = {
+    BASE_IMAGE = "ubuntu:20.04"
+  }
 }
 
-target "11-8-0" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda11.8.0"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:11.8.0-devel-ubuntu22.04"
-    }
+target "cpu-ubuntu2204" {
+  inherits = ["common-base"]
+  tags = [
+    "runpod/base:${RELEASE_VERSION}-ubuntu2204",
+    "runpod/base:${RELEASE_VERSION}-jammy",
+  ]
+  args = {
+    BASE_IMAGE = "ubuntu:22.04"
+  }
 }
 
-target "12-1-0" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda12.1.0"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:12.1.0-devel-ubuntu22.04"
-    }
+target "cpu-ubuntu2404" {
+  inherits = ["common-base"]
+  tags = [
+    "runpod/base:${RELEASE_VERSION}-ubuntu2404",
+    "runpod/base:${RELEASE_VERSION}-noble",
+  ]
+  args = {
+    BASE_IMAGE = "ubuntu:24.04"
+  }
 }
 
-target "12-2-0" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda12.2.0"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:12.2.0-devel-ubuntu22.04"
-    }
+target "cuda-matrix" {
+  inherits = ["common-base"]
+  
+  name = "cuda-${combo.ubuntu_name}-${replace(combo.cuda_version, ".", "")}"
+  
+  matrix = {
+    combo = flatten([
+      for cuda in CUDA_VERSIONS: [
+        for ubuntu in UBUNTU_VERSIONS: {
+          ubuntu_version = ubuntu.version
+          ubuntu_name = ubuntu.name
+          ubuntu_alias = ubuntu.alias
+          cuda_code = replace(cuda.version, ".", "")
+          cuda_version = cuda.version
+        } if contains(cuda.ubuntu, ubuntu.version)
+      ]
+    ])
+  }
+  
+  tags = [
+    "runpod/base:${RELEASE_VERSION}-cuda${combo.cuda_code}-${combo.ubuntu_name}",
+    "runpod/base:${RELEASE_VERSION}-cuda${combo.cuda_code}-${combo.ubuntu_alias}",
+    "runpod/base:${RELEASE_VERSION}-${combo.ubuntu_name}-cuda${combo.cuda_code}",
+    "runpod/base:${RELEASE_VERSION}-${combo.ubuntu_alias}-cuda${combo.cuda_code}"
+  ]
+  
+  args = {
+    BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-devel-ubuntu${combo.ubuntu_version}"
+  }
 }
 
-target "12-4-1" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda12.4.1"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
-    }
-}
-
-target "12-5-1" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda12.5.1"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:12.5.1-devel-ubuntu22.04"
-    }
-}
-
-target "12-6-2" {
-    context = "${GITHUB_WORKSPACE}/official-templates/base"
-    dockerfile = "Dockerfile"
-    tags = ["runpod/base:${RELEASE}-cuda12.6.2"]
-    contexts = {
-        scripts = "container-template"
-        proxy = "container-template/proxy"
-        logo = "container-template"
-    }
-    args = {
-        BASE_RELEASE_VERSION = "${RELEASE}"
-        BASE_IMAGE = "nvidia/cuda:12.6.2-devel-ubuntu22.04"
-    }
-}
+# the line we change to make ci run

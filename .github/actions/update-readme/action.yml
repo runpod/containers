@@ -1,8 +1,8 @@
 name: "Update Template README"
-description: "Updates a RunPod template README via the API"
+description: "Updates a Runpod template README via the API"
 inputs:
   template_id:
-    description: "RunPod Template ID"
+    description: "Runpod Template ID"
     required: true
   template_path:
     description: "Path to the template directory"

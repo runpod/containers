@@ -7,28 +7,27 @@ ENV SHELL=/bin/bash
 ENV PYTHONUNBUFFERED=True
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Set the base release version
-ARG BASE_RELEASE_VERSION
-ENV BASE_RELEASE_VERSION=${BASE_RELEASE_VERSION}
+# Set the default workspace directory
+ENV RP_WORKSPACE=/workspace
 
 # Override the default huggingface cache directory.
-ENV HF_HOME="/runpod-volume/.cache/huggingface/"
-ENV HF_DATASETS_CACHE="/runpod-volume/.cache/huggingface/datasets/"
-ENV DEFAULT_HF_METRICS_CACHE="/runpod-volume/.cache/huggingface/metrics/"
-ENV DEFAULT_HF_MODULES_CACHE="/runpod-volume/.cache/huggingface/modules/"
-ENV HUGGINGFACE_HUB_CACHE="/runpod-volume/.cache/huggingface/hub/"
-ENV HUGGINGFACE_ASSETS_CACHE="/runpod-volume/.cache/huggingface/assets/"
-
-# Faster transfer of models from the hub to the container
-ENV HF_HUB_ENABLE_HF_TRANSFER="1"
+ENV HF_HOME="${RP_WORKSPACE}/.cache/huggingface/"
 
 # Shared python package cache
-ENV VIRTUALENV_OVERRIDE_APP_DATA="/runpod-volume/.cache/virtualenv/"
-ENV PIP_CACHE_DIR="/runpod-volume/.cache/pip/"
-ENV UV_CACHE_DIR="/runpod-volume/.cache/uv/"
+ENV VIRTUALENV_OVERRIDE_APP_DATA="${RP_WORKSPACE}/.cache/virtualenv/"
+ENV PIP_CACHE_DIR="${RP_WORKSPACE}/.cache/pip/"
+ENV UV_CACHE_DIR="${RP_WORKSPACE}/.cache/uv/"
 
-# Set Default Python Version
-ENV PYTHON_VERSION="3.10"
+# Faster transfer of models from the hub to the container
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_XET_HIGH_PERFORMANCE=1
+
+# modern pip workarounds
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PIP_ROOT_USER_ACTION=ignore
+
+# Set TZ and Locale
+ENV TZ=Etc/UTC
 
 WORKDIR /
 
@@ -36,134 +35,59 @@ WORKDIR /
 RUN apt-get update --yes && \
     apt-get upgrade --yes
 
-# Install basic utilities
-RUN apt install --yes --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    file \
-    git \
-    inotify-tools \
-    jq \
-    libgl1 \
-    lsof \
-    vim \
-    nano \
-    tmux \
-    nginx \
-    openssh-server \
-    procps \
-    rsync \
-    sudo \
-    software-properties-common \
-    unzip \
-    wget \
-    zip
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-# Install build tools and development packages
-RUN apt install --yes --no-install-recommends \
-    build-essential \
-    make \
-    cmake \
-    gfortran \
-    libblas-dev \
-    liblapack-dev
-
-# Install image and video processing libraries
-RUN apt install --yes --no-install-recommends \
-    ffmpeg \
-    libavcodec-dev \
-    libavfilter-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libjpeg-dev \
-    libpng-dev \
-    libpostproc-dev \
-    libswresample-dev \
-    libswscale-dev \
-    libtiff-dev \
-    libv4l-dev \
-    libx264-dev \
-    libxext6 \
-    libxrender-dev \
-    libxvidcore-dev
-
-# Install deep learning dependencies and miscellaneous
-RUN apt install --yes --no-install-recommends \
-    libatlas-base-dev \
-    libffi-dev \
-    libhdf5-serial-dev \
-    libsm6 \
-    libssl-dev
-
-# Install file systems and storage
-RUN apt install --yes --no-install-recommends \
-    cifs-utils \
-    nfs-common \
-    zstd
+# Install 
+RUN apt-get install --yes --no-install-recommends \
+    ca-certificates curl dirmngr file git gpg gpg-agent inotify-tools \
+    jq lsof nano nginx openssh-server rsync software-properties-common \
+    sudo tmux unzip vim wget zip build-essential make cmake gfortran ffmpeg \
+    libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev \
+    libffi-dev libhdf5-dev libgl1 libjpeg-dev liblapack-dev libpng-dev \
+    libpostproc-dev libsm6 libssl-dev libswscale-dev libtiff-dev \
+    libv4l-dev libx264-dev libxrender-dev libxvidcore-dev \
+    cifs-utils nfs-common zstd
 
 # Add the Python PPA
-RUN add-apt-repository ppa:deadsnakes/ppa
+RUN add-apt-repository ppa:deadsnakes/ppa -y
 
-# Install Python 3.9-3.11 with distutils
-RUN apt install --yes --no-install-recommends \
-    python3.9-dev \
-    python3.9-venv \
-    python3.9-distutils \
-    python3.10-dev \
-    python3.10-venv \
-    python3.10-distutils \
-    python3.11-dev \
-    python3.11-venv \
-    python3.11-distutils
-
-# Install Python 3.12-3.13 (distutils is included in dev package for newer versions)
-RUN apt install --yes --no-install-recommends \
-    python3.12-dev \
-    python3.12-venv \
-    python3.13-dev \
-    python3.13-venv
-
-# Cleanup
-RUN apt-get autoremove -y && \
+# Install Python 
+RUN apt-get install --yes --no-install-recommends \
+    python3.9-dev python3.9-venv python3.9-distutils \
+    python3.10-dev python3.10-venv python3.10-distutils \
+    python3.11-dev python3.11-venv python3.11-distutils \
+    python3.12-dev python3.12-venv \
+    python3.13-dev python3.13-venv python-is-python3 && \
+    apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set locale
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+# Install pip if we are not ROCm
+RUN if [ -z "${ROCM_PATH}"]; then \
+        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+        python3.9  get-pip.py && \
+        python3.10 get-pip.py && \
+        python3.11 get-pip.py && \
+        python3.12 get-pip.py && \
+        python3.13 get-pip.py && \
+        rm get-pip.py; \
+    fi
 
-# Install pip
-RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.9 get-pip.py && \
-    python3.10 get-pip.py && \
-    python3.11 get-pip.py && \
-    python3.12 get-pip.py && \
-    python3.13 get-pip.py && \
-    rm get-pip.py
-
-# Get the latest pip for all python versions
-RUN python3.9 -m pip install --upgrade pip && \
-    python3.10 -m pip install --upgrade pip && \
-    python3.11 -m pip install --upgrade pip && \
-    python3.12 -m pip install --upgrade pip && \
-    python3.13 -m pip install --upgrade pip
-
-# Install virtualenv
-RUN python3.9 -m pip install virtualenv && \
-    python3.10 -m pip install virtualenv && \
-    python3.11 -m pip install virtualenv && \
-    python3.12 -m pip install virtualenv && \
-    python3.13 -m pip install virtualenv
+# ensurepip (it's there, we just installed it^) and install virtualenv
+RUN if [ -z "${ROCM_PATH}"]; then \
+        python3.9 -m pip install --upgrade pip virtualenv && \
+        python3.10 -m pip install --upgrade pip virtualenv && \
+        python3.11 -m pip install --upgrade pip virtualenv && \
+        python3.12 -m pip install --upgrade pip virtualenv && \
+        python3.13 -m pip install --upgrade pip virtualenv; \
+    fi
 
 # Install Jupyter and related packages (always with Python 3.10)
 RUN python3.10 -m pip install --upgrade --no-cache-dir \
     jupyterlab \
     ipywidgets \
     jupyter-archive \
-    jupyter_contrib_nbextensions \
-    notebook==6.5.5 && \
-    jupyter contrib nbextension install --user && \
-    jupyter nbextension enable --py widgetsnbextension
+    notebook==7.4.2
 
 # Install pip drop-in replacement uv (https://github.com/astral-sh/uv)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
@@ -172,20 +96,16 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     export PATH="$HOME/.local/bin:$PATH" && \
     uv --version
 
-# Install additional tools that were previously installed via Homebrew
-# Install pyenv via git
-RUN git clone https://github.com/pyenv/pyenv.git /opt/pyenv && \
-    echo 'export PYENV_ROOT="/opt/pyenv"' >> /etc/profile.d/pyenv.sh && \
-    echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> /etc/profile.d/pyenv.sh && \
-    echo 'if command -v pyenv 1>/dev/null 2>&1; then eval "$(pyenv init -)"; fi' >> /etc/profile.d/pyenv.sh && \
-    chmod +x /etc/profile.d/pyenv.sh
-
 # Install filebrowser
-RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
+COPY --from=proxy snippets /etc/nginx/snippets
 COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
+
+# Remove existing SSH host keys
+RUN rm -f /etc/ssh/ssh_host_*
 
 # Copy the README.md
 COPY README.md /usr/share/nginx/html/README.md
