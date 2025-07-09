@@ -57,26 +57,30 @@ RUN apt-get install --yes --no-install-recommends \
     python3.10-dev python3.10-venv python3.10-distutils \
     python3.11-dev python3.11-venv python3.11-distutils \
     python3.12-dev python3.12-venv \
-    python3.13-dev python3.13-venv && \
+    python3.13-dev python3.13-venv python-is-python3 && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install pip
-RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.9  get-pip.py && \
-    python3.10 get-pip.py && \
-    python3.11 get-pip.py && \
-    python3.12 get-pip.py && \
-    python3.13 get-pip.py && \
-    rm get-pip.py
+# Install pip if we are not ROCm
+RUN if [ -z "${ROCM_PATH}"]; then \
+        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+        python3.9  get-pip.py && \
+        python3.10 get-pip.py && \
+        python3.11 get-pip.py && \
+        python3.12 get-pip.py && \
+        python3.13 get-pip.py && \
+        rm get-pip.py; \
+    fi
 
 # ensurepip (it's there, we just installed it^) and install virtualenv
-RUN python3.9 -m pip install --upgrade pip virtualenv && \
-    python3.10 -m pip install --upgrade pip virtualenv && \
-    python3.11 -m pip install --upgrade pip virtualenv && \
-    python3.12 -m pip install --upgrade pip virtualenv && \
-    python3.13 -m pip install --upgrade pip virtualenv
+RUN if [ -z "${ROCM_PATH}"]; then \
+        python3.9 -m pip install --upgrade pip virtualenv && \
+        python3.10 -m pip install --upgrade pip virtualenv && \
+        python3.11 -m pip install --upgrade pip virtualenv && \
+        python3.12 -m pip install --upgrade pip virtualenv && \
+        python3.13 -m pip install --upgrade pip virtualenv; \
+    fi
 
 # Install Jupyter and related packages (always with Python 3.10)
 RUN python3.10 -m pip install --upgrade --no-cache-dir \
