@@ -22,17 +22,7 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
-        id: changes
-        with:
-          files_yaml: |
-            rocm:
-              - 'official-templates/shared/**'
-              - 'official-templates/rocm/**'
-
       - name: Setup Docker
-        if: steps.changes.outputs.rocm_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -40,7 +30,6 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build rocm images
-        if: steps.changes.outputs.rocm_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0

@@ -4,8 +4,10 @@ on:
   push:
     paths:
       - ".github/workflows/base.yml"
-      - "official-templates/*/docker-bake.hcl"
-      - "official-templates/*/Dockerfile"
+      - "official-templates/base/docker-bake.hcl"
+      - "official-templates/base/Dockerfile"
+      - "official-templates/pytorch/docker-bake.hcl"
+      - "official-templates/pytorch/Dockerfile"
       - "official-templates/shared/**"
   workflow_dispatch:
 
@@ -22,17 +24,7 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
-        id: changes
-        with:
-          files_yaml: |
-            base:
-              - 'official-templates/shared/**'
-              - 'official-templates/base/**'
-
       - name: Setup Docker
-        if: steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -40,7 +32,6 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build base images
-        if: steps.changes.outputs.base_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
