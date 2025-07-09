@@ -1,0 +1,53 @@
+name: ROCm Image Build
+
+on:
+  push:
+    paths:
+      - ".github/workflows/rocm.yml"
+      - "official-templates/rocm/**"
+      - "official-templates/shared/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-rocm:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check if build is needed
+        uses: tj-actions/changed-files@v46
+        id: changes
+        with:
+          files_yaml: |
+            rocm:
+              - 'official-templates/shared/**'
+              - 'official-templates/rocm/**'
+
+      - name: Setup Docker
+        if: steps.changes.outputs.rocm_any_changed == 'true'
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build rocm images
+        if: steps.changes.outputs.rocm_any_changed == 'true'
+        uses: docker/bake-action@v6
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/rocm/docker-bake.hcl
+          push: true
+          set: |
+            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}

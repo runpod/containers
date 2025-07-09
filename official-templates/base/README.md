@@ -1,16 +1,28 @@
 <h1>Runpod Base</h1>
 
-## ⚠️ | Notice
+**Essential foundation for machine learning workflows.**
 
-Your Pod is launching, please wait a moment before refreshing the page. You might also be seeing this message if your handler has any errors, please check your terminal for more information.
+Runpod Base images are designed to be lightweight but flexible—supporting a wide range of user workloads without overwhelming choice when building your own images. Whether you're prototyping a new ML model, setting up a development environment, or deploying a production workload, these images provide the essential foundation you need to get started fast.
 
-## 🚀 | Usage
+**What makes these essential:**
+- **Ready-to-use Jupyter Environment** — Both Notebook and JupyterLab with widgets and extensions (optional - can be disabled by not setting `JUPYTER_PASSWORD`)
+- **Multiple Python Versions** — Python 3.9 through 3.13 installed and ready to use, with 3.10 as the default
+- **Smart Workspace Setup** — Pre-configured directory structure with optimized cache locations for faster package installs
+- **Developer Tools** — SSH access for remote development and NGINX server for web services
+- **ML-Ready Libraries** — Core dependencies for scientific computing, image processing, and machine learning workflows
 
-Once the server is ready, you will see the list of endpoints available to start sending requests. You can send requests to these endpoints from the FastAPI web interface, a service such as Postman, with cURL or programmatically from a language of your choice.
+**Choose your combination:**
+- **Ubuntu versions:** 20.04, 22.04, or 24.04
+- **CUDA versions:** 12.4.1 through 12.9.0 for GPU acceleration
+- **Optimized Performance:** Efficiently configured environment variables and cache directories
 
-## Generated Images
+Perfect for immediate development and experimenting, or as the foundation for more specialized containers.
+
+*Need something more specialized? Check out our other templates in the `official-templates` directory for ROCm support, PyTorch, and other ML frameworks.*
 
 <div class="base-images">
+
+## Generated Images
 
 ### Operating Systems:
 - Ubuntu 20.04:

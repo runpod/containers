@@ -1,7 +1,3 @@
-variable "GITHUB_WORKSPACE" {
-  default = "."
-}
-
 group "cpu" {
   targets = ["cpu-ubuntu2004", "cpu-ubuntu2204", "cpu-ubuntu2404"]
 }

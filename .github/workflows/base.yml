@@ -52,7 +52,6 @@ jobs:
           push: true
           set: |
             ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}
-            *.args.GITHUB_WORKSPACE=${{ github.workspace }}
 
   build-pytorch:
     needs: build-base
@@ -95,4 +94,3 @@ jobs:
           push: true
           set: |
             ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}
-            *.args.GITHUB_WORKSPACE=${{ github.workspace }}
