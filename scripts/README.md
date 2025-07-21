@@ -1,12 +1,12 @@
-# RunPod Container Scripts
+# Runpod Container Scripts
 
-This directory contains utility scripts for managing RunPod container templates.
+This directory contains utility scripts for managing Runpod container templates.
 
 ## Scripts
 
 ### update-template-readme.sh
 
-This script updates a RunPod template's README content via the RunPod API.
+This script updates a Runpod template's README content via the Runpod API.
 
 #### Usage
 
@@ -16,7 +16,7 @@ This script updates a RunPod template's README content via the RunPod API.
 
 #### Parameters
 
-- `template_id`: The RunPod template ID to update
+- `template_id`: The Runpod template ID to update
 - `template_path`: Path to the template directory containing the README.md file
 
 #### Example

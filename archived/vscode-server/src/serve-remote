@@ -1,0 +1,28 @@
+#!/usr/bin/env expect
+
+# Set infinite timeout for expect
+set timeout -1
+
+# Check for presence of the RUNPOD_POD_ID environment variable
+if { ![info exists env(RUNPOD_POD_ID)] } {
+    puts "Error: RUNPOD_POD_ID environment variable is not set."
+    exit 1
+}
+set runpod_pod_id $env(RUNPOD_POD_ID)
+
+# Spawn the code-server process
+spawn code-server \
+    --accept-server-license-terms \
+    --disable-telemetry \
+    serve
+
+# Automate responses to code-server prompts
+expect {
+    "What would you like to call this machine?" {
+        send -- "$runpod_pod_id\r"
+        exp_continue
+    }
+    eof {
+        puts "Finished interacting with code-server."
+    }
+}
