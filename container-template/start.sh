@@ -95,8 +95,6 @@ setup_ssh
 start_jupyter
 export_env_vars
 
-execute_script "/post_start.sh" "Running post-start script..."
-
 echo "Start script(s) finished, Pod is ready to use."
 
 sleep infinity
