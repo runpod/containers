@@ -67,7 +67,9 @@ setup_ssh() {
 export_env_vars() {
     echo "Exporting environment variables..."
     printenv | grep -E '^RUNPOD_|^PATH=|^_=' | awk -F = '{ print "export " $1 "=\"" $2 "\"" }' >> /etc/rp_environment
-    echo 'source /etc/rp_environment' >> ~/.bashrc
+    if ! grep -q 'source /etc/rp_environment' ~/.bashrc; then
+        echo 'source /etc/rp_environment' >> ~/.bashrc
+    fi
 }
 
 # Start jupyter lab

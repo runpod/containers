@@ -31,22 +31,19 @@ ENV TZ=Etc/UTC
 
 WORKDIR /
 
-# Update and upgrade
-RUN apt-get update --yes && \
-    apt-get upgrade --yes
-
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Install 
-RUN apt-get install --yes --no-install-recommends \
-    ca-certificates curl dirmngr file git gpg gpg-agent inotify-tools \
-    jq lsof nano nginx openssh-server rsync software-properties-common \
-    sudo tmux unzip vim wget zip build-essential make cmake gfortran ffmpeg \
+RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
+    apt-get install --yes --no-install-recommends \
+    build-essential ca-certificates cifs-utils cmake curl \
+    dirmngr ffmpeg file gfortran git gpg gpg-agent inotify-tools jq \
     libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev \
-    libffi-dev libhdf5-dev libgl1 libjpeg-dev liblapack-dev libpng-dev \
-    libpostproc-dev libsm6 libssl-dev libswscale-dev libtiff-dev \
-    libv4l-dev libx264-dev libxrender-dev libxvidcore-dev \
-    cifs-utils nfs-common zstd
+    libffi-dev libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev \
+    libpostproc-dev libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev \
+    libx264-dev libxrender-dev libxvidcore-dev lsof make nano nfs-common nginx \
+    openssh-server rsync slurm-wlm software-properties-common sudo tmux unzip vim wget zip zstd
 
 # Add the Python PPA
 RUN add-apt-repository ppa:deadsnakes/ppa -y
@@ -82,19 +79,14 @@ RUN if [ -z "${ROCM_PATH}"]; then \
         python3.13 -m pip install --upgrade pip virtualenv; \
     fi
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Install Jupyter and related packages (always with Python 3.10)
 RUN python3.10 -m pip install --upgrade --no-cache-dir \
     jupyterlab \
     ipywidgets \
     jupyter-archive \
     notebook==7.4.2
-
-# Install pip drop-in replacement uv (https://github.com/astral-sh/uv)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile.d/uv.sh && \
-    chmod +x /etc/profile.d/uv.sh && \
-    export PATH="$HOME/.local/bin:$PATH" && \
-    uv --version
 
 # Install filebrowser
 RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash

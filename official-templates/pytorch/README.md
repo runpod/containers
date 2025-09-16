@@ -13,7 +13,7 @@ Built on our base images, these PyTorch containers come pre-configured with spec
 **Choose your combination:**
 - **PyTorch versions:** 2.4.0 through 2.7.1
 - **CUDA versions:** 12.4.1 through 12.9.0
-- **Ubuntu versions:** 20.04, 22.04, and 24.04
+- **Ubuntu versions:** 22.04 and 24.04
 
 Perfect for research, development, and production PyTorch workloads without the setup overhead.
 
@@ -21,125 +21,54 @@ Please also see [../base/README.md](../base/README.md)
 
 <div class="base-images">
 
-## Generated PyTorch Images
+## Available PyTorch Images
 
 ### CUDA 12.4.1:
 - Torch 2.4.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch240-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1241-torch240`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch240-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1241-torch240`
+  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch240-ubuntu2204`
 - Torch 2.4.1:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch241-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1241-torch241`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch241-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1241-torch241`
+  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch241-ubuntu2204`
 - Torch 2.5.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch250-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1241-torch250`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch250-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1241-torch250`
+  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch250-ubuntu2204`
 - Torch 2.5.1:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch251-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1241-torch251`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch251-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1241-torch251`
+  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch251-ubuntu2204`
 - Torch 2.6.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch260-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1241-torch260`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1241-torch260-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1241-torch260`
-
-### CUDA 12.5.1:
-- Torch 2.5.1:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1251-torch251-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1251-torch251`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1251-torch251-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1251-torch251`
-- Torch 2.6.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1251-torch260-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1251-torch260`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1251-torch260-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1251-torch260`
-
-### CUDA 12.6.3:
-- Torch 2.6.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1263-torch260-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1263-torch260`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1263-torch260-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1263-torch260`
-  - Ubuntu 24.04:
-    - `runpod/pytorch:0.7.0-dev-cu1263-torch260-ubuntu2404`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2404-cu1263-torch260`
-- Torch 2.7.1:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1263-torch271-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1263-torch271`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1263-torch271-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1263-torch271`
-  - Ubuntu 24.04:
-    - `runpod/pytorch:0.7.0-dev-cu1263-torch271-ubuntu2404`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2404-cu1263-torch271`
+  - Ubuntu 20.04: `runpod/pytorch:0.7.0-cu1241-torch260-ubuntu2004`
+  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch260-ubuntu2204`
 
 ### CUDA 12.8.1:
 - Torch 2.6.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1281-torch260-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1281-torch260`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1281-torch260-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1281-torch260`
-  - Ubuntu 24.04:
-    - `runpod/pytorch:0.7.0-dev-cu1281-torch260-ubuntu2404`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2404-cu1281-torch260`
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1281-torch260-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1281-torch260-ubuntu2404`
 - Torch 2.7.1:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1281-torch271-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1281-torch271`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1281-torch271-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1281-torch271`
-  - Ubuntu 24.04:
-    - `runpod/pytorch:0.7.0-dev-cu1281-torch271-ubuntu2404`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2404-cu1281-torch271`
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1281-torch271-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1281-torch271-ubuntu2404`
+- Torch 2.8.0:
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1281-torch280-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1281-torch280-ubuntu2404`
 
 ### CUDA 12.9.0:
 - Torch 2.6.0:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1290-torch260-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1290-torch260`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1290-torch260-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1290-torch260`
-  - Ubuntu 24.04:
-    - `runpod/pytorch:0.7.0-dev-cu1290-torch260-ubuntu2404`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2404-cu1290-torch260`
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch260-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch260-ubuntu2404`
 - Torch 2.7.1:
-  - Ubuntu 20.04:
-    - `runpod/pytorch:0.7.0-dev-cu1290-torch271-ubuntu2004`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2004-cu1290-torch271`
-  - Ubuntu 22.04:
-    - `runpod/pytorch:0.7.0-dev-cu1290-torch271-ubuntu2204`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2204-cu1290-torch271`
-  - Ubuntu 24.04:
-    - `runpod/pytorch:0.7.0-dev-cu1290-torch271-ubuntu2404`
-    - `runpod/pytorch:0.7.0-dev-ubuntu2404-cu1290-torch271`
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch271-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch271-ubuntu2404`
+- Torch 2.8.0:
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch280-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch280-ubuntu2404`
+
+### CUDA 13.0.0:
+- Torch 2.6.0:
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch260-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch260-ubuntu2404`
+- Torch 2.7.1:
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch271-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch271-ubuntu2404`
+- Torch 2.8.0:
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1300-torch280-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1300-torch280-ubuntu2404`
+
+*Search for more on the [Docker Hub](https://hub.docker.com/r/runpod/pytorch/tags)*
 
 </div>
