@@ -1,96 +1,45 @@
-<h1>Runpod Base</h1>
+### Runpod Base
 
-**Essential foundation for machine learning workflows.**
+**A lean, flexible starting point for machine learning workflows.**
 
-Runpod Base images are designed to be lightweight but flexible—supporting a wide range of user workloads without overwhelming choice when building your own images. Whether you're prototyping a new ML model, setting up a development environment, or deploying a production workload, these images provide the essential foundation you need to get started fast.
+Runpod Base images provide a clean, developer-friendly environment that scales from quick experiments to production. Use them as-is for instant productivity or as the foundation for your own images.
 
-**What makes these essential:**
-- **Ready-to-use Jupyter Environment** — Both Notebook and JupyterLab with widgets and extensions (optional - can be disabled by not setting `JUPYTER_PASSWORD`)
-- **Multiple Python Versions** — Python 3.9 through 3.13 installed and ready to use, with 3.10 as the default
-- **Smart Workspace Setup** — Pre-configured directory structure with optimized cache locations for faster package installs
-- **Developer Tools** — SSH access for remote development and NGINX server for web services
-- **ML-Ready Libraries** — Core dependencies for scientific computing, image processing, and machine learning workflows
+### What's included
+- **Jupyter-ready (optional)**: Notebook and JupyterLab with widgets/extensions; enable by setting `JUPYTER_PASSWORD` (omit to disable).
+- **Multiple Python versions**: 3.9–3.13 preinstalled; 3.10 is the default.
+- **Smart workspace layout**: Preconfigured directories and cache paths for faster package installs.
+- **Developer tooling**: SSH for remote development and NGINX for serving web apps.
+- **ML-ready libraries**: Core dependencies for scientific computing, imaging, and ML workflows.
+- **Optimized performance**: Sensible environment variables and cache locations for efficient builds and runtime.
 
-**Choose your combination:**
-- **Ubuntu versions:** 20.04, 22.04, or 24.04
-- **CUDA versions:** 12.4.1 through 12.9.0 for GPU acceleration
-- **Optimized Performance:** Efficiently configured environment variables and cache directories
+### Available configurations
+- **Ubuntu**: 22.04 and 24.04
+- **CUDA**: 12.8.0, 12.8.1, 12.9.0, and 13.0.0
 
-Perfect for immediate development and experimenting, or as the foundation for more specialized containers.
+Perfect for rapid prototyping, day‑to‑day development, and as a base layer for specialized images.
 
-*Need something more specialized? Check out our other templates in the `official-templates` directory for ROCm support, PyTorch, and other ML frameworks.*
+Need something more specialized? Explore the templates in `official-templates` for ROCm, PyTorch, and other ML frameworks.
 
 <div class="base-images">
 
 ## Generated Images
 
 ### Operating Systems:
-- Ubuntu 20.04:
-    - `runpod/base:0.7.0`
-    - `runpod/base:0.7.0-ubuntu2004`
-- Ubuntu 22.04:
-    - `runpod/base:0.7.0-ubuntu2204`
-    - `runpod/base:0.7.0-jammy`
-- Ubuntu 24.04:
-    - `runpod/base:0.7.0-ubuntu2404`
-    - `runpod/base:0.7.0-noble`
+- Ubuntu 22.04: `runpod/base:0.7.0-ubuntu2204`
+- Ubuntu 24.04: `runpod/base:0.7.0-ubuntu2404`
 
 ### CUDA Versions:
-- 12.4.1:
-    - Ubuntu 20.04:
-        - `runpod/base:0.7.0-cuda1241`
-        - `runpod/base:0.7.0-cuda1241-ubuntu2004`
-        - `runpod/base:0.7.0-focal-cuda1241`
-    - Ubuntu 22.04:
-        - `runpod/base:0.7.0-cuda1241`
-        - `runpod/base:0.7.0-cuda1241-ubuntu2204`
-        - `runpod/base:0.7.0-jammy-cuda1241`
-- 12.5.1:
-    - Ubuntu 20.04:
-        - `runpod/base:0.7.0-cuda1251`
-        - `runpod/base:0.7.0-cuda1251-ubuntu2004`
-        - `runpod/base:0.7.0-focal-cuda1251`
-    - Ubuntu 22.04:
-        - `runpod/base:0.7.0-cuda1251`
-        - `runpod/base:0.7.0-cuda1251-ubuntu2204`
-        - `runpod/base:0.7.0-jammy-cuda1251`
-- 12.6.3:
-    - Ubuntu 20.04:
-        - `runpod/base:0.7.0-cuda1263`
-        - `runpod/base:0.7.0-cuda1263-ubuntu2004`
-        - `runpod/base:0.7.0-focal-cuda1263`
-    - Ubuntu 22.04:
-        - `runpod/base:0.7.0-cuda1263`
-        - `runpod/base:0.7.0-cuda1263-ubuntu2204`
-        - `runpod/base:0.7.0-jammy-cuda1263`
-    - Ubuntu 24.04:
-        - `runpod/base:0.7.0-cuda1263`
-        - `runpod/base:0.7.0-cuda1263-ubuntu2404`
-        - `runpod/base:0.7.0-noble-cuda1263`
+- 12.8.0:
+    - Ubuntu 22.04: `runpod/base:0.7.0-cuda1280-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:0.7.0-cuda1280-ubuntu2404`
 - 12.8.1:
-    - Ubuntu 20.04:
-        - `runpod/base:0.7.0-cuda1281`
-        - `runpod/base:0.7.0-cuda1281-ubuntu2004`
-        - `runpod/base:0.7.0-focal-cuda1281`
-    - Ubuntu 22.04:
-        - `runpod/base:0.7.0-cuda1281`
-        - `runpod/base:0.7.0-cuda1281-ubuntu2204`
-        - `runpod/base:0.7.0-jammy-cuda1281`
-    - Ubuntu 24.04:
-        - `runpod/base:0.7.0-cuda1281`
-        - `runpod/base:0.7.0-cuda1281-ubuntu2404`
-        - `runpod/base:0.7.0-noble-cuda1281`
+    - Ubuntu 22.04: `runpod/base:0.7.0-cuda1281-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:0.7.0-cuda1281-ubuntu2404`
 - 12.9.0:
-    - Ubuntu 20.04:
-        - `runpod/base:0.7.0-cuda1290`
-        - `runpod/base:0.7.0-cuda1290-ubuntu2004`
-        - `runpod/base:0.7.0-focal-cuda1290`
-    - Ubuntu 22.04:
-        - `runpod/base:0.7.0-cuda1290`
-        - `runpod/base:0.7.0-cuda1290-ubuntu2204`
-        - `runpod/base:0.7.0-jammy-cuda1290`
-    - Ubuntu 24.04:
-        - `runpod/base:0.7.0-cuda1290`
-        - `runpod/base:0.7.0-cuda1290-ubuntu2404`
-        - `runpod/base:0.7.0-noble-cuda1290`
+    - Ubuntu 22.04: `runpod/base:0.7.0-cuda1290-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:0.7.0-cuda1290-ubuntu2404`
+- 13.0.0:
+    - Ubuntu 22.04: `runpod/base:0.7.0-cuda1300-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:0.7.0-cuda1300-ubuntu2404`
+
 </div>
