@@ -8,21 +8,21 @@ This repository contains the Dockerfiles for the Runpod containers used for our 
 
 The following dependencies are required for all images for Runpod platform functionality.
 
-- `nginx` - Required for proxying ports to the user.
-- `openssh-server` - Required for SSH access to the container.
-- `jupyterlab` - Required for JupyterLab access to the container.
+- `nginx`: Required for proxying ports to the user.
+- `openssh-server`: Required for SSH access to the container.
+- `jupyterlab`: Required for JupyterLab access to the container.
 
 ### README
 
-Every container folder has its own README.md file, this file is displayed on the Docker Hub and the README section of the template on the Runpod website. Additionally, if the container opens a port other than 8888 that is passed through the proxy and the service is not running yet, the README will be displayed to the user to guide them.
+Every container folder has its own README.md file, displayed on Docker Hub and in the template section on the Runpod website. When containers open ports other than 8888 through the proxy, the README guides users while services are starting up.
 
 ## Building Containers
 
-This repository is powered by Docker Buildx and uses [bake files](https://docs.docker.com/build/bake/) to manage builds.
+This repository uses Docker Buildx with [bake files](https://docs.docker.com/build/bake/) to manage builds.
 
 ### Using the Bake Script
 
-`./bake.sh` automatically combines shared version definitions with template-specific bake files. 
+`./bake.sh` automatically combines shared version definitions with template specific bake files. 
 
 Use it like this:
 
@@ -39,4 +39,4 @@ Use it like this:
 
 ### Version Definitions
 
-Version compatibility and build targets for CUDA, Ubuntu, and PyTorch is centralized in `official-templates/shared/versions.hcl`. This file is automatically included when building with the `bake.sh` script. When adding new versions or changing compatibility, modify this file.
+Version compatibility and build targets for CUDA, Ubuntu, and PyTorch are centralized in `official-templates/shared/versions.hcl`. This file is automatically included when building with the `bake.sh` script. When adding new versions or changing compatibility, modify this file.

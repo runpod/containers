@@ -1,9 +1,9 @@
 group "default" {
   targets = [
-    "rocm641-ubuntu2204-pytorch251",
-    "rocm641-ubuntu2204-pytorch260",
-    "rocm641-ubuntu2404-pytorch260",
-    "rocm641-ubuntu2404-pytorch270",
+    "rocm644-ubuntu2204-pytorch251",
+    "rocm644-ubuntu2204-pytorch260",
+    "rocm644-ubuntu2404-pytorch260",
+    "rocm644-ubuntu2404-pytorch271",
   ]
 }
 
@@ -18,42 +18,42 @@ target "rocm-base" {
   }
 }
 
-target "rocm641-ubuntu2204-pytorch251" {
+target "rocm644-ubuntu2204-pytorch251" {
   inherits = ["rocm-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}-rocm641-ubuntu2204-py310-pytorch251",
+    "runpod/base:${RELEASE_VERSION}-rocm644-ubuntu2204-py310-pytorch251",
   ]
   args = {
-    BASE_IMAGE = "rocm/pytorch:rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.5.1"
+    BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu22.04_py3.10_pytorch_release_2.5.1"
   }
 }
 
-target "rocm641-ubuntu2204-pytorch260" {
+target "rocm644-ubuntu2204-pytorch260" {
   inherits = ["rocm-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}-rocm641-ubuntu2204-py310-pytorch260",
+    "runpod/base:${RELEASE_VERSION}-rocm644-ubuntu2204-py310-pytorch260",
   ]
   args = {
-    BASE_IMAGE = "rocm/pytorch:rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0"
+    BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu22.04_py3.10_pytorch_release_2.6.0"
   }
 }
 
-target "rocm641-ubuntu2404-pytorch260" {
+target "rocm644-ubuntu2404-pytorch260" {
   inherits = ["rocm-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}-rocm641-ubuntu2404-py312-pytorch260",
+    "runpod/base:${RELEASE_VERSION}-rocm644-ubuntu2404-py312-pytorch260",
   ]
   args = {
-    BASE_IMAGE = "rocm/pytorch:rocm6.4.1_ubuntu24.04_py3.12_pytorch_release_2.6.0"
+    BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu24.04_py3.12_pytorch_release_2.6.0"
   }
 }
 
-target "rocm641-ubuntu2404-pytorch270" {
+target "rocm644-ubuntu2404-pytorch271" {
   inherits = ["rocm-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}-rocm641-ubuntu2404-py312-pytorch270",
+    "runpod/base:${RELEASE_VERSION}-rocm644-ubuntu2404-py312-pytorch271",
   ]
   args = {
-    BASE_IMAGE = "rocm/pytorch:rocm6.4.1_ubuntu24.04_py3.12_pytorch_release_2.7.0"
+    BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu24.04_py3.12_pytorch_release_2.7.1"
   }
 }

@@ -1,40 +1,27 @@
-# runpod/pytorch
+### Runpod PyTorch
 
 **PyTorch-optimized images for deep learning workflows.**
 
-Built on our base images, these PyTorch containers come pre-configured with specific PyTorch versions and CUDA support, eliminating the guesswork of compatibility and setup time. Whether you're training neural networks, running inference, or developing ML models, these images provide the exact PyTorch environment you need.
+Built on our base images, these containers provide pre-configured PyTorch and CUDA combinations for immediate deep learning development. Skip the compatibility guesswork and setup time: just run, and start training.
 
-**What makes these optimized:**
-- **Precision-matched versions** — Each image contains a specific PyTorch version paired with the optimal CUDA toolkit
-- **Zero configuration** — PyTorch is installed and ready to import, no pip installs or environment setup required
-- **GPU-accelerated** — All images include CUDA support for immediate GPU acceleration
-- **Production-ready** — Built on our stable base images with all the development tools and workspace setup you need
+### What's included
+- **Version matched**: PyTorch and CUDA combinations tested for optimal compatibility.
+- **Zero setup**: PyTorch ready to import immediately, no additional installs required.
+- **GPU accelerated**: Full CUDA support enabled for immediate deep learning acceleration.
+- **Production ready**: Built on our stable base images with complete development toolchain.
 
-**Choose your combination:**
-- **PyTorch versions:** 2.4.0 through 2.7.1
-- **CUDA versions:** 12.4.1 through 12.9.0
-- **Ubuntu versions:** 22.04 and 24.04
+### Available configurations
+- **PyTorch**: 2.4.1, 2.5.0, 2.5.1, 2.6.0, 2.7.1, and 2.8.0
+- **CUDA**: 12.4.1, 12.8.1, 12.9.0, and 13.0.0 (not available on Runpod)
+- **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble)
 
-Perfect for research, development, and production PyTorch workloads without the setup overhead.
+Focus on your models, not your environment setup.
 
 Please also see [../base/README.md](../base/README.md)
 
 <div class="base-images">
 
 ## Available PyTorch Images
-
-### CUDA 12.4.1:
-- Torch 2.4.0:
-  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch240-ubuntu2204`
-- Torch 2.4.1:
-  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch241-ubuntu2204`
-- Torch 2.5.0:
-  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch250-ubuntu2204`
-- Torch 2.5.1:
-  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch251-ubuntu2204`
-- Torch 2.6.0:
-  - Ubuntu 20.04: `runpod/pytorch:0.7.0-cu1241-torch260-ubuntu2004`
-  - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch260-ubuntu2204`
 
 ### CUDA 12.8.1:
 - Torch 2.6.0:
@@ -60,15 +47,28 @@ Please also see [../base/README.md](../base/README.md)
 
 ### CUDA 13.0.0:
 - Torch 2.6.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch260-ubuntu2204`
-  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch260-ubuntu2404`
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404`
 - Torch 2.7.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1290-torch271-ubuntu2204`
-  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1290-torch271-ubuntu2404`
+  - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1300-torch271-ubuntu2204`
+  - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1300-torch271-ubuntu2404`
 - Torch 2.8.0:
   - Ubuntu 22.04: `runpod/pytorch:1.0.0-cu1300-torch280-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.0.0-cu1300-torch280-ubuntu2404`
 
-*Search for more on the [Docker Hub](https://hub.docker.com/r/runpod/pytorch/tags)*
-
+<details>
+  <summary> CUDA 12.4.1 (Legacy): </summary>
+  ### CUDA 12.4.1:
+  - Torch 2.4.0:
+    - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch240-ubuntu2204`
+  - Torch 2.4.1:
+    - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch241-ubuntu2204`
+  - Torch 2.5.0:
+    - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch250-ubuntu2204`
+  - Torch 2.5.1:
+    - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch251-ubuntu2204`
+  - Torch 2.6.0:
+    - Ubuntu 20.04: `runpod/pytorch:0.7.0-cu1241-torch260-ubuntu2004`
+    - Ubuntu 22.04: `runpod/pytorch:0.7.0-cu1241-torch260-ubuntu2204`
+</details>
 </div>
