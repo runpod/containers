@@ -37,13 +37,13 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
-    build-essential ca-certificates cifs-utils cmake curl \
-    dirmngr ffmpeg file gfortran git gpg gpg-agent inotify-tools jq \
-    libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev \
-    libffi-dev libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev \
-    libpostproc-dev libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev \
-    libx264-dev libxrender-dev libxvidcore-dev lsof make nano nfs-common nginx \
-    openssh-server rsync slurm-wlm software-properties-common sudo tmux unzip vim wget zip zstd
+    build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
+    file gfortran git gpg gpg-agent inetutils-traceroute inotify-tools iputils-ping jq \
+    libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
+    libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev libpostproc-dev \
+    libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
+    libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
+    software-properties-common sudo tmux unzip vim wget zip zstd
 
 # Add the Python PPA
 RUN add-apt-repository ppa:deadsnakes/ppa -y
