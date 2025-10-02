@@ -23,20 +23,20 @@ Need something more specialized? Explore the templates in `official-templates` f
 ## Generated Images
 
 ### Base Images (CPU-Only, No GPU Drivers):
-- Ubuntu 22.04: `runpod/base:1.0.0-ubuntu2204`
-- Ubuntu 24.04: `runpod/base:1.0.0-ubuntu2404`
+- Ubuntu 22.04: `runpod/base:1.0.1-ubuntu2204`
+- Ubuntu 24.04: `runpod/base:1.0.1-ubuntu2404`
 
 ### CUDA Images (GPU Required) by Version:
 - 12.8.0:
-    - Ubuntu 22.04: `runpod/base:1.0.0-cuda1280-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.0-cuda1280-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:1.0.1-cuda1280-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:1.0.1-cuda1280-ubuntu2404`
 - 12.8.1:
-    - Ubuntu 22.04: `runpod/base:1.0.0-cuda1281-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.0-cuda1281-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:1.0.1-cuda1281-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:1.0.1-cuda1281-ubuntu2404`
 - 12.9.0:
-    - Ubuntu 22.04: `runpod/base:1.0.0-cuda1290-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.0-cuda1290-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:1.0.1-cuda1290-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:1.0.1-cuda1290-ubuntu2404`
 - 13.0.0:
-    - Ubuntu 22.04: `runpod/base:1.0.0-cuda1300-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.0-cuda1300-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:1.0.1-cuda1300-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:1.0.1-cuda1300-ubuntu2404`
 </div>

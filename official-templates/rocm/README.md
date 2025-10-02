@@ -26,12 +26,12 @@ Perfect for AMD GPU workloads with zero setup time.
 
 **Ubuntu 22.04 (Python 3.10)** 
 The venv must be activated with: `conda init && source ~/.bashrc && conda activate py_3.10`
-- PyTorch 2.5.1: `runpod/base:1.0.0-rocm644-ubuntu2204-py310-pytorch251`
-- PyTorch 2.6.0: `runpod/base:1.0.0-rocm644-ubuntu2204-py310-pytorch260`
+- PyTorch 2.5.1: `runpod/base:1.0.1-rocm644-ubuntu2204-py310-pytorch251`
+- PyTorch 2.6.0: `runpod/base:1.0.1-rocm644-ubuntu2204-py310-pytorch260`
 
 **Ubuntu 24.04 (Python 3.12)** 
 The venv must be activated with: `conda init && source ~/.bashrc && conda activate py_3.12`
-- PyTorch 2.6.0: `runpod/base:1.0.0-rocm644-ubuntu2404-py312-pytorch260`
-- PyTorch 2.7.1: `runpod/base:1.0.0-rocm644-ubuntu2404-py312-pytorch271`
+- PyTorch 2.6.0: `runpod/base:1.0.1-rocm644-ubuntu2404-py312-pytorch260`
+- PyTorch 2.7.1: `runpod/base:1.0.1-rocm644-ubuntu2404-py312-pytorch271`
 
 </div>
