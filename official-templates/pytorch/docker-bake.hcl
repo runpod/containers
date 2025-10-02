@@ -52,7 +52,7 @@ variable "COMPATIBLE_BUILDS" {
 }
 
 group "dev" {
-  targets = ["pytorch-ubuntu2204-cu1281-torch271"]
+  targets = ["pytorch-ubuntu2404-cu1281-torch280"]
 }
 
 group "default" {

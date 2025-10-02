@@ -71,7 +71,7 @@ RUN if [ -z "${ROCM_PATH}" ]; then \
     fi
 
 # ensurepip (it's there, we just installed it^) and install virtualenv
-RUN if [ -z "${ROCM_PATH}"]; then \
+RUN if [ -z "${ROCM_PATH}" ]; then \
         python3.9 -m pip install --upgrade pip virtualenv && \
         python3.10 -m pip install --upgrade pip virtualenv && \
         python3.11 -m pip install --upgrade pip virtualenv && \
