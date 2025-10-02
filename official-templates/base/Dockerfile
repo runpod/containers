@@ -54,13 +54,13 @@ RUN apt-get install --yes --no-install-recommends \
     python3.10-dev python3.10-venv python3.10-distutils \
     python3.11-dev python3.11-venv python3.11-distutils \
     python3.12-dev python3.12-venv \
-    python3.13-dev python3.13-venv python-is-python3 && \
+    python3.13-dev python3.13-venv && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Install pip if we are not ROCm
-RUN if [ -z "${ROCM_PATH}"]; then \
+RUN if [ -z "${ROCM_PATH}" ]; then \
         curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
         python3.9  get-pip.py && \
         python3.10 get-pip.py && \
@@ -79,10 +79,14 @@ RUN if [ -z "${ROCM_PATH}"]; then \
         python3.13 -m pip install --upgrade pip virtualenv; \
     fi
 
+RUN ln -sf /usr/bin/python3.12 /usr/local/bin/python
+RUN ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip
+RUN ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install Jupyter and related packages (always with Python 3.10)
-RUN python3.10 -m pip install --upgrade --no-cache-dir \
+# Install Jupyter and related packages
+RUN python -m pip install --upgrade --no-cache-dir \
     jupyterlab \
     ipywidgets \
     jupyter-archive \
