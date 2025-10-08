@@ -13,7 +13,7 @@ outputs:
     value: ${{ steps.build-type.outputs.is_production }}
   release-suffix:
     description: 'Release suffix for non-production builds'
-    value: ${{ steps.env-vars.outputs.release }}
+    value: ${{ steps.env-vars.outputs.release_suffix }}
 
 runs:
   using: 'composite'
@@ -32,10 +32,8 @@ runs:
         username: ${{ inputs.dockerhub-username }}
         password: ${{ inputs.dockerhub-token }}
 
-    - name: Set up Docker Buildx
-      uses: useblacksmith/build-push-action@v1.2
-      with:
-        setup-only: true
+    - name: Set up Docker Build
+      uses: useblacksmith/setup-docker-builder@v1
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
@@ -56,6 +54,7 @@ runs:
       run: |
         if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
           BRANCH_NAME=$(echo ${GITHUB_REF##refs/heads/} | sed 's/\//-/g')
-          echo "RELEASE=dev-${BRANCH_NAME}" >> $GITHUB_ENV
-          echo "release=dev-${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          SUFFIX="-dev-${BRANCH_NAME}"
+          echo "RELEASE=${SUFFIX}" >> $GITHUB_ENV
+          echo "release_suffix=${SUFFIX}" >> $GITHUB_OUTPUT
         fi 

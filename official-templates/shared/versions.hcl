@@ -1,4 +1,8 @@
-RELEASE_VERSION = "1.0.1"
+RELEASE_VERSION = "1.0.2"
+
+variable "RELEASE_SUFFIX" {
+  default = "" # Set by CI, not used by humans.
+}
 
 UBUNTU_VERSIONS = [
   {

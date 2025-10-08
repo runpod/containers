@@ -66,7 +66,7 @@ setup_ssh() {
 # Export env vars
 export_env_vars() {
     echo "Exporting environment variables..."
-    printenv | awk -F = '{ val = $0; sub(/^[^=]*=/, "", val); print "export " $1 "=\"" val "\"" }' > /etc/rp_environment
+    printenv | grep -E '^[A-Z_][A-Z0-9_]*=' | grep -v '^PUBLIC_KEY' | awk -F = '{ val = $0; sub(/^[^=]*=/, "", val); print "export " $1 "=\"" val "\"" }' > /etc/rp_environment
     if ! grep -q 'source /etc/rp_environment' ~/.bashrc; then
         echo 'source /etc/rp_environment' >> ~/.bashrc
     fi
