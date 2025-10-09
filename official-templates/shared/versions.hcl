@@ -29,4 +29,3 @@ CUDA_VERSIONS = [
     ubuntu = ["24.04"]
   }
 ]
-
