@@ -35,14 +35,13 @@ jobs:
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
         with:
           source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
           push: true
-          set: |
-            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}
 
   build-pytorch:
     needs: build-base
@@ -77,11 +76,10 @@ jobs:
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
         with:
           source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
           push: true
-          set: |
-            ${{ steps.setup.outputs.is-production != 'true' && format('*.args.RELEASE_VERSION={0}', steps.setup.outputs.release-suffix) || '' }}

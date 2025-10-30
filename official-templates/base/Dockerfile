@@ -31,22 +31,19 @@ ENV TZ=Etc/UTC
 
 WORKDIR /
 
-# Update and upgrade
-RUN apt-get update --yes && \
-    apt-get upgrade --yes
-
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Install 
-RUN apt-get install --yes --no-install-recommends \
-    ca-certificates curl dirmngr file git gpg gpg-agent inotify-tools \
-    jq lsof nano nginx openssh-server rsync software-properties-common \
-    sudo tmux unzip vim wget zip build-essential make cmake gfortran ffmpeg \
-    libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev \
-    libffi-dev libhdf5-dev libgl1 libjpeg-dev liblapack-dev libpng-dev \
-    libpostproc-dev libsm6 libssl-dev libswscale-dev libtiff-dev \
-    libv4l-dev libx264-dev libxrender-dev libxvidcore-dev \
-    cifs-utils nfs-common zstd
+RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
+    apt-get install --yes --no-install-recommends \
+    build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
+    file gfortran git gpg gpg-agent inetutils-traceroute inotify-tools iputils-ping jq \
+    libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
+    libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev libpostproc-dev \
+    libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
+    libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
+    software-properties-common sudo tmux unzip vim wget zip zstd
 
 # Add the Python PPA
 RUN add-apt-repository ppa:deadsnakes/ppa -y
@@ -57,13 +54,13 @@ RUN apt-get install --yes --no-install-recommends \
     python3.10-dev python3.10-venv python3.10-distutils \
     python3.11-dev python3.11-venv python3.11-distutils \
     python3.12-dev python3.12-venv \
-    python3.13-dev python3.13-venv python-is-python3 && \
+    python3.13-dev python3.13-venv && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Install pip if we are not ROCm
-RUN if [ -z "${ROCM_PATH}"]; then \
+RUN if [ -z "${ROCM_PATH}" ]; then \
         curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
         python3.9  get-pip.py && \
         python3.10 get-pip.py && \
@@ -74,7 +71,7 @@ RUN if [ -z "${ROCM_PATH}"]; then \
     fi
 
 # ensurepip (it's there, we just installed it^) and install virtualenv
-RUN if [ -z "${ROCM_PATH}"]; then \
+RUN if [ -z "${ROCM_PATH}" ]; then \
         python3.9 -m pip install --upgrade pip virtualenv && \
         python3.10 -m pip install --upgrade pip virtualenv && \
         python3.11 -m pip install --upgrade pip virtualenv && \
@@ -82,19 +79,18 @@ RUN if [ -z "${ROCM_PATH}"]; then \
         python3.13 -m pip install --upgrade pip virtualenv; \
     fi
 
-# Install Jupyter and related packages (always with Python 3.10)
-RUN python3.10 -m pip install --upgrade --no-cache-dir \
+RUN ln -sf /usr/bin/python3.12 /usr/local/bin/python
+RUN ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip
+RUN ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install Jupyter and related packages
+RUN python -m pip install --upgrade --no-cache-dir \
     jupyterlab \
     ipywidgets \
     jupyter-archive \
     notebook==7.4.2
-
-# Install pip drop-in replacement uv (https://github.com/astral-sh/uv)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile.d/uv.sh && \
-    chmod +x /etc/profile.d/uv.sh && \
-    export PATH="$HOME/.local/bin:$PATH" && \
-    uv --version
 
 # Install filebrowser
 RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
@@ -110,9 +106,8 @@ RUN rm -f /etc/ssh/ssh_host_*
 # Copy the README.md
 COPY README.md /usr/share/nginx/html/README.md
 
-# Start Scripts
+# Start Script
 COPY --from=scripts --chmod=755 start.sh /
-COPY --chmod=755 post_start.sh /
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt
