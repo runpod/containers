@@ -1,6 +1,6 @@
 gdown==4.7.1
 ipywidgets==8.0.7
-jupyterlab==3.6.7
+jupyterlab==4.4.8
 jupyter-archive==3.3.4
 jupyter_contrib_nbextensions==0.7.0
 xformers==0.0.20
