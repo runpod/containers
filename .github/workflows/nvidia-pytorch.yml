@@ -1,0 +1,64 @@
+name: NVIDIA PyTorch Image Build
+
+on:
+  push:
+    paths:
+      - ".github/workflows/nvidia-pytorch.yml"
+      - "official-templates/nvidia-pytorch/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-nvidia-pytorch:
+    runs-on: [self-hosted, podman]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine release suffix
+        id: release-suffix
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "suffix=" >> $GITHUB_OUTPUT
+          else
+            BRANCH_NAME=$(echo ${GITHUB_REF##refs/heads/} | sed 's/\//-/g')
+            echo "suffix=-dev-${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build nvidia-pytorch images
+        uses: docker/bake-action@v6
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.release-suffix.outputs.suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/nvidia-pytorch/docker-bake.hcl
+          push: true
+          set: |
+            *.args.BUILDKIT_PROGRESS=plain
+# Trigger workflow
+# Trigger after credential helper fix
+# All credential helpers disabled
+# Credentials now in config.json
+# Builder 'container' now created
+# Trigger workflow - Wed Nov  5 14:02:55 CST 2025
