@@ -15,5 +15,6 @@ RUN export N_GPUS=$(nvidia-smi | grep -i nvidia | grep -v SMI | wc -l)
 
 RUN test "$HOSTNAME" = "node-0" && python -m pip install hf_transfer || sleep 20 
 RUN test "$HOSTNAME" = "node-0" && ray start --head --port=6379 --node-ip-address=$HEAD_IP --dashboard-host=0.0.0.0 --disable-usage-stats || ray start --address=$HEAD_IP:6379 --disable-usage-stats
-#TODO determine pipeline length/width programmatically from container
+
+#Note: Two configurable environment variables must be user-specified: HF_MODEL specifies what model to download and serve, HF_TOKEN optionally lets you add your huggingface credential to access gated models
 RUN test "$HOSTNAME" = "node-0" && vllm serve $HF_MODEL --tensor-parallel-size $N_GPUS --pipeline-parallel-size $N_NODES
