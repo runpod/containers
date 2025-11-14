@@ -1,4 +1,4 @@
-RELEASE_VERSION = "1.0.2"
+RELEASE_VERSION = "1.0.3"
 
 variable "RELEASE_SUFFIX" {
   default = "" # Set by CI, not used by humans.
