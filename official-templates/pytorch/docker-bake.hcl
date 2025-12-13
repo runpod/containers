@@ -2,6 +2,10 @@
 
 variable "TORCH_META" {
   default = {
+    "2.9.1" = {}
+    "2.9.0" = {
+      torchvision = "0.24.0"
+    }
     "2.8.0" = {
       torchvision = "0.23.0"
     }
@@ -21,14 +25,20 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.8.1", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "12.8.1", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "12.8.1", torch = "2.8.0", whl_src = "128" },
+    { cuda_version = "12.8.1", torch = "2.9.0", whl_src = "128" },
+    { cuda_version = "12.8.1", torch = "2.9.1", whl_src = "128" },
     
     { cuda_version = "12.9.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "12.9.0", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.8.0", whl_src = "129" },
+    { cuda_version = "12.9.0", torch = "2.9.0", whl_src = "129" },
+    { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "129" },
 
     { cuda_version = "13.0.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "13.0.0", torch = "2.7.1", whl_src = "128" },
-    { cuda_version = "13.0.0", torch = "2.8.0", whl_src = "129" }
+    { cuda_version = "13.0.0", torch = "2.8.0", whl_src = "129" },
+    { cuda_version = "13.0.0", torch = "2.9.0", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.9.1", whl_src = "130" },
   ]
 }
 
@@ -44,7 +54,7 @@ variable "COMPATIBLE_BUILDS" {
           wheel_src      = combo.whl_src
           torch          = combo.torch
           torch_code     = replace(combo.torch, ".", "")
-          torch_vision   = TORCH_META[combo.torch].torchvision
+          torch_vision   = lookup(TORCH_META[combo.torch], "torchvision", "")
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
       ]
     ]
@@ -80,7 +90,7 @@ target "pytorch-matrix" {
   args = {
     BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
-    TORCH = "torch==${build.torch} torchvision==${build.torch_vision} torchaudio==${build.torch}"
+    TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""} torchaudio==${build.torch}"
   }
   
   tags = [

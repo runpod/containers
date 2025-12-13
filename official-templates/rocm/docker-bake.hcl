@@ -16,6 +16,9 @@ target "rocm-base" {
     proxy   = "container-template/proxy"
     logo    = "container-template"
   }
+  args = {
+    RP_SKIP_PYTHON = "1"
+  }
 }
 
 target "rocm644-ubuntu2204-pytorch251" {
