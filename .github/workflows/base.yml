@@ -47,7 +47,7 @@ jobs:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
               - 'official-templates/pytorch/**'
 
       - name: Setup Docker
-        if: steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -72,7 +72,7 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build pytorch images
-        if: steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0

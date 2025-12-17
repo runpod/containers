@@ -1,6 +1,9 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
+ARG RP_SKIP_PYTHON
+ARG RP_SKIP_JUPYTER
+
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV SHELL=/bin/bash
@@ -44,53 +47,54 @@ RUN apt-get update --yes && \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
     software-properties-common sudo tmux unzip vim wget zip zstd
-
-# Add the Python PPA
-RUN add-apt-repository ppa:deadsnakes/ppa -y
-
-# Install Python 
-RUN apt-get install --yes --no-install-recommends \
-    python3.9-dev python3.9-venv python3.9-distutils \
-    python3.10-dev python3.10-venv python3.10-distutils \
-    python3.11-dev python3.11-venv python3.11-distutils \
-    python3.12-dev python3.12-venv \
-    python3.13-dev python3.13-venv && \
+    
+# Install Python versions
+RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt-get install --yes --no-install-recommends \
+        python3.9-dev python3.9-venv python3.9-distutils \
+        python3.10-dev python3.10-venv python3.10-distutils \
+        python3.11-dev python3.11-venv python3.11-distutils \
+        python3.12-dev python3.12-venv \
+        python3.13-dev python3.13-venv && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*;
 
-# Install pip if we are not ROCm
-RUN if [ -z "${ROCM_PATH}" ]; then \
-        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-        python3.9  get-pip.py && \
-        python3.10 get-pip.py && \
-        python3.11 get-pip.py && \
-        python3.12 get-pip.py && \
-        python3.13 get-pip.py && \
-        rm get-pip.py; \
-    fi
+# Install pip
+RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python3.9  get-pip.py && \
+    python3.10 get-pip.py && \
+    python3.11 get-pip.py && \
+    python3.12 get-pip.py && \
+    python3.13 get-pip.py && \
+    rm get-pip.py;
 
-# ensurepip (it's there, we just installed it^) and install virtualenv
-RUN if [ -z "${ROCM_PATH}" ]; then \
-        python3.9 -m pip install --upgrade pip virtualenv && \
-        python3.10 -m pip install --upgrade pip virtualenv && \
-        python3.11 -m pip install --upgrade pip virtualenv && \
-        python3.12 -m pip install --upgrade pip virtualenv && \
-        python3.13 -m pip install --upgrade pip virtualenv; \
-    fi
+# Install virtualenv
+RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+    python3.9 -m pip install --upgrade pip virtualenv && \
+    python3.10 -m pip install --upgrade pip virtualenv && \
+    python3.11 -m pip install --upgrade pip virtualenv && \
+    python3.12 -m pip install --upgrade pip virtualenv && \
+    python3.13 -m pip install --upgrade pip virtualenv;
 
-RUN ln -sf /usr/bin/python3.12 /usr/local/bin/python
-RUN ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip
-RUN ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3
+# Symlink default python/pip
+RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+    ln -sf /usr/bin/python3.12 /usr/local/bin/python && \
+    ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip && \
+    ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3;
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install Jupyter and related packages
-RUN python -m pip install --upgrade --no-cache-dir \
-    jupyterlab \
-    ipywidgets \
-    jupyter-archive \
-    notebook==7.4.2
+# Install Jupyter and hf_transfer packages
+RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
+    python -m pip install --upgrade --no-cache-dir \
+        hf_transfer \
+        jupyterlab \
+        ipywidgets \
+        jupyter-archive \
+        notebook==7.4.2;
 
 # Install filebrowser
 RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
