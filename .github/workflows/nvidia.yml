@@ -1,0 +1,41 @@
+name: Nvidia Image Build
+
+on:
+  push:
+    paths:
+      - ".github/workflows/nvidia.yml"
+      - "official-templates/nvidia-*/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-nvidia:
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build nvidia images
+        uses: docker/bake-action@v6
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/nvidia-pytorch/docker-bake.hcl
+          push: true
+

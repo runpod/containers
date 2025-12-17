@@ -6,7 +6,7 @@ For more information on the NGC images visit https://catalog.ngc.nvidia.com/orgs
 
 ## Deployment
 
-Please use `runpod/nvidia-pytorch:1.0.0-25.11`
+Please use `runpod/nvidia-pytorch:1.0.3-25.11`
 
 ## Build
 
