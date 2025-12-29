@@ -112,6 +112,7 @@ COPY README.md /usr/share/nginx/html/README.md
 
 # Start Script
 COPY --from=scripts --chmod=755 start.sh /
+COPY --from=scripts --chmod=755 post_start.sh /
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt
