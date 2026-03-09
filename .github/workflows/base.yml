@@ -8,6 +8,8 @@ on:
       - "official-templates/base/Dockerfile"
       - "official-templates/pytorch/docker-bake.hcl"
       - "official-templates/pytorch/Dockerfile"
+      - "official-templates/autoresearch/docker-bake.hcl"
+      - "official-templates/autoresearch/Dockerfile"
       - "official-templates/shared/**"
   workflow_dispatch:
 
@@ -41,6 +43,46 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
+          push: true
+
+  build-autoresearch:
+    needs: build-base
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if build is needed
+        uses: tj-actions/changed-files@v46
+        id: changes
+        with:
+          files_yaml: |
+            autoresearch:
+              - 'official-templates/shared/**'
+              - 'official-templates/autoresearch/**'
+
+      - name: Setup Docker
+        if: steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build autoresearch images
+        if: steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: docker/bake-action@v6
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/autoresearch/docker-bake.hcl
           push: true
 
   build-pytorch:
