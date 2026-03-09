@@ -2,7 +2,7 @@ ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
 # Clone autoresearch into workspace
-ARG AUTORESEARCH_REF=main
+ARG AUTORESEARCH_REF=master
 RUN git clone --branch ${AUTORESEARCH_REF} --depth 1 \
     https://github.com/runpod/autoresearch.git /workspace/autoresearch
 
