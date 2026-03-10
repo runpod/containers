@@ -15,5 +15,5 @@ RUN uv sync
 RUN uv run prepare.py
 
 # Copy to /workspace on first boot (volume mount overlays /workspace at runtime)
-RUN echo '#!/bin/bash\nif [ ! -f /workspace/autoresearch/pyproject.toml ]; then\n  cp -a /opt/autoresearch /workspace/autoresearch\nfi' > /pre_start.sh && \
+RUN printf '#!/bin/bash\nif [ ! -f /workspace/autoresearch/pyproject.toml ]; then\n  cp -a /opt/autoresearch /workspace/autoresearch\nfi\n' > /pre_start.sh && \
     chmod +x /pre_start.sh
