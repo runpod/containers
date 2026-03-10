@@ -14,6 +14,6 @@ RUN uv sync
 # Download data and train tokenizer (~2 min)
 RUN uv run prepare.py
 
-# Copy to /workspace on first boot (volume mount overlays /workspace at runtime)
-RUN printf '#!/bin/bash\nif [ ! -f /workspace/autoresearch/pyproject.toml ]; then\n  cp -a /opt/autoresearch /workspace/autoresearch\nfi\n' > /pre_start.sh && \
-    chmod +x /pre_start.sh
+# On first boot: copy source files to /workspace (lightweight, persists edits)
+# and symlink .venv back to /opt (12GB, stays on fast container layer)
+COPY pre_start.sh /pre_start.sh
