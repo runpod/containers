@@ -1,6 +1,10 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
+# Install runpodctl for pod management (scaling up GPUs)
+RUN wget -qO- https://github.com/runpod/runpodctl/releases/latest/download/runpodctl-linux-amd64 > /usr/local/bin/runpodctl && \
+    chmod +x /usr/local/bin/runpodctl
+
 # Clone autoresearch to /opt (safe from volume mounts)
 ARG AUTORESEARCH_REF=master
 RUN git clone --branch ${AUTORESEARCH_REF} --depth 1 \
