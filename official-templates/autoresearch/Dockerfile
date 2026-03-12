@@ -2,7 +2,8 @@ ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
 # Install runpodctl for pod management (scaling up GPUs)
-RUN wget -qO- https://github.com/runpod/runpodctl/releases/latest/download/runpodctl-linux-amd64.tar.gz | \
+ARG RUNPODCTL_VERSION=v2.1.6
+RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz | \
     tar -xz -C /usr/local/bin runpodctl
 
 # Clone autoresearch to /opt (safe from volume mounts)
