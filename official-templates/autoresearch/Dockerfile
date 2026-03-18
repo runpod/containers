@@ -22,3 +22,7 @@ RUN uv run prepare.py
 # On first boot: copy source files to /workspace (lightweight, persists edits)
 # and symlink .venv back to /opt (12GB, stays on fast container layer)
 COPY pre_start.sh /pre_start.sh
+
+# Override the NVIDIA CUDA entrypoint which blocks boot on hosts with older
+# drivers (e.g. driver 550 only supports CUDA 12.4, but this image has 12.8).
+ENTRYPOINT ["/start.sh"]
