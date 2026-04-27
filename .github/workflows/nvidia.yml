@@ -28,7 +28,7 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build nvidia images
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
