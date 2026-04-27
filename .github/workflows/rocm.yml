@@ -16,7 +16,7 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       
