@@ -1,0 +1,36 @@
+name: Hadolint
+
+on:
+  pull_request:
+    paths:
+      - "official-templates/**/Dockerfile"
+      - "helper-templates/**/Dockerfile"
+      - ".github/actions/hadolint/**"
+      - ".github/workflows/hadolint.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Add rows when new top-level Dockerfiles appear (e.g. nvidia-pytorch).
+        dockerfile:
+          - official-templates/base/Dockerfile
+          - official-templates/pytorch/Dockerfile
+          - official-templates/autoresearch/Dockerfile
+          - official-templates/nvidia-pytorch/Dockerfile
+          - official-templates/rocm/Dockerfile
+          - helper-templates/verify-nccl/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: ./.github/actions/hadolint
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
