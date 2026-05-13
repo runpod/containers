@@ -47,10 +47,22 @@ jobs:
           push: false
           load: true
 
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
       - name: Trivy scan
         uses: ./.github/actions/trivy
         with:
-          bake-metadata: ${{ steps.build.outputs.metadata }}
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push base images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
 
   build-autoresearch:
     needs: build-base
