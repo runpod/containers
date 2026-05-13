@@ -1,9 +1,8 @@
 name: Trivy
-description: "Scan Docker images with Trivy; fail on CRITICAL/HIGH fixed vulnerabilities"
-
+description: "Scan Docker images with Trivy"
 inputs:
-  image-refs:
-    description: "JSON array of image references to scan"
+  bake-metadata:
+    description: "The bake metadata to scan"
     required: true
 
 runs:
