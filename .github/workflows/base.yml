@@ -34,6 +34,7 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build base images
+        id: build
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
@@ -49,7 +50,7 @@ jobs:
       - name: Trivy scan
         uses: ./.github/actions/trivy
         with:
-          bake-metadata: ${{ steps.bake.outputs.metadata }}
+          bake-metadata: ${{ steps.build.outputs.metadata }}
 
   build-autoresearch:
     needs: build-base
