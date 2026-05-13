@@ -1,0 +1,38 @@
+name: Trivy
+description: "Scan Docker images with Trivy"
+inputs:
+  bake-metadata:
+    description: "The bake metadata to scan"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Trivy
+      shell: bash
+      run: |
+        curl -fsSL https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz \
+          -o /tmp/trivy.tar.gz
+        tar xz -C /tmp -f /tmp/trivy.tar.gz trivy
+        sudo mv /tmp/trivy /usr/local/bin/trivy
+        trivy --version
+
+    - name: Trivy
+      shell: bash
+      env:
+        BAKE_METADATA: ${{ inputs.bake-metadata }}
+      run: |
+        set -euo pipefail
+        echo "${BAKE_METADATA}" | jq -r 'to_entries[] | .value["image.name"] // empty' | sort -u > "${RUNNER_TEMP}/trivy-refs.txt"
+        if ! grep -q . "${RUNNER_TEMP}/trivy-refs.txt"; then
+          echo "No image.name in bake metadata"
+          exit 1
+        fi
+        echo "Scanning:"
+        cat "${RUNNER_TEMP}/trivy-refs.txt"
+        while IFS= read -r ref || [ -n "${ref}" ]; do
+          [ -z "${ref}" ] && continue
+          echo "::group::Trivy — ${ref}"
+          trivy image "${ref}"
+          echo "::endgroup::"
+        done < "${RUNNER_TEMP}/trivy-refs.txt"

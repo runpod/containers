@@ -43,7 +43,13 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: true
+          push: false
+          load: true
+
+      - name: Trivy scan
+        uses: ./.github/actions/trivy
+        with:
+          bake-metadata: ${{ steps.bake.outputs.metadata }}
 
   build-autoresearch:
     needs: build-base
