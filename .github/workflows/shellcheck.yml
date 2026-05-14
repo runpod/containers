@@ -1,0 +1,24 @@
+name: Shellcheck
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  shellcheck:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Shellcheck
+        uses: reviewdog/action-shellcheck@v1.32.0
+        with:
+          fail_level: warning

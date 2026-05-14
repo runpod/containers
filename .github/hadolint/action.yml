@@ -1,0 +1,35 @@
+name: Hadolint
+description: "Lint Dockerfiles via hadolint/hadolint-action (reuse with uses: ./.github/actions/hadolint)"
+inputs:
+  failure-threshold:
+    description: Fail when violations meet or exceed this severity (error, warning, info, style, ignore). Default error avoids failing on existing style warnings while still failing on errors.
+    required: false
+    default: "error"
+  ignore:
+    description: Comma-separated Hadolint rule codes to ignore
+    required: false
+    default: ""
+  dockerfile:
+    description: Path to Dockerfile to lint (workflows often pass this from a matrix)
+    required: false
+    default: "official-templates/base/Dockerfile"
+  format:
+    description: "tty = PR inline annotations (recommended); sarif = file for github/codeql-action/upload-sarif (Code Scanning tab)"
+    required: false
+    default: "tty"
+  output-file:
+    description: "Use /dev/stdout with format tty. For sarif, set a path e.g. hadolint.sarif for upload-sarif."
+    required: false
+    default: "/dev/stdout"
+
+runs:
+  using: composite
+  steps:
+    - id: hadolint
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.dockerfile }}
+        failure-threshold: ${{ inputs.failure-threshold }}
+        ignore: ${{ inputs.ignore }}
+        format: ${{ inputs.format }}
+        output-file: ${{ inputs.output-file }}

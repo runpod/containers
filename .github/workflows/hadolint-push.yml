@@ -1,0 +1,42 @@
+name: Hadolint-PR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    strategy:
+      fail-fast: false
+      matrix:
+        # Add rows when new top-level Dockerfiles appear
+        dockerfile:
+          - official-templates/base/Dockerfile
+          - official-templates/pytorch/Dockerfile
+          - official-templates/autoresearch/Dockerfile
+          - helper-templates/verify-nccl/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Lint Dockerfile
+        uses: ./.github/actions/hadolint
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: warning
+          format: sarif
+          output-file: hadolint.sarif
+      
+      - name: Upload Hadolint SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint-${{ strategy.job-index }}

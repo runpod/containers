@@ -93,6 +93,7 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build autoresearch images
+        id: build
         if: steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
@@ -103,7 +104,24 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: true
+          push: false
+          load: true
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Trivy scan
+        uses: ./.github/actions/trivy
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push autoresearch images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
 
   build-pytorch:
     needs: build-base
@@ -134,6 +152,7 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build pytorch images
+        id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
@@ -144,4 +163,21 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: true
+          push: false
+          load: true
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Trivy scan
+        uses: ./.github/actions/trivy
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push pytorch images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
