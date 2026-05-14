@@ -1,10 +1,12 @@
 name: ROCm Image Build
 
 on:
-  push:
+  pull_request:
     paths:
       - ".github/workflows/rocm.yml"
       - "official-templates/rocm/**"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

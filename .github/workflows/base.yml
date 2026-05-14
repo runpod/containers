@@ -1,7 +1,7 @@
 name: Docker Image Build and Release
 
 on:
-  push:
+  pull_request:
     paths:
       - ".github/workflows/base.yml"
       - "official-templates/base/docker-bake.hcl"
@@ -11,6 +11,8 @@ on:
       - "official-templates/autoresearch/docker-bake.hcl"
       - "official-templates/autoresearch/Dockerfile"
       - "official-templates/shared/**"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -85,7 +87,7 @@ jobs:
               - 'official-templates/autoresearch/**'
 
       - name: Setup Docker
-        if: steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -94,7 +96,7 @@ jobs:
 
       - name: Build autoresearch images
         id: build
-        if: steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: docker/bake-action@v6
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
@@ -141,6 +143,7 @@ jobs:
           files_yaml: |
             pytorch:
               - 'official-templates/shared/**'
+              - 'official-templates/base/**'
               - 'official-templates/pytorch/**'
 
       - name: Setup Docker

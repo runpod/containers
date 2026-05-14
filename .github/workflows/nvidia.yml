@@ -1,10 +1,12 @@
 name: Nvidia Image Build
 
 on:
-  push:
+  pull_request:
     paths:
       - ".github/workflows/nvidia.yml"
       - "official-templates/nvidia-*/**"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
