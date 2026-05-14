@@ -153,7 +153,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          max-parallelism: 10
+          max-parallelism: 9
 
       - name: Build pytorch images
         id: build

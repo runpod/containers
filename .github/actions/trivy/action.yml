@@ -37,6 +37,7 @@ runs:
         for ref in "${refs[@]}"; do
           echo "::group::Trivy — ${ref}"
           if ! trivy image \
+              --timeout 30m \
               --severity CRITICAL,HIGH \
               --exit-code 1 \
               --ignore-unfixed \
