@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   shellcheck:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
