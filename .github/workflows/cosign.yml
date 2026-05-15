@@ -1,0 +1,47 @@
+name: Cosign
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cosign.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SOURCE_IMAGE: ubuntu:latest
+  TARGET_IMAGE: mchekm/runpod-containers:ubuntu-latest-cosign
+
+jobs:
+  cosign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull, retag and push image
+        id: push
+        run: |
+          docker pull "${SOURCE_IMAGE}"
+          docker tag "${SOURCE_IMAGE}" "${TARGET_IMAGE}"
+          docker push "${TARGET_IMAGE}"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${TARGET_IMAGE}" | cut -d'@' -f2)
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes "mchekm/runpod-containers@${{ steps.push.outputs.digest }}"
