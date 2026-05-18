@@ -46,8 +46,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: false
-          load: true
+          push: true #false
+          # load: true
 
       - name: Extract image refs
         id: refs
@@ -60,10 +60,10 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
-      - name: Push base images
-        uses: ./.github/actions/docker-push
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+      # - name: Push base images
+      #   uses: ./.github/actions/docker-push
+      #   with:
+      #     image-refs: ${{ steps.refs.outputs.refs }}
 
 
   build-autoresearch:
@@ -106,8 +106,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: false
-          load: true
+          push: true #false
+          # load: true
 
       - name: Extract image refs
         id: refs
@@ -120,10 +120,10 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
-      - name: Push autoresearch images
-        uses: ./.github/actions/docker-push
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+      # - name: Push autoresearch images
+      #   uses: ./.github/actions/docker-push
+      #   with:
+      #     image-refs: ${{ steps.refs.outputs.refs }}
 
   build-pytorch:
     needs: build-base
@@ -167,8 +167,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: false
-          load: true
+          push: true #false
+          # load: true
 
       - name: Extract image refs
         id: refs
@@ -181,7 +181,7 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
-      - name: Push pytorch images
-        uses: ./.github/actions/docker-push
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+      # - name: Push pytorch images
+      #   uses: ./.github/actions/docker-push
+      #   with:
+      #     image-refs: ${{ steps.refs.outputs.refs }}

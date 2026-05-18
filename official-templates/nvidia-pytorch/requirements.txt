@@ -1,0 +1,14 @@
+aiohttp==3.13.3
+black==26.3.1
+jaraco.context==6.1.0
+jupyter_server==2.18.0
+jupyterlab==4.5.7
+mistune==3.2.1
+nbconvert==7.17.0
+notebook==7.5.6
+onnx==1.21.0
+pillow==12.2.0
+protobuf==6.33.5
+tornado==6.5.5
+urllib3==2.7.0
+wheel==0.46.2

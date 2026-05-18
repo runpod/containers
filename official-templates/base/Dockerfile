@@ -86,14 +86,11 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+COPY --from=requirements requirements.txt /requirements.txt
+
 # Install Jupyter and hf_transfer packages
 RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
-    python -m pip install --upgrade --no-cache-dir \
-        hf_transfer \
-        jupyterlab==4.5.7 \
-        ipywidgets \
-        jupyter-archive \
-        notebook==7.5.6;
+    python -m pip install --upgrade --no-cache-dir -r requirements.txt
 
 # Install filebrowser
 RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash

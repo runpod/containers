@@ -10,11 +10,12 @@ target "nvidia-base" {
     scripts = "container-template"
     proxy   = "container-template/proxy"
     logo    = "container-template"
+    requirements = "official-templates/nvidia-pytorch"
   }
-  args = {
-    RP_SKIP_PYTHON  = "1"
-    RP_SKIP_JUPYTER = "1"
-  }
+  // args = {
+  //   RP_SKIP_PYTHON  = "1"
+  //   RP_SKIP_JUPYTER = "1"
+  // }
 }
 
 target "pytorch-2511" {

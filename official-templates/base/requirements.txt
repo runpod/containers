@@ -1,0 +1,5 @@
+hf_transfer 
+jupyterlab==4.5.7
+ipywidgets
+jupyter-archive
+notebook==7.5.6
