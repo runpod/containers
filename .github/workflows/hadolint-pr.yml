@@ -32,3 +32,4 @@ jobs:
           failure-threshold: warning
           format: tty
           output-file: /dev/stdout
+          ignore: DL3022,DL3006

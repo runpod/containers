@@ -11,6 +11,10 @@ ARG AUTORESEARCH_REF=master
 RUN git clone --branch ${AUTORESEARCH_REF} --depth 1 \
     https://github.com/runpod/autoresearch.git /opt/autoresearch
 
+RUN python -m pip install --upgrade --no-cache-dir \
+    pillow==12.2.0\
+    urllib3==2.7.0 \
+
 WORKDIR /opt/autoresearch
 
 # Install Python dependencies
