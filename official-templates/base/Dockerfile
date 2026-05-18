@@ -36,7 +36,7 @@ WORKDIR /
 
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-# Install 
+# Install
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
@@ -46,8 +46,9 @@ RUN apt-get update --yes && \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev libpostproc-dev \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
-    software-properties-common sudo tmux unzip vim wget zip zstd
-    
+    software-properties-common sudo tmux unzip vim wget zip zstd && \
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+
 # Install Python versions
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
@@ -89,10 +90,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
     python -m pip install --upgrade --no-cache-dir \
         hf_transfer \
-        jupyterlab \
+        jupyterlab==4.5.7 \
         ipywidgets \
         jupyter-archive \
-        notebook==7.4.2;
+        notebook==7.5.6;
 
 # Install filebrowser
 RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
@@ -101,9 +102,6 @@ RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh |
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
 COPY --from=proxy snippets /etc/nginx/snippets
 COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
-
-# Remove existing SSH host keys
-RUN rm -f /etc/ssh/ssh_host_*
 
 # Copy the README.md
 COPY README.md /usr/share/nginx/html/README.md
