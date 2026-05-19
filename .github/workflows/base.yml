@@ -6,10 +6,12 @@ on:
       - ".github/workflows/base.yml"
       - "official-templates/base/docker-bake.hcl"
       - "official-templates/base/Dockerfile"
+      - "official-templates/base/requirements.txt"
       - "official-templates/pytorch/docker-bake.hcl"
       - "official-templates/pytorch/Dockerfile"
       - "official-templates/autoresearch/docker-bake.hcl"
       - "official-templates/autoresearch/Dockerfile"
+      - "official-templates/autoresearch/requirements.txt"
       - "official-templates/shared/**"
   push:
     branches: [main]
