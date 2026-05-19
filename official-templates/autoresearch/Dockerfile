@@ -1,6 +1,8 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.1.6
 RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz | \
@@ -14,12 +16,9 @@ RUN git clone --branch ${AUTORESEARCH_REF} --depth 1 \
 WORKDIR /opt/autoresearch
 
 # Install Python dependencies
-RUN uv sync
-
-RUN uv pip install --upgrade "pillow==12.2.0" "urllib3==2.7.0"
-
-# Download data and train tokenizer (~2 min)
-RUN uv run prepare.py
+RUN uv sync && \
+    uv pip install --upgrade "pillow==12.2.0" "urllib3==2.7.0" && \
+    uv run prepare.py # Download data and train tokenizer (~2 min)
 
 # On first boot: copy source files to /workspace (lightweight, persists edits)
 # and symlink .venv back to /opt (12GB, stays on fast container layer)
