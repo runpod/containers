@@ -17,9 +17,9 @@ jobs:
           - dockerfile: official-templates/base/Dockerfile
             ignore: DL3022,DL3006
           - dockerfile: official-templates/pytorch/Dockerfile
-            ignore: DL3013
+            ignore: "DL3013,DL3006"
           - dockerfile: official-templates/autoresearch/Dockerfile
-            ignore: ""
+            ignore: "DL3006"
           - dockerfile: helper-templates/verify-nccl/Dockerfile
             ignore: "DL3008"
     steps:

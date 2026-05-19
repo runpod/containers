@@ -72,11 +72,11 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
 
 # Install virtualenv
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
-    python3.9 -m pip install --upgrade pip virtualenv && \
-    python3.10 -m pip install --upgrade pip virtualenv && \
-    python3.11 -m pip install --upgrade pip virtualenv && \
-    python3.12 -m pip install --upgrade pip virtualenv && \
-    python3.13 -m pip install --upgrade pip virtualenv;
+    python3.9 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
+    python3.10 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
+    python3.11 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
+    python3.12 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
+    python3.13 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3;
 
 # Symlink default python/pip
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
@@ -108,7 +108,9 @@ COPY --from=scripts --chmod=755 start.sh /
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt
-RUN echo 'cat /etc/runpod.txt' >> /root/.bashrc
-RUN echo 'echo -e "\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/\033[0m and \033[1;34mhttps://blog.runpod.io/\033[0m\n\n"' >> /root/.bashrc
+RUN cat >> /root/.bashrc <<'EOF'
+cat /etc/runpod.txt
+printf "\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/\033[0m and \033[1;34mhttps://blog.runpod.io/\033[0m\n\n"
+EOF
 
 CMD ["/start.sh"]
