@@ -46,8 +46,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: false
-          load: true
+          push: true
 
       - name: Extract image refs
         id: refs
@@ -59,12 +58,6 @@ jobs:
         uses: ./.github/actions/trivy
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-
-      - name: Push base images
-        uses: ./.github/actions/docker-push
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
-
 
   build-autoresearch:
     needs: build-base
@@ -106,8 +99,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: false
-          load: true
+          push: true
 
       - name: Extract image refs
         id: refs
@@ -117,11 +109,6 @@ jobs:
 
       - name: Trivy scan
         uses: ./.github/actions/trivy
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
-
-      - name: Push autoresearch images
-        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -153,7 +140,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          max-parallelism: 3
+          # max-parallelism: 4
 
       - name: Build pytorch images
         id: build
@@ -167,8 +154,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: false
-          load: true
+          push: true
 
       - name: Extract image refs
         id: refs
@@ -178,10 +164,5 @@ jobs:
 
       - name: Trivy scan
         uses: ./.github/actions/trivy
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
-
-      - name: Push pytorch images
-        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}

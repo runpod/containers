@@ -40,8 +40,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/nvidia-pytorch/docker-bake.hcl
-          push: false
-          load: true
+          push: true
       
       - name: Extract image refs
         id: refs
@@ -51,10 +50,5 @@ jobs:
 
       - name: Trivy scan
         uses: ./.github/actions/trivy
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
-
-      - name: Push nvidia images
-        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
