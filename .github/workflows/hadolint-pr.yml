@@ -13,12 +13,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Add rows when new top-level Dockerfiles appear (e.g. nvidia-pytorch).
-        dockerfile:
-          - official-templates/base/Dockerfile
-          - official-templates/pytorch/Dockerfile
-          - official-templates/autoresearch/Dockerfile
-          - helper-templates/verify-nccl/Dockerfile
+        include:
+          - dockerfile: official-templates/base/Dockerfile
+            ignore: DL3022,DL3006
+          - dockerfile: official-templates/pytorch/Dockerfile
+            ignore: DL3013
+          - dockerfile: official-templates/autoresearch/Dockerfile
+            ignore: ""
+          - dockerfile: helper-templates/verify-nccl/Dockerfile
+            ignore: "DL3008"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,4 +35,4 @@ jobs:
           failure-threshold: warning
           format: tty
           output-file: /dev/stdout
-          ignore: DL3022,DL3006
+          ignore: ${{ matrix.ignore }}

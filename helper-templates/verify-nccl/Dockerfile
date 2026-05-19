@@ -10,11 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pciutils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/NVIDIA/cuda-samples.git && \
-    cd cuda-samples/Samples/0_Introduction/simpleP2P && \
-    make
+RUN git clone https://github.com/NVIDIA/cuda-samples.git 
+    
+WORKDIR /verify-nccl/cuda-samples/Samples/0_Introduction/simpleP2P
+
+RUN make
 
 COPY --chmod=755 check_nccl.sh .
 
 # Start Container
-CMD tail -f /dev/null
+CMD ["tail", "-f", "/dev/null"]

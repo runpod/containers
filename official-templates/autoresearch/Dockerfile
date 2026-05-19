@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install runpodctl for pod management (scaling up GPUs)
-ARG RUNPODCTL_VERSION=v2.1.6
+ARG RUNPODCTL_VERSION=v2.3.0
 RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz | \
     tar -xz -C /usr/local/bin runpodctl
 
@@ -17,7 +17,6 @@ WORKDIR /opt/autoresearch
 
 # Install Python dependencies
 RUN uv sync && \
-    uv pip install --upgrade "pillow==12.2.0" "urllib3==2.7.0" && \
     uv run prepare.py # Download data and train tokenizer (~2 min)
 
 # On first boot: copy source files to /workspace (lightweight, persists edits)
