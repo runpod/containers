@@ -72,11 +72,11 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
 
 # Install virtualenv
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
-    python3.9 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
-    python3.10 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
-    python3.11 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
-    python3.12 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3 && \
-    python3.13 -m pip install --upgrade --no-cache-dir pip==26.1.1 virtualenv==21.3.3;
+    python3.9 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
+    python3.10 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
+    python3.11 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
+    python3.12 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
+    python3.13 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3;
 
 # Symlink default python/pip
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
