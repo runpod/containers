@@ -47,7 +47,8 @@ RUN apt-get update --yes && \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
     software-properties-common sudo tmux unzip vim wget zip zstd && \
-    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Python versions
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
@@ -72,11 +73,11 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
 
 # Install virtualenv
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
-    python3.9 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
-    python3.10 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
-    python3.11 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
-    python3.12 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3 && \
-    python3.13 -m pip install --upgrade --no-cache-dir pip virtualenv==21.3.3;
+    python3.9 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.10 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.11 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.12 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.13 -m pip install --upgrade --no-cache-dir pip virtualenv;
 
 # Symlink default python/pip
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
