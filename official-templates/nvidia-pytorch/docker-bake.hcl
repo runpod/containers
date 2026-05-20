@@ -13,7 +13,8 @@ target "nvidia-base" {
     requirements = "official-templates/nvidia-pytorch"
   }
   args = {
-    RP_SKIP_PYTHON = "1"
+    RP_SKIP_PYTHON                  = "1"
+    RP_STRIP_VENDORED_TEST_FIXTURES = "1"
   }
 }
 
