@@ -31,7 +31,7 @@ jobs:
 
       - name: Build rocm images
         id: build
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -40,8 +40,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/rocm/docker-bake.hcl
-          push: false
-          load: true
+          push: true
 
       - name: Extract image refs
         id: refs
@@ -51,10 +50,5 @@ jobs:
 
       - name: Trivy scan
         uses: ./.github/actions/trivy
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
-
-      - name: Push rocm images
-        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
