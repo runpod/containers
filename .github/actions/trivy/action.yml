@@ -1,9 +1,17 @@
 name: Trivy
 description: "Scan Docker images with Trivy"
 inputs:
-  bake-metadata:
-    description: "The bake metadata to scan"
+  image-refs:
+    description: "JSON array of image refs to scan"
     required: true
+  skip-files:
+    description: |
+      Optional newline-separated list of glob patterns to pass to Trivy as
+      --skip-files. Use this to silence known-benign findings (e.g. demo
+      cert/key fixtures shipped by vendored upstream libraries in NGC base
+      images) without affecting the rest of the scan.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -21,6 +29,7 @@ runs:
       shell: bash
       env:
         IMAGE_REFS: ${{ inputs.image-refs }}
+        SKIP_FILES: ${{ inputs.skip-files }}
       run: |
         set -uo pipefail
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
@@ -29,21 +38,35 @@ runs:
           exit 1
         fi
 
+        trivy_cmd=(
+          trivy image
+          --timeout 30m
+          --severity CRITICAL,HIGH
+          --exit-code 1
+          --ignore-unfixed
+          --pkg-types os,library
+          --format table
+          --no-progress
+        )
+
+        skip_patterns=()
+        while IFS= read -r pattern; do
+          [ -z "$pattern" ] && continue
+          trivy_cmd+=(--skip-files "$pattern")
+          skip_patterns+=("$pattern")
+        done <<< "${SKIP_FILES}"
+
         echo "Scanning ${#refs[@]} image(s):"
         printf '  - %s\n' "${refs[@]}"
+        if [ ${#skip_patterns[@]} -gt 0 ]; then
+          echo "Skipping file patterns:"
+          printf '  - %s\n' "${skip_patterns[@]}"
+        fi
 
         failed=()
         for ref in "${refs[@]}"; do
           echo "::group::Trivy — ${ref}"
-          if ! trivy image \
-              --timeout 30m \
-              --severity CRITICAL,HIGH \
-              --exit-code 1 \
-              --ignore-unfixed \
-              --pkg-types os,library \
-              --format table \
-              --no-progress \
-              "${ref}"; then
+          if ! "${trivy_cmd[@]}" "${ref}"; then
             failed+=("${ref}")
           fi
           echo "::endgroup::"

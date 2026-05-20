@@ -53,6 +53,11 @@ jobs:
         uses: ./.github/actions/trivy
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          skip-files: |
+            **/civetweb/resources/cert/*
+            **/civetweb/resources/ssl_cert.pem
+            **/civetweb/resources/server.pem
+            **/civetweb/resources/server_bkup.pem
 
       - name: Push nvidia images
         uses: ./.github/actions/docker-push

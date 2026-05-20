@@ -3,7 +3,6 @@ FROM ${BASE_IMAGE}
 
 ARG RP_SKIP_PYTHON
 ARG RP_SKIP_JUPYTER
-ARG RP_STRIP_VENDORED_TEST_FIXTURES
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -85,13 +84,6 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     ln -sf /usr/bin/python3.12 /usr/local/bin/python && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3;
-
-RUN [[ -z "$RP_STRIP_VENDORED_TEST_FIXTURES" ]] && exit 0; \
-    find /opt /usr -type f \( \
-            -path '*/civetweb/resources/cert/*' \
-         -o -path '*/civetweb/resources/ssl_cert.pem' \
-         -o -path '*/civetweb/resources/server.pem' \
-       \) -print -delete
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
