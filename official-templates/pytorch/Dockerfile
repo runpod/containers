@@ -5,7 +5,7 @@ ARG WHEEL_SRC
 ARG TORCH
 
 RUN python -m pip install \
-        --timeout 120 \
+        --timeout 300 \
         --retries 10 \
         --resume-retries 5 \
         --no-cache-dir \
