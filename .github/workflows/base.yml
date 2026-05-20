@@ -37,7 +37,7 @@ jobs:
 
       - name: Build base images
         id: build
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -70,7 +70,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
         id: changes
         with:
           files_yaml: |
@@ -90,7 +90,7 @@ jobs:
       - name: Build autoresearch images
         id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -124,7 +124,7 @@ jobs:
           fetch-depth: 0
       
       - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
         id: changes
         with:
           files_yaml: |
@@ -145,7 +145,7 @@ jobs:
       - name: Build pytorch images
         id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
