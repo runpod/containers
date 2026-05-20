@@ -24,7 +24,7 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       
@@ -65,12 +65,12 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
+        uses: docker/setup-qemu-action@v47.0.6
         id: changes
         with:
           files_yaml: |
@@ -119,12 +119,12 @@ jobs:
     runs-on: blacksmith-16vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       
       - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
+        uses: docker/setup-qemu-action@v47.0.6
         id: changes
         with:
           files_yaml: |
