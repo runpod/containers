@@ -70,7 +70,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check if build is needed
-        uses: docker/setup-qemu-action@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
+        uses: tj-actions/changed-files@v46
         id: changes
         with:
           files_yaml: |
@@ -124,7 +124,7 @@ jobs:
           fetch-depth: 0
       
       - name: Check if build is needed
-        uses: docker/setup-qemu-action@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
+        uses: tj-actions/changed-files@v46
         id: changes
         with:
           files_yaml: |
