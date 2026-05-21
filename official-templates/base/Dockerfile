@@ -97,7 +97,7 @@ RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
     rm /tmp/scrub-stale-metadata.py
 
 # Install filebrowser
-RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+# RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
