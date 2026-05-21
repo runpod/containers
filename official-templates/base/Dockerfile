@@ -50,6 +50,9 @@ RUN apt-get update --yes && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
 
+RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
+        -print -exec rm -rf {} + 2>/dev/null || true
+
 # Install Python versions
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
@@ -97,7 +100,7 @@ RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
     rm /tmp/scrub-stale-metadata.py
 
 # Install filebrowser
-# RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
