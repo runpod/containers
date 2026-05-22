@@ -56,7 +56,7 @@ RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
 # Install Python versions
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt-get install --yes --no-install-recommends \
         python3.9-dev python3.9-venv python3.9-distutils \
@@ -69,7 +69,7 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     rm -rf /var/lib/apt/lists/*;
 
 # Install pip
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     curl -sS https://bootstrap.pypa.io/pip/3.9/get-pip.py | python3.9 && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
@@ -77,7 +77,7 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.13;
 
 # Install virtualenv
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     python3.9 -m pip install --upgrade --no-cache-dir pip virtualenv && \
     python3.10 -m pip install --upgrade --no-cache-dir pip virtualenv && \
     python3.11 -m pip install --upgrade --no-cache-dir pip virtualenv && \
@@ -85,7 +85,7 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     python3.13 -m pip install --upgrade --no-cache-dir pip virtualenv;
 
 # Symlink default python/pip
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     ln -sf /usr/bin/python3.12 /usr/local/bin/python && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3;

@@ -14,20 +14,26 @@ runs:
     - name: Check if README exists
       id: check_readme
       shell: bash
+      env:
+        TEMPLATE_PATH: ${{ inputs.template_path }}
       run: |
-        if [ -f "${{ inputs.template_path }}/README.md" ]; then
-          echo "skip=false" >> $GITHUB_OUTPUT
+        if [[ -f "${TEMPLATE_PATH}/README.md" ]]; then
+          echo "skip=false" >> "$GITHUB_OUTPUT"
         else
-          echo "skip=true" >> $GITHUB_OUTPUT
-          echo "README.md not found at ${{ inputs.template_path }}/README.md, skipping update"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "README.md not found at ${TEMPLATE_PATH}/README.md, skipping update"
         fi
 
     - name: Make script executable
       if: steps.check_readme.outputs.skip != 'true'
       shell: bash
-      run: chmod +x ${{ github.workspace }}/scripts/update-template-readme.sh
+      run: chmod +x "${GITHUB_WORKSPACE}/scripts/update-template-readme.sh"
 
     - name: Update template README
       if: steps.check_readme.outputs.skip != 'true'
       shell: bash
-      run: ${{ github.workspace }}/scripts/update-template-readme.sh "${{ inputs.template_id }}" "${{ inputs.template_path }}"
+      env:
+        TEMPLATE_ID: ${{ inputs.template_id }}
+        TEMPLATE_PATH: ${{ inputs.template_path }}
+      run: |
+        "${GITHUB_WORKSPACE}/scripts/update-template-readme.sh" "${TEMPLATE_ID}" "${TEMPLATE_PATH}"

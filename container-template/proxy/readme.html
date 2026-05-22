@@ -1,9 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
     <title>502 | README | Runpod </title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"
+        integrity="sha512-LhccdVNGe2QMEfI3x4DVV3ckMRe36TfydKss6mJpdHjNFiV07dFpS2xzeZedptKZrwxfICJpez09iNioiSZ3hA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -40,19 +42,11 @@
 <body>
     <div id="content"></div>
 
-    <script>
-        // Instantiate Showdown
-        var converter = new showdown.Converter();
-
-        fetch('/README.md')
-            .then(response => response.text())
-            .then(text => {
-                // Convert markdown to HTML
-                var html = converter.makeHtml(text);
-
-                // Insert HTML into the page
-                document.getElementById('content').innerHTML = html;
-            });
+    <script type="module">
+        const converter = new showdown.Converter();
+        const response = await fetch('/README.md');
+        const text = await response.text();
+        document.getElementById('content').innerHTML = converter.makeHtml(text);
     </script>
 </body>
 

@@ -2,8 +2,8 @@
 set -e
 
 # Check if template ID and template path are provided
-if [ -z "$1" ] || [ -z "$2" ]; then
-  echo "Error: Template ID and template path are required"
+if [[ -z "$1" ]] || [[ -z "$2" ]]; then
+  echo "Error: Template ID and template path are required" >&2
   echo "Usage: $0 <template_id> <template_path>"
   echo "Example: $0 abc123 official-templates/pytorch"
   exit 1
@@ -15,14 +15,14 @@ README_PATH="${TEMPLATE_PATH}/README.md"
 API_KEY=$RUNPOD_API_KEY
 
 # Check if API key is set
-if [ -z "$API_KEY" ]; then
-  echo "Error: RUNPOD_API_KEY environment variable is not set"
+if [[ -z "$API_KEY" ]]; then
+  echo "Error: RUNPOD_API_KEY environment variable is not set" >&2
   exit 1
 fi
 
 # Read README content
-if [ ! -f "$README_PATH" ]; then
-  echo "Error: README file not found at $README_PATH"
+if [[ ! -f "$README_PATH" ]]; then
+  echo "Error: README file not found at $README_PATH" >&2
   exit 1
 fi
 

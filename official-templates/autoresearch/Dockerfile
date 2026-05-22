@@ -5,12 +5,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.3.0
-RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz | \
+RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/"${RUNPODCTL_VERSION}"/runpodctl-linux-amd64.tar.gz | \
     tar -xz -C /usr/local/bin runpodctl
 
 # Clone autoresearch to /opt (safe from volume mounts)
 ARG AUTORESEARCH_REF=master
-RUN git clone --branch ${AUTORESEARCH_REF} --depth 1 \
+RUN git clone --branch "${AUTORESEARCH_REF}" --depth 1 \
     https://github.com/runpod/autoresearch.git /opt/autoresearch
 
 WORKDIR /opt/autoresearch
