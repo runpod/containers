@@ -16,7 +16,7 @@ RUN git clone --branch "${AUTORESEARCH_REF}" --depth 1 \
 WORKDIR /opt/autoresearch
 
 # Install Python dependencies
-RUN uv sync && \
+RUN uv sync --no-build && \
     uv run prepare.py # Download data and train tokenizer (~2 min)
 
 # On first boot: copy source files to /workspace (lightweight, persists edits)

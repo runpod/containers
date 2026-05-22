@@ -68,13 +68,13 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*;
 
-# Install pip
+# Install pip 
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    curl -sS https://bootstrap.pypa.io/pip/3.9/get-pip.py | python3.9 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.13;
+    python3.9  -m ensurepip --upgrade && \
+    python3.10 -m ensurepip --upgrade && \
+    python3.11 -m ensurepip --upgrade && \
+    python3.12 -m ensurepip --upgrade && \
+    python3.13 -m ensurepip --upgrade;
 
 # Install virtualenv
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
@@ -96,13 +96,22 @@ COPY --from=requirements requirements.txt /requirements.txt
 COPY --from=scripts scrub-stale-metadata.py /tmp/scrub-stale-metadata.py
 
 # Install Jupyter and hf_transfer packages
-RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
-    python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
+RUN [[ -n "$RP_SKIP_JUPYTER" ]] && exit 0; \
+    python -m pip install --upgrade --no-cache-dir --require-hashes -r requirements.txt && \
     python /tmp/scrub-stale-metadata.py /requirements.txt && \
     rm /tmp/scrub-stale-metadata.py
 
-# Install filebrowser
-RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+# Install filebrowser (pinned + SHA-256 verified, avoids `curl | bash`).
+# Bump FILEBROWSER_VERSION + FILEBROWSER_SHA256 together when updating.
+# Checksums: https://github.com/filebrowser/filebrowser/releases
+ARG FILEBROWSER_VERSION=2.63.5
+ARG FILEBROWSER_SHA256=b36ad6296db0a749a5adbc792ab5321d11b307106123d44e171b7c158fcca2d9
+RUN curl -fsSL -o /tmp/filebrowser.tar.gz \
+        "https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" && \
+    echo "${FILEBROWSER_SHA256}  /tmp/filebrowser.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/filebrowser.tar.gz -C /usr/local/bin filebrowser && \
+    chmod +x /usr/local/bin/filebrowser && \
+    rm /tmp/filebrowser.tar.gz
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
