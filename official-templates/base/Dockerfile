@@ -68,13 +68,23 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*;
 
-# Install pip 
+# Install pip via verified get-pip.py
+ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
+ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
+ARG GET_PIP_39_SHA256=95c0ae79ccf9ac1e47e4187f49081d6ae1f45997afd4549e14f37337cbcfd766
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    python3.9  -m ensurepip --upgrade && \
-    python3.10 -m ensurepip --upgrade && \
-    python3.11 -m ensurepip --upgrade && \
-    python3.12 -m ensurepip --upgrade && \
-    python3.13 -m ensurepip --upgrade;
+    curl -fsSL -o /tmp/get-pip.py \
+        "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
+    echo "${GET_PIP_SHA256}  /tmp/get-pip.py" | sha256sum -c - && \
+    curl -fsSL -o /tmp/get-pip-3.9.py \
+        "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/3.9/get-pip.py" && \
+    echo "${GET_PIP_39_SHA256}  /tmp/get-pip-3.9.py" | sha256sum -c - && \
+    python3.9  /tmp/get-pip-3.9.py && \
+    python3.10 /tmp/get-pip.py && \
+    python3.11 /tmp/get-pip.py && \
+    python3.12 /tmp/get-pip.py && \
+    python3.13 /tmp/get-pip.py && \
+    rm /tmp/get-pip.py /tmp/get-pip-3.9.py
 
 # Install virtualenv
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
