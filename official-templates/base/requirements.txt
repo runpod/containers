@@ -1,4 +1,4 @@
-hf_transfer==0.1.9 
+hf_transfer==0.1.9
 jupyterlab==4.5.7
 ipywidgets==8.1.8
 jupyter-archive==3.4.0

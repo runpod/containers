@@ -107,7 +107,7 @@ COPY --from=scripts scrub-stale-metadata.py /tmp/scrub-stale-metadata.py
 
 # Install Jupyter and hf_transfer packages
 RUN [[ -n "$RP_SKIP_JUPYTER" ]] && exit 0; \
-    python -m pip install --upgrade --no-cache-dir --require-hashes -r requirements.txt && \
+    python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
     python /tmp/scrub-stale-metadata.py /requirements.txt && \
     rm /tmp/scrub-stale-metadata.py
 
