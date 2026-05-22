@@ -49,7 +49,9 @@ RUN apt-get update --yes && \
     software-properties-common sudo tmux unzip vim wget zip zstd && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
-
+    
+# Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
+# Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
