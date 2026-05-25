@@ -16,7 +16,7 @@ target "rocm-base" {
     proxy   = "container-template/proxy"
     logo    = "container-template"
     requirements = "official-templates/rocm"
-    scripts_stale_metadata = "scripts"
+    scrab_stale_metadata = "scripts"
   }
   args = {
     RP_SKIP_PYTHON = "1"
