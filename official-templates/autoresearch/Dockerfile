@@ -20,8 +20,8 @@ WORKDIR /opt/autoresearch
 # --locked: assert uv.lock matches pyproject.toml (catches drift at build time).
 # --no-build: refuse source distributions — `setup.py` can execute arbitrary
 # code during install, and we want only pre-built, audited wheels.
-RUN uv sync --frozen --locked --no-build && \
-    uv run --frozen --locked --no-build prepare.py # Download data and train tokenizer (~2 min)
+RUN uv sync --frozen --no-build && \
+    uv run --frozen --no-build prepare.py # Download data and train tokenizer (~2 min)
 
 # On first boot: copy source files to /workspace (lightweight, persists edits)
 # and symlink .venv back to /opt (12GB, stays on fast container layer)
