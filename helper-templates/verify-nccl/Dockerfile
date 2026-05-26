@@ -8,9 +8,8 @@ WORKDIR /verify-nccl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nano \
     pciutils \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone https://github.com/NVIDIA/cuda-samples.git 
+    && rm -rf /var/lib/apt/lists/* &&\
+    git clone https://github.com/NVIDIA/cuda-samples.git 
     
 WORKDIR /verify-nccl/cuda-samples/Samples/0_Introduction/simpleP2P
 
