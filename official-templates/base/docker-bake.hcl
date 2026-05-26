@@ -15,6 +15,7 @@ target "common-base" {
     proxy   = "container-template/proxy"
     logo    = "container-template"
     requirements = "official-templates/base"
+    scrab_stale_metadata = "scripts"
   }
 }
 

@@ -103,7 +103,7 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 COPY --from=requirements requirements.txt /requirements.txt
-COPY --from=scripts scrub-stale-metadata.py /tmp/scrub-stale-metadata.py
+COPY --from=scrab_stale_metadata scrub-stale-metadata.py /tmp/scrub-stale-metadata.py
 
 # Install Jupyter and hf_transfer packages
 RUN [[ -n "$RP_SKIP_JUPYTER" ]] && exit 0; \
