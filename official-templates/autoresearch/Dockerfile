@@ -7,7 +7,7 @@ USER root
 
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.3.0
-RUN wget -qO- --https-only --secure-protocol=TLSv1_2 \
+RUN wget -qO- --https-only --secure-protocol=TLSv1_2 --max-redirect=0 \
     https://github.com/runpod/runpodctl/releases/download/"${RUNPODCTL_VERSION}"/runpodctl-linux-amd64.tar.gz | \
     tar -xz -C /usr/local/bin runpodctl
 
