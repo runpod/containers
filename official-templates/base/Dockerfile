@@ -138,7 +138,9 @@ COPY --from=scripts --chmod=755 start.sh /
 COPY --from=logo runpod.txt /etc/runpod.txt
 RUN cat >> /root/.bashrc <<'EOF'
 cat /etc/runpod.txt
-printf "\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/\033[0m and \033[1;34mhttps://blog.runpod.io/\033[0m\n\n"
+printf "%s" "\nFor detailed documentation and guides, please visit:\n\
+https://docs.runpod.io/\n\
+and https://blog.runpod.io\n\n"
 EOF
 
 CMD ["/start.sh"]
