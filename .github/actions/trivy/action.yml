@@ -20,7 +20,7 @@ runs:
       shell: bash
       run: |
         curl -fsSL --proto '=https' --tlsv1.2 \
-        https://github.com/aquasecurity/trivy/releases/download/v0.78.0/trivy_0.78.0_Linux-64bit.tar.gz \
+        https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_Linux-64bit.tar.gz \
         -o /tmp/trivy.tar.gz
         tar xz -C /tmp -f /tmp/trivy.tar.gz trivy
         sudo mv /tmp/trivy /usr/local/bin/trivy
