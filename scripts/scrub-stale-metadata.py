@@ -12,8 +12,8 @@ import re
 import shutil
 import sys
 
-NAME_RE = re.compile(r"^Name:\s*(.+)$", re.MULTILINE)
-VERSION_RE = re.compile(r"^Version:\s*(.+)$", re.MULTILINE)
+NAME_RE = re.compile(r"^Name:\s*([^\n]*)$", re.MULTILINE)
+VERSION_RE = re.compile(r"^Version:\s*([^\n]*)$", re.MULTILINE)
 SEARCH_ROOTS = (pathlib.Path("/usr"), pathlib.Path("/opt"))
 
 

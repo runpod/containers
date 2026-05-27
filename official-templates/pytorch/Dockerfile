@@ -1,6 +1,8 @@
 ARG BASE_IMAGE=non-existing
 FROM "${BASE_IMAGE}"
 
+USER nonroot
+
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG WHEEL_SRC

@@ -1,6 +1,11 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
+RUN addgroup -S nonroot \
+    && adduser -S nonroot -G nonroot
+
+USER nonroot
+
 ARG RP_SKIP_PYTHON
 ARG RP_SKIP_JUPYTER
 
