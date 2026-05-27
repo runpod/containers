@@ -1,8 +1,10 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
-RUN addgroup -S nonroot \
-    && adduser -S nonroot -G nonroot
+
+RUN groupadd -r nonroot \
+    && useradd -r -g nonroot nonroot
+
 
 USER nonroot
 
