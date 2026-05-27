@@ -1,8 +1,6 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
-USER nonroot
-
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install runpodctl for pod management (scaling up GPUs)
@@ -28,6 +26,8 @@ RUN uv sync --frozen --no-build && \
 # On first boot: copy source files to /workspace (lightweight, persists edits)
 # and symlink .venv back to /opt (12GB, stays on fast container layer)
 COPY pre_start.sh /pre_start.sh
+
+USER nonroot
 
 # Override the NVIDIA CUDA entrypoint which blocks boot on hosts with older
 # drivers (e.g. driver 550 only supports CUDA 12.4, but this image has 12.8).

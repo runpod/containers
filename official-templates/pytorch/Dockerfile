@@ -1,8 +1,6 @@
 ARG BASE_IMAGE=non-existing
 FROM "${BASE_IMAGE}"
 
-USER nonroot
-
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG WHEEL_SRC
@@ -20,3 +18,5 @@ RUN read -ra TORCH_PKGS <<< "${TORCH}" && \
         --upgrade \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
+
+USER nonroot

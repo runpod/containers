@@ -5,9 +5,6 @@ FROM ${BASE_IMAGE}
 RUN groupadd -r nonroot \
     && useradd -r -g nonroot nonroot
 
-
-USER nonroot
-
 ARG RP_SKIP_PYTHON
 ARG RP_SKIP_JUPYTER
 
@@ -149,5 +146,7 @@ printf "%s" "\nFor detailed documentation and guides, please visit:\n\
 https://docs.runpod.io/\n\
 and https://blog.runpod.io\n\n"
 EOF
+
+USER nonroot
 
 CMD ["/start.sh"]
