@@ -6,6 +6,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG WHEEL_SRC
 ARG TORCH
 
+USER root
+
 # TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0 torchvision==0.23.0
 # torchaudio==2.8.0"). `read -ra` splits it into a real bash array so pip receives one
 # argument per package instead of a single mashed-together string.

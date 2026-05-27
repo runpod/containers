@@ -77,10 +77,10 @@ ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
 ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
 ARG GET_PIP_39_SHA256=95c0ae79ccf9ac1e47e4187f49081d6ae1f45997afd4549e14f37337cbcfd766
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    curl -fsSL -o /tmp/get-pip.py \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
         "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
     echo "${GET_PIP_SHA256}  /tmp/get-pip.py" | sha256sum -c - && \
-    curl -fsSL -o /tmp/get-pip-3.9.py \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip-3.9.py \
         "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/3.9/get-pip.py" && \
     echo "${GET_PIP_39_SHA256}  /tmp/get-pip-3.9.py" | sha256sum -c - && \
     python3.9  /tmp/get-pip-3.9.py && \
@@ -120,7 +120,7 @@ RUN [[ -n "$RP_SKIP_JUPYTER" ]] && exit 0; \
 # Checksums: https://github.com/filebrowser/filebrowser/releases
 ARG FILEBROWSER_VERSION=2.63.5
 ARG FILEBROWSER_SHA256=b36ad6296db0a749a5adbc792ab5321d11b307106123d44e171b7c158fcca2d9
-RUN curl -fsSL -o /tmp/filebrowser.tar.gz \
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/filebrowser.tar.gz \
         "https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" && \
     echo "${FILEBROWSER_SHA256}  /tmp/filebrowser.tar.gz" | sha256sum -c - && \
     tar -xzf /tmp/filebrowser.tar.gz -C /usr/local/bin filebrowser && \

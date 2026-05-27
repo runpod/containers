@@ -3,9 +3,12 @@ FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+USER root
+
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.3.0
-RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/"${RUNPODCTL_VERSION}"/runpodctl-linux-amd64.tar.gz | \
+RUN wget -qO- --https-only --secure-protocol=TLSv1_2 \
+    https://github.com/runpod/runpodctl/releases/download/"${RUNPODCTL_VERSION}"/runpodctl-linux-amd64.tar.gz | \
     tar -xz -C /usr/local/bin runpodctl
 
 # Clone autoresearch to /opt (safe from volume mounts)

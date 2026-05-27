@@ -36,7 +36,7 @@ jobs:
 
       - name: Build base images
         id: build
-        uses: docker/bake-action@v7
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -89,7 +89,7 @@ jobs:
       - name: Build autoresearch images
         id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: docker/bake-action@v7
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -144,7 +144,7 @@ jobs:
       - name: Build pytorch images
         id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: docker/bake-action@v7
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}

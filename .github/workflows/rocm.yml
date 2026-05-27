@@ -30,7 +30,7 @@ jobs:
 
       - name: Build rocm images
         id: build
-        uses: docker/bake-action@v7
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
