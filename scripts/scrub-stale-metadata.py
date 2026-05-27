@@ -12,49 +12,66 @@ import re
 import shutil
 import sys
 
+NAME_RE = re.compile(r"^Name:\s*([^\n]*)$", re.MULTILINE)
+VERSION_RE = re.compile(r"^Version:\s*([^\n]*)$", re.MULTILINE)
+SEARCH_ROOTS = (pathlib.Path("/usr"), pathlib.Path("/opt"))
+
 
 def canonical(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).strip().lower()
 
 
-def main(requirements_path: str) -> None:
+def parse_pinned(requirements_path: str) -> dict[str, str]:
+    """Read a requirements file, return {canonical_name: version} for `==` pins."""
     pinned: dict[str, str] = {}
-    for line in pathlib.Path(requirements_path).read_text().splitlines():
-        line = line.split("#", 1)[0].strip()
+    for raw in pathlib.Path(requirements_path).read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
         if "==" not in line:
             continue
         name, version = line.split("==", 1)
         pinned[canonical(name)] = version.strip()
+    return pinned
 
-    name_re = re.compile(r"^Name:\s*(.+)$", re.MULTILINE)
-    version_re = re.compile(r"^Version:\s*(.+)$", re.MULTILINE)
 
-    for root in (pathlib.Path("/usr"), pathlib.Path("/opt")):
+def read_meta(meta_dir: pathlib.Path) -> tuple[str, str] | None:
+    """Return (canonical_name, version) for a metadata dir, or None if unreadable."""
+    metadata = meta_dir / "METADATA"
+    if not metadata.exists():
+        metadata = meta_dir / "PKG-INFO"
+    if not metadata.exists():
+        return None
+    try:
+        text = metadata.read_text(errors="ignore")
+    except OSError:
+        return None
+    name_match = NAME_RE.search(text)
+    version_match = VERSION_RE.search(text)
+    if not name_match or not version_match:
+        return None
+    return canonical(name_match.group(1)), version_match.group(1).strip()
+
+
+def iter_meta_dirs() -> "Iterator[pathlib.Path]":
+    for root in SEARCH_ROOTS:
         if not root.is_dir():
             continue
-        for meta_dir in [*root.rglob("*.dist-info"), *root.rglob("*.egg-info")]:
-            if not meta_dir.is_dir():
-                continue
-            metadata = meta_dir / "METADATA"
-            if not metadata.exists():
-                metadata = meta_dir / "PKG-INFO"
-            if not metadata.exists():
-                continue
-            try:
-                text = metadata.read_text(errors="ignore")
-            except OSError:
-                continue
-            name_match = name_re.search(text)
-            version_match = version_re.search(text)
-            if not name_match or not version_match:
-                continue
-            pkg = canonical(name_match.group(1))
-            ver = version_match.group(1).strip()
-            expected = pinned.get(pkg)
-            if expected is None or ver == expected:
-                continue
-            print(f"scrub-stale-metadata: removing {meta_dir} (Version: {ver}, pinned {expected})")
-            shutil.rmtree(meta_dir, ignore_errors=True)
+        for meta_dir in (*root.rglob("*.dist-info"), *root.rglob("*.egg-info")):
+            if meta_dir.is_dir():
+                yield meta_dir
+
+
+def main(requirements_path: str) -> None:
+    pinned = parse_pinned(requirements_path)
+    for meta_dir in iter_meta_dirs():
+        meta = read_meta(meta_dir)
+        if meta is None:
+            continue
+        pkg, ver = meta
+        expected = pinned.get(pkg)
+        if expected is None or ver == expected:
+            continue
+        print(f"scrub-stale-metadata: removing {meta_dir} (Version: {ver}, pinned {expected})")
+        shutil.rmtree(meta_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
