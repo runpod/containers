@@ -20,5 +20,3 @@ RUN read -ra TORCH_PKGS <<< "${TORCH}" && \
         --upgrade \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
-
-USER nonroot

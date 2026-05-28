@@ -147,6 +147,4 @@ https://docs.runpod.io/\n\
 and https://blog.runpod.io\n\n"
 EOF
 
-USER nonroot
-
 CMD ["/start.sh"]
