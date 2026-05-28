@@ -3,8 +3,6 @@ FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-USER root
-
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.3.0
 ARG RUNPODCTL_SHA256=908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169
