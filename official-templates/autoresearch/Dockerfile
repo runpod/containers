@@ -7,9 +7,13 @@ USER root
 
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.3.0
-RUN wget -qO- --https-only --secure-protocol=TLSv1_2 --max-redirect=0 \
-    https://github.com/runpod/runpodctl/releases/download/"${RUNPODCTL_VERSION}"/runpodctl-linux-amd64.tar.gz | \
-    tar -xz -C /usr/local/bin runpodctl
+ARG RUNPODCTL_SHA256=908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169
+RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
+    -O /tmp/runpodctl.tar.gz \
+    "https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz" && \
+    echo "${RUNPODCTL_SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c - && \
+    tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl && \
+    rm /tmp/runpodctl.tar.gz
 
 # Clone autoresearch to /opt (safe from volume mounts)
 ARG AUTORESEARCH_REF=master
