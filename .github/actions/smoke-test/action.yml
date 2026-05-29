@@ -102,7 +102,22 @@ runs:
         # required). We log the result but don't fail the action here — the
         # real ssh probe in test_images.py will surface any auth problems
         # with a more useful error than this validation could.
+        bytes=$(wc -c < "${KEY_PATH}")
         lines=$(wc -l < "${KEY_PATH}")
+        # An ed25519 private key in OpenSSH format is ~400 bytes; RSA-3072
+        # is ~2.5 KB. Below ~200 bytes the secret is almost certainly empty
+        # or truncated — fail loudly so the user knows to fix the secret
+        # before we burn time on the rest of the pipeline.
+        if [ "${bytes}" -lt 200 ]; then
+          echo "::error::RUNPOD_SSH_PRIVATE_KEY secret looks empty/truncated"
+          echo "::error::(only ${bytes} bytes, ${lines} lines)."
+          echo "::error::Set the secret to the FULL contents of the PEM"
+          echo "::error::private key file (e.g. ~/.ssh/runpod_ci_key — NOT"
+          echo "::error::the .pub half). Newlines must be preserved."
+          exit 1
+        fi
+        echo "ssh key file: ${bytes} bytes, ${lines} lines"
+
         first=$(head -n 1 "${KEY_PATH}" || true)
         case "${first}" in
           "-----BEGIN OPENSSH PRIVATE KEY-----"|\

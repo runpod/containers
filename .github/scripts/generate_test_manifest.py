@@ -46,22 +46,28 @@ def is_gpu_ref(ref: str) -> bool:
 
 def render_yaml(groups: dict) -> str:
     """Hand-rolled YAML emitter so the runner doesn't need PyYAML.
-    Output shape matches the test_images.py manifest schema (2-space indent,
-    block-style lists). Strings are unquoted — safe for our values which are
-    image refs / instance names / floats / single-word manufacturer names."""
+
+    Output shape matches tests/test_images.py's minimal YAML parser, which
+    is strict about indentation: 4 spaces for list keys / scalar keys
+    inside a group, then a bare `- value` for list items also at 4 spaces.
+    Don't change this without also relaxing parse_manifest() in test_images.py.
+
+    Strings are unquoted — safe for our values which are image refs,
+    instance names, floats, and single-word manufacturer names.
+    """
     lines: list[str] = []
     for grp_name, body in groups.items():
         lines.append(f"{grp_name}:")
-        lines.append("  images:")
+        lines.append("    images:")
         for img in body["images"]:
-            lines.append(f"  - {img}")
+            lines.append(f"    - {img}")
         if "instances" in body:
-            lines.append("  instances:")
+            lines.append("    instances:")
             for inst in body["instances"]:
-                lines.append(f"  - {inst}")
+                lines.append(f"    - {inst}")
         for key in ("max_price_per_hour", "min_vram_gb", "manufacturer"):
             if key in body:
-                lines.append(f"  {key}: {body[key]}")
+                lines.append(f"    {key}: {body[key]}")
     return "\n".join(lines) + "\n"
 
 
