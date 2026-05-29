@@ -103,11 +103,13 @@ jobs:
 
       - name: Extract image refs
         id: refs
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Trivy scan
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/trivy
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
@@ -158,11 +160,13 @@ jobs:
 
       - name: Extract image refs
         id: refs
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Trivy scan
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/trivy
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
