@@ -181,6 +181,12 @@ UNAVAILABLE_RE = re.compile(
     # RunPod-specific phrasings observed in pod-create errors:
     r"no\s+longer\s+any\s+instances\s+available"
     r"|please\s+refresh\s+and\s+try\s+again"
+    # "This machine does not have the resources to deploy your pod. Please
+    # try a different machine" — RunPod returns this when a candidate host
+    # was picked but couldn't actually fit the pod (vRAM, disk, CPU). Same
+    # remediation as "no capacity": move on to the next instance type.
+    r"|does\s+not\s+have\s+the\s+resources"
+    r"|try\s+a\s+different\s+machine"
     # Generic capacity-shortage phrasings:
     r"|no\s+(?:machines|capacity|hosts|gpus|instances)\s+available"
     r"|insufficient\s+capacity"
@@ -1018,12 +1024,19 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_pair(image: str, instance: str, group: str) -> str:
-    """Returns one of:
+def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
+    """Returns (status, detail). Statuses:
         'PASS'         — image booted, CUDA check OK, survived dwell
-        'FAIL'         — image really is broken (container crashed, CUDA failed,
-                         pod entered terminal state) — moving to another GPU
-                         won't help, the image itself is the problem
+        'FAIL'         — pod was created and the CONTAINER itself proved
+                         broken (crashed, CUDA failed, terminal state).
+                         Moving to another GPU won't help, the image is bad.
+                         `detail` describes which check failed.
+        'CREATE_FAIL'  — pod-create returned a non-capacity, non-transient
+                         error (bad image tag, registry auth, malformed
+                         request, etc.). Like FAIL — another GPU won't fix
+                         it. Distinct so the summary doesn't mis-attribute
+                         the failure to the container. `detail` is the raw
+                         orchestrator error.
         'UNAVAILABLE'  — RunPod has no capacity for this instance — try next
         'STUCK'        — pod was created but RunPod never assigned an SSH
                          endpoint within CREATE_TIMEOUT. Almost always a bad
@@ -1067,7 +1080,7 @@ def test_pair(image: str, instance: str, group: str) -> str:
             break
         if UNAVAILABLE_RE.search(raw):
             log(f"instance unavailable, will try next ({raw[:120]})", indent=2)
-            return "UNAVAILABLE"
+            return "UNAVAILABLE", ""
         if TRANSIENT_RE.search(raw) and attempt < CREATE_RETRIES:
             backoff = CREATE_RETRY_BACKOFF * attempt
             log(
@@ -1078,12 +1091,15 @@ def test_pair(image: str, instance: str, group: str) -> str:
             time.sleep(backoff)
             continue
         log(f"pod create failed: {raw[:400]}", indent=2)
-        return "FAIL"
+        return "CREATE_FAIL", f"pod create failed: {raw[:200].strip()}"
 
     if not pod_id:
         log(f"pod create failed after {CREATE_RETRIES} attempts: {raw[:200]}",
             indent=2)
-        return "FAIL"
+        return "CREATE_FAIL", (
+            f"pod create failed after {CREATE_RETRIES} attempts: "
+            f"{raw[:200].strip()}"
+        )
 
     register_pod(pod_id)
     log(
@@ -1108,10 +1124,10 @@ def test_pair(image: str, instance: str, group: str) -> str:
                     indent=2,
                 )
                 dump_pod_logs(pod_id)
-                return "STUCK"
+                return "STUCK", ""
             log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
             dump_pod_logs(pod_id)
-            return "FAIL"
+            return "FAIL", f"pod entered {state} state: {detail}"
 
         log(f"smoke check passed: {detail}", indent=2)
 
@@ -1127,7 +1143,7 @@ def test_pair(image: str, instance: str, group: str) -> str:
             if not ok:
                 log("cuda check FAILED -- image broken", indent=2)
                 dump_pod_logs(pod_id)
-                return "FAIL"
+                return "FAIL", "CUDA/GPU functional check failed"
             log("cuda check passed", indent=2)
 
         # Brief dwell to catch containers that boot, accept SSH, then crash.
@@ -1146,10 +1162,13 @@ def test_pair(image: str, instance: str, group: str) -> str:
                         indent=2,
                     )
                     dump_pod_logs(pod_id)
-                    return "FAIL"
+                    return "FAIL", (
+                        "container crashed after initial boot "
+                        f"({DWELL_SEC}s dwell re-probe failed: {err})"
+                    )
 
         dump_pod_logs(pod_id)
-        return "PASS"
+        return "PASS", ""
     finally:
         # Always clean up this specific pod, even on exception.
         cleanup_pod(pod_id)
@@ -1161,17 +1180,33 @@ def test_image(image: str, instances: list[str], group: str) -> tuple[str, str]:
     Iterates instance types until one PASSes. Stops early on FAIL (real image
     bug — no point trying another GPU). UNAVAILABLE (capacity) and STUCK
     (RunPod gave us a dead host) just move on to the next instance.
+    CREATE_FAIL also short-circuits: a non-capacity orchestrator error
+    (e.g. bad image tag, registry auth) won't be fixed by another GPU.
     """
     log(f"image: {image}")
     stuck_instances: list[str] = []
+    last_create_error = ""
     for inst in instances:
-        result = test_pair(image, inst, group)
+        result, detail = test_pair(image, inst, group)
         if result == "PASS":
             return "PASS", ""
         if result == "FAIL":
-            return "FAIL", "container did not stay healthy"
+            return "FAIL", detail or "container did not stay healthy"
+        if result == "CREATE_FAIL":
+            # Last create error is most informative — capacity-shortage 5xx
+            # would have been UNAVAILABLE, so this is a genuine orchestrator
+            # rejection. Try one more instance in case it's instance-specific,
+            # but remember the error in case all fail.
+            last_create_error = detail
+            continue
         if result == "STUCK":
             stuck_instances.append(inst)
+        # UNAVAILABLE: silently try next
+    if last_create_error:
+        # We never got past pod-create on any instance and the errors weren't
+        # capacity-shortages. Surface the last orchestrator error — this is
+        # usually an image / auth / registry problem.
+        return "FAIL", last_create_error
     if stuck_instances:
         # We tried every instance and RunPod never gave us a working host on
         # any of them — surface that distinctly from "no capacity at all".
@@ -1184,8 +1219,10 @@ def test_image(image: str, instances: list[str], group: str) -> tuple[str, str]:
             f"RunPod never assigned an SSH endpoint on {len(stuck_instances)} "
             "instance type(s) — likely a scheduler issue, try again later"
         )
-    log("all instances exhausted, none available", indent=1)
-    return "SKIP", "no listed instances available"
+    log(f"all {len(instances)} instances unavailable (no capacity)", indent=1)
+    return "SKIP", (
+        f"no capacity on any of {len(instances)} candidate instance type(s)"
+    )
 
 
 # ---------------------------------------------------------------------------
