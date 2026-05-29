@@ -72,14 +72,18 @@ runs:
     - name: Configure runpodctl
       shell: bash
       env:
-        # Mark the secret as a step env var so GitHub auto-masks it in logs
-        # if it ever surfaces (it shouldn't — runpodctl doesn't echo it).
-        API_KEY: ${{ inputs.runpod-api-key }}
+        # `runpodctl config --apiKey` is deprecated. The CLI (and our
+        # tests/test_images.py) both read RUNPOD_API_KEY out of the env,
+        # so we just propagate the secret through $GITHUB_ENV — every
+        # subsequent step in this composite action gets it automatically.
+        # GitHub keeps the secret masked in logs because the value still
+        # matches `secrets.RUNPOD_API_KEY`.
+        RUNPOD_API_KEY: ${{ inputs.runpod-api-key }}
       run: |
         set -euo pipefail
-        runpodctl config --apiKey "${API_KEY}" >/dev/null
         # Validate auth before we attempt any pod operations — fail loud, fast.
         runpodctl user >/dev/null
+        echo "RUNPOD_API_KEY=${RUNPOD_API_KEY}" >> "${GITHUB_ENV}"
 
     - name: Write SSH private key
       shell: bash
@@ -91,10 +95,44 @@ runs:
         KEY_PATH="${RUNNER_TEMP}/runpod-ssh-key"
         printf '%s\n' "${SSH_KEY}" > "${KEY_PATH}"
         chmod 600 "${KEY_PATH}"
-        # Sanity-check: ssh-keygen -l will fail loudly if the secret got
-        # mangled (wrong line endings, missing PEM headers, etc.) before we
-        # spend money spinning up pods.
-        ssh-keygen -l -f "${KEY_PATH}" >/dev/null
+
+        # Soft sanity check: ssh-keygen -y reads a private key and emits its
+        # matching public key. It's the only ssh-keygen mode that works
+        # reliably on a standalone private key file (no companion .pub
+        # required). We log the result but don't fail the action here — the
+        # real ssh probe in test_images.py will surface any auth problems
+        # with a more useful error than this validation could.
+        lines=$(wc -l < "${KEY_PATH}")
+        first=$(head -n 1 "${KEY_PATH}" || true)
+        case "${first}" in
+          "-----BEGIN OPENSSH PRIVATE KEY-----"|\
+          "-----BEGIN RSA PRIVATE KEY-----"|\
+          "-----BEGIN EC PRIVATE KEY-----"|\
+          "-----BEGIN PRIVATE KEY-----")
+            echo "ssh key looks like a PEM private key (${lines} lines)"
+            ;;
+          "ssh-rsa "*|"ssh-ed25519 "*|"ecdsa-sha2-"*)
+            echo "::error::RUNPOD_SSH_PRIVATE_KEY contains a PUBLIC key, not"
+            echo "::error::a private one. Put the PRIVATE half (the file"
+            echo "::error::without the .pub extension) into the secret."
+            exit 1
+            ;;
+          *)
+            echo "::warning::ssh key first line is not a recognised PEM"
+            echo "::warning::header (got: ${first:0:30}...). It may still"
+            echo "::warning::work, but check the secret if SSH probes fail."
+            ;;
+        esac
+
+        if ssh-keygen -y -f "${KEY_PATH}" >/dev/null 2>&1; then
+          echo "ssh-keygen -y validated the key"
+        else
+          echo "::warning::ssh-keygen could not derive public key from the"
+          echo "::warning::file. Possible causes: passphrase-protected key,"
+          echo "::warning::CRLF line endings, partial paste. Continuing —"
+          echo "::warning::test_images.py will report the real ssh error."
+        fi
+
         echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
 
     - name: Generate test manifest
@@ -121,7 +159,8 @@ runs:
     - name: Run smoke tests
       shell: bash
       env:
-        RUNPOD_API_KEY: ${{ inputs.runpod-api-key }}
+        # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
+        # 'Configure runpodctl' and 'Write SSH private key' steps above.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
       run: |
         set -uo pipefail
