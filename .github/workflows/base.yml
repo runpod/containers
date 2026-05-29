@@ -58,6 +58,14 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: base
+          runpod-api-key: ${{ secrets.RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}
+
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
@@ -110,6 +118,15 @@ jobs:
         uses: ./.github/actions/trivy
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Smoke test
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: autoresearch
+          runpod-api-key: ${{ secrets.RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}
 
   build-pytorch:
     needs: build-base
@@ -165,3 +182,12 @@ jobs:
         uses: ./.github/actions/trivy
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Smoke test
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: pytorch
+          runpod-api-key: ${{ secrets.RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}

@@ -1,0 +1,128 @@
+name: Smoke test
+description: |
+  Generate a test manifest from bake image refs, then smoke-test each image
+  on a real RunPod pod via tests/test_images.py:
+    - boots the image on the cheapest available eligible instance,
+    - runs the per-group CUDA / GPU functional check over SSH,
+    - terminates the pod (always — even on Ctrl-C / job timeout).
+
+inputs:
+  image-refs:
+    description: "JSON array of image refs to smoke-test"
+    required: true
+  profile:
+    description: "base | autoresearch | pytorch — drives grouping in generate_test_manifest.py"
+    required: true
+  runpod-api-key:
+    description: "RunPod API key (pod-management permissions required)"
+    required: true
+  ssh-private-key:
+    description: |
+      PEM-formatted private key matching a public SSH key registered on the
+      RunPod account this API key belongs to. test_images.py uses it to ssh
+      into the pod for the GPU/CUDA functional check and log capture.
+    required: true
+  budget-usd-per-hour:
+    description: "Max USD/hr for GPU instance selection"
+    required: false
+    default: "1.0"
+  min-vram-gb:
+    description: "Min vRAM (GB) for GPU instance selection"
+    required: false
+    default: "16"
+  manufacturer:
+    description: "GPU manufacturer filter (Nvidia / AMD)"
+    required: false
+    default: "Nvidia"
+  cpu-instance:
+    description: "RunPod CPU instance id for the base_cpu group"
+    required: false
+    default: "cpu3c-2-4"
+  max-parallel:
+    description: "Concurrent pods under test (cost cap — each worker holds one pod)"
+    required: false
+    default: "2"
+  runpodctl-version:
+    description: "runpodctl release tag"
+    required: false
+    default: "v2.3.0"
+  runpodctl-sha256:
+    description: "SHA-256 of runpodctl-linux-amd64.tar.gz for the pinned version"
+    required: false
+    default: "908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169"
+
+runs:
+  using: composite
+  steps:
+    - name: Install runpodctl
+      shell: bash
+      env:
+        VERSION: ${{ inputs.runpodctl-version }}
+        SHA256: ${{ inputs.runpodctl-sha256 }}
+      run: |
+        set -euo pipefail
+        curl -fsSL --proto '=https' --tlsv1.2 \
+          "https://github.com/runpod/runpodctl/releases/download/${VERSION}/runpodctl-linux-amd64.tar.gz" \
+          -o /tmp/runpodctl.tar.gz
+        echo "${SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c -
+        sudo tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl
+        rm /tmp/runpodctl.tar.gz
+        runpodctl version
+
+    - name: Configure runpodctl
+      shell: bash
+      env:
+        # Mark the secret as a step env var so GitHub auto-masks it in logs
+        # if it ever surfaces (it shouldn't — runpodctl doesn't echo it).
+        API_KEY: ${{ inputs.runpod-api-key }}
+      run: |
+        set -euo pipefail
+        runpodctl config --apiKey "${API_KEY}" >/dev/null
+        # Validate auth before we attempt any pod operations — fail loud, fast.
+        runpodctl user >/dev/null
+
+    - name: Write SSH private key
+      shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh-private-key }}
+      run: |
+        set -euo pipefail
+        umask 077
+        KEY_PATH="${RUNNER_TEMP}/runpod-ssh-key"
+        printf '%s\n' "${SSH_KEY}" > "${KEY_PATH}"
+        chmod 600 "${KEY_PATH}"
+        # Sanity-check: ssh-keygen -l will fail loudly if the secret got
+        # mangled (wrong line endings, missing PEM headers, etc.) before we
+        # spend money spinning up pods.
+        ssh-keygen -l -f "${KEY_PATH}" >/dev/null
+        echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
+
+    - name: Generate test manifest
+      shell: bash
+      env:
+        REFS: ${{ inputs.image-refs }}
+        PROFILE: ${{ inputs.profile }}
+        BUDGET: ${{ inputs.budget-usd-per-hour }}
+        MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
+        MANUFACTURER: ${{ inputs.manufacturer }}
+        CPU_INSTANCE: ${{ inputs.cpu-instance }}
+      run: |
+        set -euo pipefail
+        python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
+          --profile "${PROFILE}" \
+          --refs "${REFS}" \
+          --budget "${BUDGET}" \
+          --min-vram-gb "${MIN_VRAM_GB}" \
+          --manufacturer "${MANUFACTURER}" \
+          --cpu-instance "${CPU_INSTANCE}" \
+          --output "${RUNNER_TEMP}/test-manifest.yaml"
+        echo "MANIFEST_PATH=${RUNNER_TEMP}/test-manifest.yaml" >> "${GITHUB_ENV}"
+
+    - name: Run smoke tests
+      shell: bash
+      env:
+        RUNPOD_API_KEY: ${{ inputs.runpod-api-key }}
+        MAX_PARALLEL: ${{ inputs.max-parallel }}
+      run: |
+        set -uo pipefail
+        python3 "${GITHUB_WORKSPACE}/tests/test_images.py" "${MANIFEST_PATH}"
