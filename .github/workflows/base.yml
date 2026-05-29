@@ -189,5 +189,5 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           profile: pytorch
-          runpod-api-key: ${{ secrets.RUNPOD_API_KEY }}
-          ssh-private-key: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
