@@ -34,13 +34,10 @@ inputs:
     description: "GPU manufacturer filter (Nvidia / AMD)"
     required: false
     default: "Nvidia"
-  cpu-instance:
-    description: "RunPod CPU instance id for the base_cpu group"
-    required: false
-    default: "cpu3c-2-4"
   max-parallel:
     description: "Concurrent pods under test (cost cap — each worker holds one pod)"
     required: false
+    
     default: "2"
   runpodctl-version:
     description: "runpodctl release tag"
@@ -158,7 +155,6 @@ runs:
         BUDGET: ${{ inputs.budget-usd-per-hour }}
         MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
         MANUFACTURER: ${{ inputs.manufacturer }}
-        CPU_INSTANCE: ${{ inputs.cpu-instance }}
       run: |
         set -euo pipefail
         python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
@@ -167,7 +163,6 @@ runs:
           --budget "${BUDGET}" \
           --min-vram-gb "${MIN_VRAM_GB}" \
           --manufacturer "${MANUFACTURER}" \
-          --cpu-instance "${CPU_INSTANCE}" \
           --output "${RUNNER_TEMP}/test-manifest.yaml"
         echo "MANIFEST_PATH=${RUNNER_TEMP}/test-manifest.yaml" >> "${GITHUB_ENV}"
 

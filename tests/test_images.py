@@ -13,16 +13,25 @@ Requirements: runpodctl (logged in), python3 >= 3.9
 Manifest schema (per group):
     images:                list of docker images to test (required)
     instances:             list of GPU display names to try, in priority order
-                           (one of `instances:` or `max_price_per_hour:` required)
+                           (one of `instances:` or `max_price_per_hour:` required
+                            — except for the `base_cpu` group, see below)
     max_price_per_hour:    USD/hr budget — auto-pick any GPU at this price or
                            below, cheapest first. Loses to explicit `instances:`
                            if both are set.
     min_vram_gb:           extra filter for budget mode (default 0)
     manufacturer:          'Nvidia' or 'AMD' filter for budget mode (default any)
 
+The `base_cpu` group is special: runpodctl 2.3.0 does not let us pick a
+specific CPU flavor (--gpu-id is rejected for --compute-type CPU), so the
+manifest needs ONLY an `images:` list for that group — no `instances:` /
+`max_price_per_hour:` / `min_vram_gb:`. RunPod picks a CPU flavor for us.
+
 Env vars (overridable):
     CLOUD_TYPE       SECURE | COMMUNITY                       (default: SECURE)
-    DISK_GB          container disk size                      (default: 100)
+    DISK_GB          container disk size for GPU pods         (default: 100)
+    CPU_DISK_GB      container disk size for CPU pods. RunPod caps this per
+                     CPU flavor (20 GB on the cheapest, 30 GB on larger ones);
+                     20 is the universal safe value           (default: 20)
     RUNPOD_API_KEY   used for GraphQL gpu pricing (read from ~/.runpod/config.toml
                      by default; set this in CI / containers without a config file)
     DWELL_SEC        extra seconds to wait after SSH becomes reachable, then
@@ -52,7 +61,8 @@ Env vars (overridable):
 Per-group functional checks (runs over SSH after the container is reachable):
     pytorch / nvidia-pytorch / rocm   PyTorch sees the GPU, matmul on device
     base_gpu                          nvidia-smi + nvcc respond
-    base_cpu                          (skipped — no GPU)
+    base_cpu                          (no functional check — pod just needs to
+                                       boot and stay healthy through dwell)
 """
 
 from __future__ import annotations
@@ -79,6 +89,12 @@ from typing import Optional
 
 CLOUD_TYPE = os.environ.get("CLOUD_TYPE", "SECURE")
 DISK_GB = int(os.environ.get("DISK_GB", "100"))
+# CPU pods on RunPod cap container disk by flavor: the cheapest flavors
+# (cpu3c-2-4 and similar) reject >20 GB outright; larger ones cap at 30 GB.
+# 20 GB is the universal safe value — and plenty for a smoke-test that
+# only boots start.sh and dwells for a minute. Overridable for the rare
+# case where a CPU image actually needs more.
+CPU_DISK_GB = int(os.environ.get("CPU_DISK_GB", "20"))
 DWELL_SEC = int(os.environ.get("DWELL_SEC", "60"))
 CREATE_TIMEOUT = int(os.environ.get("CREATE_TIMEOUT", "600"))
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
@@ -421,12 +437,18 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     """Decide which GPU display names this group should try, in order.
 
     Priority:
+      0. CPU groups (name == 'base_cpu') — runpodctl 2.3.0 can't pick a
+         specific CPU flavor; we return a single sentinel value so the
+         caller's per-instance loop runs exactly once with --compute-type CPU.
       1. Explicit `instances:` list in the manifest — wins, used as-is.
       2. `max_price_per_hour: X` (+ optional `min_vram_gb`, `manufacturer`)
          — auto-pick from RunPod catalog, sorted cheapest first.
 
     Returns [] when neither is set (caller will SKIP the group).
     """
+    if group_name == "base_cpu":
+        return [CPU_INSTANCE_SENTINEL]
+
     explicit = group_config.get("instances") or []
     if explicit:
         return list(explicit)
@@ -557,27 +579,54 @@ def _extract_error(raw: str) -> str:
     return raw[:200]
 
 
-def create_pod(image: str, gpu_id: str, name: str) -> tuple[Optional[str], str]:
+# Sentinel `instance` value used by CPU groups in place of a GPU display name.
+# resolve_instances() returns this for CPU groups so the per-instance loop in
+# test_image() runs exactly once; test_pair() recognises it and switches into
+# the CPU pod-create path (no --gpu-id, --compute-type CPU).
+CPU_INSTANCE_SENTINEL = "__cpu_auto__"
+
+
+def create_pod(
+    image: str,
+    gpu_id: str,
+    name: str,
+    *,
+    compute_type: str = "GPU",
+) -> tuple[Optional[str], str]:
+    """Create a pod via `runpodctl pod create`. Returns (pod_id, raw_output).
+
+    compute_type='GPU' uses --gpu-id to target a specific GPU type (caller
+    must pass a non-empty gpu_id).
+    compute_type='CPU' creates a CPU pod; runpodctl 2.3.0 does NOT let us
+    pick a specific CPU flavor (--gpu-id is rejected for CPU), so RunPod
+    chooses one for us. gpu_id is ignored in CPU mode.
+    """
+    disk_gb = CPU_DISK_GB if compute_type == "CPU" else DISK_GB
     args = [
         "pod", "create",
         "--image", image,
-        "--gpu-id", gpu_id,
-        "--gpu-count", "1",
         "--cloud-type", CLOUD_TYPE,
-        "--container-disk-in-gb", str(DISK_GB),
+        "--container-disk-in-gb", str(disk_gb),
         "--ports", "22/tcp",
         "--name", name,
         "--terminate-after", AUTO_TERMINATE,
         "-o", "json",
     ]
+    if compute_type == "CPU":
+        args.extend(["--compute-type", "CPU"])
+        # CPU images have no CUDA, no GPU — `--min-cuda-version` would be
+        # nonsensical and `--gpu-id` is rejected by runpodctl for CPU pods.
+    else:
+        args.extend(["--gpu-id", gpu_id, "--gpu-count", "1"])
+        # Constrain scheduling to hosts whose driver supports this image's
+        # CUDA. Without this, RunPod may land a cu13.0 image on an
+        # older-driver host and the container fails at startup with
+        # `nvidia-container-cli: cuda>=13.0`.
+        cuda_version = detect_cuda_version(image)
+        if cuda_version:
+            args.extend(["--min-cuda-version", cuda_version])
     if REGISTRY_AUTH_ID:
         args.extend(["--registry-auth-id", REGISTRY_AUTH_ID])
-    # Constrain scheduling to hosts whose driver supports this image's CUDA.
-    # Without this, RunPod may land a cu13.0 image on an older-driver host and
-    # the container fails at startup with `nvidia-container-cli: cuda>=13.0`.
-    cuda_version = detect_cuda_version(image)
-    if cuda_version:
-        args.extend(["--min-cuda-version", cuda_version])
     proc = runpodctl(*args, timeout=120)
     raw = (proc.stderr + proc.stdout).strip()
     if proc.returncode != 0:
@@ -727,8 +776,17 @@ def cuda_check_command(group: str) -> str:
     if group in ("pytorch", "nvidia-pytorch", "rocm"):
         # Test that PyTorch actually sees the GPU through CUDA/ROCm. This catches
         # mismatched driver/toolkit versions, missing libs, broken Python envs.
+        #
+        # Use `python` (the runpod/base symlink at /usr/local/bin/python ->
+        # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 the system
+        # `python3` resolves to python3.10 — but pytorch/Dockerfile installs
+        # torch via `python -m pip install`, so torch lives only in
+        # python3.12's site-packages. Calling `python3` on 22.04 would
+        # spuriously raise ModuleNotFoundError. On 24.04 they coincidentally
+        # match (system python3 = 3.12) — using `python` makes the check
+        # portable across both.
         return (
-            "python3 - <<'PY'\n"
+            "python - <<'PY'\n"
             "import sys, torch\n"
             "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
             "n = torch.cuda.device_count()\n"
@@ -974,13 +1032,19 @@ def test_pair(image: str, instance: str, group: str) -> str:
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and is
     used to select the appropriate GPU/CUDA functional check."""
-    gpu_id = resolve_gpu_id(instance)
-    cuda = detect_cuda_version(image)
-    cuda_note = f", min-cuda={cuda}" if cuda else ""
-    log(
-        f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
-        indent=1,
-    )
+    is_cpu = instance == CPU_INSTANCE_SENTINEL
+    if is_cpu:
+        gpu_id = ""
+        log("attempt: CPU pod (--compute-type CPU, flavor chosen by RunPod)",
+            indent=1)
+    else:
+        gpu_id = resolve_gpu_id(instance)
+        cuda = detect_cuda_version(image)
+        cuda_note = f", min-cuda={cuda}" if cuda else ""
+        log(
+            f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
+            indent=1,
+        )
 
     # Retry on transient orchestrator errors (5xx, "something went wrong",
     # 502/503/504). These often happen when several workers race for the same
@@ -995,7 +1059,10 @@ def test_pair(image: str, instance: str, group: str) -> str:
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
-        pod_id, raw = create_pod(image, gpu_id, name)
+        pod_id, raw = create_pod(
+            image, gpu_id, name,
+            compute_type="CPU" if is_cpu else "GPU",
+        )
         if pod_id:
             break
         if UNAVAILABLE_RE.search(raw):
@@ -1168,23 +1235,23 @@ def main() -> int:
 
     manifest = parse_manifest(images_path)
 
-    # Resolve the instances list for each non-CPU group now (so we can warn
-    # about typos / empty lists once, up front, instead of per-job). For
+    # Resolve the instances list for each group now (so we can warn about
+    # typos / empty lists once, up front, instead of per-job). For
     # explicit-list groups this is just a copy. For budget-based groups this
-    # queries the GPU_CATALOG and picks cheapest-first.
+    # queries the GPU_CATALOG and picks cheapest-first. For `base_cpu` it
+    # returns a single sentinel value (RunPod picks the CPU flavor).
     resolved_instances: dict[str, list[str]] = {}
     for grp, contents in manifest.items():
-        if grp == "base_cpu":
-            continue
         resolved_instances[grp] = resolve_instances(grp, contents)
 
     # Warn about explicit-list entries that don't match any known GPU display
-    # name — these would be passed to runpodctl verbatim and fail.
+    # name — these would be passed to runpodctl verbatim and fail. Skip the
+    # CPU sentinel since it isn't a GPU name by design.
     unmapped = sorted({
         inst
         for grp, instances in resolved_instances.items()
         for inst in instances
-        if not is_known_gpu(inst)
+        if inst != CPU_INSTANCE_SENTINEL and not is_known_gpu(inst)
     })
     if unmapped:
         log(
@@ -1215,14 +1282,6 @@ def main() -> int:
     jobs: list[tuple[str, str, list[str]]] = []
     for group, contents in manifest.items():
         if group_filter and group != group_filter:
-            continue
-        if group == "base_cpu":
-            log(
-                f"skipping CPU group '{group}' (CPU flavor selection "
-                "not supported in runpodctl 2.3.0)"
-            )
-            for img in contents.get("images", []):
-                results[img] = ("SKIP", "CPU flavor unsupported in runpodctl")
             continue
         instances = resolved_instances.get(group, [])
         if not instances:

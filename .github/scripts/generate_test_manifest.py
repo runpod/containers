@@ -78,17 +78,19 @@ def build_groups(
     budget: float,
     min_vram_gb: int,
     manufacturer: str,
-    cpu_instance: str,
 ) -> dict:
     if profile == "base":
+        # Split refs into CPU- vs GPU-targeted images by tag content.
+        # CPU images: tested via runpodctl --compute-type CPU. RunPod selects
+        #   the CPU flavor for us — runpodctl 2.3.0 doesn't expose --gpu-id
+        #   for CPU, so we can't (and don't) constrain the manifest with an
+        #   `instances:` or `max_price_per_hour:` field for CPU groups.
+        # GPU images: tested with the normal --gpu-id flow and budget filter.
         cpu = [r for r in refs if not is_gpu_ref(r)]
         gpu = [r for r in refs if is_gpu_ref(r)]
         groups: dict = {}
         if cpu:
-            groups["base_cpu"] = {
-                "images": cpu,
-                "instances": [cpu_instance],
-            }
+            groups["base_cpu"] = {"images": cpu}
         if gpu:
             groups["base_gpu"] = {
                 "images": gpu,
@@ -156,11 +158,6 @@ def main() -> int:
         default="Nvidia",
         help="GPU manufacturer filter for budget mode (default: Nvidia)",
     )
-    ap.add_argument(
-        "--cpu-instance",
-        default="cpu3c-2-4",
-        help="RunPod CPU instance id for base_cpu group (default: cpu3c-2-4)",
-    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -180,7 +177,6 @@ def main() -> int:
         budget=args.budget,
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
-        cpu_instance=args.cpu_instance,
     )
 
     if not groups:
