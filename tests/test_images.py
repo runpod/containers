@@ -58,11 +58,18 @@ Env vars (overridable):
                      injects into pods. Auto-discovered from common locations
                      if not set                              (default: empty)
 
-Per-group functional checks (runs over SSH after the container is reachable):
-    pytorch / nvidia-pytorch / rocm   PyTorch sees the GPU, matmul on device
-    base_gpu                          nvidia-smi + nvcc respond
-    base_cpu                          (no functional check — pod just needs to
-                                       boot and stay healthy through dwell)
+Functional check (runs over SSH after the container is reachable). The check
+is selected by inspecting the image REF, not the manifest group name — so
+new groups don't silently skip the check:
+    image has 'pytorch' / 'torch\\d' in ref
+        -> torch.cuda.is_available + matmul on device (catches broken
+           drivers, missing libs, mismatched toolkit/driver versions).
+    image has 'cuda' / 'cu\\d' / 'rocm' (but no torch markers)
+        -> nvidia-smi -L + driver/memory query + nvcc --version. Covers
+           base GPU images and autoresearch (whose torch is in a venv
+           not reachable from the system python we ssh into).
+    otherwise (no GPU markers)
+        -> no check. Pod must still boot and survive DWELL_SEC.
 """
 
 from __future__ import annotations
@@ -769,28 +776,71 @@ def ssh_probe(host: str, port: int, timeout: int = 8) -> tuple[bool, str]:
     return False, (r.stderr or r.stdout).strip()[:200]
 
 
-def cuda_check_command(group: str) -> str:
-    """Return a one-line shell command that functionally validates the GPU/CUDA
-    stack for a given image group. Returns empty string for groups where no
-    GPU check applies (e.g. CPU-only base images).
+# Image-tag substrings/patterns we treat as "this image expects a GPU
+# runtime" (NVIDIA CUDA or AMD ROCm). Kept loose on purpose — the worst
+# case for a false positive is running nvidia-smi on a CPU pod, which just
+# returns non-zero and surfaces as a FAIL we'd want to see anyway.
+_GPU_TAG_RE = re.compile(
+    # 'cuda1281', 'cuda1300', or the bare word 'cuda' (e.g. nvidia/cuda:...)
+    r"\bcuda\b|\bcuda\d"
+    # 'cu1281', 'cu1290' short form. Boundary prevents matching 'cube',
+    # 'cute', etc. — we require a digit immediately after 'cu'.
+    r"|(?:^|[^a-z0-9])cu\d"
+    # AMD ROCm tag fragments: 'rocm', 'rocm644'.
+    r"|\brocm",
+    re.IGNORECASE,
+)
 
-    The command MUST exit non-zero on failure so the SSH call can detect it.
-    Output goes to stdout/stderr and is captured for the report."""
-    if group == "base_cpu":
-        return ""
+# Image-name/tag markers that imply PyTorch is installed in the *system*
+# Python (i.e. `python -c "import torch"` will work over SSH).
+# Deliberately does NOT match autoresearch: its torch lives in
+# /opt/autoresearch/.venv (uv-managed) and isn't on sys.path for the
+# system interpreter we ssh into.
+_TORCH_TAG_RE = re.compile(
+    # 'pytorch' anywhere in name or tag covers runpod/pytorch,
+    # runpod/nvidia-pytorch, and base images with -pytorch251-style tags.
+    r"\bpytorch"
+    # Tag fragments like 'torch260', 'torch271' — short form some images use.
+    r"|(?:^|[^a-z0-9])torch\d",
+    re.IGNORECASE,
+)
 
-    if group in ("pytorch", "nvidia-pytorch", "rocm"):
-        # Test that PyTorch actually sees the GPU through CUDA/ROCm. This catches
-        # mismatched driver/toolkit versions, missing libs, broken Python envs.
-        #
-        # Use `python` (the runpod/base symlink at /usr/local/bin/python ->
-        # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 the system
-        # `python3` resolves to python3.10 — but pytorch/Dockerfile installs
-        # torch via `python -m pip install`, so torch lives only in
-        # python3.12's site-packages. Calling `python3` on 22.04 would
-        # spuriously raise ModuleNotFoundError. On 24.04 they coincidentally
-        # match (system python3 = 3.12) — using `python` makes the check
-        # portable across both.
+
+def _image_expects_gpu(image: str) -> bool:
+    """True if the image ref implies a GPU runtime (CUDA or ROCm) inside."""
+    return bool(_GPU_TAG_RE.search(image))
+
+
+def _image_expects_torch(image: str) -> bool:
+    """True if the image ref implies PyTorch is importable from system Python."""
+    return bool(_TORCH_TAG_RE.search(image))
+
+
+def cuda_check_command(group: str, image: str) -> str:
+    """Return a shell command that functionally validates the GPU/CUDA stack
+    for a given image, or '' to skip the check (CPU images).
+
+    Selection is driven by the IMAGE REF, not the manifest `group` name:
+    new manifest groups added in the future won't silently skip the check.
+    `group` is accepted for log/report context only.
+
+    Logic:
+        - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
+          (covers runpod/pytorch, runpod/nvidia-pytorch, ROCm-pytorch bases)
+        - has 'cuda' / 'cu\\d' / 'rocm' only         -> run nvidia-smi check
+          (covers runpod/base GPU tags and autoresearch — torch in venv
+          not visible to system python)
+        - none of the above                          -> CPU image, no check
+
+    The returned command MUST exit non-zero on failure so the SSH call can
+    detect it. Output is captured for the run report.
+    """
+    if _image_expects_torch(image):
+        # Use `python` (the runpod/base symlink /usr/local/bin/python ->
+        # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 system `python3`
+        # resolves to python3.10 — but pytorch/Dockerfile installs torch via
+        # `python -m pip`, so torch only exists in python3.12's site-packages.
+        # On 24.04 they happen to coincide. Using `python` is portable.
         return (
             "python - <<'PY'\n"
             "import sys, torch\n"
@@ -810,9 +860,10 @@ def cuda_check_command(group: str) -> str:
             "PY"
         )
 
-    if group == "base_gpu":
-        # No PyTorch in base images — just verify the CUDA toolkit is installed
-        # and the driver responds to a real query (more than just nvidia-smi banner).
+    if _image_expects_gpu(image):
+        # GPU image without system-Python torch (raw base, autoresearch's
+        # uv-venv'd torch, etc.). Verify the toolkit + driver respond to a
+        # real query — more than just an nvidia-smi banner.
         return (
             "set -e; "
             "nvidia-smi -L; "
@@ -825,18 +876,20 @@ def cuda_check_command(group: str) -> str:
             "fi"
         )
 
+    # No GPU/torch markers — treat as CPU image. Boot + dwell is the only
+    # gate; no extra functional check to run.
     return ""
 
 
-def run_cuda_check(host: str, port: int, group: str) -> tuple[bool, str]:
+def run_cuda_check(host: str, port: int, group: str, image: str) -> tuple[bool, str]:
     """Run the GPU/CUDA functional check inside the pod over SSH.
     Returns (ok, output). ok=True when:
-      * the group has no check defined (treated as pass), OR
+      * the image has no GPU check defined (treated as pass), OR
       * the remote command exits 0.
     output contains stdout+stderr for inclusion in the run log."""
-    cmd = cuda_check_command(group)
+    cmd = cuda_check_command(group, image)
     if not cmd:
-        return True, "(no GPU check for this group)"
+        return True, "(no GPU check for this image)"
     ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
     try:
         r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
@@ -1135,9 +1188,9 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
         # "does this image actually work" gate — distinct from "did it boot".
         st = pod_state(pod_id)
         host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
-        if host and port and cuda_check_command(group):
+        if host and port and cuda_check_command(group, image):
             log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
-            ok, output = run_cuda_check(host, int(port), group)
+            ok, output = run_cuda_check(host, int(port), group, image)
             for line in (output or "").splitlines():
                 log(f"  {line}", indent=2)
             if not ok:
