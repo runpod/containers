@@ -34,10 +34,20 @@ inputs:
     description: "GPU manufacturer filter (Nvidia / AMD)"
     required: false
     default: "Nvidia"
+  test-jupyter:
+    description: |
+      'true' to add `test_jupyter: true` to every group in the generated
+      manifest, which makes test_images.py expose 8888/http, set
+      JUPYTER_PASSWORD, and run the in-pod + public-proxy Jupyter probes.
+      Off by default — enable only for profiles whose images use our
+      container-template/start.sh (base, autoresearch, pytorch). NGC
+      nvidia-pytorch ships its own entrypoint and would fail the probe.
+    required: false
+    default: "false"
   max-parallel:
     description: "Concurrent pods under test (cost cap — each worker holds one pod)"
     required: false
-    
+
     default: "2"
   runpodctl-version:
     description: "runpodctl release tag"
@@ -155,14 +165,23 @@ runs:
         BUDGET: ${{ inputs.budget-usd-per-hour }}
         MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
         MANUFACTURER: ${{ inputs.manufacturer }}
+        TEST_JUPYTER: ${{ inputs.test-jupyter }}
       run: |
         set -euo pipefail
+        # Only the literal string "true" turns the flag on; anything else
+        # ('false', '', '0', 'yes', ...) leaves it off so the default stays
+        # safe even if the caller fat-fingers the input.
+        EXTRA_ARGS=()
+        if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-jupyter)
+        fi
         python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
           --profile "${PROFILE}" \
           --refs "${REFS}" \
           --budget "${BUDGET}" \
           --min-vram-gb "${MIN_VRAM_GB}" \
           --manufacturer "${MANUFACTURER}" \
+          "${EXTRA_ARGS[@]}" \
           --output "${RUNNER_TEMP}/test-manifest.yaml"
         echo "MANIFEST_PATH=${RUNNER_TEMP}/test-manifest.yaml" >> "${GITHUB_ENV}"
 

@@ -70,6 +70,7 @@ jobs:
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
 
   build-autoresearch:
     needs: build-base
@@ -204,3 +205,4 @@ jobs:
           profile: pytorch
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true

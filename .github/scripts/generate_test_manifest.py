@@ -54,6 +54,8 @@ def render_yaml(groups: dict) -> str:
 
     Strings are unquoted — safe for our values which are image refs,
     instance names, floats, and single-word manufacturer names.
+    Booleans are emitted as the lowercase `true`/`false` literals
+    test_images.py's parser recognises.
     """
     lines: list[str] = []
     for grp_name, body in groups.items():
@@ -65,9 +67,17 @@ def render_yaml(groups: dict) -> str:
             lines.append("    instances:")
             for inst in body["instances"]:
                 lines.append(f"    - {inst}")
-        for key in ("max_price_per_hour", "min_vram_gb", "manufacturer"):
+        for key in (
+            "max_price_per_hour",
+            "min_vram_gb",
+            "manufacturer",
+            "test_jupyter",
+        ):
             if key in body:
-                lines.append(f"    {key}: {body[key]}")
+                val = body[key]
+                if isinstance(val, bool):
+                    val = "true" if val else "false"
+                lines.append(f"    {key}: {val}")
     return "\n".join(lines) + "\n"
 
 
@@ -78,7 +88,24 @@ def build_groups(
     budget: float,
     min_vram_gb: int,
     manufacturer: str,
+    test_jupyter: bool = False,
 ) -> dict:
+    """Build the manifest dict for `profile`.
+
+    `test_jupyter` is opt-in (default off). When true, every group emitted
+    here gets `test_jupyter: true`, which tells tests/test_images.py to
+    expose 8888/http, set JUPYTER_PASSWORD, and run the in-pod + public-
+    proxy Jupyter probes. Only enable this when the underlying images
+    actually use container-template/start.sh (runpod/base, runpod/pytorch,
+    runpod/autoresearch). NGC nvidia-pytorch images have a different
+    entrypoint and would fail the probe.
+    """
+
+    def _maybe_jupyter(body: dict) -> dict:
+        if test_jupyter:
+            body["test_jupyter"] = True
+        return body
+
     if profile == "base":
         # Split refs into CPU- vs GPU-targeted images by tag content.
         # CPU images: tested via runpodctl --compute-type CPU. RunPod selects
@@ -90,37 +117,37 @@ def build_groups(
         gpu = [r for r in refs if is_gpu_ref(r)]
         groups: dict = {}
         if cpu:
-            groups["base_cpu"] = {"images": cpu}
+            groups["base_cpu"] = _maybe_jupyter({"images": cpu})
         if gpu:
-            groups["base_gpu"] = {
+            groups["base_gpu"] = _maybe_jupyter({
                 "images": gpu,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
                 "manufacturer": manufacturer,
-            }
+            })
         return groups
 
     if profile == "autoresearch":
         # autoresearch images always extend a GPU base; reuse base_gpu so
         # test_images.py runs the nvidia-smi check on them.
         return {
-            "base_gpu": {
+            "base_gpu": _maybe_jupyter({
                 "images": refs,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
                 "manufacturer": manufacturer,
-            }
+            })
         }
 
     if profile == "pytorch":
         # 'pytorch' triggers the torch.cuda functional check in test_images.py.
         return {
-            "pytorch": {
+            "pytorch": _maybe_jupyter({
                 "images": refs,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
                 "manufacturer": manufacturer,
-            }
+            })
         }
 
     raise ValueError(f"unknown profile: {profile!r}")
@@ -158,6 +185,16 @@ def main() -> int:
         default="Nvidia",
         help="GPU manufacturer filter for budget mode (default: Nvidia)",
     )
+    ap.add_argument(
+        "--test-jupyter",
+        action="store_true",
+        help=(
+            "Emit `test_jupyter: true` for every produced group so "
+            "test_images.py exposes 8888/http, sets JUPYTER_PASSWORD, and "
+            "runs the in-pod + public-proxy Jupyter probes. "
+            "Off by default — enable per CI step."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -177,6 +214,7 @@ def main() -> int:
         budget=args.budget,
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
+        test_jupyter=args.test_jupyter,
     )
 
     if not groups:

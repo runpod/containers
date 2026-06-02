@@ -25,6 +25,14 @@ Manifest schema (per group):
                            the image tag itself doesn't encode a CUDA version
                            (e.g. NGC `nvidia-pytorch:25.11`). Image tags like
                            `cu1281` / `cuda1281` always win.
+    test_jupyter:          true | false — when true, the pod is created with
+                           JUPYTER_PASSWORD=admin in env and HTTP port 8888
+                           exposed, then the script SSHes in and verifies
+                           Jupyter Lab is actually listening. Use for groups
+                           whose images use container-template/start.sh
+                           (runpod/base, runpod/pytorch, runpod/autoresearch,
+                           rocm). Skip for NGC nvidia-pytorch (different
+                           entrypoint).            (default: false)
 
 The `base_cpu` group is special: runpodctl 2.3.0 does not let us pick a
 specific CPU flavor (--gpu-id is rejected for --compute-type CPU), so the
@@ -75,6 +83,26 @@ new groups don't silently skip the check:
            not reachable from the system python we ssh into).
     otherwise (no GPU markers)
         -> no check. Pod must still boot and survive DWELL_SEC.
+
+Jupyter check (opt-in via manifest `test_jupyter: true`). Two stages,
+both must pass:
+    1. In-pod: SSH into the pod and curl http://127.0.0.1:8888/api/status
+       with our token. Catches silent start.sh failures (e.g.
+       `python3 -m jupyter` not finding the module on Ubuntu 22.04 — the
+       kind of bug that prints "Jupyter Lab started" in the container log
+       while no server is actually running).
+    2. Public proxy: from the test machine, GET
+       https://<pod-id>-8888.proxy.runpod.net/api/status with the token.
+       Catches port-type misconfigurations (`8888/tcp` instead of
+       `8888/http` — proxy never wires up non-http ports) and DNS/proxy
+       registration issues that would prevent real users from reaching
+       Jupyter from the RunPod console.
+
+Jupyter env vars:
+    JUPYTER_WAIT_TIMEOUT   seconds the in-pod probe waits for :8888 to bind
+                                                              (default: 30)
+    JUPYTER_PROXY_TIMEOUT  seconds the proxy probe retries while RunPod's
+                           ingress registers the new pod (default: 60)
 """
 
 from __future__ import annotations
@@ -167,6 +195,27 @@ SSH_OPTS = [
 CUDA_TAG_RE = re.compile(r"\bcu(?:da)?(\d{2})(\d)(\d)\b", re.IGNORECASE)
 
 
+_TRUE_RE = re.compile(r"^(true|yes|on|1)$", re.IGNORECASE)
+_FALSE_RE = re.compile(r"^(false|no|off|0)$", re.IGNORECASE)
+
+
+def _normalize_bool(value: object) -> Optional[bool]:
+    """Coerce a manifest scalar to bool. Returns None when the value isn't
+    obviously truthy/falsy so callers can distinguish "absent" from "false"."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().strip('"').strip("'")
+    if _TRUE_RE.match(s):
+        return True
+    if _FALSE_RE.match(s):
+        return False
+    return None
+
+
 def _normalize_cuda_version(value: object) -> Optional[str]:
     """Coerce a manifest `min_cuda_version` value to the 'X.Y' string format
     that `runpodctl --min-cuda-version` expects.
@@ -193,6 +242,22 @@ def _normalize_cuda_version(value: object) -> Optional[str]:
 # `detect_cuda_version(image)` returns None (i.e. image tag has no embedded
 # CUDA — NGC `nvidia-pytorch:25.11` and similar opaque tags).
 GROUP_MIN_CUDA: dict[str, str] = {}
+
+
+# Per-group Jupyter-check opt-in, populated in main() from `test_jupyter:`
+# manifest fields. When True, `create_pod` adds the JUPYTER_PASSWORD env var
+# and exposes :8888, and `test_pair` runs `run_jupyter_check` after the CUDA
+# functional check.
+GROUP_TEST_JUPYTER: dict[str, bool] = {}
+
+# Password we hand to start.sh via env. Not a secret — every pod we spin up
+# is auto-terminated within AUTO_TERMINATE and is only reachable through
+# RunPod's authenticated proxy. We just need ANY non-empty value so start.sh
+# decides to launch Jupyter (see start.sh: `if [[ $JUPYTER_PASSWORD ]]`).
+JUPYTER_TEST_PASSWORD = "admin"
+# Jupyter Lab is started in background by start.sh AFTER it prints "Pod is
+# ready", so a brief startup grace is needed before we probe.
+JUPYTER_WAIT_TIMEOUT = int(os.environ.get("JUPYTER_WAIT_TIMEOUT", "30"))
 
 
 def detect_cuda_version(image: str) -> Optional[str]:
@@ -362,7 +427,7 @@ def parse_manifest(path: Path) -> dict[str, dict]:
             value = value.strip()
             # Strip optional surrounding quotes so `min_cuda_version: "13.0"`
             # is parsed identically to `min_cuda_version: 13.0`. Numeric
-            # coercion is then attempted only on unquoted values.
+            # and bool coercion are attempted only on unquoted values.
             quoted = len(value) >= 2 and (
                 (value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")
             )
@@ -371,6 +436,10 @@ def parse_manifest(path: Path) -> dict[str, dict]:
             parsed: object
             if quoted:
                 parsed = value
+            elif _TRUE_RE.match(value):
+                parsed = True
+            elif _FALSE_RE.match(value):
+                parsed = False
             else:
                 try:
                     parsed = (
@@ -651,6 +720,7 @@ def create_pod(
     *,
     compute_type: str = "GPU",
     group: Optional[str] = None,
+    test_jupyter: bool = False,
 ) -> tuple[Optional[str], str]:
     """Create a pod via `runpodctl pod create`. Returns (pod_id, raw_output).
 
@@ -662,18 +732,30 @@ def create_pod(
 
     `group` is used to look up `min_cuda_version` from the manifest when the
     image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`).
+
+    `test_jupyter=True` expands the pod config so JupyterLab can be tested:
+        - `--ports` gains `8888/http`
+        - `--env` sets `JUPYTER_PASSWORD` (the value start.sh checks before
+          starting Jupyter)
     """
     disk_gb = CPU_DISK_GB if compute_type == "CPU" else DISK_GB
+    ports = ["22/tcp"]
+    if test_jupyter:
+        ports.append("8888/http")
     args = [
         "pod", "create",
         "--image", image,
         "--cloud-type", CLOUD_TYPE,
         "--container-disk-in-gb", str(disk_gb),
-        "--ports", "22/tcp",
+        "--ports", ",".join(ports),
         "--name", name,
         "--terminate-after", AUTO_TERMINATE,
         "-o", "json",
     ]
+    if test_jupyter:
+        # runpodctl wants --env as a single JSON-object string.
+        env_obj = {"JUPYTER_PASSWORD": JUPYTER_TEST_PASSWORD}
+        args.extend(["--env", json.dumps(env_obj)])
     if compute_type == "CPU":
         args.extend(["--compute-type", "CPU"])
         # CPU images have no CUDA, no GPU — `--min-cuda-version` would be
@@ -954,6 +1036,142 @@ def run_cuda_check(host: str, port: int, group: str, image: str) -> tuple[bool, 
     return (r.returncode == 0), combined
 
 
+def jupyter_check_command(timeout: int) -> str:
+    """Shell snippet (run via SSH on the pod) that verifies Jupyter Lab is
+    actually running and answers HTTP with the token we set via env.
+
+    Why both `jupyter server list` AND a `curl`: the list catches the silent
+    `python3 -m jupyter` failure mode (server never started — list is empty
+    even though start.sh printed 'Jupyter Lab started'); the curl catches
+    "process is alive but http endpoint is wedged" or "token mismatch".
+
+    Polls for up to `timeout` seconds because start.sh launches Jupyter in
+    background via `nohup ... &` and exits without waiting; the HTTP port
+    typically becomes reachable a few seconds after the pod logs say it is.
+    """
+    return (
+        "set -e; "
+        # Wait for the HTTP port to open. Don't rely on `jupyter` CLI being
+        # in PATH yet (the binary IS in PATH from the base image, but the
+        # server takes a few seconds to bind). Use raw /dev/tcp instead so
+        # we don't need nc / curl just to detect "listening".
+        f"for i in $(seq 1 {timeout}); do "
+        "  if (echo > /dev/tcp/127.0.0.1/8888) 2>/dev/null; then break; fi; "
+        "  sleep 1; "
+        "done; "
+        # Server should appear in `jupyter server list`. If start.sh used
+        # the wrong python interpreter, this is empty.
+        "echo '--- jupyter server list ---'; "
+        "OUT=$(jupyter server list 2>&1 || true); "
+        "echo \"$OUT\"; "
+        "echo \"$OUT\" | grep -qE 'http://[^ ]*:8888' "
+        "  || { echo 'FAIL: no Jupyter server listening on :8888'; exit 1; }; "
+        # API responds with our token. /api/status is a tiny endpoint that
+        # returns 200 + JSON when the server is healthy AND auth passes.
+        "echo '--- curl /api/status ---'; "
+        f"curl -sS --max-time 10 -o /tmp/_jupyter_status "
+        f"  -w 'http=%{{http_code}}\\n' "
+        f"  \"http://127.0.0.1:8888/api/status?token={JUPYTER_TEST_PASSWORD}\" "
+        "  || { echo 'FAIL: curl to :8888 failed'; exit 1; }; "
+        "cat /tmp/_jupyter_status; echo; "
+        "grep -qE '^http=200' /tmp/_jupyter_status 2>/dev/null "
+        "  || grep -qE '\"started\"' /tmp/_jupyter_status "
+        "  || { echo 'FAIL: /api/status did not return 200 with valid token'; "
+        "       exit 1; }; "
+        "echo 'jupyter check OK'"
+    )
+
+
+def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
+    """SSH into the pod and run the jupyter probe against 127.0.0.1:8888.
+
+    This validates the IN-POD side: start.sh launched Jupyter with the right
+    interpreter, server bound to :8888, our token works.
+
+    Returns (ok, output). ok=False when the SSH call itself failed, OR when
+    jupyter probe exited non-zero (server not running / wrong token / API
+    not healthy)."""
+    cmd = jupyter_check_command(JUPYTER_WAIT_TIMEOUT)
+    ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
+    # SSH command has its own grace loop (JUPYTER_WAIT_TIMEOUT) plus a 10s
+    # curl; pad the outer timeout to leave room for SSH handshake.
+    outer_timeout = JUPYTER_WAIT_TIMEOUT + 30
+    try:
+        r = subprocess.run(
+            ssh_cmd, capture_output=True, text=True, timeout=outer_timeout
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"jupyter check timed out after {outer_timeout}s"
+    except FileNotFoundError:
+        return False, "ssh binary not found"
+    combined = (r.stdout + r.stderr).strip()
+    return (r.returncode == 0), combined
+
+
+# RunPod exposes any port declared as `<port>/http` through its public proxy
+# at `https://<pod-id>-<port>.proxy.runpod.net`. We hit this URL from the
+# test machine so we validate the END-USER path, not just the in-pod side.
+# The proxy takes a few seconds to register newly-exposed ports, so retry.
+JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
+
+
+def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
+    """Hit `https://<pod-id>-8888.proxy.runpod.net/api/status?token=admin`
+    from the test machine. Verifies that:
+
+      1. RunPod's public proxy has the pod registered for port 8888.
+         If the port was exposed as `8888/tcp` instead of `8888/http`, the
+         proxy never wires it up and this fails. The SSH-side check would
+         still pass — that's exactly the kind of misconfiguration the
+         end-user would hit when they tried to open Jupyter from the UI.
+      2. Jupyter is reachable end-to-end, not just on localhost.
+
+    Retries for up to JUPYTER_PROXY_TIMEOUT seconds because the proxy is
+    eventually-consistent: a freshly-created pod may not be in its routing
+    table for ~10–30s. Returns (ok, multi-line log).
+    """
+    import urllib.error
+    import urllib.request
+
+    url = (
+        f"https://{pod_id}-8888.proxy.runpod.net/api/status"
+        f"?token={JUPYTER_TEST_PASSWORD}"
+    )
+    deadline = time.monotonic() + JUPYTER_PROXY_TIMEOUT
+    lines = [f"GET {url}"]
+    last_err = ""
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "runpod-smoke-test/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                code = resp.status
+                body = resp.read(2048).decode("utf-8", errors="replace")
+                lines.append(
+                    f"attempt #{attempt}: HTTP {code} body={body[:200]}"
+                )
+                if code == 200:
+                    return True, "\n".join(lines)
+                last_err = f"HTTP {code}"
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code} {e.reason}"
+            lines.append(f"attempt #{attempt}: {last_err}")
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
+            lines.append(f"attempt #{attempt}: {last_err}")
+        time.sleep(5)
+
+    lines.append(
+        f"FAIL: proxy unreachable after {JUPYTER_PROXY_TIMEOUT}s "
+        f"({attempt} attempts), last error: {last_err}"
+    )
+    return False, "\n".join(lines)
+
+
 def fetch_logs_via_ssh(host: str, port: int, tail: int = 20) -> Optional[str]:
     """SSH to the pod and grab the most useful diagnostic info from inside
     the container. Returns stdout on success, None if SSH didn't work."""
@@ -1182,6 +1400,7 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
+            test_jupyter=GROUP_TEST_JUPYTER.get(group, False),
         )
         if pod_id:
             break
@@ -1252,6 +1471,52 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
                 dump_pod_logs(pod_id)
                 return "FAIL", "CUDA/GPU functional check failed"
             log("cuda check passed", indent=2)
+
+        # Jupyter checks: only when the group opted in via `test_jupyter`.
+        # Two stages, both must pass:
+        #   1. IN-POD: SSH into the pod and probe 127.0.0.1:8888. Catches
+        #      start.sh regressions (e.g. wrong python interpreter for
+        #      `-m jupyter`) that don't surface in container stdout.
+        #   2. PROXY: from the test machine, hit
+        #      https://<pod-id>-8888.proxy.runpod.net/. Catches port-type
+        #      mistakes (`8888/tcp` instead of `8888/http`) — proxy never
+        #      registers a non-http port, so end users can't reach Jupyter
+        #      even though the in-pod check would happily pass.
+        if host and port and GROUP_TEST_JUPYTER.get(group, False):
+            log(
+                f"running Jupyter Lab check (in-pod) for group '{group}'...",
+                indent=2,
+            )
+            ok, output = run_jupyter_check(host, int(port))
+            for line in (output or "").splitlines():
+                log(f"  {line}", indent=2)
+            if not ok:
+                log(
+                    "jupyter check (in-pod) FAILED -- start.sh did not "
+                    "bring up JupyterLab",
+                    indent=2,
+                )
+                dump_pod_logs(pod_id)
+                return "FAIL", "Jupyter Lab check failed (in-pod)"
+            log("jupyter check (in-pod) passed", indent=2)
+
+            log(
+                f"running Jupyter Lab check (public proxy) for pod "
+                f"{pod_id}...",
+                indent=2,
+            )
+            ok, output = run_jupyter_proxy_check(pod_id)
+            for line in (output or "").splitlines():
+                log(f"  {line}", indent=2)
+            if not ok:
+                log(
+                    "jupyter check (public proxy) FAILED -- port likely "
+                    "not exposed as 8888/http",
+                    indent=2,
+                )
+                dump_pod_logs(pod_id)
+                return "FAIL", "Jupyter Lab check failed (public proxy)"
+            log("jupyter check (public proxy) passed", indent=2)
 
         # Brief dwell to catch containers that boot, accept SSH, then crash.
         # Most real images hit this in the first ~30s if they're going to crash.
@@ -1388,6 +1653,17 @@ def main() -> int:
             log(
                 f"group '{grp}': min_cuda_version={normalized} "
                 "(applied when image tag has no embedded CUDA)"
+            )
+
+    # Collect manifest `test_jupyter` opt-ins. Drives both pod creation
+    # (env + port) and the post-boot Jupyter probe.
+    for grp, contents in manifest.items():
+        flag = _normalize_bool(contents.get("test_jupyter"))
+        if flag:
+            GROUP_TEST_JUPYTER[grp] = True
+            log(
+                f"group '{grp}': test_jupyter=true "
+                f"(JUPYTER_PASSWORD={JUPYTER_TEST_PASSWORD!r}, expose 8888/http)"
             )
 
     # Resolve the instances list for each group now (so we can warn about
