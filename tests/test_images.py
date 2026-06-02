@@ -20,6 +20,11 @@ Manifest schema (per group):
                            if both are set.
     min_vram_gb:           extra filter for budget mode (default 0)
     manufacturer:          'Nvidia' or 'AMD' filter for budget mode (default any)
+    min_cuda_version:      'X.Y' string passed to `runpodctl pod create
+                           --min-cuda-version`. Only used as a FALLBACK when
+                           the image tag itself doesn't encode a CUDA version
+                           (e.g. NGC `nvidia-pytorch:25.11`). Image tags like
+                           `cu1281` / `cuda1281` always win.
 
 The `base_cpu` group is special: runpodctl 2.3.0 does not let us pick a
 specific CPU flavor (--gpu-id is rejected for --compute-type CPU), so the
@@ -160,6 +165,34 @@ SSH_OPTS = [
 # None for images without an embedded CUDA version (CPU images, ROCm, NGC).
 # Anchored with \b so we don't match e.g. 'cudnn'.
 CUDA_TAG_RE = re.compile(r"\bcu(?:da)?(\d{2})(\d)(\d)\b", re.IGNORECASE)
+
+
+def _normalize_cuda_version(value: object) -> Optional[str]:
+    """Coerce a manifest `min_cuda_version` value to the 'X.Y' string format
+    that `runpodctl --min-cuda-version` expects.
+
+    Accepts ints (`13` → '13.0'), floats (`12.8` → '12.8', `13.0` → '13.0'),
+    and strings (with or without surrounding quotes). Returns None for
+    empty/None inputs so callers can `value or fallback`-chain.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return f"{value}.0"
+    if isinstance(value, float):
+        if value.is_integer():
+            return f"{int(value)}.0"
+        return f"{value:g}"
+    return str(value).strip().strip('"').strip("'") or None
+
+
+# Per-group fallback CUDA version, populated in main() from
+# `min_cuda_version:` manifest fields. Looked up by `create_pod` only when
+# `detect_cuda_version(image)` returns None (i.e. image tag has no embedded
+# CUDA — NGC `nvidia-pytorch:25.11` and similar opaque tags).
+GROUP_MIN_CUDA: dict[str, str] = {}
 
 
 def detect_cuda_version(image: str) -> Optional[str]:
@@ -327,12 +360,24 @@ def parse_manifest(path: Path) -> dict[str, dict]:
             key, _, value = stripped.partition(":")
             key = key.strip()
             value = value.strip()
-            # Coerce numeric-looking values; keep strings as-is otherwise.
+            # Strip optional surrounding quotes so `min_cuda_version: "13.0"`
+            # is parsed identically to `min_cuda_version: 13.0`. Numeric
+            # coercion is then attempted only on unquoted values.
+            quoted = len(value) >= 2 and (
+                (value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")
+            )
+            if quoted:
+                value = value[1:-1]
             parsed: object
-            try:
-                parsed = int(value) if value.lstrip("-").isdigit() else float(value)
-            except ValueError:
+            if quoted:
                 parsed = value
+            else:
+                try:
+                    parsed = (
+                        int(value) if value.lstrip("-").isdigit() else float(value)
+                    )
+                except ValueError:
+                    parsed = value
             data[group][key] = parsed
             current_list = None
         elif stripped.startswith("- ") and current_list is not None:
@@ -605,6 +650,7 @@ def create_pod(
     name: str,
     *,
     compute_type: str = "GPU",
+    group: Optional[str] = None,
 ) -> tuple[Optional[str], str]:
     """Create a pod via `runpodctl pod create`. Returns (pod_id, raw_output).
 
@@ -613,6 +659,9 @@ def create_pod(
     compute_type='CPU' creates a CPU pod; runpodctl 2.3.0 does NOT let us
     pick a specific CPU flavor (--gpu-id is rejected for CPU), so RunPod
     chooses one for us. gpu_id is ignored in CPU mode.
+
+    `group` is used to look up `min_cuda_version` from the manifest when the
+    image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`).
     """
     disk_gb = CPU_DISK_GB if compute_type == "CPU" else DISK_GB
     args = [
@@ -634,8 +683,12 @@ def create_pod(
         # Constrain scheduling to hosts whose driver supports this image's
         # CUDA. Without this, RunPod may land a cu13.0 image on an
         # older-driver host and the container fails at startup with
-        # `nvidia-container-cli: cuda>=13.0`.
-        cuda_version = detect_cuda_version(image)
+        # `nvidia-container-cli: cuda>=13.0`. Image tag wins; the manifest
+        # `min_cuda_version` is only consulted for opaque tags (NGC etc.).
+        cuda_version = (
+            detect_cuda_version(image)
+            or (GROUP_MIN_CUDA.get(group) if group else None)
+        )
         if cuda_version:
             args.extend(["--min-cuda-version", cuda_version])
     if REGISTRY_AUTH_ID:
@@ -1105,7 +1158,7 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
             indent=1)
     else:
         gpu_id = resolve_gpu_id(instance)
-        cuda = detect_cuda_version(image)
+        cuda = detect_cuda_version(image) or GROUP_MIN_CUDA.get(group)
         cuda_note = f", min-cuda={cuda}" if cuda else ""
         log(
             f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
@@ -1128,6 +1181,7 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
         pod_id, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
+            group=group,
         )
         if pod_id:
             break
@@ -1324,6 +1378,17 @@ def main() -> int:
         )
 
     manifest = parse_manifest(images_path)
+
+    # Collect manifest `min_cuda_version` fallbacks. Used by create_pod when
+    # an image tag doesn't encode CUDA itself (NGC `nvidia-pytorch:25.11`).
+    for grp, contents in manifest.items():
+        normalized = _normalize_cuda_version(contents.get("min_cuda_version"))
+        if normalized:
+            GROUP_MIN_CUDA[grp] = normalized
+            log(
+                f"group '{grp}': min_cuda_version={normalized} "
+                "(applied when image tag has no embedded CUDA)"
+            )
 
     # Resolve the instances list for each group now (so we can warn about
     # typos / empty lists once, up front, instead of per-job). For
