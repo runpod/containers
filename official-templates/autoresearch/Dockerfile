@@ -22,9 +22,7 @@ WORKDIR /opt/autoresearch
 
 # Install Python dependencies.
 # --frozen: install exactly from uv.lock, no resolver run.
-# --locked: assert uv.lock matches pyproject.toml (catches drift at build time).
-# --no-build: refuse source distributions — `setup.py` can execute arbitrary
-# code during install, and we want only pre-built, audited wheels.
+# --no-build: refuse source distributions — `setup.py` can execute arbitrary code during install, and we want only pre-built, audited wheels.
 RUN uv sync --frozen --no-build && \
     uv run --frozen --no-build prepare.py # Download data and train tokenizer (~2 min)
 

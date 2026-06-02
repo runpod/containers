@@ -1,10 +1,6 @@
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
-
-RUN groupadd -r nonroot \
-    && useradd -r -g nonroot nonroot
-
 ARG RP_SKIP_PYTHON
 ARG RP_SKIP_JUPYTER
 
