@@ -206,3 +206,5 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          exclude_instances: |
+            *Blackwell*

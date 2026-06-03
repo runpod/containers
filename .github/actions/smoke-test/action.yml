@@ -44,6 +44,20 @@ inputs:
       nvidia-pytorch ships its own entrypoint and would fail the probe.
     required: false
     default: "false"
+  exclude-instances:
+    description: |
+      Newline-separated list of fnmatch-style GPU-display-name patterns to
+      subtract from each group's candidate pool. Each non-empty line is
+      one pattern. Examples:
+        exclude-instances: |
+          *Blackwell*
+          RTX A4000
+      Empty (default) means no exclusions. Use this to block known-bad
+      image/GPU pairings, e.g. PyTorch ≤ 2.6 wheels have no kernels for
+      sm_100/sm_120 (Blackwell), so any test landing on a Blackwell host
+      fails with 'no kernel image is available for execution on the device'.
+    required: false
+    default: ""
   max-parallel:
     description: "Concurrent pods under test (cost cap — each worker holds one pod)"
     required: false
@@ -166,6 +180,7 @@ runs:
         MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
         MANUFACTURER: ${{ inputs.manufacturer }}
         TEST_JUPYTER: ${{ inputs.test-jupyter }}
+        EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -175,6 +190,17 @@ runs:
         if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-jupyter)
         fi
+        # Split EXCLUDE_INSTANCES on newlines into one --exclude-instance
+        # per non-empty, non-whitespace, non-comment line. Each item is
+        # passed as a single argv element so glob chars (*, ?) stay literal
+        # and don't get shell-expanded against the runner's filesystem.
+        while IFS= read -r line; do
+          # trim leading/trailing whitespace
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--exclude-instance "${line}")
+        done <<< "${EXCLUDE_INSTANCES}"
         python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
           --profile "${PROFILE}" \
           --refs "${REFS}" \

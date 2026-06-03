@@ -78,6 +78,14 @@ def render_yaml(groups: dict) -> str:
                 if isinstance(val, bool):
                     val = "true" if val else "false"
                 lines.append(f"    {key}: {val}")
+        # exclude_instances is a list, emitted at the bottom of the group so
+        # it's visually grouped with other "filter" options. Patterns are
+        # double-quoted to keep glob-leading characters ('*', '?') safe from
+        # any stricter YAML parser that might consume this file later.
+        if body.get("exclude_instances"):
+            lines.append("    exclude_instances:")
+            for pat in body["exclude_instances"]:
+                lines.append(f'    - "{pat}"')
     return "\n".join(lines) + "\n"
 
 
@@ -89,6 +97,7 @@ def build_groups(
     min_vram_gb: int,
     manufacturer: str,
     test_jupyter: bool = False,
+    exclude_instances: list[str] | None = None,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -99,11 +108,21 @@ def build_groups(
     actually use container-template/start.sh (runpod/base, runpod/pytorch,
     runpod/autoresearch). NGC nvidia-pytorch images have a different
     entrypoint and would fail the probe.
-    """
 
-    def _maybe_jupyter(body: dict) -> dict:
+    `exclude_instances` is a list of fnmatch-style patterns (e.g.
+    '*Blackwell*') that test_images.py subtracts from each group's
+    candidate pool. Use to block known-bad image/GPU pairings — e.g.
+    PyTorch ≤ 2.6 wheels have no kernels for sm_100/sm_120, so any test
+    landing on a Blackwell host fails with 'no kernel image is available
+    for execution on the device'.
+    """
+    exclude_instances = list(exclude_instances or [])
+
+    def _decorate(body: dict) -> dict:
         if test_jupyter:
             body["test_jupyter"] = True
+        if exclude_instances:
+            body["exclude_instances"] = list(exclude_instances)
         return body
 
     if profile == "base":
@@ -117,9 +136,9 @@ def build_groups(
         gpu = [r for r in refs if is_gpu_ref(r)]
         groups: dict = {}
         if cpu:
-            groups["base_cpu"] = _maybe_jupyter({"images": cpu})
+            groups["base_cpu"] = _decorate({"images": cpu})
         if gpu:
-            groups["base_gpu"] = _maybe_jupyter({
+            groups["base_gpu"] = _decorate({
                 "images": gpu,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
@@ -131,7 +150,7 @@ def build_groups(
         # autoresearch images always extend a GPU base; reuse base_gpu so
         # test_images.py runs the nvidia-smi check on them.
         return {
-            "base_gpu": _maybe_jupyter({
+            "base_gpu": _decorate({
                 "images": refs,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
@@ -142,7 +161,7 @@ def build_groups(
     if profile == "pytorch":
         # 'pytorch' triggers the torch.cuda functional check in test_images.py.
         return {
-            "pytorch": _maybe_jupyter({
+            "pytorch": _decorate({
                 "images": refs,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
@@ -195,6 +214,18 @@ def main() -> int:
             "Off by default — enable per CI step."
         ),
     )
+    ap.add_argument(
+        "--exclude-instance",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help=(
+            "fnmatch-style pattern of GPU display names to subtract from "
+            "every produced group's candidate pool. Repeat for multiple "
+            "patterns. Example: --exclude-instance '*Blackwell*' "
+            "--exclude-instance 'RTX A4000'. Empty = no exclusions."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -215,6 +246,7 @@ def main() -> int:
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
+        exclude_instances=args.exclude_instance,
     )
 
     if not groups:

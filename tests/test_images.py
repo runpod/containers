@@ -20,6 +20,14 @@ Manifest schema (per group):
                            if both are set.
     min_vram_gb:           extra filter for budget mode (default 0)
     manufacturer:          'Nvidia' or 'AMD' filter for budget mode (default any)
+    exclude_instances:     list of fnmatch-style patterns (case-insensitive)
+                           subtracted from the candidate list AFTER `instances:`
+                           or budget selection. Use to block known-bad host
+                           pairings without rewriting the whole list, e.g.
+                               exclude_instances:
+                               - "*Blackwell*"
+                           skips every Blackwell GPU (sm_100/sm_120 are not in
+                           the kernel set of PyTorch ≤ 2.6 wheels).
     min_cuda_version:      'X.Y' string passed to `runpodctl pod create
                            --min-cuda-version`. Only used as a FALLBACK when
                            the image tag itself doesn't encode a CUDA version
@@ -450,7 +458,17 @@ def parse_manifest(path: Path) -> dict[str, dict]:
             data[group][key] = parsed
             current_list = None
         elif stripped.startswith("- ") and current_list is not None:
-            current_list.append(stripped[2:].strip())
+            item = stripped[2:].strip()
+            # Strip optional surrounding quotes so users can write
+            # `- "*Blackwell*"` (needed if they want the leading `*` to
+            # avoid confusing a stricter YAML parser later). YAML treats
+            # both forms identically — we do too.
+            if len(item) >= 2 and (
+                (item[0] == item[-1] == '"')
+                or (item[0] == item[-1] == "'")
+            ):
+                item = item[1:-1]
+            current_list.append(item)
     return data
 
 
@@ -560,6 +578,53 @@ def discover_gpu_catalog() -> list[dict]:
     return ((payload.get("data") or {}).get("gpuTypes") or [])
 
 
+def _apply_exclude_filter(
+    names: list[str],
+    patterns: list[str],
+    *,
+    group_name: str,
+) -> list[str]:
+    """Drop entries from `names` that match any fnmatch-style pattern in
+    `patterns` (case-insensitive). Returns the survivors and logs whatever
+    was excluded so the user can verify they didn't accidentally nuke
+    everything.
+
+    Pattern examples:
+        "*Blackwell*"  — substring match (any GPU containing 'Blackwell')
+        "RTX A4000"    — exact match
+        "RTX*"         — prefix match
+    """
+    if not patterns:
+        return names
+    import fnmatch
+    survivors: list[str] = []
+    dropped: list[tuple[str, str]] = []  # (name, pattern_that_matched)
+    norm_patterns = [p.lower() for p in patterns]
+    for name in names:
+        match = next(
+            (p for p in norm_patterns if fnmatch.fnmatchcase(name.lower(), p)),
+            None,
+        )
+        if match:
+            dropped.append((name, match))
+        else:
+            survivors.append(name)
+    if dropped:
+        log(
+            f"group '{group_name}': exclude_instances dropped "
+            f"{len(dropped)} instance(s):"
+        )
+        for name, pat in dropped:
+            log(f"  - {name!r} matched pattern {pat!r}", indent=1)
+    elif patterns:
+        log(
+            f"group '{group_name}': exclude_instances had {len(patterns)} "
+            "pattern(s) but matched nothing in the candidate list — check "
+            "spelling/casing or remove dead entries from the manifest",
+        )
+    return survivors
+
+
 def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     """Decide which GPU display names this group should try, in order.
 
@@ -571,14 +636,27 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
       2. `max_price_per_hour: X` (+ optional `min_vram_gb`, `manufacturer`)
          — auto-pick from RunPod catalog, sorted cheapest first.
 
+    After candidate selection, an optional `exclude_instances:` list of
+    fnmatch-style patterns is subtracted. Use this to block known-bad
+    matches like Blackwell GPUs on PyTorch 2.6 builds (no sm_120 kernels):
+
+        pytorch:
+            max_price_per_hour: 1.0
+            exclude_instances:
+            - "*Blackwell*"
+
     Returns [] when neither is set (caller will SKIP the group).
     """
     if group_name == "base_cpu":
         return [CPU_INSTANCE_SENTINEL]
 
+    exclude_patterns = list(group_config.get("exclude_instances") or [])
+
     explicit = group_config.get("instances") or []
     if explicit:
-        return list(explicit)
+        return _apply_exclude_filter(
+            list(explicit), exclude_patterns, group_name=group_name
+        )
 
     max_price = group_config.get("max_price_per_hour")
     if max_price is None:
@@ -614,7 +692,10 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
             candidates.append((float(price), name))
 
     candidates.sort(key=lambda x: x[0])
-    return [name for _, name in candidates]
+    names = [name for _, name in candidates]
+    return _apply_exclude_filter(
+        names, exclude_patterns, group_name=group_name
+    )
 
 
 def discover_registry_auth(prefer_name: str = "") -> Optional[str]:
@@ -1546,8 +1627,15 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
         cleanup_pod(pod_id)
 
 
-def test_image(image: str, instances: list[str], group: str) -> tuple[str, str]:
-    """Returns (status, note).
+def test_image(
+    image: str, instances: list[str], group: str
+) -> tuple[str, str, str]:
+    """Returns (status, note, instance_used).
+
+    `instance_used` is the GPU display name that produced the terminal
+    status. For PASS / FAIL it's the actual instance the test landed on.
+    For SKIP (no capacity / all stuck), it's an empty string — the test
+    never settled on any one instance.
 
     Iterates instance types until one PASSes. Stops early on FAIL (real image
     bug — no point trying another GPU). UNAVAILABLE (capacity) and STUCK
@@ -1558,18 +1646,24 @@ def test_image(image: str, instances: list[str], group: str) -> tuple[str, str]:
     log(f"image: {image}")
     stuck_instances: list[str] = []
     last_create_error = ""
+    last_create_inst = ""
     for inst in instances:
         result, detail = test_pair(image, inst, group)
         if result == "PASS":
-            return "PASS", ""
+            return "PASS", "", inst
         if result == "FAIL":
-            return "FAIL", detail or "container did not stay healthy"
+            return (
+                "FAIL",
+                detail or "container did not stay healthy",
+                inst,
+            )
         if result == "CREATE_FAIL":
             # Last create error is most informative — capacity-shortage 5xx
             # would have been UNAVAILABLE, so this is a genuine orchestrator
             # rejection. Try one more instance in case it's instance-specific,
             # but remember the error in case all fail.
             last_create_error = detail
+            last_create_inst = inst
             continue
         if result == "STUCK":
             stuck_instances.append(inst)
@@ -1578,7 +1672,7 @@ def test_image(image: str, instances: list[str], group: str) -> tuple[str, str]:
         # We never got past pod-create on any instance and the errors weren't
         # capacity-shortages. Surface the last orchestrator error — this is
         # usually an image / auth / registry problem.
-        return "FAIL", last_create_error
+        return "FAIL", last_create_error, last_create_inst
     if stuck_instances:
         # We tried every instance and RunPod never gave us a working host on
         # any of them — surface that distinctly from "no capacity at all".
@@ -1587,13 +1681,20 @@ def test_image(image: str, instances: list[str], group: str) -> tuple[str, str]:
             f"(stuck: {stuck_instances})",
             indent=1,
         )
-        return "SKIP", (
-            f"RunPod never assigned an SSH endpoint on {len(stuck_instances)} "
-            "instance type(s) — likely a scheduler issue, try again later"
+        return (
+            "SKIP",
+            (
+                f"RunPod never assigned an SSH endpoint on "
+                f"{len(stuck_instances)} instance type(s) — likely a "
+                "scheduler issue, try again later"
+            ),
+            "",
         )
     log(f"all {len(instances)} instances unavailable (no capacity)", indent=1)
-    return "SKIP", (
-        f"no capacity on any of {len(instances)} candidate instance type(s)"
+    return (
+        "SKIP",
+        f"no capacity on any of {len(instances)} candidate instance type(s)",
+        "",
     )
 
 
@@ -1706,7 +1807,10 @@ def main() -> int:
                 f"candidate(s): {preview or '(none — no GPU fits)'}"
             )
 
-    results: dict[str, tuple[str, str]] = {}
+    # results[image] = (status, note, instance_used). `instance_used` lets
+    # the summary report which GPU each test landed on (handy when an image
+    # FAILed because of an unlucky host pairing, not an actual bug).
+    results: dict[str, tuple[str, str, str]] = {}
 
     # Flatten the manifest into a list of (image, group, instances) jobs that
     # can run independently. Skip groups we can't actually exercise.
@@ -1722,7 +1826,7 @@ def main() -> int:
                 "any candidates)"
             )
             for img in contents.get("images", []):
-                results[img] = ("SKIP", "no instances configured")
+                results[img] = ("SKIP", "no instances configured", "")
             continue
         for img in contents.get("images", []):
             jobs.append((img, group, instances))
@@ -1772,7 +1876,7 @@ def main() -> int:
     print(" SUMMARY ".center(84, "="))
     print("=" * 84)
     counts: dict[str, int] = defaultdict(int)
-    for status, _ in results.values():
+    for status, _, _ in results.values():
         counts[status] += 1
     print(
         f"totals: {counts['PASS']} PASS, "
@@ -1780,11 +1884,15 @@ def main() -> int:
         f"{counts['SKIP']} SKIP\n"
     )
     for want in ("FAIL", "SKIP", "PASS"):
-        for img, (status, note) in results.items():
+        for img, (status, note, instance) in results.items():
             if status != want:
                 continue
+            # CPU sentinel ('__cpu_auto__') would just be noise in the
+            # summary — translate it to a readable label.
+            inst_label = "CPU" if instance == CPU_INSTANCE_SENTINEL else instance
+            inst_str = f" [{inst_label}]" if inst_label else ""
             note_str = f" -- {note}" if note else ""
-            print(f"  {want:6s} {img}{note_str}")
+            print(f"  {want:6s} {img}{inst_str}{note_str}")
 
     return 0 if counts["FAIL"] == 0 else 1
 
