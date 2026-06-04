@@ -163,7 +163,7 @@ def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
         inst
         for instances in resolved.values()
         for inst in instances
-        if inst != config.CPU_INSTANCE_SENTINEL and not is_known_gpu(inst)
+        if not config.is_cpu_instance(inst) and not is_known_gpu(inst)
     })
     if not unmapped:
         return
@@ -296,7 +296,14 @@ def _format_result_line(want: str, img: str, status: str, note: str,
     readable label so the summary doesn't show '__cpu_auto__'."""
     if status != want:
         return None
-    inst_label = "CPU" if instance == config.CPU_INSTANCE_SENTINEL else instance
+    # CPU labels are already human-readable ('cpu-default', 'cpu-2vcpu-8gb',
+    # …), so they go to the summary verbatim. Legacy bare `__cpu_auto__`
+    # (still recognised by is_cpu_instance for back-compat) gets relabelled
+    # to a plain 'CPU' so old runs don't read as gibberish.
+    if instance == config.CPU_INSTANCE_SENTINEL:
+        inst_label = "CPU"
+    else:
+        inst_label = instance
     inst_str = f" [{inst_label}]" if inst_label else ""
     note_str = f" -- {note}" if note else ""
     return f"  {want:6s} {img}{inst_str}{note_str}"

@@ -46,11 +46,17 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
     """Log the per-attempt header line and resolve the gpu_id.
 
     Returns (is_cpu, gpu_id). CPU attempts get an empty gpu_id since
-    runpodctl doesn't accept --gpu-id together with --compute-type CPU."""
-    is_cpu = instance == config.CPU_INSTANCE_SENTINEL
-    if is_cpu:
-        log("attempt: CPU pod (--compute-type CPU, flavor chosen by RunPod)",
-            indent=1)
+    runpodctl doesn't accept --gpu-id together with --compute-type CPU.
+    Per-flavor (vcpu, mem) values are looked up separately by the caller
+    via `config.cpu_flavor_for(instance)`."""
+    if config.is_cpu_instance(instance):
+        flavor = config.cpu_flavor_for(instance)
+        resource_note = (
+            f" (--vcpu {flavor.vcpu} --mem {flavor.mem})"
+            if flavor.vcpu or flavor.mem
+            else " (flavor chosen by RunPod)"
+        )
+        log(f"attempt: CPU pod '{instance}'{resource_note}", indent=1)
         return True, ""
     gpu_id = resolve_gpu_id(instance)
     cuda = detect_cuda_version(image) or config.GROUP_MIN_CUDA.get(group)
@@ -63,7 +69,7 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
 
 
 def _create_pod_with_retries(
-    image: str, gpu_id: str, is_cpu: bool, group: str,
+    image: str, instance: str, gpu_id: str, is_cpu: bool, group: str,
 ) -> tuple[Optional[str], str, str]:
     """Drive `create_pod` through the transient-error retry budget.
 
@@ -77,6 +83,10 @@ def _create_pod_with_retries(
     when several workers race for the same scarce GPU at the same instant.
     We back off and retry a few times before falling through to CREATE_FAIL.
     """
+    # CPU flavor is encoded in the instance label (see config.CPU_FLAVORS);
+    # GPU instances always come with zeroed flavor so the kwargs become
+    # a no-op in pod.create_pod's GPU branch.
+    flavor = config.cpu_flavor_for(instance) if is_cpu else config.CpuFlavor(0, 0)
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
         # New name on each attempt — RunPod may keep a server-side record
@@ -91,6 +101,8 @@ def _create_pod_with_retries(
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
             test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
+            cpu_vcpu=flavor.vcpu,
+            cpu_mem=flavor.mem,
         )
         if pod_id:
             return pod_id, "", ""
@@ -270,7 +282,7 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
     is_cpu, gpu_id = _log_attempt_header(image, instance, group)
 
     pod_id, early, early_detail = _create_pod_with_retries(
-        image, gpu_id, is_cpu, group,
+        image, instance, gpu_id, is_cpu, group,
     )
     if early:
         return early, early_detail

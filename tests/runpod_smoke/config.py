@@ -10,6 +10,7 @@ would capture them at import time and miss runtime updates from main().
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 
@@ -128,12 +129,97 @@ JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
 # Sentinels
 # ---------------------------------------------------------------------------
 
-# `instance` value used by CPU groups in place of a GPU display name.
-# `instances.resolve_instances()` returns this for CPU groups so the
-# per-instance loop in `runner.test_image()` runs exactly once;
-# `runner.test_pair()` recognises it and switches into the CPU pod-create
-# path (no --gpu-id, --compute-type CPU).
+# CPU "instance" candidates. runpodctl 2.3.0 doesn't expose a
+# --cpu-flavor / --instance-id flag (--gpu-id is rejected for
+# --compute-type CPU), so we steer RunPod's CPU-flavor picker via the
+# resource-minimum flags it DOES accept: `--vcpu` (min vCPUs) and
+# `--mem` (min RAM, GB). Different (vcpu, mem) asks land in different
+# flavor pools — when the cheapest tier is saturated and pod-create
+# returns "no capacity", a beefier ask often still has free machines.
+# `instances.resolve_instances` returns each label as a separate
+# "instance" so the existing per-instance retry loop in
+# `runner.test_image` iterates over them just like it does for GPUs.
+#
+# Override via `CPU_FLAVORS` env. Format:
+#   CPU_FLAVORS="label1:vcpu:mem,label2:vcpu:mem,..."
+# vcpu/mem of 0 means "omit the flag" (let RunPod pick). Empty / malformed
+# value falls back to DEFAULT_CPU_FLAVORS.
+
+
+@dataclass(frozen=True)
+class CpuFlavor:
+    """RunPod CPU pod resource ask. vcpu / mem are MINIMUMS — RunPod
+    rounds up to the cheapest flavor that fits. Setting either to 0
+    omits the corresponding runpodctl flag entirely (lets the scheduler
+    pick freely)."""
+    vcpu: int
+    mem: int
+
+
+# First entry intentionally has no resource floor — matches the legacy
+# 2.3.0 behaviour and lands on whatever cheapest CPU flavor RunPod has.
+# The other two bump (vcpu, mem) to steer the scheduler into larger
+# flavor pools when the cheap tier is fully booked. Smoke-test workload
+# is trivial (boot + dwell), so the extra cost per attempt is ≪ $0.05.
+DEFAULT_CPU_FLAVORS: dict[str, CpuFlavor] = {
+    "cpu-default": CpuFlavor(vcpu=0, mem=0),
+    "cpu-2vcpu-8gb": CpuFlavor(vcpu=2, mem=8),
+    "cpu-4vcpu-16gb": CpuFlavor(vcpu=4, mem=16),
+}
+
+
+def _parse_cpu_flavors(raw: str) -> dict[str, CpuFlavor]:
+    """Parse 'label:vcpu:mem,label:vcpu:mem,...' into a label→CpuFlavor
+    mapping. Malformed entries are dropped silently; empty / all-malformed
+    input falls back to DEFAULT_CPU_FLAVORS so the smoke-test never ends
+    up with zero CPU candidates."""
+    if not raw.strip():
+        return DEFAULT_CPU_FLAVORS
+    out: dict[str, CpuFlavor] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(":")
+        if len(parts) != 3:
+            continue
+        label, vcpu_s, mem_s = (p.strip() for p in parts)
+        if not label:
+            continue
+        try:
+            out[label] = CpuFlavor(vcpu=int(vcpu_s), mem=int(mem_s))
+        except ValueError:
+            continue
+    return out or DEFAULT_CPU_FLAVORS
+
+
+CPU_FLAVORS: dict[str, CpuFlavor] = _parse_cpu_flavors(
+    os.environ.get("CPU_FLAVORS", "")
+)
+
+
+# Legacy single-sentinel kept for back-compat with anything that imported
+# it (e.g. older `images:` manifests that hard-code `__cpu_auto__`). New
+# code consults `is_cpu_instance()` instead of comparing strings directly.
 CPU_INSTANCE_SENTINEL = "__cpu_auto__"
+
+
+def is_cpu_instance(instance: str) -> bool:
+    """True if `instance` is one of the CPU sentinels (legacy bare value
+    or a label from CPU_FLAVORS). Used in place of
+    `== CPU_INSTANCE_SENTINEL` so call sites don't have to know about
+    the multi-flavor expansion."""
+    return instance == CPU_INSTANCE_SENTINEL or instance in CPU_FLAVORS
+
+
+def cpu_flavor_for(instance: str) -> CpuFlavor:
+    """Look up the CpuFlavor for a CPU sentinel. The legacy bare
+    `__cpu_auto__` returns a zeroed flavor (no --vcpu / --mem flags).
+    Unknown labels also return zeroed flavor — safer than crashing
+    in a smoke-test that's already trying its hardest to keep going."""
+    if instance == CPU_INSTANCE_SENTINEL:
+        return CpuFlavor(vcpu=0, mem=0)
+    return CPU_FLAVORS.get(instance, CpuFlavor(vcpu=0, mem=0))
 
 
 # ---------------------------------------------------------------------------

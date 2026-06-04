@@ -182,14 +182,18 @@ def create_pod(
     compute_type: str = "GPU",
     group: Optional[str] = None,
     test_jupyter: bool = False,
+    cpu_vcpu: int = 0,
+    cpu_mem: int = 0,
 ) -> tuple[Optional[str], str]:
     """Create a pod via `runpodctl pod create`. Returns (pod_id, raw_output).
 
     compute_type='GPU' uses --gpu-id to target a specific GPU type (caller
     must pass a non-empty gpu_id).
-    compute_type='CPU' creates a CPU pod; runpodctl 2.3.0 does NOT let us
-    pick a specific CPU flavor (--gpu-id is rejected for CPU), so RunPod
-    chooses one for us. gpu_id is ignored in CPU mode.
+    compute_type='CPU' creates a CPU pod. runpodctl 2.3.0 doesn't expose
+    a `--cpu-flavor` flag, but we can steer the scheduler via the
+    resource-minimum flags `--vcpu` and `--mem`. `cpu_vcpu` / `cpu_mem`
+    > 0 are passed through verbatim; 0 means "omit the flag" (let RunPod
+    pick the cheapest available flavor). gpu_id is ignored in CPU mode.
 
     `group` is used to look up `min_cuda_version` from the manifest when
     the image tag doesn't encode a CUDA version (e.g. NGC
@@ -222,6 +226,13 @@ def create_pod(
         args.extend(["--compute-type", "CPU"])
         # CPU images have no CUDA, no GPU — `--min-cuda-version` would be
         # nonsensical and `--gpu-id` is rejected by runpodctl for CPU pods.
+        # Optional resource minimums steer RunPod's flavor picker into a
+        # different pool, giving us more shots at scheduling when the
+        # default (cheapest) tier is saturated.
+        if cpu_vcpu > 0:
+            args.extend(["--vcpu", str(cpu_vcpu)])
+        if cpu_mem > 0:
+            args.extend(["--mem", str(cpu_mem)])
     else:
         args.extend(["--gpu-id", gpu_id, "--gpu-count", "1"])
         # Constrain scheduling to hosts whose driver supports this image's
