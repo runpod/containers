@@ -191,6 +191,63 @@ def _apply_exclude_filter(
     return survivors
 
 
+def _gpu_matches_budget(
+    gpu: dict,
+    *,
+    price_field: str,
+    max_price: float,
+    min_vram: int,
+    manufacturer: str,
+) -> Optional[tuple[float, str]]:
+    """Return `(price, displayName)` if `gpu` survives the budget filter,
+    else None. Single-row predicate so the caller's loop stays flat."""
+    price = gpu.get(price_field) or 0
+    # price=0 in catalog usually means "not offered in this cloud type" —
+    # skip rather than mistakenly treat as free.
+    if price <= 0 or price > max_price:
+        return None
+    if gpu.get("memoryInGb", 0) < min_vram:
+        return None
+    if manufacturer and (gpu.get("manufacturer") or "").lower() != manufacturer:
+        return None
+    name = gpu.get("displayName")
+    return (float(price), name) if name else None
+
+
+def _select_by_budget(group_name: str, group_config: dict) -> list[str]:
+    """Pick GPUs from `config.GPU_CATALOG` that fit the budget filters,
+    sorted cheapest-first. Returns [] (and logs a warn) when the catalog
+    is empty — typically when `RUNPOD_API_KEY` isn't set."""
+    if not config.GPU_CATALOG:
+        log(
+            f"warn: group '{group_name}' uses max_price_per_hour but the "
+            "GPU catalog (with prices) is empty — set RUNPOD_API_KEY or use "
+            "an explicit instances: list",
+        )
+        return []
+
+    price_field = (
+        "communityPrice" if config.CLOUD_TYPE.upper() == "COMMUNITY"
+        else "securePrice"
+    )
+    max_price = float(group_config["max_price_per_hour"])
+    min_vram = int(group_config.get("min_vram_gb", 0))
+    manufacturer = (group_config.get("manufacturer") or "").lower()
+
+    matches = (
+        _gpu_matches_budget(
+            gpu,
+            price_field=price_field,
+            max_price=max_price,
+            min_vram=min_vram,
+            manufacturer=manufacturer,
+        )
+        for gpu in config.GPU_CATALOG
+    )
+    candidates = sorted((m for m in matches if m is not None), key=lambda x: x[0])
+    return [name for _, name in candidates]
+
+
 def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     """Decide which GPU display names this group should try, in order.
 
@@ -220,46 +277,10 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
 
     explicit = group_config.get("instances") or []
     if explicit:
-        return _apply_exclude_filter(
-            list(explicit), exclude_patterns, group_name=group_name
-        )
-
-    max_price = group_config.get("max_price_per_hour")
-    if max_price is None:
+        names = list(explicit)
+    elif group_config.get("max_price_per_hour") is not None:
+        names = _select_by_budget(group_name, group_config)
+    else:
         return []
 
-    if not config.GPU_CATALOG:
-        log(
-            f"warn: group '{group_name}' uses max_price_per_hour but the "
-            "GPU catalog (with prices) is empty — set RUNPOD_API_KEY or use "
-            "an explicit instances: list",
-        )
-        return []
-
-    min_vram = group_config.get("min_vram_gb", 0)
-    manufacturer = (group_config.get("manufacturer") or "").lower()
-    price_field = (
-        "communityPrice" if config.CLOUD_TYPE.upper() == "COMMUNITY"
-        else "securePrice"
-    )
-
-    candidates: list[tuple[float, str]] = []
-    for gpu in config.GPU_CATALOG:
-        price = gpu.get(price_field) or 0
-        # price=0 in catalog usually means "not offered in this cloud type"
-        # — skip rather than mistakenly treat as free.
-        if price <= 0 or price > float(max_price):
-            continue
-        if gpu.get("memoryInGb", 0) < int(min_vram):
-            continue
-        if manufacturer and (gpu.get("manufacturer") or "").lower() != manufacturer:
-            continue
-        name = gpu.get("displayName")
-        if name:
-            candidates.append((float(price), name))
-
-    candidates.sort(key=lambda x: x[0])
-    names = [name for _, name in candidates]
-    return _apply_exclude_filter(
-        names, exclude_patterns, group_name=group_name
-    )
+    return _apply_exclude_filter(names, exclude_patterns, group_name=group_name)

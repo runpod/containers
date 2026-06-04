@@ -18,6 +18,7 @@ import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional
 
 # When invoked via a symlink (we keep one at /tmp/runpod-scripts/testing/),
 # Python puts the symlink's directory on sys.path, NOT the directory that
@@ -43,19 +44,51 @@ from runpod_smoke.runpodctl import runpodctl
 from runpod_smoke.runner import test_image
 
 
-def main() -> int:
+# Each entry: (image, group, instances-to-try). One pod is created per
+# entry; the runner iterates instances internally until something settles.
+Job = tuple[str, str, list[str]]
+
+# Per-image outcome: (summary_status, note, instance_used). status is one
+# of "PASS" / "FAIL" / "SKIP". instance_used is "" when the test never
+# landed on any host (all UNAVAILABLE / STUCK).
+Result = tuple[str, str, str]
+
+
+# ---------------------------------------------------------------------------
+# CLI / preflight
+# ---------------------------------------------------------------------------
+
+
+def _parse_args() -> tuple[Path, Optional[str]]:
+    """argv → (manifest_path, optional group filter). No validation here
+    — that's `_check_prereqs`'s job."""
     images_path = Path(sys.argv[1] if len(sys.argv) > 1 else "images")
     group_filter = sys.argv[2] if len(sys.argv) > 2 else None
+    return images_path, group_filter
 
-    if not images_path.is_file():
-        log(f"Images manifest not found: {images_path}")
+
+def _check_prereqs(manifest_path: Path) -> Optional[int]:
+    """Return None on success, or an exit-code int on failure. Verifies:
+      1. the manifest file actually exists
+      2. `runpodctl user` succeeds (the CLI has a valid API key)
+    Anything else (GPU catalog, registry auth) is best-effort — the script
+    degrades gracefully if those are missing."""
+    if not manifest_path.is_file():
+        log(f"Images manifest not found: {manifest_path}")
         return 1
-
     auth = runpodctl("user", timeout=15)
     if auth.returncode != 0:
         log("runpodctl is not authenticated. Run 'runpodctl doctor'.")
         return 1
+    return None
 
+
+# ---------------------------------------------------------------------------
+# Runtime-state initialization (GPU map + catalog + registry auth)
+# ---------------------------------------------------------------------------
+
+
+def _init_gpu_catalog() -> None:
     config.GPU_ID_MAP.update(discover_gpu_id_map())
     log(f"discovered {len(config.GPU_ID_MAP)} GPU types from runpodctl")
 
@@ -72,6 +105,8 @@ def main() -> int:
             "ensure ~/.runpod/config.toml has 'apikey'."
         )
 
+
+def _init_registry_auth() -> None:
     if not config.REGISTRY_AUTH_ID:
         config.REGISTRY_AUTH_ID = (
             discover_registry_auth(config.REGISTRY_AUTH_NAME) or ""
@@ -84,10 +119,17 @@ def main() -> int:
             "anonymous and likely hit the toomanyrequests rate limit"
         )
 
-    manifest = parse_manifest(images_path)
 
-    # Collect manifest `min_cuda_version` fallbacks. Used by create_pod
-    # when an image tag doesn't encode CUDA itself (NGC `nvidia-pytorch:25.11`).
+# ---------------------------------------------------------------------------
+# Manifest derivatives (per-group lookup dicts) + instance resolution
+# ---------------------------------------------------------------------------
+
+
+def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
+    """Populate the per-group dicts on `config` that `pod.create_pod` and
+    `runner.test_pair` consult at run-time: `GROUP_MIN_CUDA` (fallback
+    CUDA version for tag-less images like NGC `nvidia-pytorch:25.11`)
+    and `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes)."""
     for grp, contents in manifest.items():
         normalized = _normalize_cuda_version(contents.get("min_cuda_version"))
         if normalized:
@@ -96,12 +138,8 @@ def main() -> int:
                 f"group '{grp}': min_cuda_version={normalized} "
                 "(applied when image tag has no embedded CUDA)"
             )
-
-    # Collect manifest `test_jupyter` opt-ins. Drives both pod creation
-    # (env + port) and the post-boot Jupyter probe.
     for grp, contents in manifest.items():
-        flag = _normalize_bool(contents.get("test_jupyter"))
-        if flag:
+        if _normalize_bool(contents.get("test_jupyter")):
             config.GROUP_TEST_JUPYTER[grp] = True
             log(
                 f"group '{grp}': test_jupyter=true "
@@ -109,59 +147,75 @@ def main() -> int:
                 "expose 8888/http)"
             )
 
-    # Resolve the instances list for each group now (so we can warn about
-    # typos / empty lists once, up front, instead of per-job). For
-    # explicit-list groups this is just a copy. For budget-based groups
-    # this queries the GPU catalog and picks cheapest-first. For
-    # `base_cpu` it returns a single sentinel value (RunPod picks the
-    # CPU flavor).
-    resolved_instances: dict[str, list[str]] = {}
-    for grp, contents in manifest.items():
-        resolved_instances[grp] = resolve_instances(grp, contents)
 
-    # Warn about explicit-list entries that don't match any known GPU
-    # display name — these would be passed to runpodctl verbatim and
-    # fail. Skip the CPU sentinel since it isn't a GPU name by design.
+def _resolve_all_instances(manifest: dict[str, dict]) -> dict[str, list[str]]:
+    """Per-group instance lookup — done up-front so we can warn about
+    typos / empty lists once, instead of per-job."""
+    return {grp: resolve_instances(grp, contents)
+            for grp, contents in manifest.items()}
+
+
+def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
+    """Surface manifest entries that don't map to any RunPod display name
+    (typos / casing) so the user sees them once at startup instead of
+    inside the per-job logs."""
     unmapped = sorted({
         inst
-        for grp, instances in resolved_instances.items()
+        for instances in resolved.values()
         for inst in instances
         if inst != config.CPU_INSTANCE_SENTINEL and not is_known_gpu(inst)
     })
-    if unmapped:
-        log(
-            f"warn: {len(unmapped)} instance(s) don't match any RunPod "
-            "displayName — check spelling/casing:"
-        )
-        for inst in unmapped:
-            log(f"  - {inst!r}", indent=1)
+    if not unmapped:
+        return
+    log(
+        f"warn: {len(unmapped)} instance(s) don't match any RunPod "
+        "displayName — check spelling/casing:"
+    )
+    for inst in unmapped:
+        log(f"  - {inst!r}", indent=1)
 
-    # Log the resolved instance list per group — especially useful when
-    # the user wrote `max_price_per_hour: X` and wants to see what was picked.
-    for grp, instances in resolved_instances.items():
+
+def _log_budget_picks(
+    manifest: dict[str, dict],
+    resolved: dict[str, list[str]],
+) -> None:
+    """For each budget-mode group, log what the catalog filter picked.
+    Particularly useful when the user wrote `max_price_per_hour: X` and
+    wants to see which GPUs cleared the threshold."""
+    for grp, instances in resolved.items():
         contents = manifest[grp]
-        if "max_price_per_hour" in contents and not contents.get("instances"):
-            budget = contents["max_price_per_hour"]
-            preview = ", ".join(instances[:8]) + (
-                f", ... (+{len(instances) - 8} more)" if len(instances) > 8 else ""
-            )
-            log(
-                f"group '{grp}': budget ≤ ${budget}/hr → {len(instances)} "
-                f"candidate(s): {preview or '(none — no GPU fits)'}"
-            )
+        if "max_price_per_hour" not in contents or contents.get("instances"):
+            continue
+        budget = contents["max_price_per_hour"]
+        preview = ", ".join(instances[:8]) + (
+            f", ... (+{len(instances) - 8} more)" if len(instances) > 8 else ""
+        )
+        log(
+            f"group '{grp}': budget ≤ ${budget}/hr → {len(instances)} "
+            f"candidate(s): {preview or '(none — no GPU fits)'}"
+        )
 
-    # results[image] = (status, note, instance_used). `instance_used` lets
-    # the summary report which GPU each test landed on (handy when an
-    # image FAILed because of an unlucky host pairing, not an actual bug).
-    results: dict[str, tuple[str, str, str]] = {}
 
-    # Flatten the manifest into a list of (image, group, instances) jobs
-    # that can run independently. Skip groups we can't actually exercise.
-    jobs: list[tuple[str, str, list[str]]] = []
+# ---------------------------------------------------------------------------
+# Job fan-out
+# ---------------------------------------------------------------------------
+
+
+def _build_jobs(
+    manifest: dict[str, dict],
+    resolved: dict[str, list[str]],
+    group_filter: Optional[str],
+    results: dict[str, Result],
+) -> list[Job]:
+    """Flatten the manifest into a list of `(image, group, instances)`
+    jobs that can run independently. Groups with no resolvable instances
+    are recorded directly into `results` as SKIPs (caller handles the
+    summary print)."""
+    jobs: list[Job] = []
     for group, contents in manifest.items():
         if group_filter and group != group_filter:
             continue
-        instances = resolved_instances.get(group, [])
+        instances = resolved.get(group, [])
         if not instances:
             log(
                 f"skipping group '{group}': no instances resolved "
@@ -173,48 +227,83 @@ def main() -> int:
             continue
         for img in contents.get("images", []):
             jobs.append((img, group, instances))
+    return jobs
 
+
+# ---------------------------------------------------------------------------
+# Job execution
+# ---------------------------------------------------------------------------
+
+
+def _run_jobs_serial(jobs: list[Job], results: dict[str, Result]) -> None:
+    """Single-threaded run — no worker tags, simpler logs, group-header
+    banner each time the group changes."""
+    current_group: Optional[str] = None
+    for img, group, instances in jobs:
+        if group != current_group:
+            print()
+            log(f"---------- group: {group} ----------")
+            current_group = group
+        results[img] = test_image(img, instances, group)
+
+
+def _run_one_tagged_job(job: Job) -> tuple[str, Result]:
+    """ThreadPool worker. The W<N> tag is assigned to the THREAD (not the
+    job), so e.g. with 5 jobs and 3 workers you still see only W1/W2/W3,
+    each handling 1-2 jobs sequentially."""
+    img, grp, insts = job
+    ensure_worker_tag()
+    log(f"start [group={grp}] image={img}")
+    res = test_image(img, insts, grp)
+    log(f"done  [group={grp}] image={img} -> {res[0]}")
+    return img, res
+
+
+def _run_jobs_parallel(jobs: list[Job], results: dict[str, Result]) -> None:
+    """ThreadPool fan-out capped at MAX_PARALLEL. Each worker holds at
+    most one pod at a time."""
+    with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL) as pool:
+        futures = [pool.submit(_run_one_tagged_job, job) for job in jobs]
+        for fut in as_completed(futures):
+            img, res = fut.result()
+            results[img] = res
+
+
+def _run_jobs(jobs: list[Job], results: dict[str, Result]) -> None:
     if not jobs:
         log("no jobs to run after filtering")
+        return
+    print()
+    log(
+        f"==================== running {len(jobs)} job(s) "
+        f"with MAX_PARALLEL={config.MAX_PARALLEL} ===================="
+    )
+    if config.MAX_PARALLEL <= 1:
+        _run_jobs_serial(jobs, results)
     else:
-        print()
-        log(
-            f"==================== running {len(jobs)} job(s) "
-            f"with MAX_PARALLEL={config.MAX_PARALLEL} ===================="
-        )
+        _run_jobs_parallel(jobs, results)
 
-        if config.MAX_PARALLEL <= 1:
-            # Serial mode — simpler logs, no worker tags.
-            current_group = None
-            for img, group, instances in jobs:
-                if group != current_group:
-                    print()
-                    log(f"---------- group: {group} ----------")
-                    current_group = group
-                results[img] = test_image(img, instances, group)
-        else:
-            # Parallel mode — tag each pool thread so output is readable
-            # when multiple pods are progressing at the same time. The
-            # tag is assigned to the thread (not the job), so e.g. with
-            # 5 jobs and 3 workers you still see only W1/W2/W3, each
-            # handling 1-2 jobs.
-            def _run_job(img: str, grp: str, insts: list[str]):
-                ensure_worker_tag()
-                log(f"start [group={grp}] image={img}")
-                res = test_image(img, insts, grp)
-                log(f"done  [group={grp}] image={img} -> {res[0]}")
-                return img, res
 
-            with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL) as pool:
-                futures = [
-                    pool.submit(_run_job, img, grp, insts)
-                    for img, grp, insts in jobs
-                ]
-                for fut in as_completed(futures):
-                    img, res = fut.result()
-                    results[img] = res
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
 
-    # ----- Summary -----
+
+def _format_result_line(want: str, img: str, status: str, note: str,
+                        instance: str) -> Optional[str]:
+    """Format one row of the summary, or None when this result doesn't
+    belong in the `want` bucket. CPU sentinel gets translated to a
+    readable label so the summary doesn't show '__cpu_auto__'."""
+    if status != want:
+        return None
+    inst_label = "CPU" if instance == config.CPU_INSTANCE_SENTINEL else instance
+    inst_str = f" [{inst_label}]" if inst_label else ""
+    note_str = f" -- {note}" if note else ""
+    return f"  {want:6s} {img}{inst_str}{note_str}"
+
+
+def _print_summary(results: dict[str, Result]) -> int:
+    """Print the SUMMARY block and return the exit code (0 if no FAIL)."""
     print()
     print("=" * 84)
     print(" SUMMARY ".center(84, "="))
@@ -229,18 +318,39 @@ def main() -> int:
     )
     for want in ("FAIL", "SKIP", "PASS"):
         for img, (status, note, instance) in results.items():
-            if status != want:
-                continue
-            # CPU sentinel ('__cpu_auto__') would just be noise in the
-            # summary — translate it to a readable label.
-            inst_label = (
-                "CPU" if instance == config.CPU_INSTANCE_SENTINEL else instance
-            )
-            inst_str = f" [{inst_label}]" if inst_label else ""
-            note_str = f" -- {note}" if note else ""
-            print(f"  {want:6s} {img}{inst_str}{note_str}")
-
+            line = _format_result_line(want, img, status, note, instance)
+            if line is not None:
+                print(line)
     return 0 if counts["FAIL"] == 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    manifest_path, group_filter = _parse_args()
+
+    rc = _check_prereqs(manifest_path)
+    if rc is not None:
+        return rc
+
+    _init_gpu_catalog()
+    _init_registry_auth()
+
+    manifest = parse_manifest(manifest_path)
+    _apply_manifest_overrides(manifest)
+
+    resolved = _resolve_all_instances(manifest)
+    _warn_unknown_instances(resolved)
+    _log_budget_picks(manifest, resolved)
+
+    results: dict[str, Result] = {}
+    jobs = _build_jobs(manifest, resolved, group_filter, results)
+    _run_jobs(jobs, results)
+
+    return _print_summary(results)
 
 
 if __name__ == "__main__":

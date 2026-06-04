@@ -25,6 +25,12 @@ from .log import log
 from .runpodctl import runpodctl_json
 
 
+# Error string returned by every helper that shells out to `ssh` and fails
+# because the binary isn't on $PATH. Centralised so the message stays
+# identical across helpers (callers grep for it in logs).
+_SSH_BINARY_NOT_FOUND = "ssh binary not found"
+
+
 # ---------------------------------------------------------------------------
 # SSH plumbing
 # ---------------------------------------------------------------------------
@@ -71,7 +77,7 @@ def ssh_probe(host: str, port: int, timeout: int = 8) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, "ssh probe timed out"
     except FileNotFoundError:
-        return False, "ssh binary not found"
+        return False, _SSH_BINARY_NOT_FOUND
     if r.returncode == 0 and "ready" in r.stdout:
         return True, ""
     return False, (r.stderr or r.stdout).strip()[:200]
@@ -121,13 +127,12 @@ def _image_expects_torch(image: str) -> bool:
     return bool(_TORCH_TAG_RE.search(image))
 
 
-def cuda_check_command(group: str, image: str) -> str:
+def cuda_check_command(image: str) -> str:
     """Return a shell command that functionally validates the GPU/CUDA stack
     for a given image, or '' to skip the check (CPU images).
 
-    Selection is driven by the IMAGE REF, not the manifest `group` name:
+    Selection is driven by the IMAGE REF (not the manifest group name) so
     new manifest groups added in the future won't silently skip the check.
-    `group` is accepted for log/report context only.
 
     Logic:
         - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
@@ -187,13 +192,13 @@ def cuda_check_command(group: str, image: str) -> str:
     return ""
 
 
-def run_cuda_check(host: str, port: int, group: str, image: str) -> tuple[bool, str]:
+def run_cuda_check(host: str, port: int, image: str) -> tuple[bool, str]:
     """Run the GPU/CUDA functional check inside the pod over SSH.
     Returns (ok, output). ok=True when:
       * the image has no GPU check defined (treated as pass), OR
       * the remote command exits 0.
     output contains stdout+stderr for inclusion in the run log."""
-    cmd = cuda_check_command(group, image)
+    cmd = cuda_check_command(image)
     if not cmd:
         return True, "(no GPU check for this image)"
     ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
@@ -202,7 +207,7 @@ def run_cuda_check(host: str, port: int, group: str, image: str) -> tuple[bool, 
     except subprocess.TimeoutExpired:
         return False, "cuda check timed out after 60s"
     except FileNotFoundError:
-        return False, "ssh binary not found"
+        return False, _SSH_BINARY_NOT_FOUND
     combined = (r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
 
@@ -279,7 +284,7 @@ def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, f"jupyter check timed out after {outer_timeout}s"
     except FileNotFoundError:
-        return False, "ssh binary not found"
+        return False, _SSH_BINARY_NOT_FOUND
     combined = (r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
 
@@ -326,7 +331,10 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
         except urllib.error.HTTPError as e:
             last_err = f"HTTP {e.code} {e.reason}"
             lines.append(f"attempt #{attempt}: {last_err}")
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except OSError as exc:
+            # urllib.error.URLError and the builtin TimeoutError both derive
+            # from OSError, so this single clause covers connection refused,
+            # DNS failures, socket timeouts, and 'No route to host' alike.
             last_err = f"{type(exc).__name__}: {exc}"
             lines.append(f"attempt #{attempt}: {last_err}")
         time.sleep(5)

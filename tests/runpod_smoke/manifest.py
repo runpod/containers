@@ -53,6 +53,51 @@ def _normalize_cuda_version(value: object) -> Optional[str]:
     return str(value).strip().strip('"').strip("'") or None
 
 
+def _strip_quotes(s: str) -> tuple[str, bool]:
+    """Strip a matching pair of surrounding quotes (single or double).
+    Returns (value_without_quotes, was_quoted). Quoted values are not
+    further coerced to numbers / booleans — the user asked for a string
+    by quoting it."""
+    if len(s) >= 2 and (
+        (s[0] == s[-1] == '"') or (s[0] == s[-1] == "'")
+    ):
+        return s[1:-1], True
+    return s, False
+
+
+def _coerce_scalar(raw: str) -> object:
+    """Coerce an unquoted scalar value to bool / int / float, falling
+    back to the raw string when nothing matches.
+
+    Quoted values bypass this entirely (handled by `_strip_quotes`'s
+    `was_quoted` flag in the caller) so `"13.0"` stays a string while
+    bare `13.0` becomes a float.
+    """
+    if _TRUE_RE.match(raw):
+        return True
+    if _FALSE_RE.match(raw):
+        return False
+    try:
+        return int(raw) if raw.lstrip("-").isdigit() else float(raw)
+    except ValueError:
+        return raw
+
+
+def _classify_line(line: str, stripped: str) -> str:
+    """Tag every non-blank, non-comment manifest line by its role.
+    One of: 'group_header', 'list_key', 'scalar_kv', 'list_item', 'noop'."""
+    if not line.startswith(" ") and line.endswith(":"):
+        return "group_header"
+    if line.startswith("    ") and line.endswith(":"):
+        return "list_key"
+    if stripped.startswith("- "):
+        return "list_item"
+    if (line.startswith("    ") and ":" in stripped
+            and not stripped.endswith(":")):
+        return "scalar_kv"
+    return "noop"
+
+
 def parse_manifest(path: Path) -> dict[str, dict]:
     """Parse a fixed-format manifest:
 
@@ -66,8 +111,9 @@ def parse_manifest(path: Path) -> dict[str, dict]:
             manufacturer: Nvidia        # extra filter (optional)
 
     Supports both list values (`images:`, `instances:`) and scalar values
-    (`max_price_per_hour: 1.0`). Scalars are auto-coerced to int/float when
-    they look numeric, otherwise kept as strings.
+    (`max_price_per_hour: 1.0`). Scalars are auto-coerced to int/float
+    when they look numeric, otherwise kept as strings. Surrounding
+    quotes on scalars or list items are stripped and disable coercion.
     """
     data: dict[str, dict] = {}
     group: Optional[str] = None
@@ -78,57 +124,25 @@ def parse_manifest(path: Path) -> dict[str, dict]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if not line.startswith(" ") and line.endswith(":"):
+
+        kind = _classify_line(line, stripped)
+
+        if kind == "group_header":
             group = line[:-1].strip()
             data[group] = {}
             current_list = None
-        elif line.startswith("    ") and line.endswith(":"):
+        elif kind == "list_key":
             assert group is not None, f"List key {line!r} before any group"
             key = stripped[:-1]
             data[group][key] = []
             current_list = data[group][key]
-        elif (line.startswith("    ") and ":" in stripped
-              and not stripped.startswith("- ")
-              and not stripped.endswith(":")):
-            # Scalar key: value (e.g. 'max_price_per_hour: 1.0').
+        elif kind == "scalar_kv":
             assert group is not None, f"Scalar key {line!r} before any group"
             key, _, value = stripped.partition(":")
-            key = key.strip()
-            value = value.strip()
-            # Strip optional surrounding quotes so `min_cuda_version: "13.0"`
-            # is parsed identically to `min_cuda_version: 13.0`. Numeric
-            # and bool coercion are attempted only on unquoted values.
-            quoted = len(value) >= 2 and (
-                (value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")
-            )
-            if quoted:
-                value = value[1:-1]
-            parsed: object
-            if quoted:
-                parsed = value
-            elif _TRUE_RE.match(value):
-                parsed = True
-            elif _FALSE_RE.match(value):
-                parsed = False
-            else:
-                try:
-                    parsed = (
-                        int(value) if value.lstrip("-").isdigit() else float(value)
-                    )
-                except ValueError:
-                    parsed = value
-            data[group][key] = parsed
+            value, quoted = _strip_quotes(value.strip())
+            data[group][key.strip()] = value if quoted else _coerce_scalar(value)
             current_list = None
-        elif stripped.startswith("- ") and current_list is not None:
-            item = stripped[2:].strip()
-            # Strip optional surrounding quotes so users can write
-            # `- "*Blackwell*"` (needed if they want the leading `*` to
-            # avoid confusing a stricter YAML parser later). YAML treats
-            # both forms identically — we do too.
-            if len(item) >= 2 and (
-                (item[0] == item[-1] == '"')
-                or (item[0] == item[-1] == "'")
-            ):
-                item = item[1:-1]
+        elif kind == "list_item" and current_list is not None:
+            item, _quoted = _strip_quotes(stripped[2:].strip())
             current_list.append(item)
     return data

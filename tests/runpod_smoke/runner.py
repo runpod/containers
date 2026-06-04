@@ -154,9 +154,9 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
         # "does this image actually work" gate — distinct from "did it boot".
         st = pod_state(pod_id)
         host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
-        if host and port and cuda_check_command(group, image):
+        if host and port and cuda_check_command(image):
             log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
-            ok, output = run_cuda_check(host, int(port), group, image)
+            ok, output = run_cuda_check(host, int(port), image)
             for line in (output or "").splitlines():
                 log(f"  {line}", indent=2)
             if not ok:

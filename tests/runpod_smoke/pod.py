@@ -279,6 +279,59 @@ def pod_status(pod_id: str) -> Optional[str]:
     return pod_state(pod_id).get("desired")
 
 
+# Top-level fields on `pod get` that may carry a runtime error message
+# directly. Checked verbatim with `isinstance(value, str)`.
+_DIRECT_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage",
+                        "lastStatusChange")
+
+# Same as above but expected on the nested `runtime` dict that RunPod
+# returns alongside top-level fields.
+_RUNTIME_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage")
+
+# Fields whose value is a list of event objects (or strings); each item's
+# `message` is harvested. `events` is the standard one; the other two
+# show up on older `pod get` responses.
+_EVENT_LIST_FIELDS = ("events", "statusEvents", "containerEvents")
+
+# Fields whose value is a single block of log lines that may contain
+# pull-time errors not surfaced anywhere else.
+_LOG_BLOCK_FIELDS = ("containerLogs", "logs")
+
+
+def _collect_string_field(target: list[str], src: dict, key: str) -> None:
+    val = src.get(key)
+    if isinstance(val, str) and val:
+        target.append(val)
+
+
+def _collect_event_messages(target: list[str], events: object) -> None:
+    if not isinstance(events, list):
+        return
+    for ev in events:
+        msg = ev.get("message") if isinstance(ev, dict) else str(ev)
+        if isinstance(msg, str) and msg:
+            target.append(msg)
+
+
+def _gather_runtime_error_candidates(data: dict) -> list[str]:
+    """Walk every plausible place RunPod stuffs a runtime/pull error,
+    return a flat list of candidate lines. Doesn't filter — that's
+    `pod_runtime_error`'s job."""
+    runtime = data.get("runtime") or {}
+    candidates: list[str] = []
+    for key in _DIRECT_ERROR_FIELDS:
+        _collect_string_field(candidates, data, key)
+    for key in _RUNTIME_ERROR_FIELDS:
+        _collect_string_field(candidates, runtime, key)
+    for key in _EVENT_LIST_FIELDS:
+        _collect_event_messages(candidates, data.get(key) or runtime.get(key))
+    for key in _LOG_BLOCK_FIELDS:
+        val = data.get(key) or runtime.get(key)
+        if isinstance(val, str):
+            candidates.extend(val.splitlines())
+    return candidates
+
+
 def pod_runtime_error(pod_id: str) -> Optional[str]:
     """Inspect pod-get response for container-runtime errors (pull failures,
     bad images, etc.) that appear *before* the pod ever reaches RUNNING.
@@ -286,29 +339,7 @@ def pod_runtime_error(pod_id: str) -> Optional[str]:
     data = runpodctl_json("pod", "get", pod_id, timeout=30)
     if not isinstance(data, dict):
         return None
-    candidates: list[str] = []
-    for key in ("lastError", "errorMessage", "statusMessage", "lastStatusChange"):
-        val = data.get(key)
-        if isinstance(val, str) and val:
-            candidates.append(val)
-    runtime = data.get("runtime") or {}
-    for key in ("lastError", "errorMessage", "statusMessage"):
-        val = runtime.get(key)
-        if isinstance(val, str) and val:
-            candidates.append(val)
-    for events_field in ("events", "statusEvents", "containerEvents"):
-        events = data.get(events_field) or runtime.get(events_field)
-        if isinstance(events, list):
-            for ev in events:
-                msg = ev.get("message") if isinstance(ev, dict) else str(ev)
-                if isinstance(msg, str) and msg:
-                    candidates.append(msg)
-    # Pull errors sometimes only land in container logs.
-    for key in ("containerLogs", "logs"):
-        val = data.get(key) or runtime.get(key)
-        if isinstance(val, str):
-            candidates.extend(val.splitlines())
-    for line in candidates:
+    for line in _gather_runtime_error_candidates(data):
         if RUNTIME_ERROR_RE.search(line):
             return line.strip()[:300]
     return None
@@ -317,6 +348,65 @@ def pod_runtime_error(pod_id: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Wait for the pod to become reachable
 # ---------------------------------------------------------------------------
+
+
+# Pod-lifecycle states that mean "we will never become RUNNING — stop polling".
+_TERMINAL_DESIRED = {"EXITED", "FAILED", "DEAD", "TERMINATED"}
+
+
+def _print_stall_hint(pod_id: str, elapsed: int) -> None:
+    """One-time hint for pods that sit with no SSH endpoint for too long.
+
+    RunPod doesn't surface pull progress via API/CLI, so this points the
+    user at the UI plus the single most common root cause — Docker Hub
+    rate-limiting an anonymous pull.
+    """
+    log(
+        f"pod still has no SSH endpoint after {elapsed}s. "
+        "Most common cause is a slow or throttled image pull. "
+        "Check the UI for pull progress: "
+        f"https://www.runpod.io/console/pods/{pod_id}",
+        indent=2,
+    )
+    log(
+        "If you see 'toomanyrequests' in the UI logs, you've hit the "
+        "Docker Hub pull rate limit — wait 6h, log in to a paid Docker "
+        "Hub account, or reduce MAX_PARALLEL.",
+        indent=2,
+    )
+
+
+def _probe_ssh_endpoint(
+    host: str,
+    port: int,
+    desired: object,
+    elapsed: int,
+    ssh_attempts: int,
+    last_summary: Optional[tuple],
+) -> tuple[Optional[tuple[str, str]], tuple]:
+    """One SSH probe against an assigned endpoint. Returns:
+        (outcome | None, summary_for_dedup)
+
+    `outcome` is `("RUNNING", detail)` when the probe succeeds; otherwise
+    None — caller keeps polling. `summary_for_dedup` is the value the
+    caller compares against `last_summary` to dedup the log line.
+    """
+    ok, err = ssh_probe(host, port, timeout=8)
+    summary = (desired, host, port, ok)
+    if summary != last_summary:
+        log(
+            f"t+{elapsed}s endpoint=root@{host}:{port} "
+            f"ssh_probe={'OK' if ok else 'FAIL'} (#{ssh_attempts})"
+            + (f" — {err}" if not ok and err else ""),
+            indent=2,
+        )
+    if ok:
+        return (
+            "RUNNING",
+            f"ssh probe succeeded after {elapsed}s "
+            f"({ssh_attempts} attempts, endpoint root@{host}:{port})",
+        ), summary
+    return None, summary
 
 
 def wait_for_running(pod_id: str) -> tuple[str, str]:
@@ -352,58 +442,32 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
             continue
 
         desired = st.get("desired")
-        uptime = st.get("uptime") or 0
         host = st.get("ssh_ip") or ""
         port = st.get("ssh_port") or 0
         elapsed = int(time.time() - start)
 
-        if desired in ("EXITED", "FAILED", "DEAD", "TERMINATED"):
+        if desired in _TERMINAL_DESIRED:
             return "TERMINAL", f"pod entered {desired} after {elapsed}s"
 
         if host and port:
             ssh_attempts += 1
-            ok, err = ssh_probe(host, int(port), timeout=8)
-            summary = (desired, host, port, ok)
-            if summary != last_summary:
-                log(
-                    f"t+{elapsed}s endpoint=root@{host}:{port} "
-                    f"ssh_probe={'OK' if ok else 'FAIL'} (#{ssh_attempts})"
-                    + (f" — {err}" if not ok and err else ""),
-                    indent=2,
-                )
-                last_summary = summary
-            if ok:
-                return "RUNNING", (
-                    f"ssh probe succeeded after {elapsed}s "
-                    f"({ssh_attempts} attempts, endpoint root@{host}:{port})"
-                )
+            outcome, last_summary = _probe_ssh_endpoint(
+                host, int(port), desired, elapsed, ssh_attempts, last_summary,
+            )
+            if outcome is not None:
+                return outcome
         else:
             summary = (desired, host, port, False)
             if summary != last_summary:
                 log(
-                    f"t+{elapsed}s desired={desired!r} uptime={uptime}s "
+                    f"t+{elapsed}s desired={desired!r} "
+                    f"uptime={st.get('uptime') or 0}s "
                     "ssh endpoint not assigned yet",
                     indent=2,
                 )
                 last_summary = summary
-            # Surface a hint after STALL_HINT_AFTER seconds without an SSH
-            # endpoint. RunPod doesn't expose pull progress via API/CLI,
-            # so this is the best we can do — point the user at the UI
-            # and at the most common cause (slow/throttled image pull).
             if elapsed >= config.STALL_HINT_AFTER and not stall_hinted:
-                log(
-                    f"pod still has no SSH endpoint after {elapsed}s. "
-                    "Most common cause is a slow or throttled image pull. "
-                    "Check the UI for pull progress: "
-                    f"https://www.runpod.io/console/pods/{pod_id}",
-                    indent=2,
-                )
-                log(
-                    "If you see 'toomanyrequests' in the UI logs, you've "
-                    "hit the Docker Hub pull rate limit — wait 6h, log in "
-                    "to a paid Docker Hub account, or reduce MAX_PARALLEL.",
-                    indent=2,
-                )
+                _print_stall_hint(pod_id, elapsed)
                 stall_hinted = True
 
         time.sleep(config.POLL_INTERVAL)
