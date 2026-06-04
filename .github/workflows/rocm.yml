@@ -56,3 +56,11 @@ jobs:
             **/civetweb/resources/ssl_cert.pem
             **/civetweb/resources/server.pem
             **/civetweb/resources/server_bkup.pem
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: autoresearch
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
