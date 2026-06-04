@@ -303,7 +303,16 @@ def _format_result_line(want: str, img: str, status: str, note: str,
 
 
 def _print_summary(results: dict[str, Result]) -> int:
-    """Print the SUMMARY block and return the exit code (0 if no FAIL)."""
+    """Print the SUMMARY block and return the exit code.
+
+    Exit 1 if any image FAILed (broken container — always fatal).
+    Exit 1 also if any image SKIPped AND `config.FAIL_ON_SKIP` is set
+    (the default) — SKIPs mean the test never actually ran against the
+    image, which in a CI gate is equivalent to "we don't know if this
+    image works". Set FAIL_ON_SKIP=0 to keep the legacy lenient behaviour
+    when running against tight-capacity DCs.
+    Exit 0 only when every image either PASSed or SKIPped under lenient
+    mode."""
     print()
     print("=" * 84)
     print(" SUMMARY ".center(84, "="))
@@ -321,7 +330,21 @@ def _print_summary(results: dict[str, Result]) -> int:
             line = _format_result_line(want, img, status, note, instance)
             if line is not None:
                 print(line)
-    return 0 if counts["FAIL"] == 0 else 1
+
+    if counts["FAIL"] > 0:
+        return 1
+    if counts["SKIP"] > 0 and config.FAIL_ON_SKIP:
+        # Make the reason visible at the bottom of the summary so the
+        # GitHub Actions step annotation says *why* the job failed.
+        print()
+        print(
+            f"::error::{counts['SKIP']} image(s) SKIPped — no real "
+            "validation happened. Failing the job because FAIL_ON_SKIP=1 "
+            "(default). Set FAIL_ON_SKIP=0 / fail-on-skip: 'false' on the "
+            "smoke-test action to make SKIPs non-fatal."
+        )
+        return 1
+    return 0
 
 
 # ---------------------------------------------------------------------------

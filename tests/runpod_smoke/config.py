@@ -36,6 +36,16 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 # too (DISK_GB * pods * hours can add up).
 MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 
+# Treat any SKIP outcome as a job failure. SKIPs mean the test never
+# actually ran against the image — RunPod had no capacity on every
+# candidate instance type, or every candidate landed on a stuck host.
+# In a CI smoke test that's effectively zero validation, so the default
+# is strict (fail). Set FAIL_ON_SKIP=0 only when you knowingly accept
+# capacity-shortage as non-fatal (e.g. a probe job that runs on a tight
+# DC and you don't want flaky CI). FAIL outcomes are always fatal
+# regardless of this flag.
+FAIL_ON_SKIP = os.environ.get("FAIL_ON_SKIP", "1") == "1"
+
 # How many times to retry pod-create when RunPod returns a transient
 # orchestrator error ("Something went wrong", 502/503, etc.). Capacity-
 # shortage errors are NOT retried (we move on to the next instance instead).

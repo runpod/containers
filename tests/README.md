@@ -90,8 +90,10 @@ You should see, in order:
 8. `Cleaning up pod p-xxx...`
 9. `===== SUMMARY ===== totals: 1 PASS, 0 FAIL, 0 SKIP`
 
-Exit code is `0` if no `FAIL`, `1` otherwise. `SKIP` does not fail the
-run — see the [Outcomes](#outcomes) table below.
+Exit code is `0` if no `FAIL` and no `SKIP`, `1` otherwise. `SKIP` is
+treated as a failure by default because it means no real validation
+happened; set `FAIL_ON_SKIP=0` to keep the legacy lenient behaviour. See
+the [Outcomes](#outcomes) table below.
 
 To test a single group from a larger manifest:
 
@@ -134,7 +136,10 @@ The granular per-pod outcomes below collapse into them:
 | `SKIP` | all `UNAVAILABLE` | RunPod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
 | `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but RunPod never assigned an SSH endpoint within `CREATE_TIMEOUT` (slow pull / dead host). | retry later — usually transient |
 
-`SKIP` doesn't fail the run (exit `0`); `FAIL` does (exit `1`). The
+`FAIL` always exits `1`. `SKIP` exits `1` by default (no real
+validation happened ⇒ the gate hasn't been proven green); set
+`FAIL_ON_SKIP=0` (env-var) or `fail-on-skip: 'false'` (CI input) to
+restore the legacy lenient behaviour where `SKIP` exits `0`. The
 summary lists the **instance that produced the outcome** in brackets,
 so you can tell whether a `FAIL` correlates with a specific GPU type:
 
@@ -177,9 +182,8 @@ REGISTRY_AUTH_NAME='dockerhub-prod' ./test_images.py images.yaml
 # …or by id
 REGISTRY_AUTH_ID='clxxxxxxxxxx' ./test_images.py images.yaml
 
-# Treat SKIP as a failure too (the script itself always exits 0 on SKIP)
-./test_images.py images.yaml | tee /tmp/log
-grep -qE '^\s*PASS\s' /tmp/log && ! grep -qE '^\s*(FAIL|SKIP)\s' /tmp/log
+# Treat SKIP as success (legacy lenient mode — script exits 0 on SKIP)
+FAIL_ON_SKIP=0 ./test_images.py images.yaml
 ```
 
 If a pod gets stuck (rare), `Ctrl-C` cleans up — `SIGINT`/`SIGTERM` are
@@ -422,6 +426,11 @@ fields.
 
 ## Exit code
 
-`0` if no `FAIL`, `1` otherwise. `SKIP` (no capacity / all instances
-stuck) does not fail the run — set tighter shell checks downstream if
-you need that behaviour.
+`0` only when every image PASSed (or SKIPped under `FAIL_ON_SKIP=0`).
+`1` if any image FAILed (broken container — always fatal), or if any
+image SKIPped under the default `FAIL_ON_SKIP=1`. SKIPs mean the smoke
+test never actually ran on the image (RunPod had no capacity on every
+candidate, or every candidate landed on a stuck host) — that's
+effectively zero validation, so the default is strict. Override with
+`FAIL_ON_SKIP=0` only when you knowingly accept capacity-shortage as
+non-fatal.
