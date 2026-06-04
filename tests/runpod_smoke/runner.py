@@ -39,7 +39,214 @@ from .pod import (
 )
 
 
-def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
+_Outcome = tuple[str, str]
+
+
+def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, str]:
+    """Log the per-attempt header line and resolve the gpu_id.
+
+    Returns (is_cpu, gpu_id). CPU attempts get an empty gpu_id since
+    runpodctl doesn't accept --gpu-id together with --compute-type CPU."""
+    is_cpu = instance == config.CPU_INSTANCE_SENTINEL
+    if is_cpu:
+        log("attempt: CPU pod (--compute-type CPU, flavor chosen by RunPod)",
+            indent=1)
+        return True, ""
+    gpu_id = resolve_gpu_id(instance)
+    cuda = detect_cuda_version(image) or config.GROUP_MIN_CUDA.get(group)
+    cuda_note = f", min-cuda={cuda}" if cuda else ""
+    log(
+        f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
+        indent=1,
+    )
+    return False, gpu_id
+
+
+def _create_pod_with_retries(
+    image: str, gpu_id: str, is_cpu: bool, group: str,
+) -> tuple[Optional[str], str, str]:
+    """Drive `create_pod` through the transient-error retry budget.
+
+    Returns (pod_id, early_outcome, detail):
+      - on success     -> (pod_id, "", "")
+      - on UNAVAILABLE -> (None, "UNAVAILABLE", "")  # capacity, try next instance
+      - on CREATE_FAIL -> (None, "CREATE_FAIL", error)  # non-transient orchestrator
+                                                        # error, another GPU won't help
+
+    Transient errors (5xx, "something went wrong", 502/503/504) often happen
+    when several workers race for the same scarce GPU at the same instant.
+    We back off and retry a few times before falling through to CREATE_FAIL.
+    """
+    raw = ""
+    for attempt in range(1, config.CREATE_RETRIES + 1):
+        # New name on each attempt — RunPod may keep a server-side record
+        # of rejected names briefly, and unique names also make logs
+        # unambiguous.
+        name = (
+            f"smoketest-{int(time.time())}-"
+            f"{threading.get_ident() % 10000:04d}-{attempt}"
+        )
+        pod_id, raw = create_pod(
+            image, gpu_id, name,
+            compute_type="CPU" if is_cpu else "GPU",
+            group=group,
+            test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
+        )
+        if pod_id:
+            return pod_id, "", ""
+        if UNAVAILABLE_RE.search(raw):
+            log(f"instance unavailable, will try next ({raw[:120]})", indent=2)
+            return None, "UNAVAILABLE", ""
+        if TRANSIENT_RE.search(raw) and attempt < config.CREATE_RETRIES:
+            backoff = config.CREATE_RETRY_BACKOFF * attempt
+            log(
+                f"transient pod-create error ({raw[:120]}), "
+                f"retry {attempt}/{config.CREATE_RETRIES - 1} in {backoff}s",
+                indent=2,
+            )
+            time.sleep(backoff)
+            continue
+        log(f"pod create failed: {raw[:400]}", indent=2)
+        return None, "CREATE_FAIL", f"pod create failed: {raw[:200].strip()}"
+
+    # Theoretically unreachable: the loop body returns on every path. This
+    # tail return only fires if a future edit breaks that invariant — keep
+    # it so the function still classifies cleanly instead of returning None.
+    log(
+        f"pod create failed after {config.CREATE_RETRIES} attempts: {raw[:200]}",
+        indent=2,
+    )
+    return None, "CREATE_FAIL", (
+        f"pod create failed after {config.CREATE_RETRIES} attempts: "
+        f"{raw[:200].strip()}"
+    )
+
+
+def _classify_non_running(state: str, detail: str, pod_id: str) -> _Outcome:
+    """Map a non-RUNNING terminal state to STUCK or FAIL.
+
+    TIMEOUT with no SSH endpoint ever assigned is almost always a
+    scheduler/host issue, not the image: a different GPU type lands on
+    a different host pool and usually works. Anything else (EXITED,
+    TERMINATED, FAILED, RUNNING-then-died) is a container problem — the
+    image is broken, another GPU won't help."""
+    st = pod_state(pod_id)
+    ever_had_ssh = bool(st.get("ssh_ip") and st.get("ssh_port"))
+    if state == "TIMEOUT" and not ever_had_ssh:
+        log(
+            f"{state.lower()} -- {detail} -- STUCK (no SSH endpoint "
+            "was ever assigned; trying next instance type)",
+            indent=2,
+        )
+        dump_pod_logs(pod_id)
+        return "STUCK", ""
+    log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
+    dump_pod_logs(pod_id)
+    return "FAIL", f"pod entered {state} state: {detail}"
+
+
+def _run_cuda_step(
+    host: str, port: int, image: str, group: str, pod_id: str,
+) -> Optional[_Outcome]:
+    """Per-group CUDA/GPU functional check — the real "does this image
+    actually work" gate, distinct from "did it boot". Returns the FAIL
+    outcome on a broken image, None if the check was skipped (no SSH /
+    no check command for this image) or passed."""
+    if not (host and port and cuda_check_command(image)):
+        return None
+    log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
+    ok, output = run_cuda_check(host, port, image)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log("cuda check FAILED -- image broken", indent=2)
+        dump_pod_logs(pod_id)
+        return "FAIL", "CUDA/GPU functional check failed"
+    log("cuda check passed", indent=2)
+    return None
+
+
+def _run_jupyter_steps(
+    host: str, port: int, pod_id: str, group: str,
+) -> Optional[_Outcome]:
+    """Jupyter checks: only when the group opted in via `test_jupyter`.
+
+    Two stages, both must pass:
+      1. IN-POD: SSH into the pod and probe 127.0.0.1:8888. Catches
+         start.sh regressions (e.g. wrong python interpreter for
+         `-m jupyter`) that don't surface in container stdout.
+      2. PROXY: from the test machine, hit
+         https://<pod-id>-8888.proxy.runpod.net/. Catches port-type
+         mistakes (`8888/tcp` instead of `8888/http`) — proxy never
+         registers a non-http port, so end users can't reach Jupyter
+         even though the in-pod check would happily pass."""
+    if not (host and port and config.GROUP_TEST_JUPYTER.get(group, False)):
+        return None
+
+    log(
+        f"running Jupyter Lab check (in-pod) for group '{group}'...",
+        indent=2,
+    )
+    ok, output = run_jupyter_check(host, port)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log(
+            "jupyter check (in-pod) FAILED -- start.sh did not "
+            "bring up JupyterLab",
+            indent=2,
+        )
+        dump_pod_logs(pod_id)
+        return "FAIL", "Jupyter Lab check failed (in-pod)"
+    log("jupyter check (in-pod) passed", indent=2)
+
+    log(
+        f"running Jupyter Lab check (public proxy) for pod {pod_id}...",
+        indent=2,
+    )
+    ok, output = run_jupyter_proxy_check(pod_id)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log(
+            "jupyter check (public proxy) FAILED -- port likely "
+            "not exposed as 8888/http",
+            indent=2,
+        )
+        dump_pod_logs(pod_id)
+        return "FAIL", "Jupyter Lab check failed (public proxy)"
+    log("jupyter check (public proxy) passed", indent=2)
+    return None
+
+
+def _run_dwell_step(pod_id: str) -> Optional[_Outcome]:
+    """Brief dwell to catch containers that boot, accept SSH, then crash.
+    Most real images hit this in the first ~30s if they're going to crash.
+    Returns FAIL outcome on a post-boot crash, None on skip / pass."""
+    if config.DWELL_SEC <= 0:
+        return None
+    log(f"dwelling {config.DWELL_SEC}s and re-probing SSH...", indent=2)
+    time.sleep(config.DWELL_SEC)
+    st = pod_state(pod_id)
+    host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
+    if not (host and port):
+        return None
+    ok, err = ssh_probe(host, int(port), timeout=8)
+    if ok:
+        return None
+    log(
+        f"ssh probe failed after dwell ({err}) -- "
+        "container crashed -- FAIL",
+        indent=2,
+    )
+    dump_pod_logs(pod_id)
+    return "FAIL", (
+        "container crashed after initial boot "
+        f"({config.DWELL_SEC}s dwell re-probe failed: {err})"
+    )
+
+
+def test_pair(image: str, instance: str, group: str) -> _Outcome:
     """Returns (status, detail). Statuses:
         'PASS'         — image booted, CUDA check OK, survived dwell
         'FAIL'         — pod was created and the CONTAINER itself proved
@@ -60,64 +267,16 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and
     is used to select the appropriate GPU/CUDA functional check."""
-    is_cpu = instance == config.CPU_INSTANCE_SENTINEL
-    if is_cpu:
-        gpu_id = ""
-        log("attempt: CPU pod (--compute-type CPU, flavor chosen by RunPod)",
-            indent=1)
-    else:
-        gpu_id = resolve_gpu_id(instance)
-        cuda = detect_cuda_version(image) or config.GROUP_MIN_CUDA.get(group)
-        cuda_note = f", min-cuda={cuda}" if cuda else ""
-        log(
-            f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
-            indent=1,
-        )
+    is_cpu, gpu_id = _log_attempt_header(image, instance, group)
 
-    # Retry on transient orchestrator errors (5xx, "something went wrong",
-    # 502/503/504). These often happen when several workers race for the
-    # same scarce GPU at the same instant. We back off and retry a few
-    # times before giving up and moving on to the next instance.
-    pod_id: Optional[str] = None
-    raw = ""
-    for attempt in range(1, config.CREATE_RETRIES + 1):
-        # New name on each attempt — RunPod may keep a server-side record
-        # of rejected names briefly, and unique names also make logs
-        # unambiguous.
-        name = (
-            f"smoketest-{int(time.time())}-"
-            f"{threading.get_ident() % 10000:04d}-{attempt}"
-        )
-        pod_id, raw = create_pod(
-            image, gpu_id, name,
-            compute_type="CPU" if is_cpu else "GPU",
-            group=group,
-            test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
-        )
-        if pod_id:
-            break
-        if UNAVAILABLE_RE.search(raw):
-            log(f"instance unavailable, will try next ({raw[:120]})", indent=2)
-            return "UNAVAILABLE", ""
-        if TRANSIENT_RE.search(raw) and attempt < config.CREATE_RETRIES:
-            backoff = config.CREATE_RETRY_BACKOFF * attempt
-            log(
-                f"transient pod-create error ({raw[:120]}), "
-                f"retry {attempt}/{config.CREATE_RETRIES - 1} in {backoff}s",
-                indent=2,
-            )
-            time.sleep(backoff)
-            continue
-        log(f"pod create failed: {raw[:400]}", indent=2)
-        return "CREATE_FAIL", f"pod create failed: {raw[:200].strip()}"
-
-    if not pod_id:
-        log(f"pod create failed after {config.CREATE_RETRIES} attempts: {raw[:200]}",
-            indent=2)
-        return "CREATE_FAIL", (
-            f"pod create failed after {config.CREATE_RETRIES} attempts: "
-            f"{raw[:200].strip()}"
-        )
+    pod_id, early, early_detail = _create_pod_with_retries(
+        image, gpu_id, is_cpu, group,
+    )
+    if early:
+        return early, early_detail
+    # _create_pod_with_retries' contract: when `early` is empty, pod_id is
+    # guaranteed non-None. Assert so the type checker can narrow.
+    assert pod_id is not None
 
     register_pod(pod_id)
     log(
@@ -127,111 +286,28 @@ def test_pair(image: str, instance: str, group: str) -> tuple[str, str]:
     )
 
     try:
-        state, detail = wait_for_running(pod_id)
+        state, wait_detail = wait_for_running(pod_id)
         if state != "RUNNING":
-            # Distinguish "host never came up" (STUCK — try another instance)
-            # from "container actually died" (FAIL — image is broken).
-            # TIMEOUT with no SSH endpoint ever assigned is almost always a
-            # scheduler/host issue, not the image: a different GPU type
-            # lands on a different host pool and usually works.
-            st = pod_state(pod_id)
-            ever_had_ssh = bool(st.get("ssh_ip") and st.get("ssh_port"))
-            if state == "TIMEOUT" and not ever_had_ssh:
-                log(
-                    f"{state.lower()} -- {detail} -- STUCK (no SSH endpoint "
-                    "was ever assigned; trying next instance type)",
-                    indent=2,
-                )
-                dump_pod_logs(pod_id)
-                return "STUCK", ""
-            log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
-            dump_pod_logs(pod_id)
-            return "FAIL", f"pod entered {state} state: {detail}"
+            return _classify_non_running(state, wait_detail, pod_id)
 
-        log(f"smoke check passed: {detail}", indent=2)
-
-        # Run the per-group CUDA/GPU functional check. This is the real
-        # "does this image actually work" gate — distinct from "did it boot".
+        log(f"smoke check passed: {wait_detail}", indent=2)
         st = pod_state(pod_id)
-        host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
-        if host and port and cuda_check_command(image):
-            log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
-            ok, output = run_cuda_check(host, int(port), image)
-            for line in (output or "").splitlines():
-                log(f"  {line}", indent=2)
-            if not ok:
-                log("cuda check FAILED -- image broken", indent=2)
-                dump_pod_logs(pod_id)
-                return "FAIL", "CUDA/GPU functional check failed"
-            log("cuda check passed", indent=2)
+        host = st.get("ssh_ip") or ""
+        port = int(st.get("ssh_port") or 0)
 
-        # Jupyter checks: only when the group opted in via `test_jupyter`.
-        # Two stages, both must pass:
-        #   1. IN-POD: SSH into the pod and probe 127.0.0.1:8888. Catches
-        #      start.sh regressions (e.g. wrong python interpreter for
-        #      `-m jupyter`) that don't surface in container stdout.
-        #   2. PROXY: from the test machine, hit
-        #      https://<pod-id>-8888.proxy.runpod.net/. Catches port-type
-        #      mistakes (`8888/tcp` instead of `8888/http`) — proxy never
-        #      registers a non-http port, so end users can't reach Jupyter
-        #      even though the in-pod check would happily pass.
-        if host and port and config.GROUP_TEST_JUPYTER.get(group, False):
-            log(
-                f"running Jupyter Lab check (in-pod) for group '{group}'...",
-                indent=2,
-            )
-            ok, output = run_jupyter_check(host, int(port))
-            for line in (output or "").splitlines():
-                log(f"  {line}", indent=2)
-            if not ok:
-                log(
-                    "jupyter check (in-pod) FAILED -- start.sh did not "
-                    "bring up JupyterLab",
-                    indent=2,
-                )
-                dump_pod_logs(pod_id)
-                return "FAIL", "Jupyter Lab check failed (in-pod)"
-            log("jupyter check (in-pod) passed", indent=2)
-
-            log(
-                f"running Jupyter Lab check (public proxy) for pod "
-                f"{pod_id}...",
-                indent=2,
-            )
-            ok, output = run_jupyter_proxy_check(pod_id)
-            for line in (output or "").splitlines():
-                log(f"  {line}", indent=2)
-            if not ok:
-                log(
-                    "jupyter check (public proxy) FAILED -- port likely "
-                    "not exposed as 8888/http",
-                    indent=2,
-                )
-                dump_pod_logs(pod_id)
-                return "FAIL", "Jupyter Lab check failed (public proxy)"
-            log("jupyter check (public proxy) passed", indent=2)
-
-        # Brief dwell to catch containers that boot, accept SSH, then
-        # crash. Most real images hit this in the first ~30s if they're
-        # going to crash.
-        if config.DWELL_SEC > 0:
-            log(f"dwelling {config.DWELL_SEC}s and re-probing SSH...", indent=2)
-            time.sleep(config.DWELL_SEC)
-            st = pod_state(pod_id)
-            host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
-            if host and port:
-                ok, err = ssh_probe(host, int(port), timeout=8)
-                if not ok:
-                    log(
-                        f"ssh probe failed after dwell ({err}) -- "
-                        "container crashed -- FAIL",
-                        indent=2,
-                    )
-                    dump_pod_logs(pod_id)
-                    return "FAIL", (
-                        "container crashed after initial boot "
-                        f"({config.DWELL_SEC}s dwell re-probe failed: {err})"
-                    )
+        # Sequence the checks. Each returns None on pass/skip, or a FAIL
+        # outcome to surface to the caller. Kept as straight-line code
+        # (no fancy abstraction) so the failure points stay easy to read
+        # in stack traces / logs.
+        outcome = _run_cuda_step(host, port, image, group, pod_id)
+        if outcome is not None:
+            return outcome
+        outcome = _run_jupyter_steps(host, port, pod_id, group)
+        if outcome is not None:
+            return outcome
+        outcome = _run_dwell_step(pod_id)
+        if outcome is not None:
+            return outcome
 
         dump_pod_logs(pod_id)
         return "PASS", ""

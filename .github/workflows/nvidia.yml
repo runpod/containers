@@ -64,3 +64,14 @@ jobs:
           profile: autoresearch
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          # NGC nvidia-pytorch:25.11 ships torch built against CUDA 13.0
+          # and refuses to initialise on hosts whose driver only supports
+          # CUDA 12.x (`torch.cuda.is_available() == False` with the message
+          # 'NVIDIA driver on your system is too old (found version 12080)').
+          # The image tag (`-25.11`) has no embedded CUDA marker, so we
+          # have to tell the smoke-test composite action the floor
+          # explicitly; it propagates this as `min_cuda_version` in the
+          # generated manifest and test_images.py forwards it to
+          # `runpodctl --min-cuda-version` so the scheduler avoids
+          # 570.x-driver hosts (older L4 / RTX 2000 Ada DCs).
+          min-cuda-version: "13.0"

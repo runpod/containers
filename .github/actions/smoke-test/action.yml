@@ -58,6 +58,21 @@ inputs:
       fails with 'no kernel image is available for execution on the device'.
     required: false
     default: ""
+  min-cuda-version:
+    description: |
+      Floor CUDA driver version that the pod host's driver must support
+      (e.g. '13.0'). Emitted as `min_cuda_version` on every produced
+      manifest group. test_images.py forwards this to
+      `runpodctl --min-cuda-version` for images whose tag has no embedded
+      CUDA marker — NGC nvidia-pytorch:25.11 and similar opaque tags.
+      Use this for NGC PyTorch which ships torch built against CUDA 13.0
+      and refuses to run on hosts with a 12.x driver
+      ('CUDA initialization: The NVIDIA driver on your system is too old').
+      Empty (default) = no floor, scheduler is free to pick any compatible
+      host (correct for runpod/* tags where the CUDA version is parsed
+      from the tag string).
+    required: false
+    default: ""
   max-parallel:
     description: "Concurrent pods under test (cost cap — each worker holds one pod)"
     required: false
@@ -181,6 +196,7 @@ runs:
         MANUFACTURER: ${{ inputs.manufacturer }}
         TEST_JUPYTER: ${{ inputs.test-jupyter }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
+        MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -189,6 +205,12 @@ runs:
         EXTRA_ARGS=()
         if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-jupyter)
+        fi
+        # Only pass --min-cuda-version when the input is non-empty; the
+        # generator treats empty as "no floor" and we want to keep the
+        # argv free of stray empty strings so argparse doesn't choke.
+        if [[ -n "${MIN_CUDA_VERSION}" ]]; then
+          EXTRA_ARGS+=(--min-cuda-version "${MIN_CUDA_VERSION}")
         fi
         # Split EXCLUDE_INSTANCES on newlines into one --exclude-instance
         # per non-empty, non-whitespace, non-comment line. Each item is

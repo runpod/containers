@@ -71,6 +71,7 @@ def render_yaml(groups: dict) -> str:
             "max_price_per_hour",
             "min_vram_gb",
             "manufacturer",
+            "min_cuda_version",
             "test_jupyter",
         ):
             if key in body:
@@ -98,6 +99,7 @@ def build_groups(
     manufacturer: str,
     test_jupyter: bool = False,
     exclude_instances: list[str] | None = None,
+    min_cuda_version: str | None = None,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -115,6 +117,13 @@ def build_groups(
     PyTorch ≤ 2.6 wheels have no kernels for sm_100/sm_120, so any test
     landing on a Blackwell host fails with 'no kernel image is available
     for execution on the device'.
+
+    `min_cuda_version` is the floor CUDA driver version (X.Y) the pod's
+    host driver must support. test_images.py only consults this for
+    images whose tag has no embedded CUDA marker (NGC nvidia-pytorch:25.11
+    and similar opaque tags); for runpod/* tags it's derived from the tag
+    itself. Use this for NGC PyTorch which ships torch built against
+    CUDA 13.0 and refuses to run on hosts with a 12.x driver.
     """
     exclude_instances = list(exclude_instances or [])
 
@@ -123,6 +132,8 @@ def build_groups(
             body["test_jupyter"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
+        if min_cuda_version:
+            body["min_cuda_version"] = min_cuda_version
         return body
 
     if profile == "base":
@@ -226,6 +237,18 @@ def main() -> int:
             "--exclude-instance 'RTX A4000'. Empty = no exclusions."
         ),
     )
+    ap.add_argument(
+        "--min-cuda-version",
+        default="",
+        metavar="X.Y",
+        help=(
+            "Floor CUDA driver version that the pod's host must support "
+            "(e.g. '13.0'). Emitted as `min_cuda_version` on every produced "
+            "group. test_images.py uses it for images whose tag has no "
+            "embedded CUDA marker — NGC nvidia-pytorch:25.11 and similar. "
+            "Empty (default) = no floor."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -247,6 +270,7 @@ def main() -> int:
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
         exclude_instances=args.exclude_instance,
+        min_cuda_version=(args.min_cuda_version or None),
     )
 
     if not groups:
