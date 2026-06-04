@@ -47,16 +47,20 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
 
     Returns (is_cpu, gpu_id). CPU attempts get an empty gpu_id since
     runpodctl doesn't accept --gpu-id together with --compute-type CPU.
-    Per-flavor (vcpu, mem) values are looked up separately by the caller
-    via `config.cpu_flavor_for(instance)`."""
+    Per-candidate (cloud_type, data_center_ids) is looked up separately
+    by the caller via `config.cpu_candidate_for(instance)`."""
     if config.is_cpu_instance(instance):
-        flavor = config.cpu_flavor_for(instance)
-        resource_note = (
-            f" (--vcpu {flavor.vcpu} --mem {flavor.mem})"
-            if flavor.vcpu or flavor.mem
-            else " (flavor chosen by RunPod)"
+        candidate = config.cpu_candidate_for(instance)
+        dc_note = (
+            f", --data-center-ids {candidate.data_center_ids}"
+            if candidate.data_center_ids
+            else ""
         )
-        log(f"attempt: CPU pod '{instance}'{resource_note}", indent=1)
+        log(
+            f"attempt: CPU pod '{instance}' "
+            f"(--cloud-type {candidate.cloud_type}{dc_note})",
+            indent=1,
+        )
         return True, ""
     gpu_id = resolve_gpu_id(instance)
     cuda = detect_cuda_version(image) or config.GROUP_MIN_CUDA.get(group)
@@ -83,10 +87,15 @@ def _create_pod_with_retries(
     when several workers race for the same scarce GPU at the same instant.
     We back off and retry a few times before falling through to CREATE_FAIL.
     """
-    # CPU flavor is encoded in the instance label (see config.CPU_FLAVORS);
-    # GPU instances always come with zeroed flavor so the kwargs become
-    # a no-op in pod.create_pod's GPU branch.
-    flavor = config.cpu_flavor_for(instance) if is_cpu else config.CpuFlavor(0, 0)
+    # CPU candidate (cloud_type, data_center_ids) is encoded in the
+    # instance label (see config.CPU_CANDIDATES). For GPU instances both
+    # overrides are absent → pod.create_pod falls back to the global
+    # config.CLOUD_TYPE and skips --data-center-ids.
+    cpu_candidate = (
+        config.cpu_candidate_for(instance) if is_cpu else None
+    )
+    cloud_override = cpu_candidate.cloud_type if cpu_candidate else None
+    dc_ids = cpu_candidate.data_center_ids if cpu_candidate else ""
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
         # New name on each attempt — RunPod may keep a server-side record
@@ -101,8 +110,8 @@ def _create_pod_with_retries(
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
             test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
-            cpu_vcpu=flavor.vcpu,
-            cpu_mem=flavor.mem,
+            cloud_type=cloud_override,
+            data_center_ids=dc_ids,
         )
         if pod_id:
             return pod_id, "", ""

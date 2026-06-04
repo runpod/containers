@@ -252,13 +252,14 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     """Decide which GPU display names this group should try, in order.
 
     Priority:
-      0. CPU groups (name == 'base_cpu') — runpodctl 2.3.0 can't pick a
-         specific CPU flavor by name, so we expand to one entry per
-         `config.CPU_FLAVORS` label. Each label is a `(vcpu, mem)` ask
-         that steers RunPod's scheduler into a different flavor pool
-         (see config.py for rationale). The caller's per-instance loop
-         then walks them in order on UNAVAILABLE / STUCK, identical to
-         how it cycles through GPU types.
+      0. CPU groups (name == 'base_cpu') — `runpodctl pod create`
+         doesn't accept a CPU-flavor flag, so we expand to one entry
+         per `config.CPU_CANDIDATES` label. Each label varies the axes
+         that runpodctl DOES accept for CPU (`--cloud-type` SECURE vs
+         COMMUNITY, optional `--data-center-ids`) — see config.py for
+         rationale. The caller's per-instance loop walks them in order
+         on UNAVAILABLE / STUCK, identical to how it cycles through
+         GPU types.
       1. Explicit `instances:` list in the manifest — wins, used as-is.
       2. `max_price_per_hour: X` (+ optional `min_vram_gb`, `manufacturer`)
          — auto-pick from RunPod catalog, sorted cheapest first.
@@ -275,7 +276,7 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     Returns [] when neither is set (caller will SKIP the group).
     """
     if group_name == "base_cpu":
-        return list(config.CPU_FLAVORS.keys())
+        return list(config.CPU_CANDIDATES.keys())
 
     exclude_patterns = list(group_config.get("exclude_instances") or [])
 

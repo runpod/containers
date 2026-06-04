@@ -129,97 +129,114 @@ JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
 # Sentinels
 # ---------------------------------------------------------------------------
 
-# CPU "instance" candidates. runpodctl 2.3.0 doesn't expose a
-# --cpu-flavor / --instance-id flag (--gpu-id is rejected for
-# --compute-type CPU), so we steer RunPod's CPU-flavor picker via the
-# resource-minimum flags it DOES accept: `--vcpu` (min vCPUs) and
-# `--mem` (min RAM, GB). Different (vcpu, mem) asks land in different
-# flavor pools — when the cheapest tier is saturated and pod-create
-# returns "no capacity", a beefier ask often still has free machines.
-# `instances.resolve_instances` returns each label as a separate
-# "instance" so the existing per-instance retry loop in
-# `runner.test_image` iterates over them just like it does for GPUs.
+# CPU "instance" candidates.
 #
-# Override via `CPU_FLAVORS` env. Format:
-#   CPU_FLAVORS="label1:vcpu:mem,label2:vcpu:mem,..."
-# vcpu/mem of 0 means "omit the flag" (let RunPod pick). Empty / malformed
-# value falls back to DEFAULT_CPU_FLAVORS.
+# `runpodctl pod create` (the new subcommand we use) does NOT expose
+# `--cpu-flavor`, `--vcpu`, or `--mem`. The legacy `runpodctl create pod`
+# command does have them, but it's a different code path with different
+# flags — the new command takes (`--compute-type CPU`, `--cloud-type`,
+# optional `--data-center-ids`) and lets RunPod pick the cheapest CPU
+# flavor that fits the container disk size for the chosen cloud + DC.
+#
+# To get MULTIPLE CPU "candidates" we vary the axes runpodctl actually
+# accepts:
+#   - cloud_type:        SECURE vs COMMUNITY. Totally different capacity
+#                        pools — when SECURE is full, COMMUNITY almost
+#                        always has free CPU hosts (and is cheaper).
+#   - data_center_ids:   optional `--data-center-ids` csv. Use to pin a
+#                        candidate to a specific DC or set of DCs (rare
+#                        — usually leaving this empty is the best
+#                        capacity strategy).
+#
+# `instances.resolve_instances` returns one entry per candidate label so
+# the existing per-instance retry loop in `runner.test_image` walks them
+# in order on UNAVAILABLE / STUCK, just like it does for GPU types.
+#
+# Override via `CPU_CANDIDATES` env. Format:
+#   CPU_CANDIDATES="label:CLOUD[:DC1+DC2+...],label:CLOUD[:DC_CSV],..."
+# Notes:
+#   * `+` (not `,`) separates DC ids inside one candidate, so the outer
+#     csv can stay comma-delimited without parser ambiguity.
+#   * CLOUD must be SECURE or COMMUNITY (case-insensitive); anything else
+#     drops the entry on the floor (malformed lines are silently
+#     dropped, so a typo never crashes the run).
+#   * Empty / all-malformed input falls back to DEFAULT_CPU_CANDIDATES.
 
 
 @dataclass(frozen=True)
-class CpuFlavor:
-    """RunPod CPU pod resource ask. vcpu / mem are MINIMUMS — RunPod
-    rounds up to the cheapest flavor that fits. Setting either to 0
-    omits the corresponding runpodctl flag entirely (lets the scheduler
-    pick freely)."""
-    vcpu: int
-    mem: int
+class CpuCandidate:
+    """One CPU pod-create attempt — varied along the axes that
+    `runpodctl pod create` exposes for CPU pods. RunPod's scheduler
+    still picks the actual CPU flavor (vCPU/RAM tier) inside the chosen
+    cloud + DC, based on container disk size."""
+    cloud_type: str           # 'SECURE' or 'COMMUNITY'
+    data_center_ids: str = ""  # comma-separated; "" = any DC in the cloud
 
 
-# First entry intentionally has no resource floor — matches the legacy
-# 2.3.0 behaviour and lands on whatever cheapest CPU flavor RunPod has.
-# The other two bump (vcpu, mem) to steer the scheduler into larger
-# flavor pools when the cheap tier is fully booked. Smoke-test workload
-# is trivial (boot + dwell), so the extra cost per attempt is ≪ $0.05.
-DEFAULT_CPU_FLAVORS: dict[str, CpuFlavor] = {
-    "cpu-default": CpuFlavor(vcpu=0, mem=0),
-    "cpu-2vcpu-8gb": CpuFlavor(vcpu=2, mem=8),
-    "cpu-4vcpu-16gb": CpuFlavor(vcpu=4, mem=16),
+# First entry is SECURE (matches the prior single-sentinel behaviour and
+# what most images expect — secure cloud is the safer default). Second
+# is COMMUNITY as a cheap, capacity-rich fallback: when SECURE returns
+# "no capacity" the test loop moves to this candidate, and COMMUNITY
+# almost always has free CPU hosts.
+DEFAULT_CPU_CANDIDATES: dict[str, CpuCandidate] = {
+    "cpu-secure":    CpuCandidate(cloud_type="SECURE"),
+    "cpu-community": CpuCandidate(cloud_type="COMMUNITY"),
 }
 
 
-def _parse_cpu_flavors(raw: str) -> dict[str, CpuFlavor]:
-    """Parse 'label:vcpu:mem,label:vcpu:mem,...' into a label→CpuFlavor
-    mapping. Malformed entries are dropped silently; empty / all-malformed
-    input falls back to DEFAULT_CPU_FLAVORS so the smoke-test never ends
-    up with zero CPU candidates."""
+def _parse_cpu_candidates(raw: str) -> dict[str, CpuCandidate]:
+    """Parse 'label:CLOUD[:DC1+DC2],...' into label→CpuCandidate mapping.
+    Malformed entries are silently dropped; empty / all-broken input
+    falls back to DEFAULT_CPU_CANDIDATES so the smoke-test never ends up
+    with zero CPU candidates."""
     if not raw.strip():
-        return DEFAULT_CPU_FLAVORS
-    out: dict[str, CpuFlavor] = {}
+        return DEFAULT_CPU_CANDIDATES
+    out: dict[str, CpuCandidate] = {}
     for item in raw.split(","):
         item = item.strip()
         if not item:
             continue
         parts = item.split(":")
-        if len(parts) != 3:
+        if len(parts) not in (2, 3):
             continue
-        label, vcpu_s, mem_s = (p.strip() for p in parts)
-        if not label:
+        label = parts[0].strip()
+        cloud = parts[1].strip().upper()
+        if not label or cloud not in ("SECURE", "COMMUNITY"):
             continue
-        try:
-            out[label] = CpuFlavor(vcpu=int(vcpu_s), mem=int(mem_s))
-        except ValueError:
-            continue
-    return out or DEFAULT_CPU_FLAVORS
+        dcs = parts[2].strip().replace("+", ",") if len(parts) == 3 else ""
+        out[label] = CpuCandidate(cloud_type=cloud, data_center_ids=dcs)
+    return out or DEFAULT_CPU_CANDIDATES
 
 
-CPU_FLAVORS: dict[str, CpuFlavor] = _parse_cpu_flavors(
-    os.environ.get("CPU_FLAVORS", "")
+CPU_CANDIDATES: dict[str, CpuCandidate] = _parse_cpu_candidates(
+    os.environ.get("CPU_CANDIDATES", "")
 )
 
 
 # Legacy single-sentinel kept for back-compat with anything that imported
-# it (e.g. older `images:` manifests that hard-code `__cpu_auto__`). New
-# code consults `is_cpu_instance()` instead of comparing strings directly.
+# it (e.g. older code that hard-codes `__cpu_auto__`). New code consults
+# `is_cpu_instance()` instead of comparing strings directly.
 CPU_INSTANCE_SENTINEL = "__cpu_auto__"
 
 
 def is_cpu_instance(instance: str) -> bool:
     """True if `instance` is one of the CPU sentinels (legacy bare value
-    or a label from CPU_FLAVORS). Used in place of
-    `== CPU_INSTANCE_SENTINEL` so call sites don't have to know about
-    the multi-flavor expansion."""
-    return instance == CPU_INSTANCE_SENTINEL or instance in CPU_FLAVORS
+    or a label from CPU_CANDIDATES). Used in place of
+    `== CPU_INSTANCE_SENTINEL` so call sites don't need to know about
+    the multi-candidate expansion."""
+    return instance == CPU_INSTANCE_SENTINEL or instance in CPU_CANDIDATES
 
 
-def cpu_flavor_for(instance: str) -> CpuFlavor:
-    """Look up the CpuFlavor for a CPU sentinel. The legacy bare
-    `__cpu_auto__` returns a zeroed flavor (no --vcpu / --mem flags).
-    Unknown labels also return zeroed flavor — safer than crashing
-    in a smoke-test that's already trying its hardest to keep going."""
+def cpu_candidate_for(instance: str) -> CpuCandidate:
+    """Look up the CpuCandidate for a CPU sentinel. The legacy bare
+    `__cpu_auto__` resolves to a candidate using the global CLOUD_TYPE
+    with no DC pinning. Unknown labels fall back to the same defaults —
+    safer than crashing inside a smoke-test loop."""
     if instance == CPU_INSTANCE_SENTINEL:
-        return CpuFlavor(vcpu=0, mem=0)
-    return CPU_FLAVORS.get(instance, CpuFlavor(vcpu=0, mem=0))
+        return CpuCandidate(cloud_type=CLOUD_TYPE)
+    return CPU_CANDIDATES.get(
+        instance, CpuCandidate(cloud_type=CLOUD_TYPE)
+    )
 
 
 # ---------------------------------------------------------------------------

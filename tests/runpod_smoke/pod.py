@@ -182,18 +182,25 @@ def create_pod(
     compute_type: str = "GPU",
     group: Optional[str] = None,
     test_jupyter: bool = False,
-    cpu_vcpu: int = 0,
-    cpu_mem: int = 0,
+    cloud_type: Optional[str] = None,
+    data_center_ids: str = "",
 ) -> tuple[Optional[str], str]:
     """Create a pod via `runpodctl pod create`. Returns (pod_id, raw_output).
 
     compute_type='GPU' uses --gpu-id to target a specific GPU type (caller
     must pass a non-empty gpu_id).
-    compute_type='CPU' creates a CPU pod. runpodctl 2.3.0 doesn't expose
-    a `--cpu-flavor` flag, but we can steer the scheduler via the
-    resource-minimum flags `--vcpu` and `--mem`. `cpu_vcpu` / `cpu_mem`
-    > 0 are passed through verbatim; 0 means "omit the flag" (let RunPod
-    pick the cheapest available flavor). gpu_id is ignored in CPU mode.
+    compute_type='CPU' creates a CPU pod. `runpodctl pod create` doesn't
+    accept a CPU-flavor flag, so RunPod picks the flavor based on
+    container disk size + selected cloud/DC. The caller varies CPU
+    candidates by overriding `cloud_type` (SECURE vs COMMUNITY) and
+    optionally `data_center_ids`. gpu_id is ignored in CPU mode.
+
+    `cloud_type` overrides the global `config.CLOUD_TYPE` for this call
+    only — used by the CPU-candidate retry loop to try SECURE first
+    and then COMMUNITY. When None, `config.CLOUD_TYPE` is used.
+
+    `data_center_ids` is a csv that, when non-empty, becomes
+    `--data-center-ids <csv>` and pins the pod to those DCs.
 
     `group` is used to look up `min_cuda_version` from the manifest when
     the image tag doesn't encode a CUDA version (e.g. NGC
@@ -211,13 +218,15 @@ def create_pod(
     args = [
         "pod", "create",
         "--image", image,
-        "--cloud-type", config.CLOUD_TYPE,
+        "--cloud-type", cloud_type or config.CLOUD_TYPE,
         "--container-disk-in-gb", str(disk_gb),
         "--ports", ",".join(ports),
         "--name", name,
         "--terminate-after", config.AUTO_TERMINATE,
         "-o", "json",
     ]
+    if data_center_ids:
+        args.extend(["--data-center-ids", data_center_ids])
     if test_jupyter:
         # runpodctl wants --env as a single JSON-object string.
         env_obj = {"JUPYTER_PASSWORD": config.JUPYTER_TEST_PASSWORD}
@@ -226,13 +235,9 @@ def create_pod(
         args.extend(["--compute-type", "CPU"])
         # CPU images have no CUDA, no GPU — `--min-cuda-version` would be
         # nonsensical and `--gpu-id` is rejected by runpodctl for CPU pods.
-        # Optional resource minimums steer RunPod's flavor picker into a
-        # different pool, giving us more shots at scheduling when the
-        # default (cheapest) tier is saturated.
-        if cpu_vcpu > 0:
-            args.extend(["--vcpu", str(cpu_vcpu)])
-        if cpu_mem > 0:
-            args.extend(["--mem", str(cpu_mem)])
+        # CPU flavor (vCPU/RAM tier) is chosen by RunPod from the
+        # selected cloud+DC's pool based on container disk size; we can't
+        # request a specific tier with this subcommand.
     else:
         args.extend(["--gpu-id", gpu_id, "--gpu-count", "1"])
         # Constrain scheduling to hosts whose driver supports this image's
