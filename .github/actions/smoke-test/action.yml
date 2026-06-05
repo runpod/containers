@@ -89,6 +89,19 @@ inputs:
     required: false
 
     default: "2"
+  create-timeout:
+    description: |
+      Max seconds to wait for a freshly-created pod to expose a reachable
+      SSH endpoint (the real readiness signal). If exceeded, the instance
+      is marked STUCK and we try the next candidate.
+
+      Default 600s fits NVIDIA images (~2-3GB pull). Raise it for ROCm
+      where the official rocm/pytorch:* base images are 30-50GB and pulls
+      from Docker Hub can take 10+ minutes — at 600s the pod has often
+      not finished pulling and we falsely abandon it. 1200s is a safe
+      ceiling for ROCm; keeps us from holding STUCK pods indefinitely.
+    required: false
+    default: "600"
   on-skip:
     description: |
       What to do when at least one image ends up SKIPped (the smoke
@@ -275,6 +288,9 @@ runs:
         # ON_SKIP is validated by config._coerce_on_skip (unknown values
         # collapse to 'fail') so we just propagate the raw input.
         ON_SKIP: ${{ inputs.on-skip }}
+        # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
+        # deadline for slow pulls (mainly multi-GB ROCm base images).
+        CREATE_TIMEOUT: ${{ inputs.create-timeout }}
       run: |
         set -uo pipefail
         python3 "${GITHUB_WORKSPACE}/tests/test_images.py" "${MANIFEST_PATH}"

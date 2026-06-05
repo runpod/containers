@@ -67,3 +67,4 @@ jobs:
           manufacturer: "AMD"
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
+          create-timeout: "1200"

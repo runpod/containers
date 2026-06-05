@@ -116,6 +116,13 @@ _TORCH_TAG_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Image-tag markers for AMD ROCm runtimes. Matched BEFORE the torch regex
+# so that ROCm-pytorch images (which inherit from rocm/pytorch:* and keep
+# torch in a conda env not visible to the system `python`) take the
+# rocm-smi path instead of falling into the import-torch path and failing
+# with a misleading "ModuleNotFoundError".
+_ROCM_TAG_RE = re.compile(r"\brocm", re.IGNORECASE)
+
 
 def _image_expects_gpu(image: str) -> bool:
     """True if the image ref implies a GPU runtime (CUDA or ROCm) inside."""
@@ -127,6 +134,11 @@ def _image_expects_torch(image: str) -> bool:
     return bool(_TORCH_TAG_RE.search(image))
 
 
+def _image_expects_rocm(image: str) -> bool:
+    """True if the image ref implies an AMD ROCm runtime."""
+    return bool(_ROCM_TAG_RE.search(image))
+
+
 def cuda_check_command(image: str) -> str:
     """Return a shell command that functionally validates the GPU/CUDA stack
     for a given image, or '' to skip the check (CPU images).
@@ -134,17 +146,38 @@ def cuda_check_command(image: str) -> str:
     Selection is driven by the IMAGE REF (not the manifest group name) so
     new manifest groups added in the future won't silently skip the check.
 
-    Logic:
+    Logic (first match wins):
+        - has 'rocm' in ref                          -> run rocm-smi check
+          (AMD GPUs; runpod/base ROCm-pytorch images inherit from
+          rocm/pytorch:* where torch lives in a conda env not visible to
+          the system `python`, so the torch.cuda path would falsely fail
+          with ModuleNotFoundError)
         - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
-          (covers runpod/pytorch, runpod/nvidia-pytorch, ROCm-pytorch bases)
-        - has 'cuda' / 'cu\\d' / 'rocm' only         -> run nvidia-smi check
-          (covers runpod/base GPU tags and autoresearch — torch in venv
-          not visible to system python)
+          (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack)
+        - has 'cuda' / 'cu\\d' only                  -> run nvidia-smi check
+          (runpod/base GPU tags and autoresearch — torch in venv not
+          visible to system python)
         - none of the above                          -> CPU image, no check
 
     The returned command MUST exit non-zero on failure so the SSH call can
     detect it. Output is captured for the run report.
     """
+    if _image_expects_rocm(image):
+        # AMD ROCm path. `rocm-smi` is the AMD counterpart to nvidia-smi
+        # and ships in every official rocm/* base image. We assert it
+        # finds at least one GPU by grepping for the GPU table header.
+        return (
+            "set -e; "
+            "rocm-smi --showproductname --showmeminfo vram; "
+            "rocm-smi --showid | grep -qE '^GPU\\[[0-9]+\\]' "
+            "  || { echo 'FAIL: rocm-smi reported no GPUs'; exit 1; }; "
+            "if command -v hipcc >/dev/null; then "
+            "  hipcc --version | head -n 2; "
+            "else "
+            "  echo 'hipcc not in PATH (HIP toolkit may be runtime-only)'; "
+            "fi"
+        )
+
     if _image_expects_torch(image):
         # Use `python` (the runpod/base symlink /usr/local/bin/python ->
         # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 system
@@ -368,7 +401,8 @@ def fetch_logs_via_ssh(host: str, port: int, tail: int = 20) -> Optional[str]:
         "  [ -f \"$f\" ] || continue; "
         "  echo \"--- $f ---\"; tail -n 5 \"$f\" 2>/dev/null; "
         "done; "
-        "echo '=== nvidia-smi ==='; nvidia-smi 2>&1 | head -n 15 || echo '(no nvidia-smi)'"
+        "echo '=== nvidia-smi ==='; nvidia-smi 2>&1 | head -n 15 || echo '(no nvidia-smi)'; "
+        "echo '=== rocm-smi ==='; rocm-smi 2>&1 | head -n 25 || echo '(no rocm-smi)'"
     )
     cmd = [*_ssh_command_prefix(host, port), remote_cmd]
     try:

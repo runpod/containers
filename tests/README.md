@@ -330,7 +330,7 @@ pytorch:
 | `REGISTRY_AUTH_ID` | _(empty)_ | Explicit Docker Hub registry auth id to pass as `--registry-auth-id`. Overrides auto-discovery. |
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `runpodctl registry list` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
-| `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. |
+| `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
@@ -348,10 +348,17 @@ Runs over SSH after the container is reachable. **The check is selected
 by inspecting the image REF, not the manifest group name** — so new
 groups don't silently skip the check:
 
+- image has `rocm` in ref
+  → `rocm-smi` GPU enumeration + optional `hipcc --version`. Matched
+  first so ROCm-pytorch images (built from `rocm/pytorch:*` where torch
+  lives in a conda env not visible to the system `python`) don't get
+  routed into the torch-import path and falsely fail with
+  `ModuleNotFoundError`.
 - image has `pytorch` / `torch\d` in ref
   → `torch.cuda.is_available` + matmul on device (catches broken drivers,
-  missing libs, mismatched toolkit/driver versions).
-- image has `cuda` / `cu\d` / `rocm` (but no torch markers)
+  missing libs, mismatched toolkit/driver versions). NVIDIA only at this
+  point — ROCm was already handled above.
+- image has `cuda` / `cu\d` (but no torch markers)
   → `nvidia-smi -L` + driver/memory query + `nvcc --version`. Covers base
   GPU images and `autoresearch` (whose torch is in a venv not reachable
   from the system Python we SSH into).
