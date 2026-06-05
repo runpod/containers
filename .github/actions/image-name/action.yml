@@ -1,5 +1,5 @@
 name: Image Names
-description: "Extract pushed/loaded image refs from bake metadata as a JSON array"
+description: "Extract pushed/loaded image refs and digests from bake metadata as JSON arrays"
 
 inputs:
   bake-metadata:
@@ -10,6 +10,9 @@ outputs:
   refs:
     description: "JSON array of image references (e.g. [\"docker.io/runpod/base:1.0.3-ubuntu2204\", ...])"
     value: ${{ steps.extract.outputs.refs }}
+  digests:
+    description: "JSON array of image digests in registry/image@sha256:... format"
+    value: ${{ steps.extract.outputs.digests }}
 
 runs:
   using: composite
@@ -22,6 +25,16 @@ runs:
         set -euo pipefail
         REFS=$(echo "${BAKE_METADATA}" \
           | jq -c '[.[] | ."image.name"] | map(select(. != null)) | flatten | unique')
+        DIGESTS=$(echo "${BAKE_METADATA}" \
+          | jq -c '[
+              .[]
+              | select(."image.name" and ."containerimage.digest")
+              | (."image.name" | split(",")[0] | sub(":[^:]*$"; ""))
+                + "@" + ."containerimage.digest"
+            ] | unique')
         echo "refs=${REFS}" >> "${GITHUB_OUTPUT}"
+        echo "digests=${DIGESTS}" >> "${GITHUB_OUTPUT}"
         echo "Extracted image refs:"
         echo "${REFS}" | jq -r '.[]'
+        echo "Extracted image digests:"
+        echo "${DIGESTS}" | jq -r '.[]'
