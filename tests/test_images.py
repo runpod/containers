@@ -292,19 +292,11 @@ def _run_jobs(jobs: list[Job], results: dict[str, Result]) -> None:
 def _format_result_line(want: str, img: str, status: str, note: str,
                         instance: str) -> Optional[str]:
     """Format one row of the summary, or None when this result doesn't
-    belong in the `want` bucket. CPU sentinel gets translated to a
-    readable label so the summary doesn't show '__cpu_auto__'."""
+    belong in the `want` bucket. CPU labels ('cpu-secure', 'cpu-community',
+    …) are already human-readable, so they go to the summary verbatim."""
     if status != want:
         return None
-    # CPU labels are already human-readable ('cpu-default', 'cpu-2vcpu-8gb',
-    # …), so they go to the summary verbatim. Legacy bare `__cpu_auto__`
-    # (still recognised by is_cpu_instance for back-compat) gets relabelled
-    # to a plain 'CPU' so old runs don't read as gibberish.
-    if instance == config.CPU_INSTANCE_SENTINEL:
-        inst_label = "CPU"
-    else:
-        inst_label = instance
-    inst_str = f" [{inst_label}]" if inst_label else ""
+    inst_str = f" [{instance}]" if instance else ""
     note_str = f" -- {note}" if note else ""
     return f"  {want:6s} {img}{inst_str}{note_str}"
 

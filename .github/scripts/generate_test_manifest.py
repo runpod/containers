@@ -2,17 +2,22 @@
 """Generate a test manifest YAML for tests/test_images.py.
 
 Reads a JSON array of image refs (as produced by .github/actions/image-name)
-and groups them according to the build profile:
+and groups them into one or more manifest groups. The `profile` argument
+picks the **grouping strategy**, not an image kind:
 
-  base profile          base_cpu : refs whose tag has NO GPU markers
-                        base_gpu : refs whose tag has any of the GPU markers
-                                   (cuda / pytorch / py / rocm)
-  autoresearch profile  base_gpu : all refs (uses nvidia-smi functional check
-                                   — autoresearch always runs on GPU base)
-  pytorch profile       pytorch  : all refs (uses torch.cuda functional check)
+  base  Split refs into two groups by tag content:
+          base_cpu : refs whose tag has NO GPU markers (run on CPU pod)
+          base_gpu : refs with cuda / pytorch / py / rocm markers
+        Used by runpod/base which builds both CPU- and GPU-targeted tags
+        in a single matrix.
+  gpu   All refs into a single `base_gpu` group with the budget / vRAM /
+        manufacturer filter applied. Used by every pure-GPU workflow
+        (autoresearch, pytorch, nvidia-pytorch, rocm) since they don't
+        need the CPU split.
 
-The group names matter: tests/test_images.py special-cases them in
-cuda_check_command() to pick the right per-group validation routine.
+Note: the manifest group name is informational only. tests/runpod_smoke
+selects the per-image functional check (nvidia-smi vs torch.cuda vs
+rocm-smi vs skip) from the **image ref itself**, not from the group name.
 
 Usage:
     generate_test_manifest.py --profile base \\
@@ -157,22 +162,13 @@ def build_groups(
             })
         return groups
 
-    if profile == "autoresearch":
-        # autoresearch images always extend a GPU base; reuse base_gpu so
-        # test_images.py runs the nvidia-smi check on them.
+    if profile == "gpu":
+        # Pure GPU workflow: every ref goes into one group with the budget
+        # filter. The functional check (nvidia-smi vs torch.cuda vs rocm-smi)
+        # is picked from the IMAGE REF by runpod_smoke.checks, so the group
+        # name 'base_gpu' is purely conventional here.
         return {
             "base_gpu": _decorate({
-                "images": refs,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
-        }
-
-    if profile == "pytorch":
-        # 'pytorch' triggers the torch.cuda functional check in test_images.py.
-        return {
-            "pytorch": _decorate({
                 "images": refs,
                 "max_price_per_hour": budget,
                 "min_vram_gb": min_vram_gb,
@@ -191,7 +187,7 @@ def main() -> int:
     ap.add_argument(
         "--profile",
         required=True,
-        choices=["base", "autoresearch", "pytorch"],
+        choices=["base", "gpu"],
     )
     ap.add_argument(
         "--refs",

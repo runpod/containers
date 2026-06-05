@@ -145,8 +145,20 @@ JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
 
 
 # ---------------------------------------------------------------------------
-# Sentinels
+# CPU groups + candidates
 # ---------------------------------------------------------------------------
+
+# Manifest group names that should be treated as CPU pods. Centralised
+# here (rather than a bare string match deep in instances.py) so adding a
+# second CPU-flavoured group later is one frozenset edit, not a grep-
+# and-rename hunt. `instances.resolve_instances` expands each of these
+# groups into one entry per `CPU_CANDIDATES` label instead of consulting
+# the manifest's `instances:` / `max_price_per_hour:` fields.
+#
+# Keep in sync with `.github/scripts/generate_test_manifest.py` which
+# emits 'base_cpu' as the CPU group name for the `base` profile.
+CPU_GROUP_NAMES: frozenset[str] = frozenset({"base_cpu"})
+
 
 # CPU "instance" candidates.
 #
@@ -232,27 +244,18 @@ CPU_CANDIDATES: dict[str, CpuCandidate] = _parse_cpu_candidates(
 )
 
 
-# Legacy single-sentinel kept for back-compat with anything that imported
-# it (e.g. older code that hard-codes `__cpu_auto__`). New code consults
-# `is_cpu_instance()` instead of comparing strings directly.
-CPU_INSTANCE_SENTINEL = "__cpu_auto__"
-
-
 def is_cpu_instance(instance: str) -> bool:
-    """True if `instance` is one of the CPU sentinels (legacy bare value
-    or a label from CPU_CANDIDATES). Used in place of
-    `== CPU_INSTANCE_SENTINEL` so call sites don't need to know about
-    the multi-candidate expansion."""
-    return instance == CPU_INSTANCE_SENTINEL or instance in CPU_CANDIDATES
+    """True if `instance` is one of the CPU candidate labels. Call sites
+    use this rather than checking dict membership directly so the rule
+    stays in one place if we ever add more CPU-ish synthetic labels."""
+    return instance in CPU_CANDIDATES
 
 
 def cpu_candidate_for(instance: str) -> CpuCandidate:
-    """Look up the CpuCandidate for a CPU sentinel. The legacy bare
-    `__cpu_auto__` resolves to a candidate using the global CLOUD_TYPE
-    with no DC pinning. Unknown labels fall back to the same defaults —
-    safer than crashing inside a smoke-test loop."""
-    if instance == CPU_INSTANCE_SENTINEL:
-        return CpuCandidate(cloud_type=CLOUD_TYPE)
+    """Look up the CpuCandidate for a label. Unknown labels fall back to
+    a CLOUD_TYPE-default candidate rather than crashing — a stale
+    `instances:` entry in the manifest shouldn't bring the whole
+    smoke-test down."""
     return CPU_CANDIDATES.get(
         instance, CpuCandidate(cloud_type=CLOUD_TYPE)
     )
@@ -275,9 +278,18 @@ GPU_ID_MAP: dict[str, str] = {}
 GPU_CATALOG: list[dict] = []
 
 # Per-group fallback CUDA version, populated in main() from the
-# `min_cuda_version:` manifest field. Looked up by `pod.create_pod` only
-# when `instances.detect_cuda_version(image)` returns None (i.e. image tag
-# has no embedded CUDA — NGC `nvidia-pytorch:25.11` and similar opaque tags).
+# `min_cuda_version:` manifest field. Looked up by `pod.create_pod` ONLY
+# when `instances.detect_cuda_version(image)` returns None (i.e. image
+# tag has no embedded CUDA — NGC `nvidia-pytorch:25.11` and similar
+# opaque tags).
+#
+# Despite the "min" naming (which matches runpodctl's underlying
+# `--min-cuda-version` flag), this field is a FALLBACK, not an override:
+# if the tag contains `cu1281` / `cuda1300` / etc., the manifest value
+# is silently ignored. By design — tag is the most accurate source for
+# image-encoded CUDA, so manifest gets to fill the gap, not contradict.
+# When ignored, `pod.create_pod` emits a one-line trace so the operator
+# notices.
 GROUP_MIN_CUDA: dict[str, str] = {}
 
 # Per-group Jupyter-check opt-in, populated in main() from the

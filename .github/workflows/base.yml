@@ -128,7 +128,7 @@ jobs:
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          profile: autoresearch
+          profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
 
@@ -194,7 +194,7 @@ jobs:
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          profile: pytorch
+          profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true

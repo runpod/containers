@@ -402,7 +402,7 @@ Typical caller (from a per-image-family build workflow):
 - uses: ./.github/actions/smoke-test
   with:
     image-refs: ${{ toJSON(steps.bake.outputs.image-refs) }}
-    profile: pytorch                        # base | autoresearch | pytorch | nvidia-pytorch | rocm
+    profile: gpu                            # base = split CPU/GPU (only for runpod/base) | gpu = single base_gpu group (everything else)
     runpod-api-key: ${{ secrets.RUNPOD_API_KEY }}
     ssh-private-key: ${{ secrets.RUNPOD_SSH_KEY }}
     budget-usd-per-hour: "1.0"

@@ -11,7 +11,17 @@ inputs:
     description: "JSON array of image refs to smoke-test"
     required: true
   profile:
-    description: "base | autoresearch | pytorch — drives grouping in generate_test_manifest.py"
+    description: |
+      Manifest grouping strategy passed to generate_test_manifest.py.
+        base  Split refs into base_cpu (CPU pod) and base_gpu (GPU pod)
+              by tag content. Use this only for runpod/base which builds
+              both CPU- and GPU-targeted tags in one matrix.
+        gpu   Put every ref into a single base_gpu group with the
+              budget / vRAM / manufacturer filter applied. Use for every
+              pure-GPU workflow (autoresearch, pytorch, nvidia-pytorch, rocm).
+      The functional check (nvidia-smi / torch.cuda / rocm-smi / skip) is
+      always derived from the IMAGE REF, never from the profile, so the
+      same `gpu` profile works regardless of what the image actually is.
     required: true
   runpod-api-key:
     description: "RunPod API key (pod-management permissions required)"
@@ -39,9 +49,10 @@ inputs:
       'true' to add `test_jupyter: true` to every group in the generated
       manifest, which makes test_images.py expose 8888/http, set
       JUPYTER_PASSWORD, and run the in-pod + public-proxy Jupyter probes.
-      Off by default — enable only for profiles whose images use our
-      container-template/start.sh (base, autoresearch, pytorch). NGC
-      nvidia-pytorch ships its own entrypoint and would fail the probe.
+      Off by default — enable only for images that use our
+      container-template/start.sh (runpod/base, runpod/pytorch,
+      runpod/autoresearch, runpod/base ROCm). NGC nvidia-pytorch ships
+      its own entrypoint and would fail the probe.
     required: false
     default: "false"
   exclude-instances:

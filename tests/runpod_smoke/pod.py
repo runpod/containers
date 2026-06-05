@@ -204,7 +204,17 @@ def create_pod(
 
     `group` is used to look up `min_cuda_version` from the manifest when
     the image tag doesn't encode a CUDA version (e.g. NGC
-    `nvidia-pytorch:25.11`).
+    `nvidia-pytorch:25.11`). Two-step resolution:
+      1. Try to parse the CUDA version out of the image tag itself
+         (`cu1281` / `cuda1300` / ...). Tag wins because it's the most
+         accurate source — it's literally the CUDA the image was built
+         against.
+      2. Fall back to the manifest's `min_cuda_version` when the tag has
+         no CUDA marker. This is the ONLY case where the manifest field
+         takes effect — for explicit-CUDA tags, the manifest value is
+         ignored even when set.
+    The merged result is forwarded to `runpodctl --min-cuda-version` so
+    RunPod's scheduler only picks hosts whose driver supports it.
 
     `test_jupyter=True` expands the pod config so JupyterLab can be tested:
         - `--ports` gains `8888/http`
@@ -245,12 +255,31 @@ def create_pod(
         # older-driver host and the container fails at startup with
         # `nvidia-container-cli: cuda>=13.0`. Image tag wins; the manifest
         # `min_cuda_version` is only consulted for opaque tags (NGC etc.).
-        cuda_version = (
-            detect_cuda_version(image)
-            or (config.GROUP_MIN_CUDA.get(group) if group else None)
+        tag_cuda = detect_cuda_version(image)
+        manifest_cuda = (
+            config.GROUP_MIN_CUDA.get(group) if group else None
         )
+        cuda_version = tag_cuda or manifest_cuda
         if cuda_version:
             args.extend(["--min-cuda-version", cuda_version])
+        # Emit a one-line trace of which source won, so reading the logs
+        # later (or chasing why scheduling picked a particular host) you
+        # can see whether the tag or the manifest fallback was used —
+        # and notice when a manifest value got ignored because the tag
+        # already had one.
+        if tag_cuda and manifest_cuda and tag_cuda != manifest_cuda:
+            log(
+                f"min-cuda-version: tag='{tag_cuda}' wins over "
+                f"manifest='{manifest_cuda}' (tag is the source of truth "
+                "for image-encoded CUDA; manifest is fallback-only)",
+                indent=1,
+            )
+        elif manifest_cuda and not tag_cuda:
+            log(
+                f"min-cuda-version: tag has none, using manifest "
+                f"fallback '{manifest_cuda}'",
+                indent=1,
+            )
     if config.REGISTRY_AUTH_ID:
         args.extend(["--registry-auth-id", config.REGISTRY_AUTH_ID])
     proc = runpodctl(*args, timeout=120)

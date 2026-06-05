@@ -61,7 +61,7 @@ jobs:
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          profile: autoresearch
+          profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           # NGC nvidia-pytorch:25.11 ships torch built against CUDA 13.0
