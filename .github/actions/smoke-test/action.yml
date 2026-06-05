@@ -78,20 +78,28 @@ inputs:
     required: false
 
     default: "2"
-  fail-on-skip:
+  on-skip:
     description: |
-      'true' (default) → fail the job if any image ends up SKIPped. A SKIP
-      means the smoke test never actually ran on the image — RunPod had
-      no capacity on every candidate instance type, or every candidate
-      landed on a stuck host. In a CI gate that's effectively zero
-      validation, so we treat it as a failure by default.
-      'false' → keep the legacy lenient behaviour (SKIP doesn't fail
-      the job). Use this for probe runs against tight-capacity DCs
-      where capacity-shortage flakiness would create false alarms.
-      Real FAILs (broken container, CUDA check failed) are always
-      fatal regardless of this flag.
+      What to do when at least one image ends up SKIPped (the smoke
+      test never actually ran on it — RunPod had no capacity on every
+      candidate, or every candidate landed on a stuck host). Real
+      FAILs (broken container, CUDA check failed) are always fatal
+      regardless of this knob.
+
+      'fail' (default) → exit 1 + `::error::` annotation. Job goes red.
+                         Use when SKIPped must NOT slip past CI.
+      'warn'           → exit 0 + `::warning::` annotation. Job stays
+                         green but the run gets a yellow warning
+                         bubble in the PR check tab. Use when
+                         capacity-shortage shouldn't block PRs but
+                         you still want a visible signal.
+      'pass'           → exit 0, no annotation. Legacy lenient mode,
+                         no signal at all.
+
+      Unknown values are silently coerced to 'fail' so a typo never
+      flips the safer default off.
     required: false
-    default: "true"
+    default: "fail"
   runpodctl-version:
     description: "runpodctl release tag"
     required: false
@@ -253,17 +261,9 @@ runs:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
         # 'Configure runpodctl' and 'Write SSH private key' steps above.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
-        FAIL_ON_SKIP_INPUT: ${{ inputs.fail-on-skip }}
+        # ON_SKIP is validated by config._coerce_on_skip (unknown values
+        # collapse to 'fail') so we just propagate the raw input.
+        ON_SKIP: ${{ inputs.on-skip }}
       run: |
         set -uo pipefail
-        # Translate the action's 'true'/'false' to the '1'/'0' env-var
-        # form test_images.py / runpod_smoke/config.py consume. Anything
-        # that isn't literally 'true' (case-insensitive) is treated as
-        # false so a typo in the workflow doesn't silently invert the
-        # safer default.
-        if [[ "${FAIL_ON_SKIP_INPUT,,}" == "true" ]]; then
-          export FAIL_ON_SKIP=1
-        else
-          export FAIL_ON_SKIP=0
-        fi
         python3 "${GITHUB_WORKSPACE}/tests/test_images.py" "${MANIFEST_PATH}"

@@ -37,15 +37,34 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 # too (DISK_GB * pods * hours can add up).
 MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 
-# Treat any SKIP outcome as a job failure. SKIPs mean the test never
-# actually ran against the image — RunPod had no capacity on every
-# candidate instance type, or every candidate landed on a stuck host.
-# In a CI smoke test that's effectively zero validation, so the default
-# is strict (fail). Set FAIL_ON_SKIP=0 only when you knowingly accept
-# capacity-shortage as non-fatal (e.g. a probe job that runs on a tight
-# DC and you don't want flaky CI). FAIL outcomes are always fatal
-# regardless of this flag.
-FAIL_ON_SKIP = os.environ.get("FAIL_ON_SKIP", "1") == "1"
+# What to do when at least one image ended up SKIPped. SKIPs mean the
+# test never actually ran against the image — RunPod had no capacity
+# on every candidate, or every candidate landed on a stuck host. In CI
+# that's effectively zero validation, so the default is strict ('fail').
+# Modes:
+#   'fail' — exit 1 + GitHub `::error::` annotation. Job goes red.
+#            Use when SKIPped means "we didn't prove the image works
+#            and we MUST know about that".
+#   'warn' — exit 0 + GitHub `::warning::` annotation. Job stays green
+#            but the run shows a yellow warning bubble in the PR check
+#            tab. Use when capacity-shortage is expected (tight DCs)
+#            and you'd rather not block PRs on RunPod's free capacity,
+#            but you still want a visible signal.
+#   'pass' — exit 0, no annotation. Legacy lenient behaviour, no signal
+#            at all. Avoid unless you have downstream tooling that
+#            scrapes the summary directly.
+# Unknown values fall back to 'fail' so a typo never silently switches
+# the safer default off. FAIL outcomes (broken container) are ALWAYS
+# fatal regardless of this knob.
+_ON_SKIP_VALID = ("fail", "warn", "pass")
+
+
+def _coerce_on_skip(raw: str) -> str:
+    val = (raw or "").strip().lower()
+    return val if val in _ON_SKIP_VALID else "fail"
+
+
+ON_SKIP: str = _coerce_on_skip(os.environ.get("ON_SKIP", "fail"))
 
 # How many times to retry pod-create when RunPod returns a transient
 # orchestrator error ("Something went wrong", 502/503, etc.). Capacity-

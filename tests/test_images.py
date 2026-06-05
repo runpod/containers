@@ -312,14 +312,22 @@ def _format_result_line(want: str, img: str, status: str, note: str,
 def _print_summary(results: dict[str, Result]) -> int:
     """Print the SUMMARY block and return the exit code.
 
-    Exit 1 if any image FAILed (broken container — always fatal).
-    Exit 1 also if any image SKIPped AND `config.FAIL_ON_SKIP` is set
-    (the default) — SKIPs mean the test never actually ran against the
-    image, which in a CI gate is equivalent to "we don't know if this
-    image works". Set FAIL_ON_SKIP=0 to keep the legacy lenient behaviour
-    when running against tight-capacity DCs.
-    Exit 0 only when every image either PASSed or SKIPped under lenient
-    mode."""
+    FAIL is ALWAYS fatal (exit 1) — a broken container is never something
+    we want to slip past CI.
+
+    For SKIPs (test never actually ran against the image) the behaviour
+    is driven by `config.ON_SKIP`:
+      'fail' (default) → exit 1 + `::error::` GitHub annotation
+      'warn'           → exit 0 + `::warning::` GitHub annotation
+                         (job stays green but the run shows a yellow
+                         warning bubble in the PR check tab — useful when
+                         capacity-shortage shouldn't block PRs but you
+                         still want a visible signal)
+      'pass'           → exit 0, no annotation (legacy lenient mode)
+
+    A run with BOTH FAIL and SKIP exits 1 with the FAIL annotation; the
+    SKIP count is already visible in the totals line so we don't double-
+    annotate."""
     print()
     print("=" * 84)
     print(" SUMMARY ".center(84, "="))
@@ -340,18 +348,27 @@ def _print_summary(results: dict[str, Result]) -> int:
 
     if counts["FAIL"] > 0:
         return 1
-    if counts["SKIP"] > 0 and config.FAIL_ON_SKIP:
-        # Make the reason visible at the bottom of the summary so the
-        # GitHub Actions step annotation says *why* the job failed.
-        print()
-        print(
-            f"::error::{counts['SKIP']} image(s) SKIPped — no real "
-            "validation happened. Failing the job because FAIL_ON_SKIP=1 "
-            "(default). Set FAIL_ON_SKIP=0 / fail-on-skip: 'false' on the "
-            "smoke-test action to make SKIPs non-fatal."
-        )
-        return 1
-    return 0
+    if counts["SKIP"] == 0 or config.ON_SKIP == "pass":
+        return 0
+
+    # SKIPs happened and the operator wants to be told. Annotate +
+    # decide exit code based on the mode.
+    msg = (
+        f"{counts['SKIP']} image(s) SKIPped — no real validation "
+        "happened. RunPod had no capacity on every candidate instance "
+        "type, or every candidate landed on a stuck host. "
+        "Set ON_SKIP=pass to silence this, ON_SKIP=warn to keep the "
+        "job green with a warning, or ON_SKIP=fail (default) to make "
+        "it fatal."
+    )
+    print()
+    if config.ON_SKIP == "warn":
+        print(f"::warning::{msg}")
+        return 0
+    # 'fail' — also the safe default for any unknown value (coerced
+    # in config._coerce_on_skip).
+    print(f"::error::{msg}")
+    return 1
 
 
 # ---------------------------------------------------------------------------
