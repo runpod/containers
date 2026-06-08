@@ -24,7 +24,7 @@ jobs:
             ignore: "DL3008"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       # TTY + default stdout so hadolint-action's problem matcher surfaces
       # annotations on the PR "Files changed" tab (SARIF/Code Scanning is much harder to spot).
