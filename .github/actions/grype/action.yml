@@ -1,0 +1,56 @@
+name: Grype
+description: "Scan Docker images with Grype. For now it's report-only and doesn't fail the build, until we fix the vulnerabilities."
+
+inputs:
+  image-refs:
+    description: "JSON array of image references to scan"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Grype
+      shell: bash
+      run: |
+        curl -fsSL https://github.com/anchore/grype/releases/download/v0.114.0/grype_0.114.0_linux_amd64.tar.gz \
+          -o /tmp/grype.tar.gz
+        tar xz -C /tmp -f /tmp/grype.tar.gz grype
+        sudo mv /tmp/grype /usr/local/bin/grype
+        grype --version
+
+    - name: Scan
+      shell: bash
+      env:
+        IMAGE_REFS: ${{ inputs.image-refs }}
+      run: |
+        set -uo pipefail
+        mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
+        if [ ${#refs[@]} -eq 0 ]; then
+          echo "No image refs to scan"
+          exit 1
+        fi
+
+        echo "Scanning ${#refs[@]} image(s):"
+        printf '  - %s\n' "${refs[@]}"
+
+        failed=()
+        for ref in "${refs[@]}"; do
+          echo "::group::Grype — ${ref}"
+          if ! grype "${ref}" \
+              --fail-on high \
+              --only-fixed \
+              --scope all-layers \
+              -o table \
+              -q; then
+            failed+=("${ref}")
+          fi
+          echo "::endgroup::"
+        done
+
+        if [ ${#failed[@]} -gt 0 ]; then
+          echo "::error::Grype found CRITICAL/HIGH vulnerabilities in:"
+          printf '  - %s\n' "${failed[@]}"
+          # exit 1 # TODO: Uncomment this when we fix the vulnerabilities
+        else
+          echo "All images clean of CRITICAL/HIGH (fixed) vulnerabilities."
+        fi

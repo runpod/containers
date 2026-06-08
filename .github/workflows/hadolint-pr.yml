@@ -1,0 +1,34 @@
+name: Hadolint-PR
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Add rows when new top-level Dockerfiles appear (e.g. nvidia-pytorch).
+        dockerfile:
+          - official-templates/base/Dockerfile
+          - official-templates/pytorch/Dockerfile
+          - official-templates/autoresearch/Dockerfile
+          - helper-templates/verify-nccl/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # TTY + default stdout so hadolint-action's problem matcher surfaces
+      # annotations on the PR "Files changed" tab (SARIF/Code Scanning is much harder to spot).
+      - name: Lint Dockerfile
+        uses: ./.github/actions/hadolint
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: warning
+          format: tty
+          output-file: /dev/stdout

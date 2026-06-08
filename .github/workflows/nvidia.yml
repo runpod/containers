@@ -1,10 +1,12 @@
 name: Nvidia Image Build
 
 on:
-  push:
+  pull_request:
     paths:
       - ".github/workflows/nvidia.yml"
       - "official-templates/nvidia-*/**"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +18,7 @@ jobs:
     runs-on: blacksmith-16vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       
@@ -28,7 +30,8 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build nvidia images
-        uses: docker/bake-action@v6
+        id: build
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -38,4 +41,14 @@ jobs:
             official-templates/shared/versions.hcl
             official-templates/nvidia-pytorch/docker-bake.hcl
           push: true
+      
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}

@@ -1,7 +1,7 @@
 name: Docker Image Build and Release
 
 on:
-  push:
+  pull_request:
     paths:
       - ".github/workflows/base.yml"
       - "official-templates/base/docker-bake.hcl"
@@ -11,6 +11,8 @@ on:
       - "official-templates/autoresearch/docker-bake.hcl"
       - "official-templates/autoresearch/Dockerfile"
       - "official-templates/shared/**"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +24,7 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       
@@ -34,7 +36,8 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build base images
-        uses: docker/bake-action@v6
+        id: build
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -45,18 +48,29 @@ jobs:
             official-templates/base/docker-bake.hcl
           push: true
 
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
         id: changes
         with:
           files_yaml: |
@@ -66,7 +80,7 @@ jobs:
               - 'official-templates/autoresearch/**'
 
       - name: Setup Docker
-        if: steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -74,8 +88,9 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build autoresearch images
-        if: steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: docker/bake-action@v6
+        id: build
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -86,6 +101,19 @@ jobs:
             official-templates/autoresearch/docker-bake.hcl
           push: true
 
+      - name: Extract image refs
+        id: refs
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
   build-pytorch:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
@@ -93,17 +121,18 @@ jobs:
     runs-on: blacksmith-16vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       
       - name: Check if build is needed
-        uses: tj-actions/changed-files@v46
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
         id: changes
         with:
           files_yaml: |
             pytorch:
               - 'official-templates/shared/**'
+              - 'official-templates/base/**'
               - 'official-templates/pytorch/**'
 
       - name: Setup Docker
@@ -113,10 +142,12 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          # max-parallelism: 4
 
       - name: Build pytorch images
+        id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
@@ -126,3 +157,16 @@ jobs:
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
           push: true
+
+      - name: Extract image refs
+        id: refs
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
