@@ -1,5 +1,5 @@
-name: Trivy
-description: "Scan Docker images with Trivy; fail on CRITICAL/HIGH fixed vulnerabilities"
+name: Grype
+description: "Scan Docker images with Grype; fail on CRITICAL/HIGH fixed vulnerabilities"
 
 inputs:
   image-refs:
@@ -9,14 +9,14 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install Trivy
+    - name: Install Grype
       shell: bash
       run: |
-        curl -fsSL https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_Linux-64bit.tar.gz \
-          -o /tmp/trivy.tar.gz
-        tar xz -C /tmp -f /tmp/trivy.tar.gz trivy
-        sudo mv /tmp/trivy /usr/local/bin/trivy
-        trivy --version
+        curl -fsSL https://github.com/anchore/grype/releases/download/v0.114.0/grype_0.114.0_linux_amd64.tar.gz \
+          -o /tmp/grype.tar.gz
+        tar xz -C /tmp -f /tmp/grype.tar.gz grype
+        sudo mv /tmp/grype /usr/local/bin/grype
+        grype --version
 
     - name: Scan
       shell: bash
@@ -35,23 +35,20 @@ runs:
 
         failed=()
         for ref in "${refs[@]}"; do
-          echo "::group::Trivy — ${ref}"
-          if ! trivy image \
-              --timeout 30m \
-              --severity CRITICAL,HIGH \
-              --exit-code 1 \
-              --ignore-unfixed \
-              --pkg-types os,library \
-              --format table \
-              --no-progress \
-              "${ref}"; then
+          echo "::group::Grype — ${ref}"
+          if ! grype "${ref}" \
+              --fail-on high \
+              --only-fixed \
+              --scope all-layers \
+              -o table \
+              -q; then
             failed+=("${ref}")
           fi
           echo "::endgroup::"
         done
 
         if [ ${#failed[@]} -gt 0 ]; then
-          echo "::error::Trivy found CRITICAL/HIGH vulnerabilities in:"
+          echo "::error::Grype found CRITICAL/HIGH vulnerabilities in:"
           printf '  - %s\n' "${failed[@]}"
           # exit 1 # TODO: Uncomment this when we fix the vulnerabilities
         fi

@@ -54,8 +54,8 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
-        uses: ./.github/actions/trivy
+      - name: Grype scan
+        uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -108,9 +108,9 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
+      - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: ./.github/actions/trivy
+        uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -165,8 +165,8 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
+      - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: ./.github/actions/trivy
+        uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
