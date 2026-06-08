@@ -1,5 +1,5 @@
 name: Grype
-description: "Scan Docker images with Grype; fail on CRITICAL/HIGH fixed vulnerabilities"
+description: "Scan Docker images with Grype. For now it's report-only and doesn't fail the build, until we fix the vulnerabilities."
 
 inputs:
   image-refs:
@@ -51,5 +51,6 @@ runs:
           echo "::error::Grype found CRITICAL/HIGH vulnerabilities in:"
           printf '  - %s\n' "${failed[@]}"
           # exit 1 # TODO: Uncomment this when we fix the vulnerabilities
+        else
+          echo "All images clean of CRITICAL/HIGH (fixed) vulnerabilities."
         fi
-        echo "All images clean of CRITICAL/HIGH (fixed) vulnerabilities."
