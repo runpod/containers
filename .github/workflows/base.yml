@@ -21,6 +21,8 @@ permissions:
 jobs:
   build-base:
     runs-on: blacksmith-8vcpu-ubuntu-2204
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -58,10 +60,20 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+  test-base:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-base
+    if: needs.build-base.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ needs.build-base.outputs.image-refs }}
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -72,6 +84,8 @@ jobs:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-8vcpu-ubuntu-2204
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -123,11 +137,21 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+  test-autoresearch:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-autoresearch
+    if: needs.build-autoresearch.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Smoke test
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ needs.build-autoresearch.outputs.image-refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -137,6 +161,8 @@ jobs:
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -189,15 +215,26 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+  test-pytorch:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-pytorch
+    if: needs.build-pytorch.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Smoke test
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ needs.build-pytorch.outputs.image-refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
-          exclude_instances: |
+          exclude-instances: |
             *Blackwell*
           max-parallel: "4"
+          
