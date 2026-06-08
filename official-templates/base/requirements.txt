@@ -1,4 +1,4 @@
-hf_transfer 
+hf_transfer
 jupyterlab==4.5.7
 ipywidgets
 jupyter-archive

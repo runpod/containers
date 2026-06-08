@@ -11,7 +11,7 @@ target "nvidia-base" {
     proxy   = "container-template/proxy"
     logo    = "container-template"
     requirements = "official-templates/nvidia-pytorch"
-    scrab_stale_metadata = "scripts"
+    scrub_stale_metadata = "scripts"
   }
   args = {
     RP_SKIP_PYTHON = "1"
