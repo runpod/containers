@@ -200,3 +200,4 @@ jobs:
           test-jupyter: true
           exclude_instances: |
             *Blackwell*
+          max-parallel: "4"
