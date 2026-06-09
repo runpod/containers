@@ -48,8 +48,8 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
-        uses: ./.github/actions/trivy
+      - name: Grype scan
+        uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           skip-files: |
