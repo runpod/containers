@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   build-base:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -46,7 +46,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -62,7 +63,7 @@ jobs:
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -99,7 +100,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -118,7 +120,7 @@ jobs:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -156,7 +158,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs

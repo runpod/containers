@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build-rocm:
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,7 +40,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/rocm/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
