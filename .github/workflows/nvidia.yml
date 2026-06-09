@@ -58,3 +58,8 @@ jobs:
             **/civetweb/resources/ssl_cert.pem
             **/civetweb/resources/server.pem
             **/civetweb/resources/server_bkup.pem
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
