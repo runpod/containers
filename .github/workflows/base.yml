@@ -21,10 +21,12 @@ permissions:
 
 jobs:
   build-base:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
       
@@ -46,7 +48,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -54,8 +57,13 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
-        uses: ./.github/actions/trivy
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -69,10 +77,20 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+  test-base:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-base
+    if: needs.build-base.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ needs.build-base.outputs.image-refs }}
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -82,10 +100,12 @@ jobs:
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
@@ -119,7 +139,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -128,9 +149,15 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
+      - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: ./.github/actions/trivy
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -146,11 +173,21 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+
+  test-autoresearch:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-autoresearch
+    if: needs.build-autoresearch.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Smoke test
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ needs.build-autoresearch.outputs.image-refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -159,10 +196,13 @@ jobs:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 240
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
       
@@ -197,7 +237,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -206,12 +247,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
+      - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: ./.github/actions/trivy
+        uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+      - name: Push images
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          
       - name: Install Cosign
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
@@ -224,14 +271,25 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+  test-pytorch:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-pytorch
+    if: needs.build-pytorch.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Smoke test
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ needs.build-pytorch.outputs.image-refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
-          exclude_instances: |
+          exclude-instances: |
             *Blackwell*
+          max-parallel: "4"
+          

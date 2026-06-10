@@ -11,7 +11,7 @@ ARG TORCH
 # argument per package instead of a single mashed-together string.
 RUN read -ra TORCH_PKGS <<< "${TORCH}" && \
     python -m pip install \
-        --timeout 300 \
+        --timeout 1000 \
         --retries 10 \
         --resume-retries 5 \
         --no-cache-dir \
