@@ -4,11 +4,11 @@ FROM ${BASE_IMAGE}
 ARG WHEEL_SRC
 ARG TORCH
 
-RUN python -m pip install \
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install \
         --timeout 1000 \
         --retries 10 \
         --resume-retries 5 \
-        --no-cache-dir \
         --upgrade \
         ${TORCH} \
         --index-url https://download.pytorch.org/whl/cu${WHEEL_SRC}
