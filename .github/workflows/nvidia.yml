@@ -42,9 +42,6 @@ jobs:
             official-templates/nvidia-pytorch/docker-bake.hcl
           load: true
           push: false
-          set: |
-            *.cache-from=type=registry,ref=docker.io/runpod/buildcache:nvidia-pytorch
-            *.cache-to=type=registry,ref=docker.io/runpod/buildcache:nvidia-pytorch,mode=max
       
       - name: Extract image refs
         id: refs

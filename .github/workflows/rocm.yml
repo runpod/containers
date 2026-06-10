@@ -42,9 +42,6 @@ jobs:
             official-templates/rocm/docker-bake.hcl
           load: true
           push: false
-          set: |
-            *.cache-from=type=registry,ref=docker.io/runpod/buildcache:rocm
-            *.cache-to=type=registry,ref=docker.io/runpod/buildcache:rocm,mode=max
 
       - name: Extract image refs
         id: refs
