@@ -132,6 +132,7 @@ jobs:
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v6
