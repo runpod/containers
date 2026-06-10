@@ -42,6 +42,9 @@ jobs:
             official-templates/rocm/docker-bake.hcl
           load: true
           push: false
+          set: |
+            *.cache-from=type=registry,ref=docker.io/runpod/buildcache:rocm
+            *.cache-to=type=registry,ref=docker.io/runpod/buildcache:rocm,mode=max
 
       - name: Extract image refs
         id: refs
@@ -53,11 +56,6 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          skip-files: |
-            **/civetweb/resources/cert/*
-            **/civetweb/resources/ssl_cert.pem
-            **/civetweb/resources/server.pem
-            **/civetweb/resources/server_bkup.pem
 
       - name: Push images
         uses: ./.github/actions/docker-push

@@ -48,6 +48,10 @@ jobs:
             official-templates/base/docker-bake.hcl
           load: true
           push: false
+          
+          set: |
+            *.cache-from=type=registry,ref=docker.io/runpod/buildcache:base
+            *.cache-to=type=registry,ref=docker.io/runpod/buildcache:base,mode=max
 
       - name: Extract image refs
         id: refs
@@ -107,6 +111,9 @@ jobs:
             official-templates/autoresearch/docker-bake.hcl
           load: true
           push: false
+          set: |
+            *.cache-from=type=registry,ref=docker.io/runpod/buildcache:autoresearch
+            *.cache-to=type=registry,ref=docker.io/runpod/buildcache:autoresearch,mode=max
 
       - name: Extract image refs
         id: refs
@@ -172,6 +179,9 @@ jobs:
             official-templates/pytorch/docker-bake.hcl
           load: true
           push: false
+          set: |
+            *.cache-from=type=registry,ref=docker.io/runpod/buildcache:pytorch
+            *.cache-to=type=registry,ref=docker.io/runpod/buildcache:pytorch,mode=max
 
       - name: Extract image refs
         id: refs
