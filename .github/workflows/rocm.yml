@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-rocm:
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -39,7 +39,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/rocm/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -47,12 +48,12 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
-        uses: ./.github/actions/trivy
+      - name: Grype scan
+        uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          skip-files: |
-            **/civetweb/resources/cert/*
-            **/civetweb/resources/ssl_cert.pem
-            **/civetweb/resources/server.pem
-            **/civetweb/resources/server_bkup.pem
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
