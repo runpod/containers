@@ -161,7 +161,6 @@ jobs:
           fetch-depth: 0
 
       - name: Smoke test
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ needs.build-autoresearch.outputs.image-refs }}
@@ -247,7 +246,6 @@ jobs:
           fetch-depth: 0
 
       - name: Smoke test
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ needs.build-pytorch.outputs.image-refs }}
