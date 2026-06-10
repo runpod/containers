@@ -1,0 +1,28 @@
+name: Docker Push
+description: "Push locally-loaded images to their registry refs"
+
+inputs:
+  image-refs:
+    description: "JSON array of image references to push"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Push
+      shell: bash
+      env:
+        IMAGE_REFS: ${{ inputs.image-refs }}
+      run: |
+        set -euo pipefail
+        mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
+        if [ ${#refs[@]} -eq 0 ]; then
+          echo "No image refs to push"
+          exit 1
+        fi
+
+        for ref in "${refs[@]}"; do
+          echo "::group::docker push — ${ref}"
+          docker push "${ref}"
+          echo "::endgroup::"
+        done

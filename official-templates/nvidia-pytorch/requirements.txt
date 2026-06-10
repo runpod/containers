@@ -12,3 +12,4 @@ protobuf==6.33.5
 tornado==6.5.5
 urllib3==2.7.0
 wheel==0.46.2
+pyarrow==23.0.1

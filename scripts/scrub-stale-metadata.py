@@ -7,10 +7,13 @@ upgrades the wheel install but cannot reach those bundled trees, so
 Trivy keeps reporting the (now-unused) older version. This script removes
 the orphaned metadata for packages listed in the supplied requirements
 file."""
+from __future__ import annotations
+
 import pathlib
 import re
 import shutil
 import sys
+from collections.abc import Iterator
 
 NAME_RE = re.compile(r"^Name:\s*([^\n]*)$", re.MULTILINE)
 VERSION_RE = re.compile(r"^Version:\s*([^\n]*)$", re.MULTILINE)
@@ -51,7 +54,7 @@ def read_meta(meta_dir: pathlib.Path) -> tuple[str, str] | None:
     return canonical(name_match.group(1)), version_match.group(1).strip()
 
 
-def iter_meta_dirs() -> "Iterator[pathlib.Path]":
+def iter_meta_dirs() -> Iterator[pathlib.Path]:
     for root in SEARCH_ROOTS:
         if not root.is_dir():
             continue

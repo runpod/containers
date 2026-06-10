@@ -26,7 +26,7 @@ runs:
   using: composite
   steps:
     - id: hadolint
-      uses: hadolint/hadolint-action@v3.1.0
+      uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5
       with:
         dockerfile: ${{ inputs.dockerfile }}
         failure-threshold: ${{ inputs.failure-threshold }}

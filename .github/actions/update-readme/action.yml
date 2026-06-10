@@ -37,3 +37,4 @@ runs:
         TEMPLATE_PATH: ${{ inputs.template_path }}
       run: |
         "${GITHUB_WORKSPACE}/scripts/update-template-readme.sh" "${TEMPLATE_ID}" "${TEMPLATE_PATH}"
+        

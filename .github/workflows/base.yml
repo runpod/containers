@@ -20,12 +20,12 @@ permissions:
 
 jobs:
   build-base:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
       
@@ -47,7 +47,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -55,8 +56,13 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
-        uses: ./.github/actions/trivy
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -83,12 +89,12 @@ jobs:
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
@@ -122,7 +128,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -131,9 +138,15 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
+      - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: ./.github/actions/trivy
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
@@ -160,12 +173,13 @@ jobs:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 240
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
       
@@ -200,7 +214,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -209,9 +224,15 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
-      - name: Trivy scan
+      - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: ./.github/actions/trivy
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
