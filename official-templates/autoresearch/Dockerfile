@@ -23,7 +23,9 @@ WORKDIR /opt/autoresearch
 # Install Python dependencies.
 # --frozen: install exactly from uv.lock, no resolver run.
 # --no-build: refuse source distributions — `setup.py` can execute arbitrary code during install, and we want only pre-built, audited wheels.
-RUN uv sync --frozen --no-build && \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    export UV_HTTP_TIMEOUT=1000 && \
+    uv sync --frozen --no-build && \
     uv run --frozen --no-build prepare.py # Download data and train tokenizer (~2 min)
 
 # On first boot: copy source files to /workspace (lightweight, persists edits)
