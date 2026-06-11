@@ -41,3 +41,4 @@ jobs:
         with:
           sarif_file: hadolint.sarif
           category: hadolint-${{ strategy.job-index }}
+          
