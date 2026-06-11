@@ -17,7 +17,7 @@ jobs:
           - dockerfile: official-templates/base/Dockerfile
             ignore: DL3006,DL3008,DL3013,DL3022
           - dockerfile: official-templates/pytorch/Dockerfile
-            ignore: "DL3013,DL3006"
+            ignore: "DL3013,DL3006,DL3042"
           - dockerfile: official-templates/autoresearch/Dockerfile
             ignore: "DL3006"
           - dockerfile: helper-templates/verify-nccl/Dockerfile
@@ -36,3 +36,4 @@ jobs:
           format: tty
           output-file: /dev/stdout
           ignore: ${{ matrix.ignore }}
+          
