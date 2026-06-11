@@ -173,7 +173,7 @@ signature in production.
 ### Why we sign the digest, not the tag
 
 Cosign binds signatures to the immutable `sha256:` digest. Tags
-(`1.0.6-ubuntu2204`, `latest`, …) can be moved at any time; a signature on a
+(`1.0.7-ubuntu2204`, `latest`, …) can be moved at any time; a signature on a
 tag would be meaningless. `image-name` outputs the digest form, and that is
 what we pass to both `cosign sign` and `cosign verify` in CI — and what
 consumers should verify too.
@@ -194,7 +194,7 @@ the Docker daemon is not available.
 ### Step-by-step
 
 ```bash
-IMAGE="docker.io/runpod/base:1.0.6-ubuntu2204"
+IMAGE="docker.io/runpod/base:1.0.7-ubuntu2204"
 
 # 1. Resolve the tag to its immutable digest.
 DIGEST=$(docker buildx imagetools inspect "${IMAGE}" \
