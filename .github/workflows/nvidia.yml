@@ -11,11 +11,12 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   build-nvidia:
     runs-on: blacksmith-32vcpu-ubuntu-2404
+    permissions:
+      id-token: write
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
     steps:
