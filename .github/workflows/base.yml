@@ -173,7 +173,7 @@ jobs:
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 240
+    timeout-minutes: 300
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
     steps:
@@ -199,7 +199,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          # max-parallelism: 4
+          max-parallelism: 4
 
       - name: Build pytorch images
         id: build
