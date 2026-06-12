@@ -3,7 +3,7 @@ description: "Scan Docker images with Grype. For now it's report-only and doesn'
 
 inputs:
   image-refs:
-    description: "JSON array of image references to scan"
+    description: "JSON array of image refs to scan"
     required: true
 
 runs:
@@ -36,7 +36,7 @@ runs:
         failed=()
         for ref in "${refs[@]}"; do
           echo "::group::Grype — ${ref}"
-          if ! grype "${ref}" \
+          if ! grype "docker:${ref}" \
               --fail-on high \
               --only-fixed \
               --scope all-layers \

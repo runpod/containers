@@ -14,6 +14,8 @@ target "common-base" {
     scripts = "container-template"
     proxy   = "container-template/proxy"
     logo    = "container-template"
+    requirements = "official-templates/base"
+    scrub_stale_metadata = "scripts"
   }
 }
 

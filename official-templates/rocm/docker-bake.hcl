@@ -1,6 +1,5 @@
 group "default" {
   targets = [
-    "rocm644-ubuntu2204-pytorch251",
     "rocm644-ubuntu2204-pytorch260",
     "rocm644-ubuntu2404-pytorch260",
     "rocm644-ubuntu2404-pytorch271",
@@ -15,19 +14,11 @@ target "rocm-base" {
     scripts = "container-template"
     proxy   = "container-template/proxy"
     logo    = "container-template"
+    requirements = "official-templates/rocm"
+    scrub_stale_metadata = "scripts"
   }
   args = {
     RP_SKIP_PYTHON = "1"
-  }
-}
-
-target "rocm644-ubuntu2204-pytorch251" {
-  inherits = ["rocm-base"]
-  tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm644-ubuntu2204-py310-pytorch251",
-  ]
-  args = {
-    BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu22.04_py3.10_pytorch_release_2.5.1"
   }
 }
 

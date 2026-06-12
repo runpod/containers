@@ -2,7 +2,6 @@ ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}
 
 ARG RP_SKIP_PYTHON
-ARG RP_SKIP_JUPYTER
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -36,7 +35,7 @@ WORKDIR /
 
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-# Install 
+# Install
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
@@ -46,8 +45,15 @@ RUN apt-get update --yes && \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev libpostproc-dev \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
-    software-properties-common sudo tmux unzip vim wget zip zstd
+    software-properties-common sudo tmux unzip vim wget zip zstd && \
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
+    rm -rf /var/lib/apt/lists/*
     
+# Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
+# Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
+RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
+        -print -exec rm -rf {} + 2>/dev/null || true
+
 # Install Python versions
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
@@ -71,11 +77,11 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
 
 # Install virtualenv
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
-    python3.9 -m pip install --upgrade pip virtualenv && \
-    python3.10 -m pip install --upgrade pip virtualenv && \
-    python3.11 -m pip install --upgrade pip virtualenv && \
-    python3.12 -m pip install --upgrade pip virtualenv && \
-    python3.13 -m pip install --upgrade pip virtualenv;
+    python3.9 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.10 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.11 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.12 -m pip install --upgrade --no-cache-dir pip virtualenv && \
+    python3.13 -m pip install --upgrade --no-cache-dir pip virtualenv;
 
 # Symlink default python/pip
 RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
@@ -85,14 +91,13 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+COPY --from=requirements requirements.txt /requirements.txt
+COPY --from=scrub_stale_metadata scrub-stale-metadata.py /tmp/scrub-stale-metadata.py
+
 # Install Jupyter and hf_transfer packages
-RUN [[ -n $RP_SKIP_JUPYTER ]] && exit 0; \
-    python -m pip install --upgrade --no-cache-dir \
-        hf_transfer \
-        jupyterlab \
-        ipywidgets \
-        jupyter-archive \
-        notebook==7.4.2;
+RUN python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
+    python /tmp/scrub-stale-metadata.py /requirements.txt && \
+    rm /tmp/scrub-stale-metadata.py
 
 # Install filebrowser
 RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
@@ -102,9 +107,6 @@ COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
 COPY --from=proxy snippets /etc/nginx/snippets
 COPY --from=proxy readme.html /usr/share/nginx/html/readme.html
 
-# Remove existing SSH host keys
-RUN rm -f /etc/ssh/ssh_host_*
-
 # Copy the README.md
 COPY README.md /usr/share/nginx/html/README.md
 
@@ -113,7 +115,9 @@ COPY --from=scripts --chmod=755 start.sh /
 
 # Welcome Message
 COPY --from=logo runpod.txt /etc/runpod.txt
-RUN echo 'cat /etc/runpod.txt' >> /root/.bashrc
-RUN echo 'echo -e "\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/\033[0m and \033[1;34mhttps://blog.runpod.io/\033[0m\n\n"' >> /root/.bashrc
+RUN cat >> /root/.bashrc <<'EOF'
+cat /etc/runpod.txt
+printf "\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/\033[0m and \033[1;34mhttps://blog.runpod.io/\033[0m\n\n"
+EOF
 
 CMD ["/start.sh"]

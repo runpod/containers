@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   build-base:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -46,7 +46,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -59,10 +60,15 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -99,7 +105,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -114,11 +121,18 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+      - name: Push images
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
   build-pytorch:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 300
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -156,7 +170,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          push: true
+          load: true
+          push: false
 
       - name: Extract image refs
         id: refs
@@ -168,5 +183,11 @@ jobs:
       - name: Grype scan
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
