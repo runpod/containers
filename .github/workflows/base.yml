@@ -178,7 +178,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
-          targets: pytorch-*-${{ matrix.cuda }}-*
+          targets: ${{ matrix.cuda }}
           load: true
           push: false
 
