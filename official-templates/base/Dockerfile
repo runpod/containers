@@ -55,7 +55,7 @@ RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
 # Install Python versions
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt-get install --yes --no-install-recommends \
         python3.9-dev python3.9-venv python3.9-distutils \
@@ -67,16 +67,26 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*;
 
-# Install pip
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
-    curl -sS https://bootstrap.pypa.io/pip/3.9/get-pip.py | python3.9 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.13;
+# Install pip via verified get-pip.py
+ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
+ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
+ARG GET_PIP_39_SHA256=95c0ae79ccf9ac1e47e4187f49081d6ae1f45997afd4549e14f37337cbcfd766
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
+        "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
+    echo "${GET_PIP_SHA256}  /tmp/get-pip.py" | sha256sum -c - && \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip-3.9.py \
+        "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/3.9/get-pip.py" && \
+    echo "${GET_PIP_39_SHA256}  /tmp/get-pip-3.9.py" | sha256sum -c - && \
+    python3.9  /tmp/get-pip-3.9.py && \
+    python3.10 /tmp/get-pip.py && \
+    python3.11 /tmp/get-pip.py && \
+    python3.12 /tmp/get-pip.py && \
+    python3.13 /tmp/get-pip.py && \
+    rm /tmp/get-pip.py /tmp/get-pip-3.9.py
 
 # Install virtualenv
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     python3.9 -m pip install --upgrade --no-cache-dir pip virtualenv && \
     python3.10 -m pip install --upgrade --no-cache-dir pip virtualenv && \
     python3.11 -m pip install --upgrade --no-cache-dir pip virtualenv && \
@@ -84,7 +94,7 @@ RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
     python3.13 -m pip install --upgrade --no-cache-dir pip virtualenv;
 
 # Symlink default python/pip
-RUN [[ -n $RP_SKIP_PYTHON ]] && exit 0; \
+RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     ln -sf /usr/bin/python3.12 /usr/local/bin/python && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3;
@@ -99,8 +109,17 @@ RUN python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
     python /tmp/scrub-stale-metadata.py /requirements.txt && \
     rm /tmp/scrub-stale-metadata.py
 
-# Install filebrowser
-RUN curl -LsSf https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+# Install filebrowser (pinned + SHA-256 verified, avoids `curl | bash`).
+# Bump FILEBROWSER_VERSION + FILEBROWSER_SHA256 together when updating.
+# Checksums: https://github.com/filebrowser/filebrowser/releases
+ARG FILEBROWSER_VERSION=2.63.5
+ARG FILEBROWSER_SHA256=b36ad6296db0a749a5adbc792ab5321d11b307106123d44e171b7c158fcca2d9
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/filebrowser.tar.gz \
+        "https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" && \
+    echo "${FILEBROWSER_SHA256}  /tmp/filebrowser.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/filebrowser.tar.gz -C /usr/local/bin filebrowser && \
+    chmod +x /usr/local/bin/filebrowser && \
+    rm /tmp/filebrowser.tar.gz
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
@@ -117,7 +136,13 @@ COPY --from=scripts --chmod=755 start.sh /
 COPY --from=logo runpod.txt /etc/runpod.txt
 RUN cat >> /root/.bashrc <<'EOF'
 cat /etc/runpod.txt
-printf "\nFor detailed documentation and guides, please visit:\n\033[1;34mhttps://docs.runpod.io/\033[0m and \033[1;34mhttps://blog.runpod.io/\033[0m\n\n"
+cat <<'BANNER'
+
+For detailed documentation and guides, please visit:
+https://docs.runpod.io/
+and https://blog.runpod.io
+
+BANNER
 EOF
 
 CMD ["/start.sh"]

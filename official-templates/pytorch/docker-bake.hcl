@@ -72,6 +72,33 @@ group "default" {
   ]
 }
 
+# Per-CUDA-major groups so CI can shard the matrix across separate runners.
+# Bake does not expand glob patterns in target arguments, so we need explicit
+# groups (or full target names) — globs only work via `--list` / `--print`.
+group "cu1281" {
+  targets = [
+    for build in COMPATIBLE_BUILDS:
+      "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
+      if build.cuda_code == "1281"
+  ]
+}
+
+group "cu1290" {
+  targets = [
+    for build in COMPATIBLE_BUILDS:
+      "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
+      if build.cuda_code == "1290"
+  ]
+}
+
+group "cu1300" {
+  targets = [
+    for build in COMPATIBLE_BUILDS:
+      "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
+      if build.cuda_code == "1300"
+  ]
+}
+
 target "pytorch-base" {
   context = "official-templates/pytorch"
   dockerfile = "Dockerfile"

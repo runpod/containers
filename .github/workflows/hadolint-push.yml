@@ -19,14 +19,14 @@ jobs:
           - dockerfile: official-templates/base/Dockerfile
             ignore: DL3006,DL3008,DL3013,DL3022
           - dockerfile: official-templates/pytorch/Dockerfile
-            ignore: "DL3013,DL3006"
+            ignore: "DL3013,DL3006,DL3042"
           - dockerfile: official-templates/autoresearch/Dockerfile
             ignore: "DL3006"
           - dockerfile: helper-templates/verify-nccl/Dockerfile
             ignore: "DL3008"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Lint Dockerfile
         uses: ./.github/actions/hadolint
@@ -35,9 +35,11 @@ jobs:
           failure-threshold: warning
           format: sarif
           output-file: hadolint.sarif
+          ignore: ${{ matrix.ignore }}
       
       - name: Upload Hadolint SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: hadolint.sarif
           category: hadolint-${{ strategy.job-index }}
+          

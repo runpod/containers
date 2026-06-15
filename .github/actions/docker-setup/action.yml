@@ -64,13 +64,13 @@ runs:
         fi
 
     - name: Login to Docker Hub
-      uses: docker/login-action@v4
+      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
       with:
         username: ${{ inputs.dockerhub-username }}
         password: ${{ inputs.dockerhub-token }}
 
     - name: Set up Docker Build
-      uses: useblacksmith/setup-docker-builder@v1
+      uses: useblacksmith/setup-docker-builder@ab5c1da94f53f5cd75c1038092aa276dddfccbba
       with:
         max-parallelism: ${{ inputs.max-parallelism }}
 
@@ -86,7 +86,7 @@ runs:
         echo "::endgroup::"
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v4
+      uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3
 
     - name: Determine if this is a production build
       id: build-type

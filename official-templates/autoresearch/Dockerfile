@@ -5,23 +5,28 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install runpodctl for pod management (scaling up GPUs)
 ARG RUNPODCTL_VERSION=v2.3.0
-RUN wget -qO- https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz | \
-    tar -xz -C /usr/local/bin runpodctl
+ARG RUNPODCTL_SHA256=908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169
+RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
+    -O /tmp/runpodctl.tar.gz \
+    "https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz" && \
+    echo "${RUNPODCTL_SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c - && \
+    tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl && \
+    rm /tmp/runpodctl.tar.gz
 
 # Clone autoresearch to /opt (safe from volume mounts)
 ARG AUTORESEARCH_REF=master
-RUN git clone --branch ${AUTORESEARCH_REF} --depth 1 \
+RUN git clone --branch "${AUTORESEARCH_REF}" --depth 1 \
     https://github.com/runpod/autoresearch.git /opt/autoresearch
 
 WORKDIR /opt/autoresearch
 
-# Install Python dependencies
-# UV_HTTP_TIMEOUT raised from the 30s default to tolerate slow PyTorch CDN
-# downloads of multi-hundred-MB CUDA wheels under bandwidth contention.
+# Install Python dependencies.
+# --frozen: install exactly from uv.lock, no resolver run.
+# --no-build: refuse source distributions — `setup.py` can execute arbitrary code during install, and we want only pre-built, audited wheels.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     export UV_HTTP_TIMEOUT=1000 && \
-    uv sync && \
-    uv run prepare.py # Download data and train tokenizer (~2 min)
+    uv sync --frozen --no-build && \
+    uv run --frozen --no-build prepare.py # Download data and train tokenizer (~2 min)
 
 # On first boot: copy source files to /workspace (lightweight, persists edits)
 # and symlink .venv back to /opt (12GB, stays on fast container layer)
