@@ -173,14 +173,17 @@ jobs:
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-32vcpu-ubuntu-2404
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
     timeout-minutes: 240
     # The full pytorch matrix (~25 images × multi-GB each) overwhelms the
     # docker-container-driver BuildKit's OCI export pipeline on `load: true`,
     # blowing peak runner disk and stalling the daemon for 15+ minutes until
     # the orchestrator kills the runner. Shard the matrix by CUDA major so
     # each runner only loads 5-10 images at a time onto its own disk.
+    #
+    # NOTE: we intentionally do NOT declare job-level `outputs:` here -- with
+    # a matrix, all shards race to write the same output key and only one
+    # (last-finished) wins, so 2/3 of the refs would silently disappear.
+    # Per-shard refs are passed to test-pytorch via upload-artifact below.
     strategy:
       fail-fast: false
       matrix:
@@ -245,21 +248,69 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+      # Persist this shard's refs so the corresponding test-pytorch matrix
+      # entry can pick them up. Artifact name is unique per shard, so the
+      # three uploads don't collide.
+      - name: Save refs artifact
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/pytorch-refs
+          printf '%s\n' "$REFS" > /tmp/pytorch-refs/refs.json
+
+      - name: Upload refs artifact
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytorch-refs-${{ matrix.cuda }}
+          path: /tmp/pytorch-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch
     if: needs.build-pytorch.result == 'success'
-    
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Smoke test
+      # When the build was skipped because nothing changed, the corresponding
+      # artifact won't exist. continue-on-error lets us detect that and skip
+      # the smoke-test for this shard instead of failing the whole job.
+      - name: Download refs for ${{ matrix.cuda }}
+        id: dl
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: pytorch-refs-${{ matrix.cuda }}
+          path: /tmp/pytorch-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/pytorch-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        if: steps.refs.outcome == 'success'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-pytorch.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -267,4 +318,3 @@ jobs:
           exclude-instances: |
             *Blackwell*
           max-parallel: "4"
-          
