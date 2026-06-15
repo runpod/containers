@@ -173,15 +173,24 @@ jobs:
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 300
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
+    timeout-minutes: 240
+    # The full pytorch matrix (~25 images × multi-GB each) overwhelms the
+    # docker-container-driver BuildKit's OCI export pipeline on `load: true`,
+    # blowing peak runner disk and stalling the daemon for 15+ minutes until
+    # the orchestrator kills the runner. Shard the matrix by CUDA major so
+    # each runner only loads 5-10 images at a time onto its own disk.
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
-      
+
       - name: Check if build is needed
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
         id: changes
@@ -199,9 +208,9 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          # max-parallelism: 4
+          max-parallelism: 6
 
-      - name: Build pytorch images
+      - name: Build pytorch images (${{ matrix.cuda }})
         id: build
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -213,6 +222,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
           load: true
           push: false
 
@@ -239,6 +249,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch
     if: needs.build-pytorch.result == 'success'
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v6
