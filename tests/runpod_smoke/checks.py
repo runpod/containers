@@ -390,7 +390,37 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
-def fetch_logs_via_ssh(host: str, port: int, tail: int = 20) -> Optional[str]:
+def _gpu_smi_block(image: str) -> str:
+    """Pick the right vendor SMI for the diagnostic dump.
+
+    This mirrors `cuda_check_command`: ROCm image refs get `rocm-smi`,
+    CUDA/GPU image refs get `nvidia-smi`, and CPU images skip the SMI
+    section entirely.
+    """
+    if _image_expects_rocm(image):
+        return (
+            "echo '=== rocm-smi ==='; "
+            "if command -v rocm-smi >/dev/null 2>&1; then "
+            "  rocm-smi 2>&1 | head -n 25; "
+            "else "
+            "  echo '(rocm-smi not in PATH)'; "
+            "fi; "
+        )
+    if _image_expects_gpu(image):
+        return (
+            "echo '=== nvidia-smi ==='; "
+            "if command -v nvidia-smi >/dev/null 2>&1; then "
+            "  nvidia-smi 2>&1 | head -n 15; "
+            "else "
+            "  echo '(nvidia-smi not in PATH)'; "
+            "fi; "
+        )
+    return ""
+
+
+def fetch_logs_via_ssh(
+    host: str, port: int, image: str, tail: int = 20,
+) -> Optional[str]:
     """SSH to the pod and grab the most useful diagnostic info from inside
     the container. Returns stdout on success, None if SSH didn't work."""
     if not config.SSH_LOG_FETCH:
@@ -407,8 +437,7 @@ def fetch_logs_via_ssh(host: str, port: int, tail: int = 20) -> Optional[str]:
         "  [ -f \"$f\" ] || continue; "
         "  echo \"--- $f ---\"; tail -n 5 \"$f\" 2>/dev/null; "
         "done; "
-        "echo '=== nvidia-smi ==='; nvidia-smi 2>&1 | head -n 15 || echo '(no nvidia-smi)'; "
-        "echo '=== rocm-smi ==='; rocm-smi 2>&1 | head -n 25 || echo '(no rocm-smi)'"
+        + _gpu_smi_block(image)
     )
     cmd = [*_ssh_command_prefix(host, port), remote_cmd]
     try:
@@ -422,7 +451,7 @@ def fetch_logs_via_ssh(host: str, port: int, tail: int = 20) -> Optional[str]:
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
-def dump_pod_logs(pod_id: str, tail: int = 20) -> None:
+def dump_pod_logs(pod_id: str, image: str, tail: int = 20) -> None:
     """Print pod metadata + container logs (via direct SSH) before terminating."""
     data = runpodctl_json("pod", "get", pod_id, timeout=30)
     if not isinstance(data, dict):
@@ -449,7 +478,7 @@ def dump_pod_logs(pod_id: str, tail: int = 20) -> None:
         return
 
     log(f"--- container/system logs via SSH (root@{host}:{port}) ---", indent=2)
-    logs = fetch_logs_via_ssh(host, int(port), tail=tail)
+    logs = fetch_logs_via_ssh(host, int(port), image, tail=tail)
     if logs is None:
         log("  (SSH log fetch disabled or ssh binary not found)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)

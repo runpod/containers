@@ -85,6 +85,8 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           on-skip: "warn"
+          exclude-instances: |
+            RTX 2000 Ada
 
   build-autoresearch:
     needs: build-base
@@ -177,6 +179,8 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          exclude-instances: |
+            RTX 2000 Ada
 
   build-pytorch:
     needs: build-base
@@ -189,11 +193,8 @@ jobs:
     # blowing peak runner disk and stalling the daemon for 15+ minutes until
     # the orchestrator kills the runner. Shard the matrix by CUDA major so
     # each runner only loads 5-10 images at a time onto its own disk.
-    #
-    # NOTE: we intentionally do NOT declare job-level `outputs:` here -- with
-    # a matrix, all shards race to write the same output key and only one
-    # (last-finished) wins, so 2/3 of the refs would silently disappear.
-    # Per-shard refs are passed to test-pytorch via upload-artifact below.
+    outputs:
+      changed: ${{ steps.changes.outputs.pytorch_any_changed }}
     strategy:
       fail-fast: false
       matrix:
@@ -282,7 +283,10 @@ jobs:
   test-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch
-    if: needs.build-pytorch.result == 'success'
+    if: |
+      needs.build-pytorch.result == 'success'
+      && (github.event_name == 'workflow_dispatch'
+          || needs.build-pytorch.outputs.changed == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -293,9 +297,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # When the build was skipped because nothing changed, the corresponding
-      # artifact won't exist. continue-on-error lets us detect that and skip
-      # the smoke-test for this shard instead of failing the whole job.
       - name: Download refs for ${{ matrix.cuda }}
         id: dl
         uses: actions/download-artifact@v4
@@ -327,4 +328,5 @@ jobs:
           test-jupyter: true
           exclude-instances: |
             *Blackwell*
+            RTX 2000 Ada
           max-parallel: "4"
