@@ -92,6 +92,7 @@ jobs:
     runs-on: blacksmith-16vcpu-ubuntu-2204
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
+      changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -153,7 +154,16 @@ jobs:
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-autoresearch
-    if: needs.build-autoresearch.result == 'success'
+    # Mirror the gate from `build-autoresearch` steps: workflow_dispatch
+    # always tests, `push` only tests when autoresearch paths changed.
+    # `result == 'success'` alone isn't enough — when nothing changed,
+    # every build step is skipped but the JOB itself reports success,
+    # so the test job would spin up a runner and feed an empty
+    # `image-refs` to smoke-test (which fails or warns about a no-op).
+    if: |
+      needs.build-autoresearch.result == 'success'
+      && (github.event_name == 'workflow_dispatch'
+          || needs.build-autoresearch.outputs.changed == 'true')
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10

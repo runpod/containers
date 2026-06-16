@@ -341,8 +341,14 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
         f"https://{pod_id}-8888.proxy.runpod.net/api/status"
         f"?token={config.JUPYTER_TEST_PASSWORD}"
     )
+    # Same URL with the token stripped — used in log lines so we never
+    # write the bearer token to stdout / CI logs. The real `url` (with
+    # token) only ever goes to urlopen.
+    redacted_url = (
+        f"https://{pod_id}-8888.proxy.runpod.net/api/status?token=<redacted>"
+    )
     deadline = time.monotonic() + config.JUPYTER_PROXY_TIMEOUT
-    lines = [f"GET {url}"]
+    lines = [f"GET {redacted_url}"]
     last_err = ""
     attempt = 0
     while time.monotonic() < deadline:
