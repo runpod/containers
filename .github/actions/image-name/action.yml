@@ -13,6 +13,9 @@ outputs:
   digests:
     description: "JSON array of image digests in registry/image@sha256:... format"
     value: ${{ steps.extract.outputs.digests }}
+  ref-digests:
+    description: "JSON object mapping each image reference to its expected sha256 digest"
+    value: ${{ steps.extract.outputs.ref-digests }}
 
 runs:
   using: composite
@@ -24,17 +27,46 @@ runs:
       run: |
         set -euo pipefail
         REFS=$(echo "${BAKE_METADATA}" \
-          | jq -c '[.[] | ."image.name"] | map(select(. != null)) | flatten | unique')
+          | jq -c '
+            def image_refs:
+              if type == "array" then .[]
+              else split(",")[]
+              end;
+            [.[] | ."image.name" | select(. != null) | image_refs] | unique')
         DIGESTS=$(echo "${BAKE_METADATA}" \
-          | jq -c '[
+          | jq -c '
+            def image_refs:
+              if type == "array" then .[]
+              else split(",")[]
+              end;
+            def without_tag:
+              split("/")[-1] as $name
+              | if ($name | contains(":")) then sub(":[^:]*$"; "") else . end;
+            [
               .[]
               | select(."image.name" and ."containerimage.digest")
-              | (."image.name" | split(",")[0] | sub(":[^:]*$"; ""))
-                + "@" + ."containerimage.digest"
+              | ."containerimage.digest" as $digest
+              | ."image.name" | image_refs | without_tag + "@" + $digest
             ] | unique')
+        REF_DIGESTS=$(echo "${BAKE_METADATA}" \
+          | jq -c '
+            def image_refs:
+              if type == "array" then .[]
+              else split(",")[]
+              end;
+            reduce (
+              .[]
+              | select(."image.name" and ."containerimage.digest")
+              | ."containerimage.digest" as $digest
+              | ."image.name" | image_refs as $ref
+              | {ref: $ref, digest: $digest}
+            ) as $item ({}; .[$item.ref] = $item.digest)')
         echo "refs=${REFS}" >> "${GITHUB_OUTPUT}"
         echo "digests=${DIGESTS}" >> "${GITHUB_OUTPUT}"
+        echo "ref-digests=${REF_DIGESTS}" >> "${GITHUB_OUTPUT}"
         echo "Extracted image refs:"
         echo "${REFS}" | jq -r '.[]'
         echo "Extracted image digests:"
         echo "${DIGESTS}" | jq -r '.[]'
+        echo "Extracted image ref digest map:"
+        echo "${REF_DIGESTS}" | jq -r 'to_entries[] | "\(.key) -> \(.value)"'

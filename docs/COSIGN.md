@@ -121,8 +121,8 @@ workflow name, ref, commit SHA, and trigger. This is exactly what
 | File                                    | Purpose                                                                      |
 | --------------------------------------- | ---------------------------------------------------------------------------- |
 | `.github/actions/cosign/action.yml`     | Reusable sign + verify composite action.                                     |
-| `.github/actions/image-name/action.yml` | Extracts `<image>@sha256:<digest>` pairs from `docker buildx bake` metadata. |
-| `.github/actions/docker-push/action.yml` | Pushes tags and verifies Docker Hub resolved them to the expected digest.    |
+| `.github/actions/image-name/action.yml` | Extracts image refs, signable digests, and ref-to-digest mappings from `docker buildx bake` metadata. |
+| `.github/actions/docker-push/action.yml` | Pushes tags and verifies Docker Hub resolved each exact ref to the expected digest. |
 | `.github/workflows/base.yml`            | Builds and signs `runpod/base`, `runpod/pytorch`, `runpod/autoresearch`.     |
 | `.github/workflows/nvidia.yml`          | Builds and signs `runpod/nvidia-*` images.                                   |
 | `.github/workflows/rocm.yml`            | Builds and signs `runpod/rocm` images.                                       |
@@ -144,7 +144,7 @@ docker/bake-action  →  image-name (extract digests)  →  grype  →  docker-p
 
 The cosign step always runs **after** the image push. `docker-push` resolves
 each pushed tag from Docker Hub and confirms its registry manifest digest
-matches the immutable digest returned by buildx before anything is signed.
+matches the buildx digest for that exact ref before anything is signed.
 
 ### What the cosign action does
 
@@ -366,4 +366,3 @@ identity + issuer, not `--key`).
 | `cosign verify` succeeds locally but admission controller rejects                                    | Different regex / issuer pinned in the controller policy.                     | Align the controller policy with the actual signing workflow URI ([§3](#tightening-the-policy-for-production)).                         |
 | Verification slow / hangs                                                                            | Rekor lookup against `rekor.sigstore.dev` is slow or blocked.                 | Use `cosign verify --offline ...` if the bundle is attached, or whitelist `*.sigstore.dev`.                                             |
 | `Error: fetching signatures: GET ... manifest unknown`                                               | Image was not signed (older tag from before this workflow landed).            | Re-trigger the build pipeline to sign in place, or verify a newer tag.                                                                  |
-

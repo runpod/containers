@@ -5,8 +5,8 @@ inputs:
   image-refs:
     description: "JSON array of image references to push"
     required: true
-  image-digests:
-    description: "JSON array of expected image digests in registry/image@sha256:... format"
+  ref-digests:
+    description: "JSON object mapping each image reference to its expected sha256 digest"
     required: true
 
 runs:
@@ -16,7 +16,7 @@ runs:
       shell: bash
       env:
         IMAGE_REFS: ${{ inputs.image-refs }}
-        IMAGE_DIGESTS: ${{ inputs.image-digests }}
+        REF_DIGESTS: ${{ inputs.ref-digests }}
       run: |
         set -euo pipefail
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
@@ -29,16 +29,10 @@ runs:
           echo "::group::docker push — ${ref}"
           docker push "${ref}"
 
-          repo="${ref%@*}"
-          name="${repo##*/}"
-          if [[ "${name}" == *:* ]]; then
-            repo="${repo%:*}"
-          fi
-
-          expected_digest=$(printf '%s\n' "${IMAGE_DIGESTS}" \
-            | jq -r --arg repo "${repo}" 'map(select(startswith($repo + "@")) | split("@")[1]) | first // empty')
+          expected_digest=$(printf '%s\n' "${REF_DIGESTS}" \
+            | jq -r --arg ref "${ref}" '.[$ref] // empty')
           if [ -z "${expected_digest}" ]; then
-            echo "No expected digest found for ${ref} (repo ${repo})"
+            echo "No expected digest found for ${ref}"
             exit 1
           fi
 
