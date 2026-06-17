@@ -15,6 +15,8 @@ permissions:
 jobs:
   build-nvidia:
     runs-on: blacksmith-32vcpu-ubuntu-2404
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -57,3 +59,32 @@ jobs:
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+
+  test-nvidia:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-nvidia
+    if: needs.build-nvidia.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ needs.build-nvidia.outputs.image-refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          # NGC nvidia-pytorch:25.11 ships torch built against CUDA 13.0
+          # and refuses to initialise on hosts whose driver only supports
+          # CUDA 12.x (`torch.cuda.is_available() == False` with the message
+          # 'NVIDIA driver on your system is too old (found version 12080)').
+          # The image tag (`-25.11`) has no embedded CUDA marker, so we
+          # have to tell the smoke-test composite action the floor
+          # explicitly; it propagates this as `min_cuda_version` in the
+          # generated manifest and test_images.py forwards it to
+          # `runpodctl --min-cuda-version` so the scheduler avoids
+          # 570.x-driver hosts (older L4 / RTX 2000 Ada DCs).
+          min-cuda-version: "13.0"

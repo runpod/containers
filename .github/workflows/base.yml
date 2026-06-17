@@ -21,6 +21,8 @@ permissions:
 jobs:
   build-base:
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -64,10 +66,35 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+  test-base:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-base
+    if: needs.build-base.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ needs.build-base.outputs.image-refs }}
+          profile: base
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          on-skip: "warn"
+          exclude-instances: |
+            RTX 2000 Ada
+
   build-autoresearch:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
+      changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -126,6 +153,35 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+  test-autoresearch:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-autoresearch
+    # Mirror the gate from `build-autoresearch` steps: workflow_dispatch
+    # always tests, `push` only tests when autoresearch paths changed.
+    # `result == 'success'` alone isn't enough — when nothing changed,
+    # every build step is skipped but the JOB itself reports success,
+    # so the test job would spin up a runner and feed an empty
+    # `image-refs` to smoke-test (which fails or warns about a no-op).
+    if: |
+      needs.build-autoresearch.result == 'success'
+      && (github.event_name == 'workflow_dispatch'
+          || needs.build-autoresearch.outputs.changed == 'true')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ needs.build-autoresearch.outputs.image-refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          exclude-instances: |
+            RTX 2000 Ada
+
   build-pytorch:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
@@ -137,6 +193,8 @@ jobs:
     # blowing peak runner disk and stalling the daemon for 15+ minutes until
     # the orchestrator kills the runner. Shard the matrix by CUDA major so
     # each runner only loads 5-10 images at a time onto its own disk.
+    outputs:
+      changed: ${{ steps.changes.outputs.pytorch_any_changed }}
     strategy:
       fail-fast: false
       matrix:
@@ -200,3 +258,75 @@ jobs:
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+
+      # Persist this shard's refs so the corresponding test-pytorch matrix
+      # entry can pick them up. Artifact name is unique per shard, so the
+      # three uploads don't collide.
+      - name: Save refs artifact
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/pytorch-refs
+          printf '%s\n' "$REFS" > /tmp/pytorch-refs/refs.json
+
+      - name: Upload refs artifact
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytorch-refs-${{ matrix.cuda }}
+          path: /tmp/pytorch-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+  test-pytorch:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-pytorch
+    if: |
+      needs.build-pytorch.result == 'success'
+      && (github.event_name == 'workflow_dispatch'
+          || needs.build-pytorch.outputs.changed == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        id: dl
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: pytorch-refs-${{ matrix.cuda }}
+          path: /tmp/pytorch-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/pytorch-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        if: steps.refs.outcome == 'success'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          exclude-instances: |
+            *Blackwell*
+            RTX 2000 Ada
+          max-parallel: "4"

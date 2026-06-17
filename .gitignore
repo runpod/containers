@@ -1,3 +1,5 @@
 *.ckpt
 *.safetensors
 *.pth
+
+__pycache__/

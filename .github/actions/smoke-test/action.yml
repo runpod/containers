@@ -1,0 +1,296 @@
+name: Smoke test
+description: |
+  Generate a test manifest from bake image refs, then smoke-test each image
+  on a real RunPod pod via tests/test_images.py:
+    - boots the image on the cheapest available eligible instance,
+    - runs the per-group CUDA / GPU functional check over SSH,
+    - terminates the pod (always — even on Ctrl-C / job timeout).
+
+inputs:
+  image-refs:
+    description: "JSON array of image refs to smoke-test"
+    required: true
+  profile:
+    description: |
+      Manifest grouping strategy passed to generate_test_manifest.py.
+        base  Split refs into base_cpu (CPU pod) and base_gpu (GPU pod)
+              by tag content. Use this only for runpod/base which builds
+              both CPU- and GPU-targeted tags in one matrix.
+        gpu   Put every ref into a single base_gpu group with the
+              budget / vRAM / manufacturer filter applied. Use for every
+              pure-GPU workflow (autoresearch, pytorch, nvidia-pytorch, rocm).
+      The functional check (nvidia-smi / torch.cuda / rocm-smi / skip) is
+      always derived from the IMAGE REF, never from the profile, so the
+      same `gpu` profile works regardless of what the image actually is.
+    required: true
+  runpod-api-key:
+    description: "RunPod API key (pod-management permissions required)"
+    required: true
+  ssh-private-key:
+    description: |
+      PEM-formatted private key matching a public SSH key registered on the
+      RunPod account this API key belongs to. test_images.py uses it to ssh
+      into the pod for the GPU/CUDA functional check and log capture.
+    required: true
+  budget-usd-per-hour:
+    description: "Max USD/hr for GPU instance selection"
+    required: false
+    default: "1.0"
+  min-vram-gb:
+    description: "Min vRAM (GB) for GPU instance selection"
+    required: false
+    default: "16"
+  manufacturer:
+    description: "GPU manufacturer filter (Nvidia / AMD)"
+    required: false
+    default: "Nvidia"
+  test-jupyter:
+    description: |
+      'true' to add `test_jupyter: true` to every group in the generated
+      manifest, which makes test_images.py expose 8888/http, set
+      JUPYTER_PASSWORD, and run the in-pod + public-proxy Jupyter probes.
+      Off by default — enable only for images that use our
+      container-template/start.sh (runpod/base, runpod/pytorch,
+      runpod/autoresearch, runpod/base ROCm). NGC nvidia-pytorch ships
+      its own entrypoint and would fail the probe.
+    required: false
+    default: "false"
+  exclude-instances:
+    description: |
+      Newline-separated list of fnmatch-style GPU-display-name patterns to
+      subtract from each group's candidate pool. Each non-empty line is
+      one pattern. Examples:
+        exclude-instances: |
+          *Blackwell*
+          RTX A4000
+      Empty (default) means no exclusions. Use this to block known-bad
+      image/GPU pairings, e.g. PyTorch ≤ 2.6 wheels have no kernels for
+      sm_100/sm_120 (Blackwell), so any test landing on a Blackwell host
+      fails with 'no kernel image is available for execution on the device'.
+    required: false
+    default: ""
+  min-cuda-version:
+    description: |
+      Floor CUDA driver version that the pod host's driver must support
+      (e.g. '13.0'). Emitted as `min_cuda_version` on every produced
+      manifest group. test_images.py forwards this to
+      `runpodctl --min-cuda-version` for images whose tag has no embedded
+      CUDA marker — NGC nvidia-pytorch:25.11 and similar opaque tags.
+      Use this for NGC PyTorch which ships torch built against CUDA 13.0
+      and refuses to run on hosts with a 12.x driver
+      ('CUDA initialization: The NVIDIA driver on your system is too old').
+      Empty (default) = no floor, scheduler is free to pick any compatible
+      host (correct for runpod/* tags where the CUDA version is parsed
+      from the tag string).
+    required: false
+    default: ""
+  max-parallel:
+    description: "Concurrent pods under test (cost cap — each worker holds one pod)"
+    required: false
+
+    default: "2"
+  create-timeout:
+    description: |
+      Max seconds to wait for a freshly-created pod to expose a reachable
+      SSH endpoint (the real readiness signal). If exceeded, the instance
+      is marked STUCK and we try the next candidate.
+
+      Default 600s fits NVIDIA images (~2-3GB pull). Raise it for ROCm
+      where the official rocm/pytorch:* base images are 30-50GB and pulls
+      from Docker Hub can take 10+ minutes — at 600s the pod has often
+      not finished pulling and we falsely abandon it. 1200s is a safe
+      ceiling for ROCm; keeps us from holding STUCK pods indefinitely.
+    required: false
+    default: "600"
+  on-skip:
+    description: |
+      What to do when at least one image ends up SKIPped (the smoke
+      test never actually ran on it — RunPod had no capacity on every
+      candidate, or every candidate landed on a stuck host). Real
+      FAILs (broken container, CUDA check failed) are always fatal
+      regardless of this knob.
+
+      'fail' (default) → exit 1 + `::error::` annotation. Job goes red.
+                         Use when SKIPped must NOT slip past CI.
+      'warn'           → exit 0 + `::warning::` annotation. Job stays
+                         green but the run gets a yellow warning
+                         bubble in the PR check tab. Use when
+                         capacity-shortage shouldn't block PRs but
+                         you still want a visible signal.
+      'pass'           → exit 0, no annotation. Legacy lenient mode,
+                         no signal at all.
+
+      Unknown values are silently coerced to 'fail' so a typo never
+      flips the safer default off.
+    required: false
+    default: "fail"
+  runpodctl-version:
+    description: "runpodctl release tag"
+    required: false
+    default: "v2.3.0"
+  runpodctl-sha256:
+    description: "SHA-256 of runpodctl-linux-amd64.tar.gz for the pinned version"
+    required: false
+    default: "908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169"
+
+runs:
+  using: composite
+  steps:
+    - name: Install runpodctl
+      shell: bash
+      env:
+        VERSION: ${{ inputs.runpodctl-version }}
+        SHA256: ${{ inputs.runpodctl-sha256 }}
+      run: |
+        set -euo pipefail
+        curl -fsSL --proto '=https' --tlsv1.2 \
+          "https://github.com/runpod/runpodctl/releases/download/${VERSION}/runpodctl-linux-amd64.tar.gz" \
+          -o /tmp/runpodctl.tar.gz
+        echo "${SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c -
+        sudo tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl
+        rm /tmp/runpodctl.tar.gz
+        runpodctl version
+
+    - name: Configure runpodctl
+      shell: bash
+      env:
+        # `runpodctl config --apiKey` is deprecated. The CLI (and our
+        # tests/test_images.py) both read RUNPOD_API_KEY out of the env,
+        # so we just propagate the secret through $GITHUB_ENV — every
+        # subsequent step in this composite action gets it automatically.
+        # GitHub keeps the secret masked in logs because the value still
+        # matches `secrets.RUNPOD_API_KEY`.
+        RUNPOD_API_KEY: ${{ inputs.runpod-api-key }}
+      run: |
+        set -euo pipefail
+        # Validate auth before we attempt any pod operations — fail loud, fast.
+        runpodctl user >/dev/null
+        echo "RUNPOD_API_KEY=${RUNPOD_API_KEY}" >> "${GITHUB_ENV}"
+
+    - name: Write SSH private key
+      shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh-private-key }}
+      run: |
+        set -euo pipefail
+        umask 077
+        KEY_PATH="${RUNNER_TEMP}/runpod-ssh-key"
+        printf '%s\n' "${SSH_KEY}" > "${KEY_PATH}"
+        chmod 600 "${KEY_PATH}"
+
+        # Soft sanity check: ssh-keygen -y reads a private key and emits its
+        # matching public key. It's the only ssh-keygen mode that works
+        # reliably on a standalone private key file (no companion .pub
+        # required). We log the result but don't fail the action here — the
+        # real ssh probe in test_images.py will surface any auth problems
+        # with a more useful error than this validation could.
+        bytes=$(wc -c < "${KEY_PATH}")
+        lines=$(wc -l < "${KEY_PATH}")
+        # An ed25519 private key in OpenSSH format is ~400 bytes; RSA-3072
+        # is ~2.5 KB. Below ~200 bytes the secret is almost certainly empty
+        # or truncated — fail loudly so the user knows to fix the secret
+        # before we burn time on the rest of the pipeline.
+        if [ "${bytes}" -lt 200 ]; then
+          echo "::error::RUNPOD_SSH_PRIVATE_KEY secret looks empty/truncated"
+          echo "::error::(only ${bytes} bytes, ${lines} lines)."
+          echo "::error::Set the secret to the FULL contents of the PEM"
+          echo "::error::private key file (e.g. ~/.ssh/runpod_ci_key — NOT"
+          echo "::error::the .pub half). Newlines must be preserved."
+          exit 1
+        fi
+        echo "ssh key file: ${bytes} bytes, ${lines} lines"
+
+        first=$(head -n 1 "${KEY_PATH}" || true)
+        case "${first}" in
+          "-----BEGIN OPENSSH PRIVATE KEY-----"|\
+          "-----BEGIN RSA PRIVATE KEY-----"|\
+          "-----BEGIN EC PRIVATE KEY-----"|\
+          "-----BEGIN PRIVATE KEY-----")
+            echo "ssh key looks like a PEM private key (${lines} lines)"
+            ;;
+          "ssh-rsa "*|"ssh-ed25519 "*|"ecdsa-sha2-"*)
+            echo "::error::RUNPOD_SSH_PRIVATE_KEY contains a PUBLIC key, not"
+            echo "::error::a private one. Put the PRIVATE half (the file"
+            echo "::error::without the .pub extension) into the secret."
+            exit 1
+            ;;
+          *)
+            echo "::warning::ssh key first line is not a recognised PEM"
+            echo "::warning::header (got: ${first:0:30}...). It may still"
+            echo "::warning::work, but check the secret if SSH probes fail."
+            ;;
+        esac
+
+        if ssh-keygen -y -f "${KEY_PATH}" >/dev/null 2>&1; then
+          echo "ssh-keygen -y validated the key"
+        else
+          echo "::warning::ssh-keygen could not derive public key from the"
+          echo "::warning::file. Possible causes: passphrase-protected key,"
+          echo "::warning::CRLF line endings, partial paste. Continuing —"
+          echo "::warning::test_images.py will report the real ssh error."
+        fi
+
+        echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
+
+    - name: Generate test manifest
+      shell: bash
+      env:
+        REFS: ${{ inputs.image-refs }}
+        PROFILE: ${{ inputs.profile }}
+        BUDGET: ${{ inputs.budget-usd-per-hour }}
+        MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
+        MANUFACTURER: ${{ inputs.manufacturer }}
+        TEST_JUPYTER: ${{ inputs.test-jupyter }}
+        EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
+        MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
+      run: |
+        set -euo pipefail
+        # Only the literal string "true" turns the flag on; anything else
+        # ('false', '', '0', 'yes', ...) leaves it off so the default stays
+        # safe even if the caller fat-fingers the input.
+        EXTRA_ARGS=()
+        if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-jupyter)
+        fi
+        # Only pass --min-cuda-version when the input is non-empty; the
+        # generator treats empty as "no floor" and we want to keep the
+        # argv free of stray empty strings so argparse doesn't choke.
+        if [[ -n "${MIN_CUDA_VERSION}" ]]; then
+          EXTRA_ARGS+=(--min-cuda-version "${MIN_CUDA_VERSION}")
+        fi
+        # Split EXCLUDE_INSTANCES on newlines into one --exclude-instance
+        # per non-empty, non-whitespace, non-comment line. Each item is
+        # passed as a single argv element so glob chars (*, ?) stay literal
+        # and don't get shell-expanded against the runner's filesystem.
+        while IFS= read -r line; do
+          # trim leading/trailing whitespace
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--exclude-instance "${line}")
+        done <<< "${EXCLUDE_INSTANCES}"
+        python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
+          --profile "${PROFILE}" \
+          --refs "${REFS}" \
+          --budget "${BUDGET}" \
+          --min-vram-gb "${MIN_VRAM_GB}" \
+          --manufacturer "${MANUFACTURER}" \
+          "${EXTRA_ARGS[@]}" \
+          --output "${RUNNER_TEMP}/test-manifest.yaml"
+        echo "MANIFEST_PATH=${RUNNER_TEMP}/test-manifest.yaml" >> "${GITHUB_ENV}"
+
+    - name: Run smoke tests
+      shell: bash
+      env:
+        # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
+        # 'Configure runpodctl' and 'Write SSH private key' steps above.
+        MAX_PARALLEL: ${{ inputs.max-parallel }}
+        # ON_SKIP is validated by config._coerce_on_skip (unknown values
+        # collapse to 'fail') so we just propagate the raw input.
+        ON_SKIP: ${{ inputs.on-skip }}
+        # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
+        # deadline for slow pulls (mainly multi-GB ROCm base images).
+        CREATE_TIMEOUT: ${{ inputs.create-timeout }}
+      run: |
+        set -uo pipefail
+        python3 "${GITHUB_WORKSPACE}/tests/test_images.py" "${MANIFEST_PATH}"

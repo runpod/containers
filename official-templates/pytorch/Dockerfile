@@ -18,4 +18,3 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         --upgrade \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
-
