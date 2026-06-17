@@ -89,11 +89,27 @@ STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 REGISTRY_AUTH_ID = os.environ.get("REGISTRY_AUTH_ID", "")
 REGISTRY_AUTH_NAME = os.environ.get("REGISTRY_AUTH_NAME", "")
 
-# All pods we create carry this absolute deadline so anything we leak
-# (e.g. crash before cleanup) auto-terminates within 2h.
-AUTO_TERMINATE = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime(
-    "%Y-%m-%dT%H:%M:%SZ"
-)
+# Every pod we create carries this absolute deadline so anything we
+# leak (crash before cleanup, hung SSH, KeyboardInterrupt without
+# cleanup, …) auto-terminates within AUTO_TERMINATE_HOURS hours.
+#
+# NB: this MUST be recomputed per-pod, not once at module import.
+# Earlier we stored a module-level constant (`AUTO_TERMINATE = now+2h`),
+# which silently expired after the first 2h of any long-running session:
+# all pods created later got a `--terminate-after` timestamp IN THE
+# PAST, which RunPod accepts without complaint but never acts on, and
+# the pods kept burning credits until the user noticed. After a single
+# overnight run that cost real money this was changed to a function.
+AUTO_TERMINATE_HOURS = int(os.environ.get("AUTO_TERMINATE_HOURS", "2"))
+
+
+def auto_terminate_deadline() -> str:
+    """Return an RFC3339 'Z' timestamp AUTO_TERMINATE_HOURS hours from
+    NOW. Always call this at pod-create time — never cache the result.
+    """
+    return (
+        datetime.now(timezone.utc) + timedelta(hours=AUTO_TERMINATE_HOURS)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------------------------------------------------------------------------

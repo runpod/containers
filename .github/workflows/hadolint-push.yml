@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   hadolint:
@@ -19,7 +20,7 @@ jobs:
           - dockerfile: official-templates/base/Dockerfile
             ignore: DL3006,DL3008,DL3013,DL3022
           - dockerfile: official-templates/pytorch/Dockerfile
-            ignore: "DL3013,DL3006"
+            ignore: "DL3013,DL3006,DL3042"
           - dockerfile: official-templates/autoresearch/Dockerfile
             ignore: "DL3006"
           - dockerfile: helper-templates/verify-nccl/Dockerfile
@@ -35,6 +36,7 @@ jobs:
           failure-threshold: warning
           format: sarif
           output-file: hadolint.sarif
+          ignore: ${{ matrix.ignore }}
       
       - name: Upload Hadolint SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e

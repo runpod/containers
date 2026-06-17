@@ -232,7 +232,10 @@ def create_pod(
         "--container-disk-in-gb", str(disk_gb),
         "--ports", ",".join(ports),
         "--name", name,
-        "--terminate-after", config.AUTO_TERMINATE,
+        # MUST be recomputed per pod, not read from a cached constant —
+        # see config.auto_terminate_deadline docstring for the cautionary
+        # tale of the overnight charge.
+        "--terminate-after", config.auto_terminate_deadline(),
         "-o", "json",
     ]
     if data_center_ids:

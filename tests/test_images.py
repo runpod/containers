@@ -141,10 +141,13 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     for grp, contents in manifest.items():
         if _normalize_bool(contents.get("test_jupyter")):
             config.GROUP_TEST_JUPYTER[grp] = True
+            # JUPYTER_TEST_PASSWORD is a hard-coded throw-away token for
+            # short-lived test pods (see config.py), but we still redact
+            # it in logs so the pattern stays clean for CodeQL and any
+            # future operator who copy-pastes the log into a ticket.
             log(
                 f"group '{grp}': test_jupyter=true "
-                f"(JUPYTER_PASSWORD={config.JUPYTER_TEST_PASSWORD!r}, "
-                "expose 8888/http)"
+                "(JUPYTER_PASSWORD=<redacted>, expose 8888/http)"
             )
 
 

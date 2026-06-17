@@ -143,7 +143,9 @@ def _create_pod_with_retries(
     )
 
 
-def _classify_non_running(state: str, detail: str, pod_id: str) -> _Outcome:
+def _classify_non_running(
+    state: str, detail: str, pod_id: str, image: str,
+) -> _Outcome:
     """Map a non-RUNNING terminal state to STUCK or FAIL.
 
     TIMEOUT with no SSH endpoint ever assigned is almost always a
@@ -159,10 +161,10 @@ def _classify_non_running(state: str, detail: str, pod_id: str) -> _Outcome:
             "was ever assigned; trying next instance type)",
             indent=2,
         )
-        dump_pod_logs(pod_id)
+        dump_pod_logs(pod_id, image)
         return "STUCK", ""
     log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
-    dump_pod_logs(pod_id)
+    dump_pod_logs(pod_id, image)
     return "FAIL", f"pod entered {state} state: {detail}"
 
 
@@ -181,14 +183,14 @@ def _run_cuda_step(
         log(f"  {line}", indent=2)
     if not ok:
         log("cuda check FAILED -- image broken", indent=2)
-        dump_pod_logs(pod_id)
+        dump_pod_logs(pod_id, image)
         return "FAIL", "CUDA/GPU functional check failed"
     log("cuda check passed", indent=2)
     return None
 
 
 def _run_jupyter_steps(
-    host: str, port: int, pod_id: str, group: str,
+    host: str, port: int, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Jupyter checks: only when the group opted in via `test_jupyter`.
 
@@ -217,7 +219,7 @@ def _run_jupyter_steps(
             "bring up JupyterLab",
             indent=2,
         )
-        dump_pod_logs(pod_id)
+        dump_pod_logs(pod_id, image)
         return "FAIL", "Jupyter Lab check failed (in-pod)"
     log("jupyter check (in-pod) passed", indent=2)
 
@@ -234,13 +236,13 @@ def _run_jupyter_steps(
             "not exposed as 8888/http",
             indent=2,
         )
-        dump_pod_logs(pod_id)
+        dump_pod_logs(pod_id, image)
         return "FAIL", "Jupyter Lab check failed (public proxy)"
     log("jupyter check (public proxy) passed", indent=2)
     return None
 
 
-def _run_dwell_step(pod_id: str) -> Optional[_Outcome]:
+def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
     Returns FAIL outcome on a post-boot crash, None on skip / pass."""
@@ -260,7 +262,7 @@ def _run_dwell_step(pod_id: str) -> Optional[_Outcome]:
         "container crashed -- FAIL",
         indent=2,
     )
-    dump_pod_logs(pod_id)
+    dump_pod_logs(pod_id, image)
     return "FAIL", (
         "container crashed after initial boot "
         f"({config.DWELL_SEC}s dwell re-probe failed: {err})"
@@ -309,7 +311,7 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
     try:
         state, wait_detail = wait_for_running(pod_id)
         if state != "RUNNING":
-            return _classify_non_running(state, wait_detail, pod_id)
+            return _classify_non_running(state, wait_detail, pod_id, image)
 
         log(f"smoke check passed: {wait_detail}", indent=2)
         st = pod_state(pod_id)
@@ -323,14 +325,14 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         outcome = _run_cuda_step(host, port, image, group, pod_id)
         if outcome is not None:
             return outcome
-        outcome = _run_jupyter_steps(host, port, pod_id, group)
+        outcome = _run_jupyter_steps(host, port, pod_id, image, group)
         if outcome is not None:
             return outcome
-        outcome = _run_dwell_step(pod_id)
+        outcome = _run_dwell_step(pod_id, image)
         if outcome is not None:
             return outcome
 
-        dump_pod_logs(pod_id)
+        dump_pod_logs(pod_id, image)
         return "PASS", ""
     finally:
         # Always clean up this specific pod, even on exception.
