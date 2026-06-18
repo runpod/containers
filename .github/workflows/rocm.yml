@@ -44,6 +44,8 @@ jobs:
             official-templates/rocm/docker-bake.hcl
           load: true
           push: false
+          targets: |
+            rocm644
 
       - name: Extract image refs
         id: refs
