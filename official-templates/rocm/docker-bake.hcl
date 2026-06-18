@@ -6,14 +6,6 @@ variable "ROCM_TORCH_COMBINATIONS" {
   ]
 }
 
-group "default" {
-  targets = [
-    "rocm644-ubuntu2204-pytorch260",
-    "rocm644-ubuntu2404-pytorch260",
-    "rocm644-ubuntu2404-pytorch271",
-  ]
-}
-
 group "rocm644" {
   targets = [
     for build in COMPATIBLE_BUILDS:
