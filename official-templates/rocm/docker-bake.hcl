@@ -8,8 +8,8 @@ variable "ROCM_TORCH_COMBINATIONS" {
 
 group "rocm644" {
   targets = [
-    for build in COMPATIBLE_BUILDS:
-      "rocm${build.rocm}-ubuntu${build.ubuntu}-py${build.python}-pytorch${build.torch}"
+    for build in ROCM_TORCH_COMBINATIONS:
+      "rocm${replace(build.rocm, ".", "")}-ubuntu${replace(build.ubuntu, ".", "")}-py${replace(build.python, ".", "")}-pytorch${replace(build.torch, ".", "")}"
       if build.rocm == "6.4.4"
   ]
 }
@@ -35,7 +35,7 @@ target "rocm-matrix" {
     build = ROCM_TORCH_COMBINATIONS
   }
   
-  name = "rocm${build.rocm}-ubuntu${build.ubuntu}-py${build.python}-pytorch${build.torch}"
+  name = "rocm${replace(build.rocm, ".", "")}-ubuntu${replace(build.ubuntu, ".", "")}-py${replace(build.python, ".", "")}-pytorch${replace(build.torch, ".", "")}"
   
   inherits = ["rocm-base"]
 
