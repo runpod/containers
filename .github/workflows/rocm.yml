@@ -1,86 +1,86 @@
-# name: ROCm Image Build
+name: ROCm Image Build
 
-# on:
-#   pull_request:
-#     paths:
-#       - ".github/workflows/rocm.yml"
-#       - "official-templates/rocm/**"
-#   push:
-#     branches: [main]
-#   workflow_dispatch:
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rocm.yml"
+      - "official-templates/rocm/**"
+  push:
+    branches: [main]
+  workflow_dispatch:
 
-# permissions:
-#   contents: read
+permissions:
+  contents: read
 
-# jobs:
-#   build-rocm:
-#     runs-on: blacksmith-32vcpu-ubuntu-2404
-#     outputs:
-#       image-refs: ${{ steps.refs.outputs.refs }}
-#     needs: build-base
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-#         with:
-#           fetch-depth: 0
+jobs:
+  build-rocm:
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    outputs:
+      image-refs: ${{ steps.refs.outputs.refs }}
+    needs: build-base
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
       
-#       - name: Setup Docker
-#         uses: ./.github/actions/docker-setup
-#         id: setup
-#         with:
-#           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-#           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-#       - name: Build rocm images
-#         id: build
-#         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
-#         env:
-#           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-#           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
-#         with:
-#           source: .
-#           files: |
-#             official-templates/shared/versions.hcl
-#             official-templates/rocm/docker-bake.hcl
-#           load: true
-#           push: false
-#           targets: |
-#             rocm644
+      - name: Build rocm images
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/rocm/docker-bake.hcl
+          load: true
+          push: false
+          targets: |
+            rocm644
 
-#       - name: Extract image refs
-#         id: refs
-#         uses: ./.github/actions/image-name
-#         with:
-#           bake-metadata: ${{ steps.build.outputs.metadata }}
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
 
-#       - name: Grype scan
-#         uses: ./.github/actions/grype
-#         with:
-#           image-refs: ${{ steps.refs.outputs.refs }}
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
 
-#       - name: Push images
-#         uses: ./.github/actions/docker-push
-#         with:
-#           image-refs: ${{ steps.refs.outputs.refs }}
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
 
-#   test-rocm:
-#     runs-on: blacksmith-4vcpu-ubuntu-2204
-#     needs: build-rocm
-#     if: needs.build-rocm.result == 'success'
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v6
-#         with:
-#           fetch-depth: 0
+  test-rocm:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-rocm
+    if: needs.build-rocm.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-#       - name: Smoke test
-#         uses: ./.github/actions/smoke-test
-#         with:
-#           image-refs: ${{ needs.build-rocm.outputs.image-refs }}
-#           profile: gpu
-#           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
-#           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
-#           manufacturer: "AMD"
-#           budget-usd-per-hour: "3.0"
-#           min-vram-gb: "80"
-#           create-timeout: "1200"
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ needs.build-rocm.outputs.image-refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          manufacturer: "AMD"
+          budget-usd-per-hour: "3.0"
+          min-vram-gb: "80"
+          create-timeout: "1200"
