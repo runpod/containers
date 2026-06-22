@@ -21,6 +21,9 @@ permissions:
 jobs:
   build-base:
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
     steps:
@@ -65,6 +68,17 @@ jobs:
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
 
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
@@ -92,6 +106,9 @@ jobs:
     needs: build-base
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
       changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
@@ -152,6 +169,19 @@ jobs:
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
 
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
@@ -188,6 +218,9 @@ jobs:
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 240
+    permissions:
+      contents: read
+      id-token: write
     # The full pytorch matrix (~25 images × multi-GB each) overwhelms the
     # docker-container-driver BuildKit's OCI export pipeline on `load: true`,
     # blowing peak runner disk and stalling the daemon for 15+ minutes until
@@ -258,6 +291,19 @@ jobs:
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          
+      - name: Install Cosign
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
 
       # Persist this shard's refs so the corresponding test-pytorch matrix
       # entry can pick them up. Artifact name is unique per shard, so the

@@ -1,0 +1,35 @@
+name: Cosign
+description: "Sign and verify Docker images with Cosign (keyless via GitHub OIDC)"
+
+inputs:
+  image-digests:
+    description: "JSON array of image digests in registry/image@sha256:... format"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Sign and verify
+      shell: bash
+      env:
+        IMAGE_DIGESTS: ${{ inputs.image-digests }}
+        SERVER_URL: ${{ github.server_url }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        IDENTITY_REGEX="^${SERVER_URL}/${REPOSITORY}/\.github/workflows/.+"
+        OIDC_ISSUER="https://token.actions.githubusercontent.com"
+
+        echo "${IMAGE_DIGESTS}" | jq -r '.[]' | while IFS= read -r ref; do
+          [ -z "${ref}" ] && continue
+          echo "::group::Sign ${ref}"
+          cosign sign --yes "${ref}"
+          echo "::endgroup::"
+
+          echo "::group::Verify ${ref}"
+          cosign verify \
+            --certificate-identity-regexp "${IDENTITY_REGEX}" \
+            --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            "${ref}"
+          echo "::endgroup::"
+        done

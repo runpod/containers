@@ -5,14 +5,18 @@ inputs:
   image-refs:
     description: "JSON array of image references to push"
     required: true
+  ref-digests:
+    description: "JSON object mapping each image reference to its expected sha256 digest"
+    required: true
 
 runs:
   using: composite
   steps:
-    - name: Push
+    - name: Push and verify registry digests
       shell: bash
       env:
         IMAGE_REFS: ${{ inputs.image-refs }}
+        REF_DIGESTS: ${{ inputs.ref-digests }}
       run: |
         set -euo pipefail
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
@@ -24,5 +28,28 @@ runs:
         for ref in "${refs[@]}"; do
           echo "::group::docker push — ${ref}"
           docker push "${ref}"
+
+          expected_digest=$(printf '%s\n' "${REF_DIGESTS}" \
+            | jq -r --arg ref "${ref}" '.[$ref] // empty')
+          if [ -z "${expected_digest}" ]; then
+            echo "No expected digest found for ${ref}"
+            exit 1
+          fi
+
+          registry_digest=$(docker buildx imagetools inspect "${ref}" \
+            | awk '/^Digest:/ {print $2; exit}')
+          if [ -z "${registry_digest}" ]; then
+            echo "Unable to resolve registry digest for ${ref}"
+            exit 1
+          fi
+
+          if [ "${registry_digest}" != "${expected_digest}" ]; then
+            echo "Registry digest mismatch for ${ref}"
+            echo "Expected: ${expected_digest}"
+            echo "Registry: ${registry_digest}"
+            exit 1
+          fi
+
+          echo "Verified registry digest ${registry_digest}"
           echo "::endgroup::"
         done
