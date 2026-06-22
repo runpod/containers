@@ -18,14 +18,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
+    strategy:
+      fail-fast: false
+      matrix:
+        nvidia: [pytorch2511]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
-      
+
       - name: Setup Docker
         uses: ./.github/actions/docker-setup
         id: setup
@@ -33,7 +35,7 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build nvidia images
+      - name: Build nvidia images (${{ matrix.nvidia }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
@@ -46,7 +48,9 @@ jobs:
             official-templates/nvidia-pytorch/docker-bake.hcl
           load: true
           push: false
-      
+          targets: |
+            ${{ matrix.nvidia }}
+
       - name: Extract image refs
         id: refs
         uses: ./.github/actions/image-name
@@ -74,31 +78,66 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+      # nvidia.yml is path-filtered to official-templates/nvidia-*/** (and
+      # runs on push/main + workflow_dispatch), so build-nvidia always
+      # builds — no changed-files gate needed (unlike pytorch in base.yml).
+      # Always persist this shard's refs for the matching test-nvidia entry.
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/nvidia-refs
+          printf '%s\n' "$REFS" > /tmp/nvidia-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: nvidia-refs-${{ matrix.nvidia }}
+          path: /tmp/nvidia-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-nvidia:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-nvidia
     if: needs.build-nvidia.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        nvidia: [pytorch2511]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
-      - name: Smoke test
+      - name: Download refs for ${{ matrix.nvidia }}
+        id: dl
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: nvidia-refs-${{ matrix.nvidia }}
+          path: /tmp/nvidia-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/nvidia-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.nvidia }})
+        if: steps.refs.outcome == 'success'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-nvidia.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
-          # NGC nvidia-pytorch:25.11 ships torch built against CUDA 13.0
-          # and refuses to initialise on hosts whose driver only supports
-          # CUDA 12.x (`torch.cuda.is_available() == False` with the message
-          # 'NVIDIA driver on your system is too old (found version 12080)').
-          # The image tag (`-25.11`) has no embedded CUDA marker, so we
-          # have to tell the smoke-test composite action the floor
-          # explicitly; it propagates this as `min_cuda_version` in the
-          # generated manifest and test_images.py forwards it to
-          # `runpodctl --min-cuda-version` so the scheduler avoids
-          # 570.x-driver hosts (older L4 / RTX 2000 Ada DCs).
           min-cuda-version: "13.0"

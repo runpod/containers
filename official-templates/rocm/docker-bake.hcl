@@ -47,33 +47,3 @@ target "rocm-matrix" {
     "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm${replace(build.rocm, ".", "")}-ubuntu${replace(build.ubuntu, ".", "")}-py${replace(build.python, ".", "")}-pytorch${replace(build.torch, ".", "")}",
   ]
 }
-
-// target "rocm644-ubuntu2204-pytorch260" {
-//   inherits = ["rocm-base"]
-//   tags = [
-//     "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm644-ubuntu2204-py310-pytorch260",
-//   ]
-//   args = {
-//     BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu22.04_py3.10_pytorch_release_2.6.0"
-//   }
-// }
-
-// target "rocm644-ubuntu2404-pytorch260" {
-//   inherits = ["rocm-base"]
-//   tags = [
-//     "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm644-ubuntu2404-py312-pytorch260",
-//   ]
-//   args = {
-//     BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu24.04_py3.12_pytorch_release_2.6.0"
-//   }
-// }
-
-// target "rocm644-ubuntu2404-pytorch271" {
-//   inherits = ["rocm-base"]
-//   tags = [
-//     "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm644-ubuntu2404-py312-pytorch271",
-//   ]
-//   args = {
-//     BASE_IMAGE = "rocm/pytorch:rocm6.4.4_ubuntu24.04_py3.12_pytorch_release_2.7.1"
-//   }
-// }
