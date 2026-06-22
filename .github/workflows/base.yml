@@ -72,7 +72,7 @@ jobs:
     if: needs.build-base.result == 'success'
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
@@ -273,7 +273,7 @@ jobs:
 
       - name: Upload refs artifact
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pytorch-refs-${{ matrix.cuda }}
           path: /tmp/pytorch-refs/refs.json
@@ -293,13 +293,13 @@ jobs:
         cuda: [cu1281, cu1290, cu1300]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
       - name: Download refs for ${{ matrix.cuda }}
         id: dl
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         continue-on-error: true
         with:
           name: pytorch-refs-${{ matrix.cuda }}

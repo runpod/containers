@@ -15,8 +15,10 @@ permissions:
 jobs:
   build-rocm:
     runs-on: blacksmith-32vcpu-ubuntu-2404
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm: [rocm644]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -30,7 +32,7 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build rocm images
+      - name: Build rocm images (${{ matrix.rocm }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
@@ -44,7 +46,7 @@ jobs:
           load: true
           push: false
           targets: |
-            rocm644
+            ${{ matrix.rocm }}
 
       - name: Extract image refs
         id: refs
@@ -62,20 +64,61 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/rocm-refs
+          printf '%s\n' "$REFS" > /tmp/rocm-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rocm-refs-${{ matrix.rocm }}
+          path: /tmp/rocm-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-rocm:
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: build-rocm
     if: needs.build-rocm.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm: [rocm644]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
-      - name: Smoke test
+      - name: Download refs for ${{ matrix.rocm }}
+        id: dl
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: rocm-refs-${{ matrix.rocm }}
+          path: /tmp/rocm-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/rocm-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.rocm }})
+        if: steps.refs.outcome == 'success'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-rocm.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
