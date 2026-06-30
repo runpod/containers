@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on a PR so a series of commits only pays for the
+# latest one. Never cancel on `push` to main (release builds must finish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-nvidia:
     runs-on: blacksmith-16vcpu-ubuntu-2404
