@@ -32,24 +32,13 @@ jobs:
       id-token: write
     outputs:
       image-refs: ${{ steps.refs.outputs.refs }}
-      changed: ${{ steps.changes.outputs.base_any_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Check if build is needed
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
-        id: changes
-        with:
-          files_yaml: |
-            base:
-              - 'official-templates/shared/**'
-              - 'official-templates/base/**'
-
       - name: Setup Docker
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -58,7 +47,6 @@ jobs:
 
       - name: Build base images
         id: build
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
@@ -73,32 +61,27 @@ jobs:
 
       - name: Extract image refs
         id: refs
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Grype scan
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
       - name: Push images
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
 
       - name: Install Cosign
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v2.6.0
 
       - name: Cosign sign and verify
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.base_any_changed == 'true'
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
@@ -106,15 +89,7 @@ jobs:
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-base
-    # Mirror the gate from `build-base` steps: workflow_dispatch always tests,
-    # `push`/`pull_request` only tests when base/shared paths changed. A bare
-    # `result == 'success'` isn't enough — when nothing changed every build
-    # step is skipped but the JOB still reports success, so the test job would
-    # spin up a runner and feed an empty `image-refs` to smoke-test.
-    if: |
-      needs.build-base.result == 'success'
-      && (github.event_name == 'workflow_dispatch'
-          || needs.build-base.outputs.changed == 'true')
+    if: needs.build-base.result == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
