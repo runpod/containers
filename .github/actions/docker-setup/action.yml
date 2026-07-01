@@ -85,9 +85,6 @@ runs:
         docker buildx inspect --bootstrap
         echo "::endgroup::"
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3
-
     - name: Determine if this is a production build
       id: build-type
       shell: bash

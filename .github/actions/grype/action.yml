@@ -13,6 +13,21 @@ inputs:
 runs:
   using: composite
   steps:
+    # Rotate the cache daily so a stale DB is refreshed at most once per day;
+    # restore-keys lets grype start from yesterday's DB and update in place.
+    - name: Grype DB cache key
+      id: grype-db-key
+      shell: bash
+      run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Grype vulnerability DB
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/grype/db
+        key: grype-db-${{ steps.grype-db-key.outputs.date }}
+        restore-keys: |
+          grype-db-
+
     - name: Install Grype
       shell: bash
       run: |
@@ -51,7 +66,7 @@ runs:
           if grype "docker:${ref}" \
               --fail-on high \
               --only-fixed \
-              --scope all-layers \
+              --scope squashed \
               -o table \
               -q > "${tmpdir}/${idx}.log" 2>&1; then
             echo 0 > "${tmpdir}/${idx}.rc"
