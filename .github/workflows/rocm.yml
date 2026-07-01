@@ -12,14 +12,22 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on a PR so a series of commits only pays for the
+# latest one. Never cancel on `push` to main (release builds must finish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-rocm:
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm: [rocm644]
     permissions:
       contents: read
       id-token: write
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -33,7 +41,7 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build rocm images
+      - name: Build rocm images (${{ matrix.rocm }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
@@ -46,6 +54,8 @@ jobs:
             official-templates/rocm/docker-bake.hcl
           load: true
           push: false
+          targets: |
+            ${{ matrix.rocm }}
 
       - name: Extract image refs
         id: refs
@@ -73,21 +83,62 @@ jobs:
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/rocm-refs
+          printf '%s\n' "$REFS" > /tmp/rocm-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rocm-refs-${{ matrix.rocm }}
+          path: /tmp/rocm-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
           
   test-rocm:
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: build-rocm
     if: needs.build-rocm.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm: [rocm644]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Smoke test
+      - name: Download refs for ${{ matrix.rocm }}
+        id: dl
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: rocm-refs-${{ matrix.rocm }}
+          path: /tmp/rocm-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/rocm-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.rocm }})
+        if: steps.refs.outcome == 'success'
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-rocm.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
