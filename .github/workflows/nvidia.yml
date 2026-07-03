@@ -2,8 +2,10 @@ name: Nvidia Image Build
 
 on:
   pull_request:
+    # A pipeline-only (ci:) change to this workflow does not alter image
+    # contents, so we don't build/push a confusing RC image for it. Test
+    # workflow changes manually via workflow_dispatch instead.
     paths:
-      - ".github/workflows/nvidia.yml"
       - "official-templates/nvidia-*/**"
   push:
     branches: [main]

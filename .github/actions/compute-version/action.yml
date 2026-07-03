@@ -122,18 +122,15 @@ runs:
 
         case "$EVENT_NAME" in
           pull_request)
-            # Preview the version the merge would produce; ensure it always
-            # differs from the last release so the RC tag is meaningful.
-            EFFECTIVE_BUMP="$BUMP"
-            [ "$EFFECTIVE_BUMP" = "none" ] && EFFECTIVE_BUMP="patch"
-            apply_bump "$EFFECTIVE_BUMP"
+            # Preview the version the merge would produce. When there is no
+            # releasable change (ci/chore/docs) we keep the base version — the
+            # RC just carries an -rc suffix, no phantom version bump.
+            apply_bump "$BUMP"
             SUFFIX="-rc.${PR_NUMBER:-0}"
             SHOULD_BUILD="true"
             ;;
           workflow_dispatch)
-            EFFECTIVE_BUMP="$BUMP"
-            [ "$EFFECTIVE_BUMP" = "none" ] && EFFECTIVE_BUMP="patch"
-            apply_bump "$EFFECTIVE_BUMP"
+            apply_bump "$BUMP"
             SUFFIX="-dev"
             SHOULD_BUILD="true"
             ;;

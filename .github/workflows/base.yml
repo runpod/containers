@@ -2,8 +2,11 @@ name: Docker Image Build and Release
 
 on:
   pull_request:
+    # Deliberately NOT triggering on this workflow file itself: a pipeline-only
+    # (ci:) change does not alter image contents, so building an RC image (and
+    # pushing a confusing -rc tag to Docker Hub) adds no value. Test workflow
+    # changes manually via workflow_dispatch instead.
     paths:
-      - ".github/workflows/base.yml"
       - "official-templates/base/docker-bake.hcl"
       - "official-templates/base/Dockerfile"
       - "official-templates/pytorch/docker-bake.hcl"
