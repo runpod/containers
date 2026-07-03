@@ -13,7 +13,26 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      suffix: ${{ steps.v.outputs.suffix }}
+      should-build: ${{ steps.v.outputs.should-build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute version
+        id: v
+        uses: ./.github/actions/compute-version
+
   build-rocm:
+    needs: version
+    if: needs.version.outputs.should-build == 'true'
     runs-on: blacksmith-32vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -38,7 +57,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
         with:
           source: .
           files: |
