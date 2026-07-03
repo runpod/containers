@@ -7,6 +7,7 @@ on:
     # workflow changes manually via workflow_dispatch instead.
     paths:
       - "official-templates/nvidia-*/**"
+      - "official-templates/shared/**"
   push:
     branches: [main]
   workflow_dispatch:
