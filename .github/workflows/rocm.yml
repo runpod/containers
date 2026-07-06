@@ -7,7 +7,9 @@ on:
     # workflow changes manually via workflow_dispatch instead.
     paths:
       - "official-templates/rocm/**"
+      - "official-templates/base/**"
       - "official-templates/shared/**"
+      - "container-template/**"
   push:
     branches: [main]
   workflow_dispatch:
