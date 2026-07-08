@@ -2,9 +2,14 @@ name: Nvidia Image Build
 
 on:
   pull_request:
+    # A pipeline-only (ci:) change to this workflow does not alter image
+    # contents, so we don't build/push a confusing RC image for it. Test
+    # workflow changes manually via workflow_dispatch instead.
     paths:
-      - ".github/workflows/nvidia.yml"
       - "official-templates/nvidia-*/**"
+      - "official-templates/base/**"
+      - "official-templates/shared/**"
+      - "container-template/**"
   push:
     branches: [main]
   workflow_dispatch:
@@ -13,13 +18,30 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      suffix: ${{ steps.v.outputs.suffix }}
+      should-build: ${{ steps.v.outputs.should-build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute version
+        id: v
+        uses: ./.github/actions/compute-version
+
   build-nvidia:
+    needs: version
+    if: needs.version.outputs.should-build == 'true'
     runs-on: blacksmith-32vcpu-ubuntu-2404
     permissions:
       contents: read
       id-token: write
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -38,7 +60,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
         with:
           source: .
           files: |
@@ -74,6 +97,22 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/nvidia-refs
+          printf '%s\n' "$REFS" > /tmp/nvidia-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nvidia-refs
+          path: /tmp/nvidia-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-nvidia:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-nvidia
@@ -84,10 +123,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: nvidia-refs
+          path: /tmp/nvidia-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/nvidia-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-nvidia.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}

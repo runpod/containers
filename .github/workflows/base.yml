@@ -2,8 +2,11 @@ name: Docker Image Build and Release
 
 on:
   pull_request:
+    # Deliberately NOT triggering on this workflow file itself: a pipeline-only
+    # (ci:) change does not alter image contents, so building an RC image (and
+    # pushing a confusing -rc tag to Docker Hub) adds no value. Test workflow
+    # changes manually via workflow_dispatch instead.
     paths:
-      - ".github/workflows/base.yml"
       - "official-templates/base/docker-bake.hcl"
       - "official-templates/base/Dockerfile"
       - "official-templates/pytorch/docker-bake.hcl"
@@ -11,6 +14,7 @@ on:
       - "official-templates/autoresearch/docker-bake.hcl"
       - "official-templates/autoresearch/Dockerfile"
       - "official-templates/shared/**"
+      - "container-template/**"
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,13 +23,30 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      suffix: ${{ steps.v.outputs.suffix }}
+      should-build: ${{ steps.v.outputs.should-build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute version
+        id: v
+        uses: ./.github/actions/compute-version
+
   build-base:
+    needs: version
+    if: needs.version.outputs.should-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
       id-token: write
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -44,7 +65,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
         with:
           source: .
           files: |
@@ -80,6 +102,22 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/base-refs
+          printf '%s\n' "$REFS" > /tmp/base-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: base-refs
+          path: /tmp/base-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-base
@@ -90,10 +128,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: base-refs
+          path: /tmp/base-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/base-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-base.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -103,14 +158,13 @@ jobs:
             RTX 2000 Ada
 
   build-autoresearch:
-    needs: build-base
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    needs: [version, build-base]
+    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
       id-token: write
     outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
       changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
     steps:
       - name: Checkout
@@ -127,9 +181,10 @@ jobs:
               - 'official-templates/shared/**'
               - 'official-templates/base/**'
               - 'official-templates/autoresearch/**'
+              - 'container-template/**'
 
       - name: Setup Docker
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -138,11 +193,12 @@ jobs:
 
       - name: Build autoresearch images
         id: build
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
         with:
           source: .
           files: |
@@ -153,48 +209,66 @@ jobs:
 
       - name: Extract image refs
         id: refs
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Grype scan
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
       - name: Push images
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
 
       - name: Install Cosign
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v2.6.0
 
       - name: Cosign sign and verify
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+      - name: Save refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/autoresearch-refs
+          printf '%s\n' "$REFS" > /tmp/autoresearch-refs/refs.json
+
+      - name: Upload refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: autoresearch-refs
+          path: /tmp/autoresearch-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-autoresearch
-    # Mirror the gate from `build-autoresearch` steps: workflow_dispatch
-    # always tests, `push` only tests when autoresearch paths changed.
-    # `result == 'success'` alone isn't enough — when nothing changed,
-    # every build step is skipped but the JOB itself reports success,
-    # so the test job would spin up a runner and feed an empty
+    # Mirror the gate from `build-autoresearch` steps: on a release (push) or
+    # manual run we build every family, so we also test it; on a PR we only
+    # test when autoresearch inputs actually changed. `result == 'success'`
+    # alone isn't enough — when a PR skips the build, the JOB still reports
+    # success, so the test job would spin up a runner and feed an empty
     # `image-refs` to smoke-test (which fails or warns about a no-op).
     if: |
       needs.build-autoresearch.result == 'success'
-      && (github.event_name == 'workflow_dispatch'
+      && (github.event_name != 'pull_request'
           || needs.build-autoresearch.outputs.changed == 'true')
     steps:
       - name: Checkout
@@ -202,10 +276,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: autoresearch-refs
+          path: /tmp/autoresearch-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/autoresearch-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-autoresearch.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -213,9 +304,9 @@ jobs:
             RTX 2000 Ada
 
   build-pytorch:
-    needs: build-base
+    needs: [version, build-base]
     # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
@@ -247,9 +338,10 @@ jobs:
               - 'official-templates/shared/**'
               - 'official-templates/base/**'
               - 'official-templates/pytorch/**'
+              - 'container-template/**'
 
       - name: Setup Docker
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
@@ -259,11 +351,12 @@ jobs:
 
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
         with:
           source: .
           files: |
@@ -275,32 +368,32 @@ jobs:
 
       - name: Extract image refs
         id: refs
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Grype scan
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
       - name: Push images
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
           
       - name: Install Cosign
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v2.6.0
 
       - name: Cosign sign and verify
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
@@ -309,7 +402,7 @@ jobs:
       # entry can pick them up. Artifact name is unique per shard, so the
       # three uploads don't collide.
       - name: Save refs artifact
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
@@ -318,7 +411,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/pytorch-refs/refs.json
 
       - name: Upload refs artifact
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: pytorch-refs-${{ matrix.cuda }}
@@ -331,7 +424,7 @@ jobs:
     needs: build-pytorch
     if: |
       needs.build-pytorch.result == 'success'
-      && (github.event_name == 'workflow_dispatch'
+      && (github.event_name != 'pull_request'
           || needs.build-pytorch.outputs.changed == 'true')
     strategy:
       fail-fast: false

@@ -1,0 +1,46 @@
+name: Release
+
+# Tags the release and publishes GitHub Release notes when a push to main
+# contains releasable Conventional Commits (feat/fix/perf/breaking). The image
+# builds themselves happen in base.yml / nvidia.yml / rocm.yml, which compute
+# the identical version from git via the same compute-version action.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute version
+        id: v
+        uses: ./.github/actions/compute-version
+
+      - name: Create tag and GitHub Release
+        if: steps.v.outputs.should-release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: ${{ steps.v.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.v.outputs.should-release }}" = "true" ]; then
+            echo "Released ${{ steps.v.outputs.tag }} (bump: ${{ steps.v.outputs.bump }})"
+          else
+            echo "No releasable commits since the last tag; nothing to release."
+          fi

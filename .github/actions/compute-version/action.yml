@@ -1,0 +1,162 @@
+name: Compute Version
+description: >-
+  Derive the next semantic version from the latest git tag and the Conventional
+  Commits made since it. Produces the RELEASE_VERSION / RELEASE_SUFFIX values the
+  docker-bake files consume, plus flags telling the caller whether to build and
+  whether to publish a release.
+
+inputs:
+  fallback-version:
+    description: "Version to start from when no git tag exists yet."
+    required: false
+    default: "1.0.7"
+  release-branch:
+    description: "Branch whose pushes produce a real release."
+    required: false
+    default: "main"
+
+outputs:
+  version:
+    description: "Semantic version without a leading v (e.g. 1.1.0)."
+    value: ${{ steps.compute.outputs.version }}
+  suffix:
+    description: "Tag suffix: empty for releases, -rc.<pr> for PRs, -dev otherwise."
+    value: ${{ steps.compute.outputs.suffix }}
+  tag:
+    description: "Git tag for the release (e.g. v1.1.0)."
+    value: ${{ steps.compute.outputs.tag }}
+  bump:
+    description: "Detected bump level: major | minor | patch | none."
+    value: ${{ steps.compute.outputs.bump }}
+  should-build:
+    description: "'true' when the caller should build images for this event."
+    value: ${{ steps.compute.outputs.should_build }}
+  should-release:
+    description: "'true' when the caller should publish a git tag + release."
+    value: ${{ steps.compute.outputs.should_release }}
+
+runs:
+  using: composite
+  steps:
+    - id: compute
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        # We squash-merge, so the PR title becomes the single commit subject on
+        # main. Deriving the RC bump from the title (not the branch commits)
+        # makes the release-candidate version match what the merge will produce.
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        FALLBACK: ${{ inputs.fallback-version }}
+        RELEASE_BRANCH: ${{ inputs.release-branch }}
+      run: |
+        set -euo pipefail
+
+        # Make sure tags are present even on shallow-ish checkouts.
+        git fetch --tags --force --quiet || true
+
+        HEAD_SHA="$(git rev-parse HEAD)"
+
+        # Latest release tag that is NOT the current commit. Excluding tags on
+        # HEAD keeps the computation stable even if release.yml has already
+        # tagged this same push (avoids an empty commit range -> false "none").
+        LATEST=""
+        while IFS= read -r tag; do
+          [ -z "$tag" ] && continue
+          if [ "$(git rev-list -n1 "$tag")" != "$HEAD_SHA" ]; then
+            LATEST="$tag"
+            break
+          fi
+        done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
+
+        if [ -n "$LATEST" ]; then
+          BASE="${LATEST#v}"
+          RANGE="${LATEST}..HEAD"
+        else
+          BASE="$FALLBACK"
+          RANGE=""
+        fi
+
+        # Detect the Conventional Commits bump level for a block of text.
+        detect_bump() {
+          local text="$1"
+          if grep -qE '(^|[[:space:]])BREAKING[ -]CHANGE' <<<"$text" \
+            || grep -qiE '^[a-z]+(\([^)]*\))?!:' <<<"$text"; then
+            echo "major"
+          elif grep -qiE '^feat(\([^)]*\))?:' <<<"$text"; then
+            echo "minor"
+          elif grep -qiE '^(fix|perf)(\([^)]*\))?:' <<<"$text"; then
+            echo "patch"
+          else
+            echo "none"
+          fi
+        }
+
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          # Squash merge: the PR title is the future main commit subject.
+          BUMP="$(detect_bump "$PR_TITLE")"
+        else
+          # Push/release: read the actual commits landed since the base.
+          if [ -n "$RANGE" ]; then
+            LOG="$(git log "$RANGE" --pretty=format:'%s%n%b%n--END--')"
+          else
+            LOG="$(git log --pretty=format:'%s%n%b%n--END--')"
+          fi
+          BUMP="$(detect_bump "$LOG")"
+        fi
+
+        IFS='.' read -r MAJOR MINOR PATCH <<<"$BASE"
+        MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+
+        apply_bump() {
+          case "$1" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+        }
+
+        SHOULD_BUILD="false"
+        SHOULD_RELEASE="false"
+        SUFFIX=""
+
+        case "$EVENT_NAME" in
+          pull_request)
+            # Preview the version the merge would produce. When there is no
+            # releasable change (ci/chore/docs) we keep the base version — the
+            # RC just carries an -rc suffix, no phantom version bump.
+            apply_bump "$BUMP"
+            SUFFIX="-rc.${PR_NUMBER:-0}"
+            SHOULD_BUILD="true"
+            ;;
+          workflow_dispatch)
+            apply_bump "$BUMP"
+            SUFFIX="-dev"
+            SHOULD_BUILD="true"
+            ;;
+          *)
+            # push (or release) on the release branch.
+            apply_bump "$BUMP"
+            if [ "$BUMP" != "none" ]; then
+              SHOULD_BUILD="true"
+              SHOULD_RELEASE="true"
+            fi
+            ;;
+        esac
+
+        VERSION="${MAJOR}.${MINOR}.${PATCH}"
+        TAG="v${VERSION}"
+
+        {
+          echo "version=${VERSION}"
+          echo "suffix=${SUFFIX}"
+          echo "tag=${TAG}"
+          echo "bump=${BUMP}"
+          echo "should_build=${SHOULD_BUILD}"
+          echo "should_release=${SHOULD_RELEASE}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Base version:     ${BASE}${LATEST:+ (from ${LATEST})}"
+        echo "Detected bump:    ${BUMP}"
+        echo "Computed version: ${VERSION}${SUFFIX}"
+        echo "should_build=${SHOULD_BUILD} should_release=${SHOULD_RELEASE}"
