@@ -1,0 +1,129 @@
+name: Docker Hub Tag Cleanup
+
+# Prunes ephemeral image tags from Docker Hub once they age out:
+#   * -rc.<PR#>   release-candidate images built for pull requests
+#   * -dev / -dev-* images built by manual (workflow_dispatch) runs
+# Release tags (e.g. 1.2.3-ubuntu2204, 1.2.3-cuda1281-ubuntu2404) and `latest`
+# are never eligible — the delete filter only matches the -rc./-dev markers.
+#
+# Triggers:
+#   * schedule          weekly sweep (actually deletes)
+#   * workflow_dispatch  manual run (dry-run by default; flip the input to delete)
+#   * workflow_call      so release.yml can run it right after cutting a release
+#                        (add once #138 lands; see README/RELEASE docs)
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted without deleting"
+        type: boolean
+        default: true
+      retention_days:
+        description: "Delete ephemeral tags older than this many days"
+        type: string
+        default: "14"
+  workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+      retention_days:
+        type: string
+        default: "14"
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-tag-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune ephemeral Docker Hub tags
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          # Must be a Docker Hub access token with DELETE permission on the
+          # runpod/* repos. A read/write push token is NOT enough — the DELETE
+          # calls below will 401/403 and fail the job.
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_RETENTION: ${{ inputs.retention_days }}
+        run: |
+          set -euo pipefail
+
+          NAMESPACE="runpod"
+          REPOS=(base pytorch nvidia-pytorch autoresearch)
+
+          RETENTION_DAYS="${INPUT_RETENTION:-14}"
+          # A scheduled run has no inputs and should actually delete. A manual
+          # run defaults to dry-run so an operator can preview first. A caller
+          # (workflow_call) passes its own value.
+          if [ "$EVENT" = "schedule" ]; then
+            DRY_RUN="false"
+          else
+            DRY_RUN="${INPUT_DRY_RUN:-true}"
+          fi
+
+          CUTOFF=$(date -u -d "${RETENTION_DAYS} days ago" +%s)
+          echo "Dry run: ${DRY_RUN} | retention: ${RETENTION_DAYS} days | cutoff: $(date -u -d @"${CUTOFF}")"
+
+          # Exchange username + token for a short-lived JWT.
+          TOKEN=$(curl -fsS -H "Content-Type: application/json" \
+            -d "{\"username\": \"${DOCKERHUB_USERNAME}\", \"password\": \"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/ | jq -r '.token // empty')
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::Docker Hub login failed (check DOCKERHUB_USERNAME/DOCKERHUB_TOKEN)"
+            exit 1
+          fi
+
+          scanned=0 matched=0 kept=0
+          for repo in "${REPOS[@]}"; do
+            echo "::group::${NAMESPACE}/${repo}"
+            url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/?page_size=100"
+            while [ -n "${url}" ] && [ "${url}" != "null" ]; do
+              resp=$(curl -fsS -H "Authorization: JWT ${TOKEN}" "${url}")
+              while IFS=$'\t' read -r name updated; do
+                [ -z "${name}" ] && continue
+                scanned=$((scanned + 1))
+
+                # Only ephemeral tags are eligible; everything else is a release
+                # tag (or `latest`) and is kept.
+                case "${name}" in
+                  *-rc.*|*-dev|*-dev-*) : ;;
+                  *) kept=$((kept + 1)); continue ;;
+                esac
+
+                ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo 0)
+                if [ "${ts}" -ge "${CUTOFF}" ]; then
+                  kept=$((kept + 1))
+                  continue
+                fi
+
+                matched=$((matched + 1))
+                if [ "${DRY_RUN}" = "true" ]; then
+                  echo "[dry-run] would delete ${NAMESPACE}/${repo}:${name} (updated ${updated})"
+                else
+                  echo "deleting ${NAMESPACE}/${repo}:${name} (updated ${updated})"
+                  curl -fsS -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                    "https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/${name}/"
+                fi
+              done < <(echo "${resp}" | jq -r '.results[] | [.name, .last_updated] | @tsv')
+              url=$(echo "${resp}" | jq -r '.next // empty')
+            done
+            echo "::endgroup::"
+          done
+
+          echo "Scanned: ${scanned} | matched (${DRY_RUN:+dry_run=}${DRY_RUN}): ${matched} | kept: ${kept}"
