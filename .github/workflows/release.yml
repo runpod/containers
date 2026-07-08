@@ -15,6 +15,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      should-release: ${{ steps.v.outputs.should-release }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -44,3 +46,12 @@ jobs:
           else
             echo "No releasable commits since the last tag; nothing to release."
           fi
+
+  # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
+  # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
+  # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
+  cleanup:
+    needs: release
+    if: needs.release.outputs.should-release == 'true'
+    uses: ./.github/workflows/cleanup.yml
+    secrets: inherit
