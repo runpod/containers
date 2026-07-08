@@ -18,20 +18,24 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on a PR so a series of commits only pays for the
+# latest one. Never cancel on `push` to main (release builds must finish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-base:
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
       id-token: write
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
-      
+
       - name: Setup Docker
         uses: ./.github/actions/docker-setup
         id: setup
@@ -80,20 +84,53 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/base-refs
+          printf '%s\n' "$REFS" > /tmp/base-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: base-refs
+          path: /tmp/base-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-base
     if: needs.build-base.result == 'success'
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
+
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: base-refs
+          path: /tmp/base-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/base-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-base.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -110,7 +147,6 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
       changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
     steps:
       - name: Checkout
@@ -183,6 +219,24 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
+      - name: Save refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/autoresearch-refs
+          printf '%s\n' "$REFS" > /tmp/autoresearch-refs/refs.json
+
+      - name: Upload refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: autoresearch-refs
+          path: /tmp/autoresearch-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-autoresearch
@@ -202,10 +256,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: autoresearch-refs
+          path: /tmp/autoresearch-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/autoresearch-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-autoresearch.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
@@ -216,7 +287,7 @@ jobs:
     needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
     if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
       contents: read
@@ -319,7 +390,7 @@ jobs:
 
       - name: Upload refs artifact
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pytorch-refs-${{ matrix.cuda }}
           path: /tmp/pytorch-refs/refs.json
@@ -339,13 +410,13 @@ jobs:
         cuda: [cu1281, cu1290, cu1300]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
       - name: Download refs for ${{ matrix.cuda }}
         id: dl
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         continue-on-error: true
         with:
           name: pytorch-refs-${{ matrix.cuda }}
