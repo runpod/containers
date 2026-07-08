@@ -42,8 +42,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    outputs:
-      image-refs: ${{ steps.refs.outputs.refs }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -98,7 +96,23 @@ jobs:
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
-          
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/rocm-refs
+          printf '%s\n' "$REFS" > /tmp/rocm-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rocm-refs
+          path: /tmp/rocm-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
   test-rocm:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-rocm
@@ -109,10 +123,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: rocm-refs
+          path: /tmp/rocm-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/rocm-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: ${{ needs.build-rocm.outputs.image-refs }}
+          image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
