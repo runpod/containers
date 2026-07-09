@@ -19,6 +19,11 @@ name: Docker Hub Tag Cleanup
 on:
   schedule:
     - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  # TEMPORARY (remove before merge): lets us exercise this workflow from a PR,
+  # since workflow_dispatch isn't selectable until the file is on the default
+  # branch. The script below forces dry-run for pull_request, so it only ever
+  # lists — it never deletes from a PR.
+  pull_request:
   workflow_dispatch:
     inputs:
       dry_run:
@@ -77,6 +82,8 @@ jobs:
           # (workflow_call) passes its own value.
           if [ "$EVENT" = "schedule" ]; then
             DRY_RUN="false"
+          elif [ "$EVENT" = "pull_request" ]; then
+            DRY_RUN="true"  # TEMPORARY test trigger — never delete from a PR
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           fi
