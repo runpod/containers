@@ -91,14 +91,33 @@ jobs:
           CUTOFF=$(date -u -d "${RETENTION_DAYS} days ago" +%s)
           echo "Dry run: ${DRY_RUN} | retention: ${RETENTION_DAYS} days | cutoff: $(date -u -d @"${CUTOFF}")"
 
-          # Exchange username + token for a short-lived JWT.
-          TOKEN=$(curl -fsS -H "Content-Type: application/json" \
+          # Try to exchange username + token for a short-lived management JWT.
+          # Deletion REQUIRES it (and a token type allowed to delete tags, which
+          # PAT/OAT are not — see RELEASE docs). Listing public repos works
+          # WITHOUT it, so a dry-run can still preview what would be deleted even
+          # if login fails. Keep this soft (no -f / || true) so a 401 does not
+          # abort the whole script under `set -e -o pipefail`.
+          LOGIN_RESP=$(curl -sS -H "Content-Type: application/json" \
             -d "{\"username\": \"${DOCKERHUB_USERNAME}\", \"password\": \"${DOCKERHUB_TOKEN}\"}" \
-            https://hub.docker.com/v2/users/login/ | jq -r '.token // empty')
+            https://hub.docker.com/v2/users/login/ 2>/dev/null || true)
+          TOKEN=$(printf '%s' "${LOGIN_RESP}" | jq -r '.token // empty' 2>/dev/null || true)
           if [ -z "${TOKEN}" ]; then
-            echo "::error::Docker Hub login failed (check DOCKERHUB_USERNAME/DOCKERHUB_TOKEN)"
-            exit 1
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning::Docker Hub login failed; continuing unauthenticated (dry-run previews public repos only)"
+            else
+              echo "::error::Docker Hub login failed and this is not a dry-run — cannot delete."
+              exit 1
+            fi
           fi
+
+          # GET with the JWT when we have one, anonymously otherwise (public repos).
+          api_get() { # <url>
+            if [ -n "${TOKEN}" ]; then
+              curl -fsS -H "Authorization: JWT ${TOKEN}" "$1"
+            else
+              curl -fsS "$1"
+            fi
+          }
 
           del() { # <repo> <tag>
             if [ "${DRY_RUN}" = "true" ]; then
@@ -119,7 +138,7 @@ jobs:
             tags="$(mktemp)"
             url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/?page_size=100"
             while [ -n "${url}" ] && [ "${url}" != "null" ]; do
-              resp=$(curl -fsS -H "Authorization: JWT ${TOKEN}" "${url}")
+              resp=$(api_get "${url}")
               echo "${resp}" | jq -r '.results[] | [.name, (.digest // ""), .last_updated] | @tsv' >> "${tags}"
               url=$(echo "${resp}" | jq -r '.next // empty')
             done
