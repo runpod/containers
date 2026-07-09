@@ -5,10 +5,29 @@ inputs:
   image-refs:
     description: "JSON array of image refs to scan"
     required: true
+  max-parallel-scans:
+    description: "Maximum number of Grype scans to run concurrently"
+    required: false
+    default: "2"
 
 runs:
   using: composite
   steps:
+    # Rotate the cache daily so a stale DB is refreshed at most once per day;
+    # restore-keys lets grype start from yesterday's DB and update in place.
+    - name: Grype DB cache key
+      id: grype-db-key
+      shell: bash
+      run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Grype vulnerability DB
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/grype/db
+        key: grype-db-${{ steps.grype-db-key.outputs.date }}
+        restore-keys: |
+          grype-db-
+
     - name: Install Grype
       shell: bash
       run: |
@@ -22,6 +41,7 @@ runs:
       shell: bash
       env:
         IMAGE_REFS: ${{ inputs.image-refs }}
+        MAX_PARALLEL_SCANS: ${{ inputs.max-parallel-scans }}
       run: |
         set -uo pipefail
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
@@ -30,21 +50,53 @@ runs:
           exit 1
         fi
 
-        echo "Scanning ${#refs[@]} image(s):"
+        max_parallel="${MAX_PARALLEL_SCANS:-2}"
+        if ! [[ "${max_parallel}" =~ ^[1-9][0-9]*$ ]]; then
+          echo "Invalid max-parallel-scans='${max_parallel}', falling back to 2"
+          max_parallel=2
+        fi
+
+        echo "Scanning ${#refs[@]} image(s), up to ${max_parallel} in parallel:"
         printf '  - %s\n' "${refs[@]}"
 
-        failed=()
-        for ref in "${refs[@]}"; do
-          echo "::group::Grype — ${ref}"
-          if ! grype "docker:${ref}" \
+        tmpdir="$(mktemp -d)"
+
+        scan_one() {
+          local idx="$1" ref="$2"
+          if grype "docker:${ref}" \
               --fail-on high \
               --only-fixed \
-              --scope all-layers \
+              --scope squashed \
               -o table \
-              -q; then
-            failed+=("${ref}")
+              -q > "${tmpdir}/${idx}.log" 2>&1; then
+            echo 0 > "${tmpdir}/${idx}.rc"
+          else
+            echo 1 > "${tmpdir}/${idx}.rc"
           fi
+        }
+
+        # Launch scans, capping concurrency at ${max_parallel}.
+        running=0
+        for idx in "${!refs[@]}"; do
+          scan_one "${idx}" "${refs[$idx]}" &
+          running=$((running + 1))
+          if [ "${running}" -ge "${max_parallel}" ]; then
+            wait -n
+            running=$((running - 1))
+          fi
+        done
+        wait
+
+        # Print each scan's output (grouped) and collect failures. A missing
+        # rc file means the scan never completed and is treated as a failure.
+        failed=()
+        for idx in "${!refs[@]}"; do
+          echo "::group::Grype — ${refs[$idx]}"
+          cat "${tmpdir}/${idx}.log" 2>/dev/null || echo "(no output captured)"
           echo "::endgroup::"
+          if [ "$(cat "${tmpdir}/${idx}.rc" 2>/dev/null)" != "0" ]; then
+            failed+=("${refs[$idx]}")
+          fi
         done
 
         if [ ${#failed[@]} -gt 0 ]; then

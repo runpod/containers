@@ -1,5 +1,15 @@
-group "default" {
-  targets = ["pytorch-2511"]
+variable "TORCH_COMBINATIONS" {
+  default = [
+    { pytorch = "25.11" }
+  ]
+}
+
+group "pytorch2511" {
+  targets = [
+    for build in TORCH_COMBINATIONS:
+      "pytorch-${replace(build.pytorch, ".", "")}"
+      if build.pytorch == "25.11"
+  ]
 }
 
 target "nvidia-base" {
@@ -18,12 +28,20 @@ target "nvidia-base" {
   }
 }
 
-target "pytorch-2511" {
+target "pytorch-matrix" {
+  matrix = {
+    build = TORCH_COMBINATIONS
+  }
+  
+  name = "pytorch-${replace(build.pytorch, ".", "")}"
+  
   inherits = ["nvidia-base"]
+
   tags = [
-    "runpod/nvidia-pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-25.11",
+    "runpod/nvidia-pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-${build.pytorch}",
   ]
+
   args = {
-    BASE_IMAGE = "nvcr.io/nvidia/pytorch:25.11-py3"
+    BASE_IMAGE = "nvcr.io/nvidia/pytorch:${build.pytorch}-py3"
   }
 }
