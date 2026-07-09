@@ -6,6 +6,10 @@ name: Docker Hub Tag Cleanup
 # Release tags (e.g. 1.2.3-ubuntu2204, 1.2.3-cuda1281-ubuntu2404) and `latest`
 # are never eligible — the delete filter only matches the -rc./-dev markers.
 #
+# It also removes orphaned Cosign signatures (`sha256-<digest>.sig` / `.att`):
+# a signature is deleted only when no live image tag still references its
+# digest, so signatures of retained release images are always kept.
+#
 # Triggers:
 #   * schedule          weekly sweep (actually deletes)
 #   * workflow_dispatch  manual run (dry-run by default; flip the input to delete)
@@ -89,41 +93,77 @@ jobs:
             exit 1
           fi
 
-          scanned=0 matched=0 kept=0
+          del() { # <repo> <tag>
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "[dry-run] would delete ${NAMESPACE}/$1:$2"
+            else
+              echo "deleting ${NAMESPACE}/$1:$2"
+              curl -fsS -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                "https://hub.docker.com/v2/repositories/${NAMESPACE}/$1/tags/$2/"
+            fi
+          }
+
+          scanned=0 img_del=0 sig_del=0 kept=0
           for repo in "${REPOS[@]}"; do
             echo "::group::${NAMESPACE}/${repo}"
+
+            # Snapshot every tag once (name, manifest digest, last_updated) so
+            # we can make two passes over the same data.
+            tags="$(mktemp)"
             url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/?page_size=100"
             while [ -n "${url}" ] && [ "${url}" != "null" ]; do
               resp=$(curl -fsS -H "Authorization: JWT ${TOKEN}" "${url}")
-              while IFS=$'\t' read -r name updated; do
-                [ -z "${name}" ] && continue
-                scanned=$((scanned + 1))
-
-                # Only ephemeral tags are eligible; everything else is a release
-                # tag (or `latest`) and is kept.
-                case "${name}" in
-                  *-rc.*|*-dev|*-dev-*) : ;;
-                  *) kept=$((kept + 1)); continue ;;
-                esac
-
-                ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo 0)
-                if [ "${ts}" -ge "${CUTOFF}" ]; then
-                  kept=$((kept + 1))
-                  continue
-                fi
-
-                matched=$((matched + 1))
-                if [ "${DRY_RUN}" = "true" ]; then
-                  echo "[dry-run] would delete ${NAMESPACE}/${repo}:${name} (updated ${updated})"
-                else
-                  echo "deleting ${NAMESPACE}/${repo}:${name} (updated ${updated})"
-                  curl -fsS -X DELETE -H "Authorization: JWT ${TOKEN}" \
-                    "https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/${name}/"
-                fi
-              done < <(echo "${resp}" | jq -r '.results[] | [.name, .last_updated] | @tsv')
+              echo "${resp}" | jq -r '.results[] | [.name, (.digest // ""), .last_updated] | @tsv' >> "${tags}"
               url=$(echo "${resp}" | jq -r '.next // empty')
             done
+
+            # Pass 1: delete aged-out ephemeral image tags (-rc./-dev). Record
+            # the digest of every tag we KEEP so pass 2 can tell which cosign
+            # signatures still back a live image.
+            declare -A LIVE=()
+            del_images=()
+            while IFS=$'\t' read -r name digest updated; do
+              [ -z "${name}" ] && continue
+              scanned=$((scanned + 1))
+              case "${name}" in
+                *.sig|*.att) continue ;; # signatures handled in pass 2
+              esac
+              eligible=false
+              case "${name}" in *-rc.*|*-dev|*-dev-*) eligible=true ;; esac
+              ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo 0)
+              if [ "${eligible}" = "true" ] && [ "${ts}" -lt "${CUTOFF}" ]; then
+                del_images+=("${name}")
+              else
+                kept=$((kept + 1))
+                [ -n "${digest}" ] && LIVE["${digest#sha256:}"]=1
+              fi
+            done < "${tags}"
+
+            # Pass 2: a cosign signature is tagged `sha256-<digest>.sig`/`.att`.
+            # If <digest> is no longer backed by a live image tag (we just
+            # deleted it, or it went in a previous run) the signature is
+            # orphaned and safe to remove; release signatures stay in LIVE.
+            del_sigs=()
+            while IFS=$'\t' read -r name digest updated; do
+              [ -z "${name}" ] && continue
+              case "${name}" in
+                *.sig|*.att) : ;;
+                *) continue ;;
+              esac
+              hex="${name#sha256-}"; hex="${hex%.*}"
+              if [ -z "${LIVE[${hex}]:-}" ]; then
+                del_sigs+=("${name}")
+              else
+                kept=$((kept + 1))
+              fi
+            done < "${tags}"
+
+            for t in "${del_images[@]:-}"; do [ -n "${t}" ] && { del "${repo}" "${t}"; img_del=$((img_del + 1)); }; done
+            for t in "${del_sigs[@]:-}";   do [ -n "${t}" ] && { del "${repo}" "${t}"; sig_del=$((sig_del + 1)); }; done
+
+            unset LIVE
+            rm -f "${tags}"
             echo "::endgroup::"
           done
 
-          echo "Scanned: ${scanned} | matched (${DRY_RUN:+dry_run=}${DRY_RUN}): ${matched} | kept: ${kept}"
+          echo "Scanned: ${scanned} | image tags: ${img_del} | signatures: ${sig_del} | kept: ${kept} | dry_run=${DRY_RUN}"
