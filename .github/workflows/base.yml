@@ -312,7 +312,7 @@ jobs:
   build-pytorch:
     needs: [version, build-base]
     # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
@@ -417,7 +417,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/pytorch-refs/refs.json
 
       - name: Upload refs artifact
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pytorch-refs-${{ matrix.cuda }}

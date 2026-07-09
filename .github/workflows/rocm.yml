@@ -42,6 +42,8 @@ jobs:
         uses: ./.github/actions/compute-version
 
   build-rocm:
+    needs: version
+    if: needs.version.outputs.should-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     strategy:
       fail-fast: false
