@@ -21,6 +21,63 @@ large apt userland; this PoC ships a single Python (3.14) and a curated tool
 set. Some of the win is "fewer Pythons," but the determinism, layer dedup, and
 no-package-manager-in-the-image properties are structural and hold regardless.
 
+## Hybrid CUDA image (`base-cuda.nix`)
+
+The images people actually run are CUDA/PyTorch. Rather than rebuild CUDA in
+Nix (unfree, huge, CI-fragile), the **hybrid** pins NVIDIA's tested CUDA base as
+`fromImage` and layers the same Nix userland on top. Directly comparable to
+`runpod/base:1.0.7-cuda1281-ubuntu2404`, which is the *same* nvidia base + an
+apt userland layer. Torch is pip-installed identically on top of both, so it's
+excluded — this compares the **userland layer**.
+
+| image | compressed | note |
+| --- | --- | --- |
+| `nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04` | 5593 MB | shared base |
+| **hybrid base-cuda** (nvidia + Nix userland) | **5846 MB** | Nix layer ≈ **253 MB** |
+| `runpod/base:1.0.7-cuda1281-ubuntu2404` (nvidia + apt) | 6359 MB | apt layer ≈ 766 MB |
+| `runpod/pytorch:1.0.7-cu1281-torch280` (base + torch) | 11211 MB | torch ≈ +4.9 GB |
+
+The Nix userland layer is **~67% smaller** than the apt layer (253 vs 766 MB).
+But the shared CUDA base and torch wheels dominate, so the **whole-image** win
+is modest (~8% on the base). The big further levers: a **runtime** (non-devel)
+base, and a **Nix-built torch**. Reproduced by
+[`compare-cuda-size.sh`](./compare-cuda-size.sh) (manual-dispatch CI job
+`cuda-image-size` — heavy, so not run on every push). Base pinned by digest +
+Nix hash via `nix-prefetch-docker`.
+
+## Maximizing shared layers across an image family
+
+These images co-deploy on the same hosts, so cross-image Docker layer reuse is
+where the real fleet-level win is. Nix helps here in a way Dockerfiles cannot:
+
+- **Automatic:** `dockerTools` layers are keyed by **store path**; an identical
+  store path produces a byte-identical layer with an identical digest. So any
+  two Nix images that share dependencies already share those layers in a host's
+  Docker cache — pulled once, reused everywhere. `base-cpu` and `base-cuda` both
+  `import ./userland.nix`, so their userland layers are literally the same
+  digests today.
+- **The subtlety:** `streamLayeredImage` assigns layers *per image* via a
+  popularity heuristic capped at `maxLayers` (default 100); everything past the
+  cap collapses into one "customisation layer." Two images with different
+  closures can put a shared path in a dedicated (shared) layer in one and fold
+  it into the customisation bundle of the other — so sharing is good but not
+  guaranteed-maximal with naive independent builds.
+
+**To force maximal, deterministic overlap** (proposed follow-up, not yet built):
+
+1. **Tiered shared bases via `fromImage`.** Materialize the common closure once
+   and chain: `common userland` → `+CUDA (per cuda version)` → `+torch (per
+   combo)`. Every variant then reuses the exact lower-tier layer digests. (The
+   CUDA hybrid already does the first hop off the nvidia base.)
+2. **Raise `maxLayers`** so big shared deps (glibc, python, cudnn userland) each
+   get a dedicated, dedupable layer instead of being bundled.
+3. **`nix2container`** (`github:nlewo/nix2container`) is purpose-built for this:
+   deterministic per-store-path layering designed so an image *family* shares
+   layers maximally, without the single-customisation-layer collapse.
+4. **Family "footprint" metric:** report total **unique** layer bytes a host
+   caches for the whole family vs the naive sum of image sizes — that delta is
+   the real co-location win, and a good CI guardrail against regressions.
+
 ## How it works
 
 - **`base-cpu.nix`** — `pkgs.dockerTools.streamLayeredImage` assembling a
