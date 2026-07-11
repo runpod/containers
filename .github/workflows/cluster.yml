@@ -1,0 +1,157 @@
+name: Cluster Image Build
+
+# The `-cluster` variant builds FROM the published runpod/pytorch base image.
+# On main we therefore run AFTER "Docker Image Build and Release" (base.yml,
+# which publishes runpod/pytorch) completes, so the base tag exists. PRs and
+# manual runs layer onto the already-released pytorch tag (docker-bake.hcl uses
+# the un-suffixed BASE_IMAGE).
+on:
+  workflow_run:
+    workflows: ["Docker Image Build and Release"]
+    types: [completed]
+    branches: [main]
+  pull_request:
+    paths:
+      - ".github/workflows/cluster.yml"
+      - "official-templates/pytorch-cluster/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on a PR so a series of commits only pays for the
+# latest one. Never cancel on `push` to main (release builds must finish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-cluster:
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    # When triggered by base.yml completing, only proceed if that run succeeded.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build cluster images (${{ matrix.cuda }})
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch-cluster/docker-bake.hcl
+          load: true
+          push: false
+          targets: |
+            ${{ matrix.cuda }}
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      # cluster.yml is path-filtered to official-templates/pytorch-cluster/**
+      # (and runs on push/main + workflow_dispatch), so build-cluster always
+      # builds. Persist this shard's refs for the matching test-cluster entry.
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/cluster-refs
+          printf '%s\n' "$REFS" > /tmp/cluster-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cluster-refs-${{ matrix.cuda }}
+          path: /tmp/cluster-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+  test-cluster:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-cluster
+    if: needs.build-cluster.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        id: dl
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: cluster-refs-${{ matrix.cuda }}
+          path: /tmp/cluster-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        if: steps.refs.outcome == 'success'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          min-cuda-version: "12.8"
