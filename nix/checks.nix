@@ -113,9 +113,16 @@ in
 
   actionlint = mkCheck {
     name = "actionlint";
-    buildInputs = [ pkgs.actionlint ];
+    buildInputs = [
+      pkgs.actionlint
+      pkgs.git
+    ];
     script = ''
       if [ -d .github/workflows ]; then
+        # actionlint finds workflows + reads .github/actionlint.yaml via the
+        # git project root; the check sandbox has no .git, so init a throwaway
+        # repo to give it one.
+        git init -q .
         actionlint
       fi
     '';
