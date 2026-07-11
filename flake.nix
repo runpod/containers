@@ -51,10 +51,16 @@
 
           devShell = import ./nix/devshell { inherit pkgs repoLib; };
 
+          # Experimental Nix-built OCI images (build-only, not published).
+          # Linux-only — these are Linux container images.
+          images = lib.optionalAttrs pkgs.stdenv.isLinux (import ./nix/images { inherit pkgs; });
+
           formatter = pkgs.nixfmt-rfc-style;
         in
         {
           inherit checks;
+
+          packages = images;
 
           devShells.default = devShell;
 

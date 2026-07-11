@@ -28,3 +28,21 @@ jobs:
       # surface in one run instead of stopping at the first failure.
       - name: nix flake check
         run: nix flake check --print-build-logs --keep-going
+
+  # Experimental: build the base-cpu image with Nix and compare its size to the
+  # published runpod/base CPU image. Build-only — nothing is pushed. Kept in a
+  # separate job so it never slows the gated flake-check above.
+  image-size:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Build Nix base-cpu image + size comparison (build-only)
+        run: bash nix/images/compare-size.sh
