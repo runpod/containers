@@ -1,0 +1,18 @@
+# Minimal project config to give the Nix static-analysis tools sane,
+# pragmatic defaults. Not a packaging manifest.
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Default rule set (E, F, plus ruff's defaults). Add rules here to
+# tighten over time.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  "E501", # line length handled by the formatter; not worth failing on
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
