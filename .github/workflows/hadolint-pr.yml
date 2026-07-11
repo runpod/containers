@@ -36,4 +36,3 @@ jobs:
           format: tty
           output-file: /dev/stdout
           ignore: ${{ matrix.ignore }}
-          

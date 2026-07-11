@@ -363,7 +363,7 @@ jobs:
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
-          
+
       - name: Install Cosign
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6

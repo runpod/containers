@@ -15,18 +15,19 @@ An AI coding agent autonomously runs ML experiments: it modifies `train.py`, tra
 1. Launch a pod with this template
 2. Connect your coding agent (Claude Code, Cursor, etc.) via SSH
 3. Tell the agent:
-   ```
+
+   ```text
    Read /workspace/autoresearch/program.md and let's kick off a new experiment!
    ```
 
 ### GPU recommendations
 
-| GPU | VRAM | Notes |
-|-----|------|-------|
-| RTX 4090 | 24 GB | Budget option. Smaller optimal model size. |
-| A40 | 48 GB | Good middle ground. |
-| A100 80GB | 80 GB | Plenty of room for larger models. |
-| H100 | 80 GB | Fastest. What Karpathy used. |
+| GPU       | VRAM  | Notes                                      |
+| --------- | ----- | ------------------------------------------ |
+| RTX 4090  | 24 GB | Budget option. Smaller optimal model size. |
+| A40       | 48 GB | Good middle ground.                        |
+| A100 80GB | 80 GB | Plenty of room for larger models.          |
+| H100      | 80 GB | Fastest. What Karpathy used.               |
 
 The 5-minute fixed time budget means cheaper GPUs work fine — you get a different optimal model size. Results are comparable within the same GPU type.
 

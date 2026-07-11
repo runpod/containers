@@ -22,7 +22,7 @@ This repository uses Docker Buildx with [bake files](https://docs.docker.com/bui
 
 ### Using the Bake Script
 
-`./bake.sh` automatically combines shared version definitions with template specific bake files. 
+`./bake.sh` automatically combines shared version definitions with template specific bake files.
 
 Use it like this:
 

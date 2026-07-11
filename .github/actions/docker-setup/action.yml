@@ -104,4 +104,4 @@ runs:
         BRANCH_NAME=$(echo "${RAW_BRANCH}" | sed 's/\//-/g')
         SUFFIX="-dev-${BRANCH_NAME}"
         echo "RELEASE=${SUFFIX}" >> $GITHUB_ENV
-        echo "release_suffix=${SUFFIX}" >> $GITHUB_OUTPUT 
+        echo "release_suffix=${SUFFIX}" >> $GITHUB_OUTPUT
