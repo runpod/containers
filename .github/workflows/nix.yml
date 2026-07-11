@@ -1,0 +1,30 @@
+name: Nix static analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flake-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      # Runs the sandbox-safe gated checks (nixfmt/statix/deadnix/nil,
+      # shellcheck, yamllint, actionlint, hadolint, markdown, taplo,
+      # editorconfig, gitleaks). --keep-going so every check's findings
+      # surface in one run instead of stopping at the first failure.
+      - name: nix flake check
+        run: nix flake check --print-build-logs --keep-going
