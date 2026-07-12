@@ -89,6 +89,34 @@ images share only their exact common prefix layers; here every identical store
 path is a shared layer regardless of image, so the shared userland + tools
 dedupe automatically.
 
+### The published fleet today (all container types)
+
+`fleet-footprint.sh` (manual-dispatch CI job `fleet-footprint`) measures the
+*current* published images across every type — base (cpu/cuda/rocm), the full
+pytorch matrix, autoresearch, nvidia-pytorch — via `skopeo` manifests (no
+pulls). It answers: how much does the existing Dockerfile fleet already share?
+
+| container type | images | naïve sum |
+| --- | --- | --- |
+| runpod/base | 10 | 111.0 GB |
+| runpod/pytorch | 25 | 306.5 GB |
+| runpod/autoresearch | 2 | 22.1 GB |
+| runpod/nvidia-pytorch | 1 | 9.1 GB |
+
+- **Fleet:** 38 images
+- **Naïve sum:** 448.7 GB
+- **Unique cached on a host** (deduped by blob digest): **258.6 GB**
+- **Already shared:** 190.1 GB — **42%** of the naïve total
+
+So the Dockerfile fleet already dedupes ~42% via its shared `FROM` chain
+(`nvidia/cuda` → `runpod/base` → `runpod/pytorch`). That reframes the Nix
+opportunity honestly: the big base/CUDA layers are *already* shared, so Nix's
+incremental win is the **userland tier** (smaller + deterministic, ~67% smaller
+than the apt layer) plus **finer, guaranteed store-path sharing** and
+reproducibility — not the CUDA base, which is shared either way. The largest
+absolute lever remains the torch wheels (~4.9 GB/image, 25 pytorch images), a
+Nix-built-torch question for later.
+
 ### Pushing overlap further
 
 1. **Tiered shared bases via `fromImage`.** Chain `common userland` → `+CUDA
