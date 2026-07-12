@@ -57,11 +57,12 @@ measure_family() {
     echo "==> $label: $img" >&2
     local out
     out=$(nixf build --no-link --print-out-paths ".#packages.${SYSTEM}.$img")
-    if [ "$label" = "nix2container" ]; then
-      "$skn2c" --insecure-policy copy "nix:$out" "docker-archive:$tmp/img.tar:r:t" >/dev/null 2>&1
-    else
-      "$out" >"$tmp/img.tar"
-    fi
+    # nix2container images (image.json) need the patched skopeo + nix: transport;
+    # dockerTools images are a runnable stream script.
+    case "$img" in
+      *-n2c | *-tiered) "$skn2c" --insecure-policy copy "nix:$out" "docker-archive:$tmp/img.tar:r:t" >/dev/null 2>&1 ;;
+      *) "$out" >"$tmp/img.tar" ;;
+    esac
     layers_of "$tmp/img.tar" >"$tmp/$img.layers"
     rm -f "$tmp/img.tar"
     cat "$tmp/$img.layers" >>"$all"
@@ -78,8 +79,9 @@ measure_family() {
 emit ""
 emit "## Nix image family — real OCI layer-sharing footprint"
 
-measure_family "dockerTools" family-base family-data family-serve
-measure_family "nix2container" family-base-n2c family-data-n2c family-serve-n2c
+measure_family "dockerTools (auto, maxLayers 100)" family-base family-data family-serve
+measure_family "nix2container (auto, maxLayers 600)" family-base-n2c family-data-n2c family-serve-n2c
+measure_family "nix2container (tiered buildLayer)" family-base-tiered family-data-tiered family-serve-tiered
 
 emit ""
-emit "_Real OCI layer blobs (\`skopeo inspect docker-archive:\`), deduped by digest. Both builders cap at the closure's store-path sharing ceiling (~53% here) only when every path is its own layer (~275+ layers/image); at its default (100) nix2container shares less than dockerTools. nix2container's edge is that many layers are cheap to build, plus explicit \`buildLayer\` composition — not a higher ceiling. See README._"
+emit "_Real OCI layer blobs (\`skopeo inspect docker-archive:\`), deduped by digest. Auto-layering hits the store-path ceiling (~53%) only at ~275+ layers/image. The **tiered** build puts the whole shared userland in one explicit \`buildLayer\` every image reuses, reaching ~the same sharing at ~15-20 layers/image — the practical answer. See README._"

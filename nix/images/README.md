@@ -116,7 +116,25 @@ nix2container; run by `footprint.sh` / the `family-footprint` CI job):
 
 **The catch either way:** hitting 53% needs ~275+ OCI layers/image, which
 overlay2 and some registries discourage. So per-path auto-layering is not the
-real answer — deliberate tiering is (below).
+real answer — deliberate tiering is.
+
+### Tiering wins: near-ceiling sharing at a low layer count
+
+`family-tiered.nix` (`family-*-tiered`) puts the **whole shared userland into
+one explicit nix2container `buildLayer`** that all three images reuse
+byte-for-byte, with only a small per-flavor delta on top:
+
+| approach | real OCI shared | layers / image |
+| --- | --- | --- |
+| dockerTools (auto, default) | 34% | 99 |
+| nix2container (auto, maxLayers 600) | 53% | 288 |
+| **nix2container (tiered `buildLayer`)** | **51%** | **~15–21** |
+
+Tiering reaches ~the store-path ceiling (51% vs 53%) at **~19 layers/image
+instead of ~288** — the shared userland (~900 MB) is one blob cached once, and
+`family-data` / `family-serve` add only their extra Python stack. This is the
+practical way to get fleet-wide sharing, and it extends naturally to the GPU
+tiers (`common userland` → `+CUDA` → `+torch`).
 
 ### The published fleet today (all container types)
 

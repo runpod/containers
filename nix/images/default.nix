@@ -14,4 +14,9 @@
   base-cuda = import ./base-cuda.nix { inherit pkgs; };
 }
 // import ./family.nix { inherit pkgs; }
-// (if n2c != null then import ./family-n2c.nix { inherit pkgs n2c; } else { })
+// (
+  if n2c != null then
+    import ./family-n2c.nix { inherit pkgs n2c; } // import ./family-tiered.nix { inherit pkgs n2c; }
+  else
+    { }
+)
