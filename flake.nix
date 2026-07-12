@@ -4,12 +4,17 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # For the experimental nix2container image targets (compared against
+    # dockerTools). Follows our nixpkgs so there's only one pin.
+    nix2container.url = "github:nlewo/nix2container";
+    nix2container.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
     {
       nixpkgs,
       flake-utils,
+      nix2container,
       ...
     }:
     flake-utils.lib.eachSystem
@@ -52,15 +57,28 @@
           devShell = import ./nix/devshell { inherit pkgs repoLib; };
 
           # Experimental Nix-built OCI images (build-only, not published).
-          # Linux-only — these are Linux container images.
-          images = lib.optionalAttrs pkgs.stdenv.isLinux (import ./nix/images { inherit pkgs; });
+          # Linux-only — these are Linux container images. Passing the
+          # nix2container builder in adds the *-n2c variants for comparison.
+          n2c = nix2container.packages.${system};
+          images = lib.optionalAttrs pkgs.stdenv.isLinux (
+            import ./nix/images {
+              inherit pkgs;
+              n2c = n2c.nix2container;
+            }
+          );
 
           formatter = pkgs.nixfmt-rfc-style;
         in
         {
           inherit checks;
 
-          packages = images;
+          packages =
+            images
+            // lib.optionalAttrs pkgs.stdenv.isLinux {
+              # Patched skopeo that understands nix2container's `nix:` transport,
+              # used by footprint.sh to inspect the n2c images' real OCI layers.
+              skopeo-n2c = n2c.skopeo-nix2container;
+            };
 
           devShells.default = devShell;
 

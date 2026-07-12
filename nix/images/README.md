@@ -92,17 +92,31 @@ layer* whose digest differs between images. So identical store paths do **not**
 all become shared layers — the store-path closure (which would show ~53%) is
 only a ceiling. Raising `maxLayers` recovers it, at the cost of layer count:
 
-| `maxLayers` | real OCI shared | layers / image |
-| --- | --- | --- |
-| 100 (default) | **34%** | 99 |
-| 200 | 38% | 199 |
-| 400 | 53% | 275 |
+| builder | `maxLayers` | real OCI shared | layers / image |
+| --- | --- | --- | --- |
+| dockerTools | 100 (default) | **34%** | 99 |
+| dockerTools | 200 | 38% | 199 |
+| dockerTools | 400 | 53% | 275 |
+| nix2container | 100 | **16%** | 100 |
+| nix2container | 300 | 48% | 283 |
+| nix2container | 600 | 53% | 288 |
 
-At `maxLayers` ≥ the closure size (~275) every store path is its own layer and
-real sharing hits the store-path ceiling (53%) — but 275 layers/image is
-impractical (overlay2 and many registries discourage that many). The clean way
-to get near-maximal OCI sharing *without* the layer-count blow-up is
-**`nix2container`** (below).
+Two findings, both measured (`family-*` = dockerTools, `family-*-n2c` =
+nix2container; run by `footprint.sh` / the `family-footprint` CI job):
+
+1. **The sharing ceiling is set by the closure, not the tool.** Both builders
+   converge at ~53% — the store-path ceiling — only when `maxLayers` ≥ the
+   closure size (~275) so every path is its own layer. Neither exceeds it.
+2. **nix2container does *not* raise the ceiling, and at its default (100) it
+   shares *less* (16%)** because it bundles the non-dedicated closure into
+   fewer, larger per-image layers. Its real advantage is that many layers are
+   *cheap to build* — it references store paths lazily instead of writing a tar
+   per layer — so `maxLayers=600` is practical to build, whereas dockerTools at
+   400 must materialise 275 layer tarballs.
+
+**The catch either way:** hitting 53% needs ~275+ OCI layers/image, which
+overlay2 and some registries discourage. So per-path auto-layering is not the
+real answer — deliberate tiering is (below).
 
 ### The published fleet today (all container types)
 
@@ -134,17 +148,20 @@ Nix-built-torch question for later.
 
 ### Pushing overlap further
 
-1. **Tiered shared bases via `fromImage`.** Chain `common userland` → `+CUDA
+The winning approach is **deliberate tiering**, not cranking `maxLayers`: put
+the whole shared userland into *one* explicit layer every image reuses, so a
+host caches it once — high sharing at a *low* layer count.
+
+1. **Explicit shared layers (`nix2container` `buildLayer`).** Define one shared
+   userland layer (the common store paths) and give each image only a small
+   per-flavor delta layer on top. This beats per-path auto-layering: near-ceiling
+   sharing with a handful of layers instead of ~275. nix2container's `buildLayer`
+   is built for exactly this; it's the natural next step for this family.
+2. **Tiered shared bases via `fromImage`.** Chain `common userland` → `+CUDA
    (per cuda version)` → `+torch (per combo)` so every variant reuses the exact
    lower-tier layer digests. (The CUDA hybrid already does the first hop off the
    nvidia base.)
-2. **Raise `maxLayers`** so big shared deps (glibc, python, cudnn userland) each
-   get a dedicated, dedupable layer instead of being bundled into the
-   customisation layer.
-3. **`nix2container`** (`github:nlewo/nix2container`) — deterministic
-   per-store-path layering built specifically so an image *family* shares layers
-   maximally, without the single-customisation-layer collapse.
-4. **Footprint as a CI guardrail:** track unique-vs-naïve over time so a change
+3. **Footprint as a CI guardrail:** track unique-vs-naïve over time so a change
    that accidentally breaks sharing (e.g. bumping one variant's nixpkgs pin)
    shows up as a regression.
 
