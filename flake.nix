@@ -67,6 +67,11 @@
             }
           );
 
+          # Native-parity ("prod") images — a separate tree from the PoC above,
+          # rebuilding base + pytorch entirely from nixpkgs (source builds,
+          # full-Nix CUDA). Build-only, not published.
+          prodImages = lib.optionalAttrs pkgs.stdenv.isLinux (import ./nix/prod-images { inherit pkgs; });
+
           formatter = pkgs.nixfmt-rfc-style;
         in
         {
@@ -74,6 +79,7 @@
 
           packages =
             images
+            // prodImages
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               # Patched skopeo that understands nix2container's `nix:` transport,
               # used by footprint.sh to inspect the n2c images' real OCI layers.
