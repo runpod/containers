@@ -72,22 +72,37 @@ paths and only add their own Python stack:
 - `family-data` — + numpy/pandas/scikit-learn/matplotlib/scipy
 - `family-serve` — + fastapi/uvicorn/pydantic/pillow/requests
 
-`footprint.sh` (CI job `family-footprint`) measures what a host actually caches
-once shared layers dedupe, vs the naïve per-image sum:
+`footprint.sh` (CI job `family-footprint`) measures the **real OCI layers** each
+image emits (streamed docker-archive → `skopeo inspect` → dedupe by blob
+digest) — what a host's Docker cache actually shares:
 
-| | store closure (NAR) |
+| | real OCI layers |
 | --- | --- |
-| family-base | 875 MB |
-| family-data | 1551 MB |
-| family-serve | 962 MB |
-| **naïve sum** (no sharing) | **3388 MB** |
-| **unique cached on a host** (deduped) | **1575 MB** |
-| **saved by sharing** | **1813 MB — 53%** |
+| family-base | 99 layers, 921 MB |
+| family-data | 99 layers, 1623 MB |
+| family-serve | 99 layers, 1010 MB |
+| **naïve sum** (no sharing) | **3555 MB** |
+| **unique cached on a host** (deduped by digest) | **2312 MB** |
+| **saved by sharing** | **1243 MB — 34%** |
 
-A box running all three flavors caches ~1.6 GB instead of ~3.4 GB. Dockerfile
-images share only their exact common prefix layers; here every identical store
-path is a shared layer regardless of image, so the shared userland + tools
-dedupe automatically.
+**Important:** this is *real OCI* sharing, not Nix store-path sharing.
+`streamLayeredImage` gives only the top `maxLayers` (default 100) store paths a
+dedicated layer and bundles the rest into a single per-image *customisation
+layer* whose digest differs between images. So identical store paths do **not**
+all become shared layers — the store-path closure (which would show ~53%) is
+only a ceiling. Raising `maxLayers` recovers it, at the cost of layer count:
+
+| `maxLayers` | real OCI shared | layers / image |
+| --- | --- | --- |
+| 100 (default) | **34%** | 99 |
+| 200 | 38% | 199 |
+| 400 | 53% | 275 |
+
+At `maxLayers` ≥ the closure size (~275) every store path is its own layer and
+real sharing hits the store-path ceiling (53%) — but 275 layers/image is
+impractical (overlay2 and many registries discourage that many). The clean way
+to get near-maximal OCI sharing *without* the layer-count blow-up is
+**`nix2container`** (below).
 
 ### The published fleet today (all container types)
 

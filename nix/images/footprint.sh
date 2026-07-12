@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# Cross-image layer-sharing "footprint": for the Nix image family, how many
-# bytes does a host actually cache once shared layers are deduped, vs the naïve
-# sum of each image's closure? The gap is the fleet-caching win.
+# Cross-image layer-sharing "footprint" for the Nix image family, measured on
+# the ACTUAL OCI layers each image emits (not the Nix closure). This matters:
+# streamLayeredImage gives the top `maxLayers` store paths their own layer and
+# bundles the rest into a single per-image "customisation layer" whose digest
+# differs between images — so store-path sharing overstates real OCI sharing.
 #
-# Metric = uncompressed store (NAR) bytes, which is what both the Nix store and
-# Docker layer dedup key on (identical store path => identical layer => cached
-# once). Compressed on-registry footprint is proportional.
+# For each image we stream the docker-archive, read its real layer digests +
+# sizes via `skopeo inspect`, and dedupe by digest across the family. That is
+# exactly what a host's Docker layer cache dedupes.
 #
 # Usage: nix/images/footprint.sh
 set -euo pipefail
 
 SYSTEM="x86_64-linux"
 FAMILY=(family-base family-data family-serve)
+export CONTAINERS_REGISTRIES_CONF="${CONTAINERS_REGISTRIES_CONF:-/dev/null}"
 
 nixf() { nix --extra-experimental-features 'nix-command flakes' "$@"; }
+sk() { nixf run nixpkgs#skopeo -- "$@"; }
+jqr() { nixf run nixpkgs#jq -- "$@"; }
 mb() { echo "$(($1 / 1048576))"; }
 
 tmp=$(mktemp -d)
@@ -27,40 +32,34 @@ emit() {
   fi
 }
 
-# path\tnarSize for the full runtime closure of an image (its layer store paths
-# and their deps). Handles both `nix path-info --json` shapes (array / object).
-closure_tsv() {
-  nixf path-info --json -r ".#packages.${SYSTEM}.$1" \
-    | nixf run nixpkgs#jq -- -r \
-      '(if type=="array" then . else (to_entries | map(.value + {path: .key})) end)
-         | .[] | [.path, .narSize] | @tsv'
-}
-
-# path-info reports narSize only for realized paths, so build the family first
-# (cheap: the stream scripts + substituting their closures from the cache).
-echo "==> realizing family closures" >&2
-nixf build --no-link "${FAMILY[@]/#/.#packages.${SYSTEM}.}"
-
 emit ""
-emit "## Nix image family — layer-sharing footprint"
+emit "## Nix image family — real OCI layer-sharing footprint"
 emit ""
-emit "| image | store closure (NAR) |"
-emit "| --- | --- |"
+emit "| image | OCI layers | size |"
+emit "| --- | --- | --- |"
 for img in "${FAMILY[@]}"; do
-  echo "==> realizing closure: $img" >&2
-  closure_tsv "$img" >"$tmp/$img.tsv"
-  total=$(awk -F'\t' '{s += $2} END {print s}' "$tmp/$img.tsv")
-  cat "$tmp/$img.tsv" >>"$tmp/all.tsv"
-  emit "| \`$img\` | $(mb "$total") MB |"
+  echo "==> building + inspecting: $img" >&2
+  out=$(nixf build --no-link --print-out-paths ".#packages.${SYSTEM}.$img")
+  "$out" >"$tmp/img.tar"
+  sk inspect "docker-archive:$tmp/img.tar" \
+    | jqr -r '.LayersData[] | "\(.Digest)\t\(.Size)"' >"$tmp/$img.layers"
+  rm -f "$tmp/img.tar"
+  nlayers=$(wc -l <"$tmp/$img.layers")
+  total=$(awk -F'\t' '{s += $2} END {print s}' "$tmp/$img.layers")
+  cat "$tmp/$img.layers" >>"$tmp/all.tsv"
+  emit "| \`$img\` | $nlayers | $(mb "$total") MB |"
 done
 
 naive=$(awk -F'\t' '{s += $2} END {print s}' "$tmp/all.tsv")
 unique=$(sort -u -k1,1 "$tmp/all.tsv" | awk -F'\t' '{s += $2} END {print s}')
 saved=$((naive - unique))
+total_layers=$(wc -l <"$tmp/all.tsv")
+unique_layers=$(sort -u -k1,1 "$tmp/all.tsv" | wc -l)
 
 emit ""
-emit "- **Naïve sum** (if nothing were shared): $(mb "$naive") MB"
-emit "- **Unique cached on a host** (shared layers deduped once): $(mb "$unique") MB"
+emit "- **Naïve sum** (every image, no sharing): $(mb "$naive") MB"
+emit "- **Unique cached on a host** (OCI layers deduped by digest): $(mb "$unique") MB"
 emit "- **Saved by sharing:** $(mb "$saved") MB — $((saved * 100 / naive))% of the naïve total"
+emit "- Layers: $total_layers total across the family, $unique_layers unique digests"
 emit ""
-emit "_Uncompressed store (NAR) bytes — what the Nix store and Docker layer dedup both key on. Identical store path ⇒ identical layer ⇒ cached once. Compressed on-registry footprint is proportional._"
+emit "_Real OCI layer blobs (via \`skopeo inspect docker-archive:\`), deduped by digest — what a host's Docker cache actually shares. streamLayeredImage bundles the store paths beyond \`maxLayers\` into a per-image customisation layer, so this is below the store-path ceiling; raising maxLayers or using nix2container trades layer count for more sharing (see README)._"
