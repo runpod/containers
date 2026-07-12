@@ -36,6 +36,11 @@ closure_tsv() {
          | .[] | [.path, .narSize] | @tsv'
 }
 
+# path-info reports narSize only for realized paths, so build the family first
+# (cheap: the stream scripts + substituting their closures from the cache).
+echo "==> realizing family closures" >&2
+nixf build --no-link "${FAMILY[@]/#/.#packages.${SYSTEM}.}"
+
 emit ""
 emit "## Nix image family — layer-sharing footprint"
 emit ""
