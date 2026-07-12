@@ -42,13 +42,19 @@ export env to `/etc/rp_environment`; `/pre_start.sh` + `/post_start.sh`; sleep.
 | --- | --- | --- | --- |
 | `prod-base-cpu` | 2473 MB | **850 MB** | full dev toolchain + 1 python |
 | `prod-pytorch-cpu` | 3967 MB | **1250 MB** | + torch 2.12.0 (CPU) |
-| `prod-base-cuda` | _(pending)_ | _(pending)_ | + nixpkgs CUDA 12.9 / cuDNN |
+| `prod-base-cuda` | 7231 MB | **3698 MB** | + nixpkgs CUDA 12.9 / cuDNN |
 | `prod-pytorch` (CUDA) | _(heavy build)_ | _(pending)_ | torch source-compiled w/ CUDA |
 
-Reference: `runpod/base:1.0.7-ubuntu2404` (apt) = 714 MB compressed. The parity Nix
-base is a touch larger here because it bundles the full gcc/gfortran/ffmpeg dev
-toolchain as Nix closures; the wins are determinism + hash-pinning, and layer sharing
-across the family (see `../images/README.md` tiering results).
+Reference points (compressed): `runpod/base:1.0.7-ubuntu2404` (apt) = **714 MB**;
+`runpod/base:1.0.7-cuda1281-ubuntu2404` = **6359 MB**.
+
+- **CPU base**: the parity Nix base (850 MB) is a touch *larger* than apt's 714 MB —
+  it bundles the full gcc/gfortran/ffmpeg dev toolchain as Nix closures, vs one Python
+  (theirs has five). Net wash on size; the win is determinism + hash-pinning.
+- **CUDA base**: full-Nix (3698 MB) is **~42% smaller** than the vendor-based image
+  (6359 MB) — it ships only the CUDA toolkit + cuDNN redistributables, not the ~5.6 GB
+  `nvidia/cuda:*-cudnn-devel` base. Plus layer sharing across the family (see
+  `../images/README.md`).
 
 ## Honest caveats
 
