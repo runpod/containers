@@ -63,20 +63,47 @@ where the real fleet-level win is. Nix helps here in a way Dockerfiles cannot:
   it into the customisation bundle of the other — so sharing is good but not
   guaranteed-maximal with naive independent builds.
 
-**To force maximal, deterministic overlap** (proposed follow-up, not yet built):
+### Prototyped here: a shared-userland family + footprint metric
 
-1. **Tiered shared bases via `fromImage`.** Materialize the common closure once
-   and chain: `common userland` → `+CUDA (per cuda version)` → `+torch (per
-   combo)`. Every variant then reuses the exact lower-tier layer digests. (The
-   CUDA hybrid already does the first hop off the nvidia base.)
+`family.nix` defines a small family that all reuse the exact same userland store
+paths and only add their own Python stack:
+
+- `family-base` — plain base userland
+- `family-data` — + numpy/pandas/scikit-learn/matplotlib/scipy
+- `family-serve` — + fastapi/uvicorn/pydantic/pillow/requests
+
+`footprint.sh` (CI job `family-footprint`) measures what a host actually caches
+once shared layers dedupe, vs the naïve per-image sum:
+
+| | store closure (NAR) |
+| --- | --- |
+| family-base | 875 MB |
+| family-data | 1551 MB |
+| family-serve | 962 MB |
+| **naïve sum** (no sharing) | **3388 MB** |
+| **unique cached on a host** (deduped) | **1575 MB** |
+| **saved by sharing** | **1813 MB — 53%** |
+
+A box running all three flavors caches ~1.6 GB instead of ~3.4 GB. Dockerfile
+images share only their exact common prefix layers; here every identical store
+path is a shared layer regardless of image, so the shared userland + tools
+dedupe automatically.
+
+### Pushing overlap further
+
+1. **Tiered shared bases via `fromImage`.** Chain `common userland` → `+CUDA
+   (per cuda version)` → `+torch (per combo)` so every variant reuses the exact
+   lower-tier layer digests. (The CUDA hybrid already does the first hop off the
+   nvidia base.)
 2. **Raise `maxLayers`** so big shared deps (glibc, python, cudnn userland) each
-   get a dedicated, dedupable layer instead of being bundled.
-3. **`nix2container`** (`github:nlewo/nix2container`) is purpose-built for this:
-   deterministic per-store-path layering designed so an image *family* shares
-   layers maximally, without the single-customisation-layer collapse.
-4. **Family "footprint" metric:** report total **unique** layer bytes a host
-   caches for the whole family vs the naive sum of image sizes — that delta is
-   the real co-location win, and a good CI guardrail against regressions.
+   get a dedicated, dedupable layer instead of being bundled into the
+   customisation layer.
+3. **`nix2container`** (`github:nlewo/nix2container`) — deterministic
+   per-store-path layering built specifically so an image *family* shares layers
+   maximally, without the single-customisation-layer collapse.
+4. **Footprint as a CI guardrail:** track unique-vs-naïve over time so a change
+   that accidentally breaks sharing (e.g. bumping one variant's nixpkgs pin)
+   shows up as a regression.
 
 ## How it works
 

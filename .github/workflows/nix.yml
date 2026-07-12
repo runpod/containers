@@ -47,6 +47,23 @@ jobs:
       - name: Build Nix base-cpu image + size comparison (build-only)
         run: bash nix/images/compare-size.sh
 
+  # Cross-image layer-sharing footprint for the Nix image family: bytes a host
+  # caches once shared layers dedupe, vs the naïve per-image sum. Build-only.
+  family-footprint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Image-family layer-sharing footprint
+        run: bash nix/images/footprint.sh
+
   # Experimental hybrid CUDA image (nvidia base + Nix userland). Heavy: pulls a
   # ~5.6 GB CUDA base and streams ~11 GB, so it is manual-dispatch only — it
   # does NOT run on every push. Trigger with:

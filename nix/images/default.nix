@@ -7,3 +7,4 @@
   base-cpu = import ./base-cpu.nix { inherit pkgs; };
   base-cuda = import ./base-cuda.nix { inherit pkgs; };
 }
+// import ./family.nix { inherit pkgs; }
