@@ -68,8 +68,9 @@ if is_head_node; then
     # No admin/admin: give the built-in admin account a random password so it
     # can't be used. Combined with disable_login_form + disabled basic auth
     # (grafana.ini), the ONLY way in is the auth proxy.
-    export GF_SECURITY_ADMIN_PASSWORD="$(openssl rand -base64 24 2>/dev/null || head -c 18 /dev/urandom | base64)"
-
+    GF_SECURITY_ADMIN_PASSWORD="$(openssl rand -base64 24 2>/dev/null || head -c 18 /dev/urandom | base64)"
+    export GF_SECURITY_ADMIN_PASSWORD
+    
     # Auto-login is handled by the grafana-proxy: it checks ?token= against the
     # shared secret JUPYTER_PASSWORD (reused from Jupyter) and injects the
     # auth.proxy identity header. Nothing to set up here.
