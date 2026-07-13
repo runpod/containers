@@ -10,7 +10,7 @@
   "timezone": "",
   "schemaVersion": 39,
   "editable": true,
-  "refresh": "30s",
+  "refresh": "auto",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -416,12 +416,17 @@
           "min": 0,
           "max": 100,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -446,7 +451,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_GPU_UTIL{Hostname=~\"$Hostname\"}",
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_GPU_UTIL{Hostname=~\"$Hostname\"})",
           "legendFormat": "{{Hostname}}/gpu{{gpu}}"
         }
       ],
@@ -472,12 +477,17 @@
           "min": 0,
           "max": 100,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -502,7 +512,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\"}",
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\"})",
           "legendFormat": "{{Hostname}}/gpu{{gpu}}"
         }
       ],
@@ -528,12 +538,17 @@
           "min": 0,
           "max": 100,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -558,7 +573,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_ENC_UTIL{Hostname=~\"$Hostname\"}",
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_ENC_UTIL{Hostname=~\"$Hostname\"})",
           "legendFormat": "{{Hostname}}/gpu{{gpu}}"
         }
       ],
@@ -584,12 +599,17 @@
           "min": 0,
           "max": 100,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -614,7 +634,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_DEC_UTIL{Hostname=~\"$Hostname\"}",
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_DEC_UTIL{Hostname=~\"$Hostname\"})",
           "legendFormat": "{{Hostname}}/gpu{{gpu}}"
         }
       ],

@@ -10,7 +10,7 @@
   "timezone": "",
   "schemaVersion": 39,
   "editable": true,
-  "refresh": "30s",
+  "refresh": "auto",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -199,6 +199,66 @@
       }
     },
     {
+      "type": "table",
+      "title": "InfiniBand / RoCE Adapters",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "HCA inventory from node_infiniband_info \u2014 device, model, firmware, board per link.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true,
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "node_infiniband_info",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "job": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "instance": "Node",
+              "device": "Device",
+              "hca_type": "HCA",
+              "firmware_version": "Firmware",
+              "board_id": "Board"
+            }
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      }
+    },
+    {
       "type": "timeseries",
       "title": "Link Capacity (signal rate)",
       "datasource": {
@@ -244,7 +304,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 13
       }
     },
     {
@@ -255,7 +315,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 19
       },
       "panels": []
     },
@@ -305,7 +365,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 14
+        "y": 20
       }
     },
     {
@@ -372,7 +432,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 14
+        "y": 20
       }
     },
     {
@@ -383,7 +443,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 28
       },
       "panels": []
     },
@@ -443,7 +503,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 23
+        "y": 29
       }
     },
     {
@@ -502,7 +562,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 29
       }
     },
     {
@@ -577,7 +637,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 37
       }
     },
     {
@@ -643,7 +703,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 37
       }
     },
     {
@@ -654,7 +714,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 45
       },
       "panels": []
     },
@@ -714,7 +774,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 46
       }
     },
     {
@@ -773,7 +833,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 46
       }
     },
     {
@@ -784,7 +844,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 54
       },
       "panels": []
     },
@@ -836,7 +896,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 49
+        "y": 55
       }
     },
     {
@@ -904,7 +964,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 49
+        "y": 55
       }
     }
   ]

@@ -654,18 +654,24 @@
         "uid": "prometheus"
       },
       "maxDataPoints": 100,
+      "description": "Per-GPU core utilization \u2014 one row per GPU, sorted host->gpu. Cold row = idle/straggler.",
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
           "min": 0,
           "max": 100,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -690,11 +696,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_GPU_UTIL",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_GPU_UTIL)",
+          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
         }
       ],
-      "description": "Per-GPU core utilization \u2014 one row per GPU. A cold row = an idle GPU or a straggler.",
       "gridPos": {
         "h": 16,
         "w": 24,
@@ -710,18 +715,24 @@
         "uid": "prometheus"
       },
       "maxDataPoints": 100,
+      "description": "Per-GPU core temperature \u2014 one row per GPU, sorted host->gpu. Slowdown ~84C.",
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
           "min": 20,
           "max": 95,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -746,11 +757,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_GPU_TEMP",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_GPU_TEMP)",
+          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
         }
       ],
-      "description": "Per-GPU core temperature \u2014 one row per GPU (Plasma; slowdown ~84\u00b0C, shutdown ~90\u00b0C+).",
       "gridPos": {
         "h": 16,
         "w": 24,
@@ -866,18 +876,24 @@
         "uid": "prometheus"
       },
       "maxDataPoints": 100,
+      "description": "Per-GPU framebuffer utilization \u2014 one row per GPU, sorted host->gpu.",
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
           "color": {
-            "mode": "scheme",
+            "mode": "continuous-plasma",
             "scheme": "Plasma"
           },
           "custom": {
             "fillOpacity": 100,
-            "lineWidth": 0
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
           }
         },
         "overrides": []
@@ -902,11 +918,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL)",
+          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
         }
       ],
-      "description": "Per-GPU framebuffer utilization \u2014 one row per GPU.",
       "gridPos": {
         "h": 16,
         "w": 24,
