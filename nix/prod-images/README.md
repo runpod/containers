@@ -23,7 +23,7 @@ export env to `/etc/rp_environment`; `/pre_start.sh` + `/post_start.sh`; sleep.
 ## The Nix rebuild
 
 - **`userland.nix`** — Python **3.14** env (jupyterlab/notebook/ipywidgets/hf-transfer
-  + our `jupyter-archive`) plus uv, filebrowser, nginx, openssh, and the apt-parity
+  with our `jupyter-archive`) plus uv, filebrowser, nginx, openssh, and the apt-parity
   dev toolchain (gcc, gnumake, cmake, gfortran, pkg-config, ffmpeg) — all Nix packages.
 - **`pkgs/jupyter-archive.nix`** — the one `requirements.txt` entry missing from nixpkgs,
   packaged from the PyPI **sdist** (hash-pinned, source-built via hatchling).
