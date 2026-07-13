@@ -16,6 +16,7 @@ let
   mkImage =
     {
       name,
+      contents ? userland.contents,
       extraContents ? [ ],
       pathDirs ? [ ],
       env ? [ ],
@@ -23,7 +24,7 @@ let
     pkgs.dockerTools.streamLayeredImage {
       inherit name;
       tag = "poc";
-      contents = userland.contents ++ [ runtime ] ++ extraContents;
+      contents = contents ++ [ runtime ] ++ extraContents;
       maxLayers = 100;
       config = {
         Cmd = [ "/start.sh" ];
@@ -47,6 +48,12 @@ let
 in
 {
   prod-base-cpu = mkImage { name = "runpod-prod-base-cpu"; };
+
+  # Runtime-only CPU base: drops the gcc/gfortran/cmake/ffmpeg dev toolchain.
+  prod-base-cpu-lean = mkImage {
+    name = "runpod-prod-base-cpu-lean";
+    contents = userland.mkContents { lean = true; };
+  };
 
   prod-base-cuda = mkImage {
     name = "runpod-prod-base-cuda";

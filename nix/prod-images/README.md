@@ -40,6 +40,7 @@ export env to `/etc/rp_environment`; `/pre_start.sh` + `/post_start.sh`; sleep.
 
 | target | uncompressed | gzip | notes |
 | --- | --- | --- | --- |
+| `prod-base-cpu-lean` | 927 MB | **299 MB** | runtime userland only (no compilers) |
 | `prod-base-cpu` | 2473 MB | **850 MB** | full dev toolchain + 1 python |
 | `prod-pytorch-cpu` | 3967 MB | **1250 MB** | + torch 2.12.0 (CPU) |
 | `prod-base-cuda` | 7231 MB | **3698 MB** | + nixpkgs CUDA 12.9 / cuDNN |
@@ -53,9 +54,12 @@ Reference points (compressed): `runpod/base:1.0.7-ubuntu2404` (apt) = **714 MB**
 (verified: `torch.version.cuda == 12.9`, `cudnn 9.22`) — every input hash-pinned,
 no download.pytorch.org wheel.
 
-- **CPU base**: the parity Nix base (850 MB) is a touch *larger* than apt's 714 MB —
-  it bundles the full gcc/gfortran/ffmpeg dev toolchain as Nix closures, vs one Python
-  (theirs has five). Net wash on size; the win is determinism + hash-pinning.
+- **CPU base — size is a *choice*, not a Nix limit.** The full parity base (850 MB) is a
+  touch *larger* than apt's 714 MB because it bundles the whole gcc/gfortran/cmake/ffmpeg
+  dev toolchain as Nix closures. Drop that build-time tooling (`prod-base-cpu-lean`) and the
+  runtime-only base is **299 MB — ~58% smaller** than apt. Most of `build-essential`/`ffmpeg`
+  is build-time, not needed in a running pod, so a lean runtime base wins comfortably; only
+  a "compile anything" base loses. Either way the determinism + hash-pinning is identical.
 - **CUDA base**: full-Nix (3698 MB) is **~42% smaller** than the vendor-based image
   (6359 MB) — it ships only the CUDA toolkit + cuDNN redistributables, not the ~5.6 GB
   `nvidia/cuda:*-cudnn-devel` base. Plus layer sharing across the family (see

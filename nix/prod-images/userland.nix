@@ -26,11 +26,10 @@ let
       jupyter-archive
     ];
 
-  # apt-parity userland: shell + core tools + the dev/build toolchain and media
-  # libs the base image apt-installs (build-essential/cmake/ffmpeg/…). Runtime
-  # .so deps of Python packages come in via their own closures, so we only need
-  # the developer-facing tools here.
-  toolContents = with pkgs; [
+  # Runtime userland: shell + services + everyday CLI tools. What a *running*
+  # pod needs — no compilers. Runtime .so deps of Python packages come in via
+  # their own closures.
+  coreTools = with pkgs; [
     uv
     filebrowser
     nginx
@@ -59,28 +58,36 @@ let
     unzip
     zip
     sudo
+  ];
 
-    # dev / build toolchain (build-essential, cmake, gfortran, pkg-config)
+  # The apt base's dev/build toolchain (build-essential, cmake, gfortran,
+  # pkg-config, ffmpeg). Build-time tooling — heavy, and omitted by the `lean`
+  # variant.
+  devTools = with pkgs; [
     gcc
     gnumake
     cmake
     gfortran
     pkg-config
-    # media / graphics stack (ffmpeg + common libs)
     ffmpeg
   ];
+
+  # Full apt-parity userland (core + dev toolchain).
+  toolContents = coreTools ++ devTools;
 
   runpodFiles = pkgs.runCommand "runpod-prod-files" { } ''
     mkdir -p "$out/etc"
     cp ${../../container-template/runpod.txt} "$out/etc/runpod.txt"
   '';
 
+  # `lean` drops the dev/build toolchain — a runtime-only base.
   mkContents =
     {
       extraPyPackages ? (_: [ ]),
       extraTools ? [ ],
+      lean ? false,
     }:
-    toolContents
+    (if lean then coreTools else toolContents)
     ++ extraTools
     ++ [
       (python.withPackages (ps: basePyPackages ps ++ extraPyPackages ps))
@@ -91,6 +98,8 @@ in
   inherit
     python
     basePyPackages
+    coreTools
+    devTools
     toolContents
     runpodFiles
     mkContents
