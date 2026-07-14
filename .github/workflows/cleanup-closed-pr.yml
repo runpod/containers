@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
 
           NAMESPACE="runpod"
-          REPOS=(base pytorch nvidia-pytorch autoresearch)
+          REPOS=(base pytorch nvidia-pytorch autoresearch pytorch-cluster)
 
           PR="${PR_NUMBER:-}"
           if [ -z "${PR}" ]; then
