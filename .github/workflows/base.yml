@@ -13,6 +13,7 @@ on:
       - "official-templates/pytorch/Dockerfile"
       - "official-templates/autoresearch/docker-bake.hcl"
       - "official-templates/autoresearch/Dockerfile"
+      - "official-templates/pytorch-cluster/**"
       - "official-templates/shared/**"
       - "container-template/**"
   push:
@@ -35,6 +36,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
       should-build: ${{ steps.v.outputs.should-build }}
+      base-version: ${{ steps.v.outputs.base-version }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -475,3 +477,172 @@ jobs:
             *Blackwell*
             RTX 2000 Ada
           max-parallel: "4"
+
+  # -cluster layers monitoring + RDMA on top of a PUBLISHED runpod/pytorch.
+  # It lives here (not a separate workflow) so it runs AFTER build-pytorch in
+  # the same run: on a release it layers on the freshly-pushed pytorch X.Y.Z,
+  # and on a PR that changed pytorch it layers on that PR's RC pytorch — so the
+  # smoke test reflects the real post-merge combination. A cluster-only PR
+  # skips the pytorch rebuild and layers on the last released pytorch instead.
+  build-cluster:
+    needs: [version, build-pytorch]
+    # always() forces run even if build-pytorch is skipped (but not if it failed).
+    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-pytorch.result == 'success' || needs.build-pytorch.result == 'skipped')
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changed: ${{ steps.changes.outputs.cluster_any_changed }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Check if build is needed
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
+        id: changes
+        with:
+          files_yaml: |
+            cluster:
+              - 'official-templates/shared/**'
+              - 'official-templates/base/**'
+              - 'official-templates/pytorch/**'
+              - 'official-templates/pytorch-cluster/**'
+              - 'container-template/**'
+
+      - name: Setup Docker
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build cluster images (${{ matrix.cuda }})
+        id: build
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          # The cluster's OWN tag: version + suffix (RC/-dev/release).
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
+          # Which published runpod/pytorch to build FROM. If pytorch was
+          # (re)built in this run (push/dispatch, or a PR that changed pytorch),
+          # use that in-run tag (version+suffix). Otherwise (cluster-only PR)
+          # fall back to the last released pytorch — the only one that exists.
+          PYTORCH_BASE_VERSION: ${{ (github.event_name != 'pull_request' || needs.build-pytorch.outputs.changed == 'true') && format('{0}{1}', needs.version.outputs.version, needs.version.outputs.suffix) || needs.version.outputs.base-version }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch-cluster/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/cluster-refs
+          printf '%s\n' "$REFS" > /tmp/cluster-refs/refs.json
+
+      - name: Upload refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cluster-refs-${{ matrix.cuda }}
+          path: /tmp/cluster-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+  test-cluster:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-cluster
+    # Same gate shape as test-pytorch: on push/dispatch always test; on a PR
+    # only test when cluster inputs actually changed (otherwise build-cluster
+    # skipped its steps and there are no refs to test).
+    if: |
+      needs.build-cluster.result == 'success'
+      && (github.event_name != 'pull_request'
+          || needs.build-cluster.outputs.changed == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        id: dl
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: cluster-refs-${{ matrix.cuda }}
+          path: /tmp/cluster-refs
+
+      - name: Read refs
+        id: refs
+        if: steps.dl.outcome == 'success'
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        if: steps.refs.outcome == 'success'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          min-cuda-version: "12.8"

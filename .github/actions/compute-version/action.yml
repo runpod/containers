@@ -22,6 +22,13 @@ outputs:
   suffix:
     description: "Tag suffix: empty for releases, -rc.<pr> for PRs, -dev otherwise."
     value: ${{ steps.compute.outputs.suffix }}
+  base-version:
+    description: >-
+      The last RELEASED version this build sits on (no bump applied), or the
+      fallback when no tag exists yet — e.g. 1.0.7. Used to build FROM an
+      already-published image when the current version's image isn't published
+      yet (e.g. cluster on a PR that doesn't rebuild pytorch).
+    value: ${{ steps.compute.outputs.base_version }}
   tag:
     description: "Git tag for the release (e.g. v1.1.0)."
     value: ${{ steps.compute.outputs.tag }}
@@ -150,6 +157,7 @@ runs:
         {
           echo "version=${VERSION}"
           echo "suffix=${SUFFIX}"
+          echo "base_version=${BASE}"
           echo "tag=${TAG}"
           echo "bump=${BUMP}"
           echo "should_build=${SHOULD_BUILD}"
