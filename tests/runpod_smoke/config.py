@@ -98,31 +98,13 @@ REGISTRY_AUTH_NAME = os.environ.get("REGISTRY_AUTH_NAME", "")
 # DATETIME (`--help`: "auto-terminate datetime (e.g., 2026-04-15T00:00:00Z)"),
 # NOT a duration. So we pass an absolute `now + AUTO_TERMINATE_HOURS`
 # timestamp, recomputed per pod.
-#
-# NB: recompute per-pod, never cache. A module-level constant (`now+2h`
-# at import) goes stale after AUTO_TERMINATE_HOURS of a long session: every
-# later pod gets a timestamp already IN THE PAST, which RunPod accepts but
-# never acts on — and the pods burn credits until someone notices.
-#
-# BIG CAVEAT — don't trust this flag on either path:
-#   * CPU pods: runpodctl silently DROPS it. The CPU create path
-#     (createPodREST) never sends it and `PodCreateRequest` has no
-#     terminateAfter/stopAfter field at all (cmd/pod/create.go +
-#     internal/api/pods.go). Verified: a CPU pod outlived its deadline.
-#   * GPU pods: the CLI forwards it (GraphQL), but RunPod still didn't act
-#     on it in testing — a GPU pod was alive 12+ min past a 9-min deadline.
-# So it's unreliable for timely cleanup regardless of pod type.
-#
-# Bottom line: keep it as harmless best-effort, but the real, universal
-# safety net is the .github/workflows/reap-pods.yml cron, which sweeps
-# leaked `smoketest-*` pods (CPU and GPU) hourly.
 AUTO_TERMINATE_HOURS = int(os.environ.get("AUTO_TERMINATE_HOURS", "2"))
 
 
 def auto_terminate_deadline() -> str:
     """Return an RFC3339 'Z' timestamp AUTO_TERMINATE_HOURS hours from
     NOW — the datetime format `--terminate-after` expects. Always call
-    this at pod-create time; never cache the result (see note above).
+    this at pod-create time; never cache the result.
     """
     return (
         datetime.now(timezone.utc) + timedelta(hours=AUTO_TERMINATE_HOURS)
