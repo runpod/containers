@@ -3,3 +3,8 @@
 *.pth
 
 __pycache__/
+
+# Nix
+result
+result-*
+.direnv/

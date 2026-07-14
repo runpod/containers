@@ -1,0 +1,14 @@
+# Align the Nix gated hadolint check with the ignore rules the repo's own
+# hadolint workflow (.github/workflows/hadolint-*.yml) already applies
+# per-Dockerfile, so the two agree on policy:
+#   DL3006 — always tag image version
+#   DL3008 — pin apt package versions
+#   DL3013 — pin pip package versions
+#   DL3022 — COPY --from references a prior FROM alias
+#   DL3042 — pip --no-cache-dir
+ignored:
+  - DL3006
+  - DL3008
+  - DL3013
+  - DL3022
+  - DL3042

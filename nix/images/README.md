@@ -1,0 +1,245 @@
+# Nix-built container images (experimental, build-only)
+
+A proof-of-concept for building RunPod's container images with Nix
+(`pkgs.dockerTools`) instead of Dockerfiles, to measure how much smaller and
+more deterministic the result is. **Nothing here is published** — this is a
+build + measure experiment only.
+
+## TL;DR — measured on the CPU base
+
+| image | compressed (download) | layers |
+| --- | --- | --- |
+| `runpod/base:1.0.7-ubuntu2404` (Dockerfile) | **714 MB** | 20 |
+| `nix base-cpu` (this PoC, Python 3.14) | **295 MB** | ~98 |
+
+≈ **59% smaller** compressed download. Numbers are reproduced on every CI run
+by [`compare-size.sh`](./compare-size.sh) (job `image-size` in
+`.github/workflows/nix.yml`).
+
+**Fair-comparison caveat:** the published base bundles Python 3.9–3.13 plus a
+large apt userland; this PoC ships a single Python (3.14) and a curated tool
+set. Some of the win is "fewer Pythons," but the determinism, layer dedup, and
+no-package-manager-in-the-image properties are structural and hold regardless.
+
+## Hybrid CUDA image (`base-cuda.nix`)
+
+The images people actually run are CUDA/PyTorch. Rather than rebuild CUDA in
+Nix (unfree, huge, CI-fragile), the **hybrid** pins NVIDIA's tested CUDA base as
+`fromImage` and layers the same Nix userland on top. Directly comparable to
+`runpod/base:1.0.7-cuda1281-ubuntu2404`, which is the *same* nvidia base + an
+apt userland layer. Torch is pip-installed identically on top of both, so it's
+excluded — this compares the **userland layer**.
+
+| image | compressed | note |
+| --- | --- | --- |
+| `nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04` | 5593 MB | shared base |
+| **hybrid base-cuda** (nvidia + Nix userland) | **5846 MB** | Nix layer ≈ **253 MB** |
+| `runpod/base:1.0.7-cuda1281-ubuntu2404` (nvidia + apt) | 6359 MB | apt layer ≈ 766 MB |
+| `runpod/pytorch:1.0.7-cu1281-torch280` (base + torch) | 11211 MB | torch ≈ +4.9 GB |
+
+The Nix userland layer is **~67% smaller** than the apt layer (253 vs 766 MB).
+But the shared CUDA base and torch wheels dominate, so the **whole-image** win
+is modest (~8% on the base). The big further levers: a **runtime** (non-devel)
+base, and a **Nix-built torch**. Reproduced by
+[`compare-cuda-size.sh`](./compare-cuda-size.sh) (manual-dispatch CI job
+`cuda-image-size` — heavy, so not run on every push). Base pinned by digest +
+Nix hash via `nix-prefetch-docker`.
+
+## Maximizing shared layers across an image family
+
+These images co-deploy on the same hosts, so cross-image Docker layer reuse is
+where the real fleet-level win is. Nix helps here in a way Dockerfiles cannot:
+
+- **Automatic:** `dockerTools` layers are keyed by **store path**; an identical
+  store path produces a byte-identical layer with an identical digest. So any
+  two Nix images that share dependencies already share those layers in a host's
+  Docker cache — pulled once, reused everywhere. `base-cpu` and `base-cuda` both
+  `import ./userland.nix`, so their userland layers are literally the same
+  digests today.
+- **The subtlety:** `streamLayeredImage` assigns layers *per image* via a
+  popularity heuristic capped at `maxLayers` (default 100); everything past the
+  cap collapses into one "customisation layer." Two images with different
+  closures can put a shared path in a dedicated (shared) layer in one and fold
+  it into the customisation bundle of the other — so sharing is good but not
+  guaranteed-maximal with naive independent builds.
+
+### Prototyped here: a shared-userland family + footprint metric
+
+`family.nix` defines a small family that all reuse the exact same userland store
+paths and only add their own Python stack:
+
+- `family-base` — plain base userland
+- `family-data` — + numpy/pandas/scikit-learn/matplotlib/scipy
+- `family-serve` — + fastapi/uvicorn/pydantic/pillow/requests
+
+`footprint.sh` (CI job `family-footprint`) measures the **real OCI layers** each
+image emits (streamed docker-archive → `skopeo inspect` → dedupe by blob
+digest) — what a host's Docker cache actually shares:
+
+| | real OCI layers |
+| --- | --- |
+| family-base | 99 layers, 921 MB |
+| family-data | 99 layers, 1623 MB |
+| family-serve | 99 layers, 1010 MB |
+| **naïve sum** (no sharing) | **3555 MB** |
+| **unique cached on a host** (deduped by digest) | **2312 MB** |
+| **saved by sharing** | **1243 MB — 34%** |
+
+**Important:** this is *real OCI* sharing, not Nix store-path sharing.
+`streamLayeredImage` gives only the top `maxLayers` (default 100) store paths a
+dedicated layer and bundles the rest into a single per-image *customisation
+layer* whose digest differs between images. So identical store paths do **not**
+all become shared layers — the store-path closure (which would show ~53%) is
+only a ceiling. Raising `maxLayers` recovers it, at the cost of layer count:
+
+| builder | `maxLayers` | real OCI shared | layers / image |
+| --- | --- | --- | --- |
+| dockerTools | 100 (default) | **34%** | 99 |
+| dockerTools | 200 | 38% | 199 |
+| dockerTools | 400 | 53% | 275 |
+| nix2container | 100 | **16%** | 100 |
+| nix2container | 300 | 48% | 283 |
+| nix2container | 600 | 53% | 288 |
+
+Two findings, both measured (`family-*` = dockerTools, `family-*-n2c` =
+nix2container; run by `footprint.sh` / the `family-footprint` CI job):
+
+1. **The sharing ceiling is set by the closure, not the tool.** Both builders
+   converge at ~53% — the store-path ceiling — only when `maxLayers` ≥ the
+   closure size (~275) so every path is its own layer. Neither exceeds it.
+2. **nix2container does *not* raise the ceiling, and at its default (100) it
+   shares *less* (16%)** because it bundles the non-dedicated closure into
+   fewer, larger per-image layers. Its real advantage is that many layers are
+   *cheap to build* — it references store paths lazily instead of writing a tar
+   per layer — so `maxLayers=600` is practical to build, whereas dockerTools at
+   400 must materialise 275 layer tarballs.
+
+**The catch either way:** hitting 53% needs ~275+ OCI layers/image, which
+overlay2 and some registries discourage. So per-path auto-layering is not the
+real answer — deliberate tiering is.
+
+### Tiering wins: near-ceiling sharing at a low layer count
+
+`family-tiered.nix` (`family-*-tiered`) puts the **whole shared userland into
+one explicit nix2container `buildLayer`** that all three images reuse
+byte-for-byte, with only a small per-flavor delta on top:
+
+| approach | real OCI shared | layers / image |
+| --- | --- | --- |
+| dockerTools (auto, default) | 34% | 99 |
+| nix2container (auto, maxLayers 600) | 53% | 288 |
+| **nix2container (tiered `buildLayer`)** | **51%** | **~15–21** |
+
+Tiering reaches ~the store-path ceiling (51% vs 53%) at **~19 layers/image
+instead of ~288** — the shared userland (~900 MB) is one blob cached once, and
+`family-data` / `family-serve` add only their extra Python stack. This is the
+practical way to get fleet-wide sharing, and it extends naturally to the GPU
+tiers (`common userland` → `+CUDA` → `+torch`).
+
+### The published fleet today (all container types)
+
+`fleet-footprint.sh` (manual-dispatch CI job `fleet-footprint`) measures the
+*current* published images across every type — base (cpu/cuda/rocm), the full
+pytorch matrix, autoresearch, nvidia-pytorch — via `skopeo` manifests (no
+pulls). It answers: how much does the existing Dockerfile fleet already share?
+
+| container type | images | naïve sum |
+| --- | --- | --- |
+| runpod/base | 10 | 111.0 GB |
+| runpod/pytorch | 25 | 306.5 GB |
+| runpod/autoresearch | 2 | 22.1 GB |
+| runpod/nvidia-pytorch | 1 | 9.1 GB |
+
+- **Fleet:** 38 images
+- **Naïve sum:** 448.7 GB
+- **Unique cached on a host** (deduped by blob digest): **258.6 GB**
+- **Already shared:** 190.1 GB — **42%** of the naïve total
+
+So the Dockerfile fleet already dedupes ~42% via its shared `FROM` chain
+(`nvidia/cuda` → `runpod/base` → `runpod/pytorch`). That reframes the Nix
+opportunity honestly: the big base/CUDA layers are *already* shared, so Nix's
+incremental win is the **userland tier** (smaller + deterministic, ~67% smaller
+than the apt layer) plus **finer, guaranteed store-path sharing** and
+reproducibility — not the CUDA base, which is shared either way. The largest
+absolute lever remains the torch wheels (~4.9 GB/image, 25 pytorch images), a
+Nix-built-torch question for later.
+
+### Pushing overlap further
+
+The winning approach is **deliberate tiering**, not cranking `maxLayers`: put
+the whole shared userland into *one* explicit layer every image reuses, so a
+host caches it once — high sharing at a *low* layer count.
+
+1. **Explicit shared layers (`nix2container` `buildLayer`).** Define one shared
+   userland layer (the common store paths) and give each image only a small
+   per-flavor delta layer on top. This beats per-path auto-layering: near-ceiling
+   sharing with a handful of layers instead of ~275. nix2container's `buildLayer`
+   is built for exactly this; it's the natural next step for this family.
+2. **Tiered shared bases via `fromImage`.** Chain `common userland` → `+CUDA
+   (per cuda version)` → `+torch (per combo)` so every variant reuses the exact
+   lower-tier layer digests. (The CUDA hybrid already does the first hop off the
+   nvidia base.)
+3. **Footprint as a CI guardrail:** track unique-vs-naïve over time so a change
+   that accidentally breaks sharing (e.g. bumping one variant's nixpkgs pin)
+   shows up as a regression.
+
+## How it works
+
+- **`base-cpu.nix`** — `pkgs.dockerTools.streamLayeredImage` assembling a
+  Python 3.14 env (JupyterLab, notebook, ipywidgets, hf_transfer), `uv`,
+  filebrowser, nginx, openssh and the common CLI tooling, plus the repo's
+  `container-template/start.sh` and banner. `config.Cmd = ["/start.sh"]`.
+- **`default.nix`** — registers the images; wired into the flake as
+  `packages.<system>.base-cpu` (Linux only). `nix flake check` does **not**
+  build it, so the fast gated-lint job is unaffected.
+- **`compare-size.sh`** — builds the stream script, measures uncompressed +
+  `gzip -9` size, verifies the stream is byte-identical across two runs
+  (determinism), and fetches the published baseline's compressed size via
+  `skopeo inspect --raw`.
+
+Build and measure locally:
+
+```sh
+nix build .#packages.x86_64-linux.base-cpu -o result-image
+./result-image | gzip -9 | wc -c          # compressed size
+bash nix/images/compare-size.sh           # full comparison table
+```
+
+## Why Nix images (the structural wins)
+
+- **Deterministic:** `streamLayeredImage` zeroes timestamps and derives content
+  from the pinned `flake.lock`. Two builds → byte-identical tar (CI asserts
+  this). No `apt-get update` drift, no "works on the build host" surprises.
+- **Smaller:** only the exact runtime closure ships — no apt caches, no
+  `build-essential`/`-dev` headers, no compilers, no package manager. Nothing
+  is "installed then deleted in another layer."
+- **Better layering / caching:** one store path per layer, content-addressed,
+  so unrelated images that share (say) glibc or Python reuse the same layers on
+  a host — big win across a family of images.
+- **Auditable supply chain:** the full dependency graph is the Nix closure;
+  `nix path-info -rS` gives an exact SBOM, and everything is pinned.
+
+## Tradeoffs / open questions
+
+- **Layer count:** ~98 fine-grained layers vs 20. Great for dedup, but some
+  registries/pull paths prefer fewer layers — `maxLayers` is tunable.
+- **`start.sh` assumes Debian:** it calls `service nginx/ssh start`. A Nix image
+  has no sysvinit; a small entrypoint shim (or s6/supervisord) is needed for a
+  runnable image. Out of scope for this size PoC.
+- **Multi-Python parity:** adding 3.9–3.13 would grow the image (est.
+  +150–250 MB) but should still beat the Dockerfile build.
+
+## Path to GPU parity (not done here)
+
+The images people actually run are CUDA/ROCm PyTorch. Options, in rough order of
+effort:
+
+1. **Hybrid** — keep the vendor CUDA/ROCm base image as `fromImage` and layer
+   the Nix userland on top. Lowest risk, keeps NVIDIA's tested CUDA stack,
+   still gets deterministic userland layers.
+2. **Full Nix** — `python3Packages.torch` with `cudaSupport = true` from
+   `cudaPackages`. Fully reproducible but unfree, very large closures, and a
+   heavier CI build; needs validation against the current images.
+
+Recommended next step: prototype option 1 for one CUDA PyTorch tag and re-run
+`compare-size.sh` against it.

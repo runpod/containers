@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
-      
+
       - name: Setup Docker
         uses: ./.github/actions/docker-setup
         id: setup
@@ -99,7 +99,7 @@ jobs:
           path: /tmp/rocm-refs/refs.json
           retention-days: 1
           if-no-files-found: error
-          
+
   test-rocm:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: build-rocm

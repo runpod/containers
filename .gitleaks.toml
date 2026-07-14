@@ -1,0 +1,21 @@
+title = "runpod/containers gitleaks config"
+
+# Start from gitleaks' built-in rule set, then add repo-specific allowlists.
+[extend]
+useDefault = true
+
+# The smoke-test composite action greps a user-supplied SSH key for PEM header
+# lines to validate its shape. The "-----BEGIN ... PRIVATE KEY-----" strings are
+# literals in a case statement, not committed secrets. Scope the allowlist to
+# that file AND the PEM-header pattern (matchCondition = AND) so a genuine key
+# committed elsewhere still trips the scanner.
+[[allowlists]]
+description = "PEM header literals in the smoke-test SSH key validator"
+matchCondition = "AND"
+paths = [
+  '''\.github/actions/smoke-test/action\.yml''',
+]
+regexTarget = "line"
+regexes = [
+  '''BEGIN (OPENSSH |RSA |EC )?PRIVATE KEY''',
+]

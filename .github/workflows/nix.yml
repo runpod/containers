@@ -1,0 +1,120 @@
+name: Nix static analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      heavy:
+        description: "Which heavy build-only job(s) to run"
+        type: choice
+        default: all
+        options: [none, cuda, fleet, all]
+
+permissions:
+  contents: read
+
+jobs:
+  flake-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      # Runs the sandbox-safe gated checks (nixfmt/statix/deadnix/nil,
+      # shellcheck, yamllint, actionlint, hadolint, markdown, taplo,
+      # editorconfig, gitleaks). --keep-going so every check's findings
+      # surface in one run instead of stopping at the first failure.
+      - name: nix flake check
+        run: nix flake check --print-build-logs --keep-going
+
+  # Experimental: build the base-cpu image with Nix and compare its size to the
+  # published runpod/base CPU image. Build-only — nothing is pushed. Kept in a
+  # separate job so it never slows the gated flake-check above.
+  image-size:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Build Nix base-cpu image + size comparison (build-only)
+        run: bash nix/images/compare-size.sh
+
+  # Cross-image layer-sharing footprint for the Nix image family: bytes a host
+  # caches once shared layers dedupe, vs the naïve per-image sum. Build-only.
+  family-footprint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Image-family layer-sharing footprint
+        run: bash nix/images/footprint.sh
+
+  # Experimental hybrid CUDA image (nvidia base + Nix userland). Heavy: pulls a
+  # ~5.6 GB CUDA base and streams ~11 GB, so it is manual-dispatch only — it
+  # does NOT run on every push. Trigger with:
+  #   gh workflow run "Nix static analysis" --ref <branch>
+  cuda-image-size:
+    if: github.event_name == 'workflow_dispatch' && (inputs.heavy == 'cuda' || inputs.heavy == 'all')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup
+          df -h /
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Build hybrid CUDA image + size comparison (build-only)
+        run: bash nix/images/compare-cuda-size.sh
+
+  # Fleet-wide layer-sharing footprint of the published images across all
+  # container types (skopeo manifests only, no pulls). Manual-dispatch: ~38
+  # images = many Docker Hub manifest requests, so authenticate + don't run on
+  # every push. Trigger with:
+  #   gh workflow run "Nix static analysis" --ref <branch> -f heavy=fleet
+  fleet-footprint:
+    if: github.event_name == 'workflow_dispatch' && (inputs.heavy == 'fleet' || inputs.heavy == 'all')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Published-fleet layer-sharing footprint
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: bash nix/images/fleet-footprint.sh
