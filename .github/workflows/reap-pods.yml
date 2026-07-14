@@ -86,7 +86,7 @@ jobs:
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           fi
-          MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
+          MAX_AGE_MIN="${INPUT_MAX_AGE:-5}"
           MAX_AGE_SEC=$(( MAX_AGE_MIN * 60 ))
           NOW=$(date -u +%s)
           echo "dry_run=${DRY_RUN} | max_age=${MAX_AGE_MIN}m (${MAX_AGE_SEC}s)"
