@@ -13,20 +13,10 @@ name: Reap Leaked Smoke-Test Pods
 # backstop, but this cron reaper is the primary, reliable sweep: it runs
 # independently of any job's lifecycle and deletes any `smoketest-*` pod
 # older than a threshold, so nothing runs for days.
-#
-# It ONLY ever touches pods named `smoketest-<epoch>-...` (the naming from
-# runner._create_pod_with_retries), and it reads each pod's age straight
-# out of that name — so it never depends on the `pod list` JSON schema and
-# never deletes a human's pod.
 
 on:
   schedule:
     - cron: "0 * * * *" # hourly
-  # TEMPORARY (remove before merge): lets us exercise this workflow from a
-  # PR, since workflow_dispatch isn't selectable until the file is on the
-  # default branch. The script forces dry-run for pull_request, so it only
-  # ever lists — it never deletes from a PR.
-  pull_request:
   workflow_dispatch:
     inputs:
       dry_run:
@@ -81,12 +71,10 @@ jobs:
           # so an operator can preview first.
           if [ "${EVENT}" = "schedule" ]; then
             DRY_RUN="false"
-          elif [ "${EVENT}" = "pull_request" ]; then
-            DRY_RUN="true"  # TEMPORARY test trigger — never delete from a PR
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           fi
-          MAX_AGE_MIN="${INPUT_MAX_AGE:-5}"
+          MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
           MAX_AGE_SEC=$(( MAX_AGE_MIN * 60 ))
           NOW=$(date -u +%s)
           echo "dry_run=${DRY_RUN} | max_age=${MAX_AGE_MIN}m (${MAX_AGE_SEC}s)"
