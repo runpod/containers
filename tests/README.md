@@ -199,9 +199,20 @@ ON_SKIP=pass ./test_images.py images.yaml
 
 If a pod gets stuck (rare), `Ctrl-C` cleans up — `SIGINT`/`SIGTERM` are
 trapped and trigger `cleanup_all()`, which `runpodctl pod delete`s
-every pod the script created. Any pod the script missed will still
-self-terminate within ~2 h via the `--terminate-after` clause set on
-every `pod create`.
+every pod the script created.
+
+For pods the script misses, the real safety net is CI-side: a
+`cancel-in-progress` PR cancel can SIGKILL the runner before
+`cleanup_all()` finishes, so the `.github/workflows/reap-pods.yml` cron
+sweeps any `smoketest-*` pod older than ~60 min and deletes it. It reads
+each pod's age from its name, so it never touches a human's pod.
+
+> Each `pod create` also passes `--terminate-after <now+2h>` (an RFC3339
+> **datetime**, per `runpodctl pod create --help`) as a best-effort
+> server-side backstop — but **don't rely on it**: runpodctl drops the
+> flag entirely for CPU pods (the REST path has no such field), and even
+> GPU pods were observed alive well past their deadline in testing. The
+> reaper cron is the real safety net.
 
 
 ## Manifest schema
@@ -441,7 +452,7 @@ fields.
 | `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=X.Y` in pod logs | image needs a newer driver than the host has | set `min_cuda_version: "X.Y"` in the manifest (only needed for tags without a `cuXYZW`/`cudaXYZW` marker) |
 | `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (classic Ubuntu 22.04 `python3` → 3.10 vs `python` → 3.12) | fix `container-template/start.sh` to use `python -m jupyter lab` |
 | `jupyter check (public proxy) FAILED` but in-pod check passed | port exposed as `8888/tcp` instead of `8888/http`, OR proxy hasn't registered the pod yet | check `pod create --ports` arg; bump `JUPYTER_PROXY_TIMEOUT` if proxy is just slow |
-| script hangs at `Cleaning up N leftover pod(s)…` | RunPod API is slow to respond to delete | wait it out; `--terminate-after` (~2 h) is the backstop and will kill anything we missed |
+| script hangs at `Cleaning up N leftover pod(s)…` | RunPod API is slow to respond to delete | wait it out; the `reap-pods.yml` cron sweeps anything we miss (`--terminate-after` is unreliable — dropped for CPU pods, not honored promptly for GPU — so don't count on it) |
 
 
 ## Exit code

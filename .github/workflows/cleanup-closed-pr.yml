@@ -16,10 +16,7 @@ name: Cleanup RC Tags on PR Close
 
 on:
   pull_request:
-    # `closed` is the real trigger. The other types are TEMPORARY (remove
-    # before merge) so we can exercise this workflow from an open PR; the
-    # script forces dry-run for any non-closed event, so it only lists.
-    types: [closed, opened, synchronize, reopened]
+    types: [closed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -50,7 +47,6 @@ jobs:
           # runpod/* repos. A read/write push token is NOT enough.
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           EVENT: ${{ github.event_name }}
-          PR_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
@@ -65,13 +61,9 @@ jobs:
           fi
 
           # A real PR-close event always deletes. A manual (workflow_dispatch)
-          # run defaults to dry-run so an operator can preview first. The
-          # TEMPORARY non-closed PR triggers (opened/synchronize/reopened) are
-          # forced to dry-run so testing from an open PR never deletes.
+          # run defaults to dry-run so an operator can preview first.
           if [ "${EVENT}" = "workflow_dispatch" ]; then
             DRY_RUN="${INPUT_DRY_RUN:-true}"
-          elif [ "${EVENT}" = "pull_request" ] && [ "${PR_ACTION}" != "closed" ]; then
-            DRY_RUN="true"  # TEMPORARY test trigger — never delete from an open PR
           else
             DRY_RUN="false"
           fi

@@ -1,0 +1,158 @@
+name: Reap Leaked Smoke-Test Pods
+
+# Safety net for RunPod pods that the smoke tests leak.
+#
+# The smoke test (tests/test_images.py) normally deletes its pod in a
+# try/finally and via SIGINT/SIGTERM handlers. But when a PR gets a new
+# push, `cancel-in-progress` cancels the running test job and GitHub
+# SIGKILLs the runner after a short grace period — often before
+# cleanup_all() has finished `runpodctl pod delete` for every pod. Those
+# pods then linger and burn credits.
+#
+# Each pod also carries a server-side `--terminate-after` window (~2h) as a
+# backstop, but this cron reaper is the primary, reliable sweep: it runs
+# independently of any job's lifecycle and deletes any `smoketest-*` pod
+# older than a threshold, so nothing runs for days.
+#
+# It ONLY ever touches pods named `smoketest-<epoch>-...` (the naming from
+# runner._create_pod_with_retries), and it reads each pod's age straight
+# out of that name — so it never depends on the `pod list` JSON schema and
+# never deletes a human's pod.
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly
+  # TEMPORARY (remove before merge): lets us exercise this workflow from a
+  # PR, since workflow_dispatch isn't selectable until the file is on the
+  # default branch. The script forces dry-run for pull_request, so it only
+  # ever lists — it never deletes from a PR.
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted without deleting"
+        type: boolean
+        default: true
+      max_age_minutes:
+        description: "Delete smoketest-* pods older than this many minutes"
+        type: string
+        default: "60"
+
+permissions:
+  contents: read
+
+# Never cancel a reaper mid-sweep, and don't let two overlap.
+concurrency:
+  group: reap-pods
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install runpodctl
+        shell: bash
+        env:
+          VERSION: "v2.3.0"
+          SHA256: "908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169"
+        run: |
+          set -euo pipefail
+          curl -fsSL --proto '=https' --tlsv1.2 \
+            "https://github.com/runpod/runpodctl/releases/download/${VERSION}/runpodctl-linux-amd64.tar.gz" \
+            -o /tmp/runpodctl.tar.gz
+          echo "${SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c -
+          sudo tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl
+          rm /tmp/runpodctl.tar.gz
+          runpodctl version
+
+      - name: Reap stale smoke-test pods
+        shell: bash
+        env:
+          # runpodctl reads its key from RUNPOD_API_KEY. Same secret the
+          # smoke-test job uses, so it has pod-management permissions.
+          RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_MAX_AGE: ${{ inputs.max_age_minutes }}
+        run: |
+          set -euo pipefail
+
+          # Scheduled runs actually delete. Manual runs default to dry-run
+          # so an operator can preview first.
+          if [ "${EVENT}" = "schedule" ]; then
+            DRY_RUN="false"
+          elif [ "${EVENT}" = "pull_request" ]; then
+            DRY_RUN="true"  # TEMPORARY test trigger — never delete from a PR
+          else
+            DRY_RUN="${INPUT_DRY_RUN:-true}"
+          fi
+          MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
+          MAX_AGE_SEC=$(( MAX_AGE_MIN * 60 ))
+          NOW=$(date -u +%s)
+          echo "dry_run=${DRY_RUN} | max_age=${MAX_AGE_MIN}m (${MAX_AGE_SEC}s)"
+
+          # Fail loud/fast if the key is missing or wrong — otherwise the
+          # empty pod list below would look like a clean account.
+          if ! runpodctl user >/dev/null 2>&1; then
+            echo "::error::runpodctl not authenticated (check TESTING_RUNPOD_API_KEY)"
+            exit 1
+          fi
+
+          LIST="$(runpodctl pod list -o json || true)"
+          echo "::group::raw pod list"
+          echo "${LIST}" | jq '.' 2>/dev/null || echo "${LIST}"
+          echo "::endgroup::"
+
+          # Normalize to `name<TAB>id` regardless of whether the CLI returns
+          # a bare array or wraps it under a key.
+          rows="$(
+            printf '%s' "${LIST}" | jq -r '
+              (if type=="array" then . else (.pods // .data // [.]) end)[]
+              | [(.name // .Name // ""), (.id // .Id // .podId // "")]
+              | @tsv
+            ' 2>/dev/null || true
+          )"
+
+          scanned=0 deleted=0 kept=0
+          while IFS=$'\t' read -r name id; do
+            [ -z "${name}" ] && continue
+            case "${name}" in smoketest-*) ;; *) continue ;; esac
+            scanned=$((scanned + 1))
+
+            # Name is smoketest-<epoch>-<threadid>-<attempt>; field 2 is the
+            # UTC create epoch. If it isn't a clean integer, leave the pod
+            # alone — we only delete pods we can positively age out.
+            epoch="$(printf '%s' "${name}" | cut -d- -f2)"
+            case "${epoch}" in
+              ''|*[!0-9]*)
+                echo "skip ${name}: no parseable epoch in name"
+                kept=$((kept + 1))
+                continue
+                ;;
+            esac
+
+            age=$(( NOW - epoch ))
+            if [ "${age}" -lt "${MAX_AGE_SEC}" ]; then
+              echo "keep ${name} (age ${age}s < ${MAX_AGE_SEC}s — likely an in-flight test)"
+              kept=$((kept + 1))
+              continue
+            fi
+
+            if [ -z "${id}" ]; then
+              echo "::warning::${name} is stale (age ${age}s) but has no id in list output — skipping"
+              kept=$((kept + 1))
+              continue
+            fi
+
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "[dry-run] would delete ${name} (${id}) age ${age}s"
+            else
+              echo "deleting ${name} (${id}) age ${age}s"
+              runpodctl pod delete "${id}" || echo "::warning::failed to delete ${id}"
+            fi
+            deleted=$((deleted + 1))
+          done <<EOF
+          ${rows}
+          EOF
+
+          echo "smoketest pods scanned: ${scanned} | reaped: ${deleted} | kept: ${kept} | dry_run=${DRY_RUN}"
