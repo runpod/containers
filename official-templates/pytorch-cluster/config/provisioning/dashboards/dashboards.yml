@@ -1,0 +1,17 @@
+apiVersion: 1
+
+# Load the pre-baked NVIDIA training-cluster dashboards from disk. They live in
+# a dedicated folder and are non-editable-on-disk (updateIntervalSeconds picks
+# up rebuilds); users can still clone them in the UI.
+providers:
+  - name: cluster-dashboards
+    orgId: 1
+    # Empty folder => dashboards land at the top level (no nested folder).
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
