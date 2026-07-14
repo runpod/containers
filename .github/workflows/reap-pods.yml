@@ -9,10 +9,10 @@ name: Reap Leaked Smoke-Test Pods
 # cleanup_all() has finished `runpodctl pod delete` for every pod. Those
 # pods then linger and burn credits.
 #
-# Each pod also carries a server-side `--terminate-after` window (~2h) as a
-# backstop, but this cron reaper is the primary, reliable sweep: it runs
-# independently of any job's lifecycle and deletes any `smoketest-*` pod
-# older than a threshold, so nothing runs for days.
+# It ONLY ever touches pods named `smoketest-<epoch>-...` (the naming from
+# runner._create_pod_with_retries), and it reads each pod's age straight
+# out of that name — so it never depends on the `pod list` JSON schema and
+# never deletes a human's pod.
 
 on:
   schedule:
