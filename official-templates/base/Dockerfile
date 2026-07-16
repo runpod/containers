@@ -19,8 +19,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # mk-build-deps pulls the full plugin build-dep set (munge, mariadb, pam,
 # cgroup/dbus, hwloc, pmix, lua, json, jwt, ...) declared in debian/control, so
 # the resulting packages carry the same plugin coverage across both Ubuntu
-# releases. `debuild --no-lint` keeps upstream lintian tag churn from failing
-# the image build; the .deb files land in /usr/src (the source's parent dir).
+# releases. `debuild --no-lintian` (option must precede the dpkg-buildpackage
+# args) skips the post-build lintian run; the .deb files land in /usr/src (the
+# source's parent dir).
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         build-essential ca-certificates curl bzip2 fakeroot devscripts equivs && \
@@ -32,7 +33,7 @@ RUN apt-get update --yes && \
     mk-build-deps --install \
         --tool='apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes' \
         debian/control && \
-    debuild -b -uc -us --no-lint && \
+    debuild --no-lintian -b -uc -us && \
     mkdir /slurm-debs && \
     cp /usr/src/*.deb /slurm-debs/
 
