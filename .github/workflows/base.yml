@@ -446,4 +446,5 @@ jobs:
           exclude-instances: |
             *Blackwell*
             RTX 2000 Ada
+            RTX PRO 4000
           max-parallel: "4"

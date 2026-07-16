@@ -1,14 +1,6 @@
 ARG BASE_IMAGE=non-existing
 
-# ── Slurm builder ─────────────────────────────────────────────────────────
-# Ubuntu's stock `slurm-wlm` is years out of date (21.08 on 22.04, 23.11 on
-# 24.04). We instead build SchedMD's own Debian packages from the pinned
-# upstream source (23.11.0+ ships the debian/ packaging). These produce
-# `slurm-smd*` packages that intentionally replace/conflict with `slurm-wlm`.
-# Compiling happens in this throwaway stage so build-time deps never reach the
-# shipped image; only the resulting .deb files are copied into the final stage.
-# ⚠️ Bump SLURM_VERSION + SLURM_SHA256 together (checksums at
-#    https://download.schedmd.com/slurm/SHA256).
+# ── Slurm builder ───
 ARG SLURM_VERSION=26.05.2
 ARG SLURM_SHA256=01151f233dde64d95cc4ca96931aea3d4a2cad372ed9ad86a8b9f6b674600c3b
 FROM ${BASE_IMAGE} AS slurm-builder
@@ -16,21 +8,16 @@ ARG SLURM_VERSION
 ARG SLURM_SHA256
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-# mk-build-deps pulls the full plugin build-dep set (munge, mariadb, pam,
-# cgroup/dbus, hwloc, pmix, lua, json, jwt, ...) declared in debian/control, so
-# the resulting packages carry the same plugin coverage across both Ubuntu
-# releases. `debuild --no-lintian` (option must precede the dpkg-buildpackage
-# args) skips the post-build lintian run; the .deb files land in /usr/src (the
-# source's parent dir).
+# mk-build-deps installs the build deps from debian/control; debuild --no-lintian builds the .debs into /usr/src.
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         build-essential ca-certificates curl bzip2 fakeroot devscripts equivs && \
     curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/slurm.tar.bz2 \
         "https://download.schedmd.com/slurm/slurm-${SLURM_VERSION}.tar.bz2" && \
     echo "${SLURM_SHA256}  /tmp/slurm.tar.bz2" | sha256sum -c - && \
-    tar -xaf /tmp/slurm.tar.bz2 -C /usr/src && \
-    cd "/usr/src/slurm-${SLURM_VERSION}" && \
-    mk-build-deps --install \
+    tar -xaf /tmp/slurm.tar.bz2 -C /usr/src
+WORKDIR /usr/src/slurm-${SLURM_VERSION}
+RUN mk-build-deps --install \
         --tool='apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes' \
         debian/control && \
     debuild --no-lintian -b -uc -us && \

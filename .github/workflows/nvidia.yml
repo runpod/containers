@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/workflows/nvidia.yml"
       - "official-templates/nvidia-*/**"
+      - "official-templates/shared/versions.hcl"
+      - "official-templates/base/**"
   push:
     branches: [main]
   workflow_dispatch:
