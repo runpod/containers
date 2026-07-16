@@ -1,4 +1,41 @@
 ARG BASE_IMAGE=non-existing
+
+# ── Slurm builder ─────────────────────────────────────────────────────────
+# Ubuntu's stock `slurm-wlm` is years out of date (21.08 on 22.04, 23.11 on
+# 24.04). We instead build SchedMD's own Debian packages from the pinned
+# upstream source (23.11.0+ ships the debian/ packaging). These produce
+# `slurm-smd*` packages that intentionally replace/conflict with `slurm-wlm`.
+# Compiling happens in this throwaway stage so build-time deps never reach the
+# shipped image; only the resulting .deb files are copied into the final stage.
+# ⚠️ Bump SLURM_VERSION + SLURM_SHA256 together (checksums at
+#    https://download.schedmd.com/slurm/SHA256).
+ARG SLURM_VERSION=26.05.2
+ARG SLURM_SHA256=01151f233dde64d95cc4ca96931aea3d4a2cad372ed9ad86a8b9f6b674600c3b
+FROM ${BASE_IMAGE} AS slurm-builder
+ARG SLURM_VERSION
+ARG SLURM_SHA256
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+# mk-build-deps pulls the full plugin build-dep set (munge, mariadb, pam,
+# cgroup/dbus, hwloc, pmix, lua, json, jwt, ...) declared in debian/control, so
+# the resulting packages carry the same plugin coverage across both Ubuntu
+# releases. `debuild --no-lint` keeps upstream lintian tag churn from failing
+# the image build; the .deb files land in /usr/src (the source's parent dir).
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+        build-essential ca-certificates curl bzip2 fakeroot devscripts equivs && \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/slurm.tar.bz2 \
+        "https://download.schedmd.com/slurm/slurm-${SLURM_VERSION}.tar.bz2" && \
+    echo "${SLURM_SHA256}  /tmp/slurm.tar.bz2" | sha256sum -c - && \
+    tar -xaf /tmp/slurm.tar.bz2 -C /usr/src && \
+    cd "/usr/src/slurm-${SLURM_VERSION}" && \
+    mk-build-deps --install \
+        --tool='apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes' \
+        debian/control && \
+    debuild -b -uc -us --no-lint && \
+    mkdir /slurm-debs && \
+    cp /usr/src/*.deb /slurm-debs/
+
 FROM ${BASE_IMAGE}
 
 ARG RP_SKIP_PYTHON
@@ -44,11 +81,26 @@ RUN apt-get update --yes && \
     libatlas-base-dev libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev libpostproc-dev \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
-    libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
+    libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync \
     software-properties-common sudo tmux unzip vim wget zip zstd && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
-    
+
+# Install SchedMD Slurm from the .deb packages built in the slurm-builder stage
+# (replaces Ubuntu's stock slurm-wlm). We install via apt (not raw dpkg) so the
+# runtime dependencies (munge, libmariadb, ...) resolve automatically, as
+# recommended by https://slurm.schedmd.com/quickstart_admin.html.
+COPY --from=slurm-builder /slurm-debs /tmp/slurm-debs
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+        /tmp/slurm-debs/slurm-smd_*.deb \
+        /tmp/slurm-debs/slurm-smd-client_*.deb \
+        /tmp/slurm-debs/slurm-smd-slurmctld_*.deb \
+        /tmp/slurm-debs/slurm-smd-slurmd_*.deb \
+        /tmp/slurm-debs/slurm-smd-slurmdbd_*.deb && \
+    apt-get clean && \
+    rm -rf /tmp/slurm-debs /var/lib/apt/lists/*
+
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
 # Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \

@@ -66,7 +66,7 @@ target "cluster-matrix" {
     # layer and pytorch isn't rebuilt for cluster-only changes, so dev/PR builds
     # layer onto the published pytorch image rather than a nonexistent
     # branch-suffixed one.
-    BASE_IMAGE = "runpod/pytorch:${RELEASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
+    BASE_IMAGE = "runpod/pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
     # CUDA major (first two digits of cuda_code) selects the concrete DCGM
     # provider package: cu1281/cu1290 -> cuda12, cu1300 -> cuda13.
     DCGM_PACKAGE = "datacenter-gpu-manager-4-cuda${substr(build.cuda_code, 0, 2)}"
