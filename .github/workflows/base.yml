@@ -49,6 +49,8 @@ jobs:
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |
@@ -179,6 +181,8 @@ jobs:
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |
@@ -335,6 +339,8 @@ jobs:
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_SUFFIX: ${{ steps.setup.outputs.release-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |

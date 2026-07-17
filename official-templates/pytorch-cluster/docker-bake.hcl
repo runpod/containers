@@ -47,9 +47,14 @@ group "cu1300" {
 }
 
 target "cluster-base" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/pytorch-cluster"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod PyTorch Cluster"
+    "org.opencontainers.image.description" = "Runpod PyTorch image with cluster extras (GPU monitoring + RDMA) layered on top of the published runpod/pytorch base."
+  }
 }
 
 target "cluster-matrix" {
