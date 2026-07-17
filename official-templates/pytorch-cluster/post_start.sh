@@ -90,12 +90,15 @@ else
     done
 fi
 
-# Head-node only: start the (autostart=false) Prometheus + Grafana programs.
+# Head-node only: start the (autostart=false) Loki + Prometheus + Grafana
+# programs. Loki starts first so the log store is up before Grafana's datasource
+# health check (harmless either way — Grafana retries). The Alloy shippers on
+# every node (autostart=true) push to node-0:3100 and retry until Loki is ready.
 if is_head_node; then
-    log "starting Prometheus + Grafana + grafana-proxy"
-    supervisorctl start prometheus grafana grafana-proxy
+    log "starting Loki + Prometheus + Grafana + grafana-proxy"
+    supervisorctl start loki prometheus grafana grafana-proxy
 else
-    log "not the head node; Prometheus/Grafana stay stopped"
+    log "not the head node; Loki/Prometheus/Grafana stay stopped"
 fi
 
 log "post-start complete"

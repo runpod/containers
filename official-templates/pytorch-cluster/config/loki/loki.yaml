@@ -1,0 +1,60 @@
+# Monolithic single-binary Loki for node-0. Filesystem storage, no auth.
+#
+# Binds 0.0.0.0:3100 so the Alloy shipper on compute nodes can push to
+# node-0:3100; Grafana on node-0 queries it over loopback 127.0.0.1:3100
+# (0.0.0.0 covers loopback). Only Grafana :8889 is public — Loki's :3100/:9096
+# stay on the private cluster network (same posture as the :9100/:9400
+# exporters). Started head-node-only by /post_start.sh (see cluster.conf).
+auth_enabled: false
+
+server:
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/loki/chunks
+      rules_directory: /var/lib/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h            # 7 days
+  # Alloy re-stamps entries with the log's own event time, so a pod starting
+  # against a pre-existing Slurm log may push back-dated lines — don't reject
+  # them. Retention (compactor) still purges anything older than 7 days.
+  reject_old_samples: false
+  volume_enabled: true              # enables Grafana's "Logs volume" panel
+  allow_structured_metadata: true   # valid only with tsdb + schema v13
+
+compactor:
+  working_directory: /var/lib/loki/compactor
+  retention_enabled: true           # actually purge data past retention_period
+  delete_request_store: filesystem
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /var/lib/loki/rules
+  rule_path: /var/lib/loki/rules-temp
+
+analytics:
+  reporting_enabled: false

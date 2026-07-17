@@ -8,6 +8,11 @@ It layers two things on top of `runpod/pytorch`:
 2. **A self-contained monitoring stack**, managed by `supervisord`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
+3. **Log aggregation**, also managed by `supervisord`:
+   - **Grafana Alloy** (per-node log shipper) runs on **every** node and tails the
+     Slurm logs, pushing them to the head node.
+   - **Loki** (`0.0.0.0:3100`) runs **only on `node-0`** and stores the logs;
+     Grafana queries it over loopback.
 
 Image tags follow the pytorch scheme with a `-cluster` suffix, e.g.
 `runpod/pytorch:<version>-cu1281-torch280-ubuntu2404-cluster`.
@@ -20,11 +25,44 @@ shipped here. On start, `post_start.sh`:
 1. If `hostname` is **`node-0`**, renders `/etc/prometheus/prometheus.yml` with a
    `node` (`:9100`) and `dcgm` (`:9400`) scrape target for **every peer found in
    `/etc/hosts` whose name starts with `node-`** (falls back to localhost).
-2. Starts `supervisord`, which brings up the exporters on every node.
-3. If `hostname` is `node-0`, starts Prometheus + Grafana via `supervisorctl`.
+2. Starts `supervisord`, which brings up the exporters **and the Alloy log
+   shipper** on every node.
+3. If `hostname` is `node-0`, starts Loki + Prometheus + Grafana via `supervisorctl`.
 
 Grafana is pre-provisioned with a Prometheus datasource pointing at
-`http://127.0.0.1:9090`, so the query traffic never leaves the head node.
+`http://127.0.0.1:9090` and a Loki datasource pointing at `http://127.0.0.1:3100`,
+so the query traffic never leaves the head node.
+
+## Log aggregation (Slurm)
+
+Slurm itself is provisioned at **runtime** by Runpod (the image only bakes in the
+`slurm-wlm` package); its logs land in the distro-standard `/var/log/slurm/`.
+**Grafana Alloy** runs on every node (`autostart=true`, like the exporters),
+tails `/var/log/slurm/*.log`, and pushes each line to the head-node **Loki** at
+`http://node-0:3100`. Loki binds `0.0.0.0:3100` so compute-node shippers can
+reach it; it stays on the private cluster network (only Grafana `:8889` is
+public). Logs are queryable in the **Slurm Logs** dashboard or Grafana's Explore
+view via the **Loki** datasource.
+
+Alloy parses each line (`config/alloy/config.alloy`) before shipping, so logs
+arrive with useful, low-cardinality **labels** — and the entry is re-stamped with
+the log's own event time:
+
+| Field | Kind | Values |
+| --- | --- | --- |
+| `node` | label | container hostname (`node-0`, `node-1`, …) |
+| `component` | label | `slurmctld` / `slurmd` / `slurmdbd` (from the filename) |
+| `level` | label | `info` / `verbose` / `debug` / `warning` / `error` / `fatal` |
+| `job_id` | structured metadata | Slurm `JobId=<n>` (kept off the label set to avoid high cardinality) |
+
+- Override the tailed path with the **`SLURM_LOG_GLOB`** env var (default
+  `/var/log/slurm/*.log`).
+- Alloy on compute nodes retries with backoff until `node-0`'s Loki is up, so
+  startup order doesn't matter.
+- Slurm writes local time without an offset; the images run **UTC**, so the
+  timestamp is parsed as UTC. On parse failure the ingestion time is kept.
+- **Note:** Alloy replaces Promtail, which Grafana declared end-of-life and
+  dropped from Loki releases after the 3.5.x line.
 
 ## Pre-baked dashboards
 
@@ -42,6 +80,10 @@ default landing page (replacing Grafana's welcome page):
   node_exporter).
 - **Fabric & Interconnect** — InfiniBand RX/TX, NVLink & PCIe throughput, and
   PCIe replay rate.
+- **Slurm Logs** — Slurm logs from every node (via Loki): error/warning stat
+  tiles, log-volume timelines by level and by node, a dedicated errors &
+  warnings stream, and the full log stream — all filterable by node, component,
+  level, and a full-text search box.
 
 The training signals (Tensor Core / DRAM / NVLink activity) come from DCGM
 profiling (DCP) metrics, so dcgm-exporter runs with Runpod's extended counter
