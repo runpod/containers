@@ -78,8 +78,12 @@ default landing page (replacing Grafana's welcome page):
   clocks, PCIe/NVLink throughput, and XID/ECC/replay errors.
 - **Node & System** — CPU, memory, disk I/O, network, filesystem, load (from
   node_exporter).
-- **Fabric & Interconnect** — InfiniBand RX/TX, NVLink & PCIe throughput, and
-  PCIe replay rate.
+- **Fabric & Interconnect** — grouped by fabric: **InfiniBand / RoCE** (port &
+  physical state now and over time, adapter inventory, link signal-rate
+  capacity), **PCIe (DCGM)** (per-GPU link gen/width and replay rate),
+  **Ethernet Fabric** (throughput, packet rate, errors/drops, carrier flaps),
+  **TCP Health** (retransmits, established/in-use sockets), and **Clock Sync**
+  (NTP offset, time-sync status).
 - **Slurm Logs** — Slurm logs from every node (via Loki): error/warning stat
   tiles, log-volume timelines by level and by node, a dedicated errors &
   warnings stream, and the full log stream — all filterable by node, component,
