@@ -18,6 +18,9 @@ outputs:
   release-suffix:
     description: 'Release suffix for non-production builds'
     value: ${{ steps.env-vars.outputs.release_suffix }}
+  build-date:
+    description: 'RFC3339 UTC build timestamp for the org.opencontainers.image.created OCI label.'
+    value: ${{ steps.oci-meta.outputs.build_date }}
 
 runs:
   using: 'composite'
@@ -84,6 +87,14 @@ runs:
         echo "::group::docker buildx inspect --bootstrap"
         docker buildx inspect --bootstrap
         echo "::endgroup::"
+
+    - name: Compute OCI build metadata
+      id: oci-meta
+      shell: bash
+      run: |
+        # RFC3339 UTC stamp consumed by docker-bake as the BUILD_DATE variable,
+        # which fills org.opencontainers.image.created (see shared/versions.hcl).
+        echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
     - name: Determine if this is a production build
       id: build-type

@@ -13,6 +13,7 @@ group "pytorch2511" {
 }
 
 target "nvidia-base" {
+  inherits = ["_oci-labels"]
   context = "official-templates/base"
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64"]
@@ -25,6 +26,10 @@ target "nvidia-base" {
   }
   args = {
     RP_SKIP_PYTHON = "1"
+  }
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod NVIDIA PyTorch"
+    "org.opencontainers.image.description" = "Runpod image built on NVIDIA's NGC PyTorch container with the Runpod base tooling layered on top."
   }
 }
 

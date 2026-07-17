@@ -13,10 +13,15 @@ RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
     tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl && \
     rm /tmp/runpodctl.tar.gz
 
-# Clone autoresearch to /opt (safe from volume mounts)
-ARG AUTORESEARCH_REF=master
-RUN git clone --branch "${AUTORESEARCH_REF}" --depth 1 \
-    https://github.com/runpod/autoresearch.git /opt/autoresearch
+# Clone autoresearch to /opt (safe from volume mounts). Pinned to an immutable
+# commit SHA for reproducible builds — `git clone --branch` only accepts a
+# branch/tag, so we init + shallow-fetch the exact commit and detach onto it.
+# Bump AUTORESEARCH_REF to update.
+ARG AUTORESEARCH_REF=d173f4ec6353213bf644631a8d30fa80974cc65f
+RUN git init /opt/autoresearch && \
+    git -C /opt/autoresearch remote add origin https://github.com/runpod/autoresearch.git && \
+    git -C /opt/autoresearch fetch --depth 1 origin "${AUTORESEARCH_REF}" && \
+    git -C /opt/autoresearch checkout --detach FETCH_HEAD
 
 WORKDIR /opt/autoresearch
 
@@ -32,6 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # and symlink .venv back to /opt (12GB, stays on fast container layer)
 COPY pre_start.sh /pre_start.sh
 
-# Override the NVIDIA CUDA entrypoint which blocks boot on hosts with older
-# drivers (e.g. driver 550 only supports CUDA 12.4, but this image has 12.8).
-ENTRYPOINT ["/start.sh"]
+# PID 1 (ENTRYPOINT tini + CMD /start.sh) is inherited from runpod/base. tini's
+# ENTRYPOINT also supersedes the NVIDIA CUDA base entrypoint, which otherwise
+# blocks boot on hosts with older drivers (e.g. driver 550 supports only CUDA
+# 12.4 while this image ships 12.8) — so no ENTRYPOINT override is needed here.

@@ -70,7 +70,7 @@ RUN apt-get update --yes && \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev libpostproc-dev \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync \
-    software-properties-common sudo tmux unzip vim wget zip zstd && \
+    software-properties-common sudo tini tmux unzip vim wget zip zstd && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
 
@@ -185,4 +185,6 @@ and https://blog.runpod.io
 BANNER
 EOF
 
+# Run everything under tini as PID 1
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["/start.sh"]
