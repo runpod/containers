@@ -13,6 +13,8 @@ It layers two things on top of `runpod/pytorch`:
      Slurm logs, pushing them to the head node.
    - **Loki** (`0.0.0.0:3100`) runs **only on `node-0`** and stores the logs;
      Grafana queries it over loopback.
+4. **Slurm job accounting backend** — **MariaDB** (`127.0.0.1:3306`) runs **only
+   on `node-0`** with an empty `slurm_acct_db` database ready for `slurmdbd`.
 
 Image tags follow the pytorch scheme with a `-cluster` suffix, e.g.
 `runpod/pytorch:<version>-cu1281-torch280-ubuntu2404-cluster`.
@@ -63,6 +65,59 @@ the log's own event time:
   timestamp is parsed as UTC. On parse failure the ingestion time is kept.
 - **Note:** Alloy replaces Promtail, which Grafana declared end-of-life and
   dropped from Loki releases after the 3.5.x line.
+
+## Slurm job accounting (MariaDB)
+
+Slurm's accounting backend (`slurmdbd`) needs a MySQL/MariaDB database.
+**MariaDB** (server + client) is installed in the image and runs **only on
+`node-0`** (`autostart=false`; started by `post_start.sh`). It binds loopback
+`127.0.0.1:3306`, so the accounting DB never leaves the head node.
+
+On `node-0`, `post_start.sh` (idempotently, every boot):
+
+1. Initialises the MariaDB data directory at
+   **`/workspace/slurm-acct-db/$RUNPOD_POD_ID`** on first boot — on the RunPod
+   persistent volume, scoped by node-0's pod id (see the note below).
+2. Starts `mariadbd`.
+3. Ensures the accounting database and login user exist:
+   - database **`slurm_acct_db`**
+   - user **`slurm`@`localhost`** with `GRANT ALL` on that database
+
+> **Why the pod-id subdirectory?** RunPod exposes no stable per-cluster id, and
+> two clusters can be attached to the same `/workspace` network volume. Scoping
+> the datadir by node-0's `RUNPOD_POD_ID` guarantees two clusters never point two
+> `mariadbd` instances at one InnoDB datadir (which would corrupt it). The
+> trade-off: the pod id changes when a cluster is recreated, so **accounting
+> history does not carry across a recreation** — each cluster instance gets its
+> own datadir. Stale per-instance directories accumulate on the volume and can be
+> pruned by hand.
+
+> **Run user.** `/workspace` is a network volume that usually forbids `chown`
+> (root is squashed). `post_start.sh` tries to give the datadir to the `mysql`
+> user and, if that fails, runs `mariadbd` **as root** so it matches the volume's
+> ownership — the resolved `user=` is written into the runtime-rendered
+> `zz-slurm-acct-datadir.cnf`. A partial datadir left by a failed init is cleared
+> before re-initialising.
+
+`slurmdbd` **creates and owns the accounting tables itself** on first connect —
+there is no schema dump to load; this only prepares the empty database and a
+user it can authenticate as. Point `slurmdbd.conf` at it:
+
+```ini
+StorageType   = accounting_storage/mysql
+StorageHost   = localhost
+StorageLoc    = slurm_acct_db
+StorageUser   = slurm
+StoragePass   = slurm
+```
+
+Overridable via env (set them **before** first boot; `StoragePass` in
+`slurmdbd.conf` must match): `SLURM_ACCT_DB_NAME`, `SLURM_ACCT_DB_USER`,
+`SLURM_ACCT_DB_PASSWORD` (all default as above). InnoDB tuning follows SchedMD's
+recommendations (`config/mariadb/99-slurm-acct.cnf`).
+
+> Slurm itself (`slurmctld` / `slurmd` / `slurmdbd` / `munge`) is provisioned at
+> runtime by RunPod — the image only supplies the MariaDB backend.
 
 ## Pre-baked dashboards
 

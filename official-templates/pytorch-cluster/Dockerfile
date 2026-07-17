@@ -27,14 +27,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG DCGM_PACKAGE=datacenter-gpu-manager-4-cuda12
 
 # RDMA/InfiniBand user-space stack, supervisor (process manager for the
-# monitoring daemons), and the DCGM runtime (provides libdcgm for the
-# embedded dcgm-exporter). The NVIDIA CUDA apt repo is already configured in
-# the base image.
+# monitoring daemons), the DCGM runtime (provides libdcgm for the embedded
+# dcgm-exporter), and MariaDB (server + client) for the Slurm accounting
+# (slurmdbd) backend on node-0. The NVIDIA CUDA apt repo is already configured
+# in the base image.
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         libibverbs1 ibverbs-providers rdma-core ibverbs-utils infiniband-diags perftest \
         supervisor \
         unzip \
+        mariadb-server mariadb-client \
         "${DCGM_PACKAGE}" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -115,6 +117,8 @@ COPY config/provisioning /etc/grafana/provisioning
 # Log-aggregation config: Loki (head-node store) + Alloy (per-node shipper).
 COPY config/loki/loki.yaml /etc/loki/loki.yaml
 COPY config/alloy/config.alloy /etc/alloy/config.alloy
+# MariaDB drop-in tuning for the Slurm accounting backend (head-node only).
+COPY config/mariadb/99-slurm-acct.cnf /etc/mysql/mariadb.conf.d/99-slurm-acct.cnf
 # Tiny shared-token front proxy for Grafana (mirrors Jupyter's token model and
 # reuses the same JUPYTER_PASSWORD secret, passed in the URL as ?token=). Pure
 # stdlib — no extra deps. It checks the token and injects the auth.proxy header.
