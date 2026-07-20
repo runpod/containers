@@ -1,56 +1,34 @@
-name: Docker Image Build and Release
+name: Base Images Build
 
+# Reusable building block invoked by the release orchestrator (release.yml),
+# which computes the version ONCE and passes it in. Builds the whole
+# base -> pytorch -> {autoresearch, pytorch-cluster} dependency chain in one
+# run. Not triggered on its own (no push/pull_request/concurrency here) — the
+# orchestrator owns triggers, gating, concurrency and the final release.
 on:
-  pull_request:
-    # Deliberately NOT triggering on this workflow file itself: a pipeline-only
-    # (ci:) change does not alter image contents, so building an RC image (and
-    # pushing a confusing -rc tag to Docker Hub) adds no value. Test workflow
-    # changes manually via workflow_dispatch instead.
-    paths:
-      - "official-templates/base/docker-bake.hcl"
-      - "official-templates/base/Dockerfile"
-      - "official-templates/pytorch/docker-bake.hcl"
-      - "official-templates/pytorch/Dockerfile"
-      - "official-templates/autoresearch/docker-bake.hcl"
-      - "official-templates/autoresearch/Dockerfile"
-      - "official-templates/pytorch-cluster/**"
-      - "official-templates/shared/**"
-      - "container-template/**"
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: "Semantic version without a leading v (e.g. 1.1.0)."
+        required: true
+        type: string
+      suffix:
+        description: "Tag suffix: empty for releases, -rc.<pr> for PRs, -dev otherwise."
+        required: false
+        default: ""
+        type: string
+      base_version:
+        description: >-
+          Last RELEASED version (no bump). Used as the pytorch base a cluster-only
+          PR layers onto when this run doesn't rebuild pytorch.
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-# Cancel superseded runs on a PR so a series of commits only pays for the
-# latest one. Never cancel on `push` to main (release builds must finish).
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.v.outputs.version }}
-      suffix: ${{ steps.v.outputs.suffix }}
-      should-build: ${{ steps.v.outputs.should-build }}
-      base-version: ${{ steps.v.outputs.base-version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Compute version
-        id: v
-        uses: ./.github/actions/compute-version
-
   build-base:
-    needs: version
-    if: needs.version.outputs.should-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -73,8 +51,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
-          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUFFIX: ${{ inputs.suffix }}
         with:
           source: .
           files: |
@@ -166,8 +144,8 @@ jobs:
             RTX 2000 Ada
 
   build-autoresearch:
-    needs: [version, build-base]
-    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    needs: build-base
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -205,8 +183,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
-          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUFFIX: ${{ inputs.suffix }}
         with:
           source: .
           files: |
@@ -312,9 +290,9 @@ jobs:
             RTX 2000 Ada
 
   build-pytorch:
-    needs: [version, build-base]
+    needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
@@ -363,8 +341,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
-          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUFFIX: ${{ inputs.suffix }}
         with:
           source: .
           files: |
@@ -485,9 +463,9 @@ jobs:
   # smoke test reflects the real post-merge combination. A cluster-only PR
   # skips the pytorch rebuild and layers on the last released pytorch instead.
   build-cluster:
-    needs: [version, build-pytorch]
+    needs: build-pytorch
     # always() forces run even if build-pytorch is skipped (but not if it failed).
-    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-pytorch.result == 'success' || needs.build-pytorch.result == 'skipped')
+    if: always() && (needs.build-pytorch.result == 'success' || needs.build-pytorch.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -531,13 +509,13 @@ jobs:
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           # The cluster's OWN tag: version + suffix (RC/-dev/release).
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
-          RELEASE_SUFFIX: ${{ needs.version.outputs.suffix }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUFFIX: ${{ inputs.suffix }}
           # Which published runpod/pytorch to build FROM. If pytorch was
           # (re)built in this run (push/dispatch, or a PR that changed pytorch),
           # use that in-run tag (version+suffix). Otherwise (cluster-only PR)
           # fall back to the last released pytorch — the only one that exists.
-          PYTORCH_BASE_VERSION: ${{ (github.event_name != 'pull_request' || needs.build-pytorch.outputs.changed == 'true') && format('{0}{1}', needs.version.outputs.version, needs.version.outputs.suffix) || needs.version.outputs.base-version }}
+          PYTORCH_BASE_VERSION: ${{ (github.event_name != 'pull_request' || needs.build-pytorch.outputs.changed == 'true') && format('{0}{1}', inputs.version, inputs.suffix) || inputs.base_version }}
         with:
           source: .
           files: |

@@ -64,16 +64,22 @@ runs:
 
         HEAD_SHA="$(git rev-parse HEAD)"
 
-        # Latest release tag that is NOT the current commit. Excluding tags on
-        # HEAD keeps the computation stable even if release.yml has already
-        # tagged this same push (avoids an empty commit range -> false "none").
+        # Highest release tag that is a proper ancestor of HEAD. Two filters:
+        #   * skip tags ON HEAD — keeps the computation stable even if
+        #     release.yml already tagged this same push (avoids an empty commit
+        #     range -> a false "none" bump).
+        #   * skip tags NOT reachable from HEAD — so re-running an OLDER commit
+        #     after a newer release exists doesn't pick that newer, unrelated
+        #     tag as its base (it would compute a wrong/backwards version).
+        # Tags are visited highest-version-first, so the first match is the last
+        # release this commit actually sits on.
         LATEST=""
         while IFS= read -r tag; do
           [ -z "$tag" ] && continue
-          if [ "$(git rev-list -n1 "$tag")" != "$HEAD_SHA" ]; then
-            LATEST="$tag"
-            break
-          fi
+          [ "$(git rev-list -n1 "$tag")" = "$HEAD_SHA" ] && continue
+          git merge-base --is-ancestor "$tag" HEAD 2>/dev/null || continue
+          LATEST="$tag"
+          break
         done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
 
         if [ -n "$LATEST" ]; then
