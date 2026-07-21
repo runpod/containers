@@ -335,6 +335,15 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
           max-parallelism: 6
 
+      # TEMPORARY (remove after one green run): a corrupt base-image layer got
+      # cached on the Blacksmith sticky disk, so cu1290 kept failing with
+      # "failed commit on ref … unexpected commit digest … failed precondition".
+      # Purge the BuildKit cache once to force a clean re-pull of the base layer.
+      - name: (TEMPORARY) Purge BuildKit cache
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
+        shell: bash
+        run: docker buildx prune --all --force || true
+
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
