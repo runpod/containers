@@ -86,10 +86,10 @@ jobs:
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
-      # nvidia.yml is path-filtered to official-templates/nvidia-*/** (and
-      # runs on push/main + workflow_dispatch), so build-nvidia always
-      # builds — no changed-files gate needed (unlike pytorch in base.yml).
-      # Always persist this shard's refs for the matching test-nvidia entry.
+      # Invoked only by the release orchestrator, which has already decided this
+      # family should build (per-family path gating lives there), so build-nvidia
+      # always runs when reached — no changed-files gate needed (unlike pytorch in
+      # base.yml). Always persist this shard's refs for the matching test-nvidia.
       - name: Save refs artifact
         shell: bash
         env:
