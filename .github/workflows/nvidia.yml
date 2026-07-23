@@ -121,16 +121,13 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs for ${{ matrix.nvidia }}
-        id: dl
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        continue-on-error: true
         with:
           name: nvidia-refs-${{ matrix.nvidia }}
           path: /tmp/nvidia-refs
 
       - name: Read refs
         id: refs
-        if: steps.dl.outcome == 'success'
         shell: bash
         run: |
           REFS=$(cat /tmp/nvidia-refs/refs.json)
@@ -141,7 +138,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Smoke test (${{ matrix.nvidia }})
-        if: steps.refs.outcome == 'success'
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
