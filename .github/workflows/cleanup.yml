@@ -17,12 +17,6 @@ name: Docker Hub Tag Cleanup
 #                        (add once #138 lands; see README/RELEASE docs)
 
 on:
-  # TEMPORARY (remove before merging TEM-13): run the sweep on this PR to
-  # smoke-test it end-to-end. pull_request is a non-schedule event, so DRY_RUN
-  # defaults to true below — this preview never deletes anything.
-  pull_request:
-    paths:
-      - ".github/workflows/cleanup.yml"
   schedule:
     - cron: "0 3 * * 1" # Mondays 03:00 UTC
   workflow_dispatch:
@@ -75,7 +69,7 @@ jobs:
           set -euo pipefail
 
           NAMESPACE="runpod"
-          REPOS=(base pytorch nvidia-pytorch autoresearch pytorch-cluster)
+          REPOS=(base pytorch nvidia-pytorch autoresearch)
 
           RETENTION_DAYS="${INPUT_RETENTION:-14}"
           # A scheduled run has no inputs and should actually delete. A manual
