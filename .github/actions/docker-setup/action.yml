@@ -11,13 +11,6 @@ inputs:
     description: 'Maximum parallelism for Docker Build'
     required: false
     default: 8
-outputs:
-  is-production:
-    description: 'Whether this is a production build'
-    value: ${{ steps.build-type.outputs.is_production }}
-  release-suffix:
-    description: 'Release suffix for non-production builds'
-    value: ${{ steps.env-vars.outputs.release_suffix }}
 
 runs:
   using: 'composite'
@@ -84,24 +77,3 @@ runs:
         echo "::group::docker buildx inspect --bootstrap"
         docker buildx inspect --bootstrap
         echo "::endgroup::"
-
-    - name: Determine if this is a production build
-      id: build-type
-      shell: bash
-      run: |
-        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-          echo "is_production=true" >> $GITHUB_OUTPUT
-        else
-          echo "is_production=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Set Environment Variables
-      id: env-vars
-      if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dj/containers-v1'
-      shell: bash
-      run: |
-        RAW_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF}}"
-        BRANCH_NAME=$(echo "${RAW_BRANCH}" | sed 's/\//-/g')
-        SUFFIX="-dev-${BRANCH_NAME}"
-        echo "RELEASE=${SUFFIX}" >> $GITHUB_ENV
-        echo "release_suffix=${SUFFIX}" >> $GITHUB_OUTPUT 
