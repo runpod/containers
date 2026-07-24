@@ -15,8 +15,12 @@ name: Cleanup RC Tags on PR Close
 # so the four repos below cover every family.
 
 on:
+  # TEMPORARY (remove before merging TEM-13): also run on open/sync/reopen so we
+  # can dry-run this on the PR. The DRY_RUN guard below forces dry-run for any
+  # pull_request event that isn't a real "closed", so these test runs never
+  # delete anything — only a genuine PR close still deletes.
   pull_request:
-    types: [closed]
+    types: [closed, opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -47,6 +51,7 @@ jobs:
           # runpod/* repos. A read/write push token is NOT enough.
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           EVENT: ${{ github.event_name }}
+          PR_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
@@ -64,6 +69,10 @@ jobs:
           # run defaults to dry-run so an operator can preview first.
           if [ "${EVENT}" = "workflow_dispatch" ]; then
             DRY_RUN="${INPUT_DRY_RUN:-true}"
+          elif [ "${EVENT}" = "pull_request" ] && [ "${PR_ACTION}" != "closed" ]; then
+            # TEMPORARY (remove before merging TEM-13): PR open/sync/reopen test
+            # runs are always dry-run so the smoke test can never delete tags.
+            DRY_RUN="true"
           else
             DRY_RUN="false"
           fi
