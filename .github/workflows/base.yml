@@ -48,7 +48,7 @@ jobs:
 
       - name: Build base images
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ inputs.version }}
@@ -180,7 +180,7 @@ jobs:
       - name: Build autoresearch images
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ inputs.version }}
@@ -338,7 +338,7 @@ jobs:
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ inputs.version }}
@@ -501,7 +501,7 @@ jobs:
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           # The cluster's OWN tag: version + suffix (RC/-dev/release).
