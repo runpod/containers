@@ -109,13 +109,24 @@ jobs:
             fi
           fi
 
-          # GET with the JWT when we have one, anonymously otherwise (public repos).
+          # GET with the JWT when we have one, anonymously otherwise (public
+          # repos). Prints the response body; returns 0 on 2xx, 44 on 404 so a
+          # caller can skip a repo that doesn't exist yet (e.g. pytorch-cluster
+          # before its first release), and 1 on any other HTTP/transport error.
           api_get() { # <url>
+            local body_file code
+            body_file="$(mktemp)"
             if [ -n "${TOKEN}" ]; then
-              curl -fsS -H "Authorization: JWT ${TOKEN}" "$1"
+              code=$(curl -sS -o "${body_file}" -w '%{http_code}' -H "Authorization: JWT ${TOKEN}" "$1" || echo 000)
             else
-              curl -fsS "$1"
+              code=$(curl -sS -o "${body_file}" -w '%{http_code}' "$1" || echo 000)
             fi
+            cat "${body_file}"; rm -f "${body_file}"
+            case "${code}" in
+              2*) return 0 ;;
+              404) return 44 ;;
+              *) echo "::error::GET $1 returned HTTP ${code}" >&2; return 1 ;;
+            esac
           }
 
           del() { # <repo> <tag>
@@ -137,7 +148,14 @@ jobs:
             tags="$(mktemp)"
             url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/?page_size=100"
             while [ -n "${url}" ] && [ "${url}" != "null" ]; do
-              resp=$(api_get "${url}")
+              rc=0
+              resp=$(api_get "${url}") || rc=$?
+              if [ "${rc}" -eq 44 ]; then
+                echo "::warning::Skipping ${NAMESPACE}/${repo}: repository not found (404) — likely not published yet"
+                break
+              elif [ "${rc}" -ne 0 ]; then
+                exit 1
+              fi
               echo "${resp}" | jq -r '.results[] | [.name, (.digest // ""), .last_updated] | @tsv' >> "${tags}"
               url=$(echo "${resp}" | jq -r '.next // empty')
             done
