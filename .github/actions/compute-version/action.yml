@@ -163,10 +163,7 @@ runs:
         {
           echo "version=${VERSION}"
           echo "suffix=${SUFFIX}"
-<<<<<<< HEAD
-=======
           echo "base_version=${BASE}"
->>>>>>> main
           echo "tag=${TAG}"
           echo "bump=${BUMP}"
           echo "should_build=${SHOULD_BUILD}"
