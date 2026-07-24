@@ -15,12 +15,6 @@ name: Reap Leaked Smoke-Test Pods
 # never deletes a human's pod.
 
 on:
-  # TEMPORARY (remove before merging TEM-13): run the reaper on this PR to
-  # smoke-test it. pull_request is a non-schedule event, so DRY_RUN defaults to
-  # true below — this preview never deletes any pods.
-  pull_request:
-    paths:
-      - ".github/workflows/reap-pods.yml"
   schedule:
     - cron: "0 * * * *" # hourly
   workflow_dispatch:
@@ -80,10 +74,6 @@ jobs:
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           fi
-          # TEMPORARY (remove with the pull_request trigger before merge): let
-          # the PR run actually delete so we can confirm the delete path works.
-          # Still only ever removes stale smoketest-* pods older than max_age.
-          [ "${EVENT}" = "pull_request" ] && DRY_RUN="false"
           MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
           MAX_AGE_SEC=$(( MAX_AGE_MIN * 60 ))
           NOW=$(date -u +%s)

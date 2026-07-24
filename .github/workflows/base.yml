@@ -28,26 +28,7 @@ permissions:
   contents: read
 
 jobs:
-  version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.v.outputs.version }}
-      suffix: ${{ steps.v.outputs.suffix }}
-      should-build: ${{ steps.v.outputs.should-build }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Compute version
-        id: v
-        uses: ./.github/actions/compute-version
-
   build-base:
-    needs: version
-    if: needs.version.outputs.should-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -163,8 +144,8 @@ jobs:
             RTX 2000 Ada
 
   build-autoresearch:
-    needs: [version, build-base]
-    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    needs: build-base
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -309,9 +290,9 @@ jobs:
             RTX 2000 Ada
 
   build-pytorch:
-    needs: [version, build-base]
+    needs: build-base
     # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && needs.version.outputs.should-build == 'true' && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
