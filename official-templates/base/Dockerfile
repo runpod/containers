@@ -112,8 +112,8 @@ RUN python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
 # Install filebrowser (pinned + SHA-256 verified, avoids `curl | bash`).
 # Bump FILEBROWSER_VERSION + FILEBROWSER_SHA256 together when updating.
 # Checksums: https://github.com/filebrowser/filebrowser/releases
-ARG FILEBROWSER_VERSION=2.63.5
-ARG FILEBROWSER_SHA256=b36ad6296db0a749a5adbc792ab5321d11b307106123d44e171b7c158fcca2d9
+ARG FILEBROWSER_VERSION=2.63.21
+ARG FILEBROWSER_SHA256=8e3954467067aa6f4988dc6dd7357129fe38d2e445fa2936bebf99620bc07ec7
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/filebrowser.tar.gz \
         "https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" && \
     echo "${FILEBROWSER_SHA256}  /tmp/filebrowser.tar.gz" | sha256sum -c - && \
