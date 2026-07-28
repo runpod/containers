@@ -69,6 +69,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
