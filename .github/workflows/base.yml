@@ -45,6 +45,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/base
 
       - name: Build base images
         id: build
@@ -177,6 +178,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/autoresearch
 
       - name: Build autoresearch images
         id: build
@@ -335,6 +337,7 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
           max-parallelism: 6
+          cache-key: ${{ github.repository }}/pytorch
 
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
@@ -499,6 +502,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/cluster
 
       - name: Build cluster images (${{ matrix.cuda }})
         id: build

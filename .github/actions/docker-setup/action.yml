@@ -11,6 +11,9 @@ inputs:
     description: 'Maximum parallelism for Docker Build'
     required: false
     default: 8
+  cache-key:
+    description: 'Sticky-disk cache lineage key. Use a distinct value per image family (e.g. base, pytorch, rocm) so families do not thrash each other''s BuildKit cache. Required by setup-docker-builder v2.'
+    required: true
 
 runs:
   using: 'composite'
@@ -63,9 +66,10 @@ runs:
         password: ${{ inputs.dockerhub-token }}
 
     - name: Set up Docker Build
-      uses: useblacksmith/setup-docker-builder@ab5c1da94f53f5cd75c1038092aa276dddfccbba
+      uses: useblacksmith/setup-docker-builder@1e75355f81cbb3f93cba1eb5dd5e5b05110ca8f9 # v2.0.1
       with:
         max-parallelism: ${{ inputs.max-parallelism }}
+        cache-key: ${{ inputs.cache-key }}
 
     - name: Inspect buildx builder
       shell: bash
