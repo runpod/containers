@@ -71,6 +71,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -364,6 +365,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
