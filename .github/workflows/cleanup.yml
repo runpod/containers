@@ -17,6 +17,9 @@ name: Docker Hub Tag Cleanup
 #                        (add once #138 lands; see README/RELEASE docs)
 
 on:
+  # TEMP(TEM-13): run on PRs so the sweep can be verified end-to-end. Forced to
+  # dry-run in the step below — a PR run NEVER deletes. Remove before merge.
+  pull_request:
   schedule:
     - cron: "0 3 * * 1" # Mondays 03:00 UTC
   workflow_dispatch:
@@ -72,6 +75,14 @@ jobs:
           REPOS=(base pytorch nvidia-pytorch autoresearch)
 
           RETENTION_DAYS="${INPUT_RETENTION:-14}"
+          # Validate before it feeds `date -d "<n> days ago"` — a non-integer
+          # would make the cutoff bogus and could delete tags it shouldn't.
+          case "${RETENTION_DAYS}" in
+            ''|*[!0-9]*)
+              echo "::error::retention_days must be a positive integer, got '${RETENTION_DAYS}'"
+              exit 1
+              ;;
+          esac
           # A scheduled run has no inputs and should actually delete. A manual
           # run defaults to dry-run so an operator can preview first. A caller
           # (workflow_call) passes its own value.
@@ -79,6 +90,11 @@ jobs:
             DRY_RUN="false"
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
+          fi
+          # TEMP(TEM-13): a PR-triggered run is always a preview, never a real
+          # delete. Remove together with the pull_request trigger above.
+          if [ "${EVENT}" = "pull_request" ]; then
+            DRY_RUN="true"
           fi
 
           CUTOFF=$(date -u -d "${RETENTION_DAYS} days ago" +%s)
@@ -105,8 +121,8 @@ jobs:
 
           # GET with the JWT when we have one, anonymously otherwise (public
           # repos). Prints the response body; returns 0 on 2xx, 44 on 404 so a
-          # caller can skip a repo that doesn't exist yet (e.g. pytorch-cluster
-          # before its first release), and 1 on any other HTTP/transport error.
+          # caller can skip a repo that doesn't exist yet, and 1 on any other
+          # HTTP/transport error.
           api_get() { # <url>
             local body_file code
             body_file="$(mktemp)"
@@ -167,8 +183,15 @@ jobs:
               esac
               eligible=false
               case "${name}" in *-rc.*|*-dev|*-dev-*) eligible=true ;; esac
-              ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo 0)
-              if [ "${eligible}" = "true" ] && [ "${ts}" -lt "${CUTOFF}" ]; then
+              ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo "")
+              if [ -z "${ts}" ]; then
+                # Unparseable/missing last_updated: NEVER treat as age 0 (which
+                # would look ancient and delete a possibly-live tag). Keep it,
+                # and mark its digest live so pass 2 preserves any signature.
+                echo "::warning::${NAMESPACE}/${repo}:${name} has unparseable last_updated ('${updated}') — keeping"
+                kept=$((kept + 1))
+                [ -n "${digest}" ] && LIVE["${digest#sha256:}"]=1
+              elif [ "${eligible}" = "true" ] && [ "${ts}" -lt "${CUTOFF}" ]; then
                 del_images+=("${name}")
               else
                 kept=$((kept + 1))

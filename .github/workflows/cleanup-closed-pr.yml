@@ -16,7 +16,10 @@ name: Cleanup RC Tags on PR Close
 
 on:
   pull_request:
-    types: [closed]
+    # TEMP(TEM-13): also run on open/update/reopen (not just close) so this can
+    # be verified on an open PR. A PR run is forced to dry-run in the step below
+    # — it NEVER deletes. Revert to `types: [closed]` before merge.
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -53,15 +56,16 @@ jobs:
           set -euo pipefail
 
           NAMESPACE="runpod"
-          # pytorch-cluster is intentionally omitted until it's first released
-          # and the runpod/pytorch-cluster repo exists on Docker Hub. Add it here
-          # once published (api_get already tolerates a missing repo via 404).
           REPOS=(base pytorch nvidia-pytorch autoresearch)
 
           PR="${PR_NUMBER:-}"
-          if [ -z "${PR}" ]; then
-            echo "::error::No PR number available"; exit 1
-          fi
+          # Must be a bare positive integer
+          case "${PR}" in
+            ''|*[!0-9]*)
+              echo "::error::PR number must be a positive integer, got '${PR}'"
+              exit 1
+              ;;
+          esac
 
           # A real PR-close event always deletes. A manual (workflow_dispatch)
           # run defaults to dry-run so an operator can preview first.
@@ -69,6 +73,11 @@ jobs:
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           else
             DRY_RUN="false"
+          fi
+          # TEMP(TEM-13): a PR-triggered run is always a preview, never a real
+          # delete. Remove together with the `types:` override above.
+          if [ "${EVENT}" = "pull_request" ]; then
+            DRY_RUN="true"
           fi
           echo "Removing runpod/*:*-rc.${PR}-* tags | dry_run=${DRY_RUN}"
 
@@ -91,8 +100,8 @@ jobs:
 
           # GET with the JWT when we have one, anonymously otherwise (public
           # repos). Prints the response body; returns 0 on 2xx, 44 on 404 so a
-          # caller can skip a repo that doesn't exist yet (e.g. pytorch-cluster
-          # before its first release), and 1 on any other HTTP/transport error.
+          # caller can skip a repo that doesn't exist yet, and 1 on any other
+          # HTTP/transport error.
           api_get() { # <url>
             local body_file code
             body_file="$(mktemp)"

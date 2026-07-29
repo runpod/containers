@@ -170,7 +170,7 @@ jobs:
   # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
   # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
   cleanup:
-    needs: release
-    if: needs.release.outputs.should-release == 'true'
+    needs: [version, release]
+    if: needs.version.outputs.should-release == 'true'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit

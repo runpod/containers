@@ -15,6 +15,9 @@ name: Reap Leaked Smoke-Test Pods
 # never deletes a human's pod.
 
 on:
+  # TEMP(TEM-13): run on PRs so the reaper can be verified end-to-end. Forced to
+  # dry-run in the step below — a PR run NEVER deletes. Remove before merge.
+  pull_request:
   schedule:
     - cron: "0 * * * *" # hourly
   workflow_dispatch:
@@ -74,7 +77,20 @@ jobs:
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           fi
+          # TEMP(TEM-13): a PR-triggered run is always a preview, never a real
+          # delete. Remove together with the pull_request trigger above.
+          if [ "${EVENT}" = "pull_request" ]; then
+            DRY_RUN="true"
+          fi
           MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
+          # Validate before arithmetic — a non-integer would make `$(( ))`
+          # error out (or silently evaluate to 0 and delete in-flight pods).
+          case "${MAX_AGE_MIN}" in
+            ''|*[!0-9]*)
+              echo "::error::max_age_minutes must be a positive integer, got '${MAX_AGE_MIN}'"
+              exit 1
+              ;;
+          esac
           MAX_AGE_SEC=$(( MAX_AGE_MIN * 60 ))
           NOW=$(date -u +%s)
           echo "dry_run=${DRY_RUN} | max_age=${MAX_AGE_MIN}m (${MAX_AGE_SEC}s)"
@@ -86,22 +102,33 @@ jobs:
             exit 1
           fi
 
-          LIST="$(runpodctl pod list -o json || true)"
+          # Do NOT swallow a failed listing: an empty result here would look
+          # like a clean account and the reaper would silently no-op while
+          # pods keep burning credits. Fail loud instead.
+          if ! LIST="$(runpodctl pod list -o json)"; then
+            echo "::error::'runpodctl pod list' failed"
+            exit 1
+          fi
           echo "::group::raw pod list"
           echo "${LIST}" | jq '.' 2>/dev/null || echo "${LIST}"
           echo "::endgroup::"
 
           # Normalize to `name<TAB>id` regardless of whether the CLI returns
-          # a bare array or wraps it under a key.
-          rows="$(
+          # a bare array or wraps it under a key. A parse failure is fatal for
+          # the same reason as above — empty rows must not be mistaken for
+          # "no pods".
+          if ! rows="$(
             printf '%s' "${LIST}" | jq -r '
               (if type=="array" then . else (.pods // .data // [.]) end)[]
               | [(.name // .Name // ""), (.id // .Id // .podId // "")]
               | @tsv
-            ' 2>/dev/null || true
-          )"
+            '
+          )"; then
+            echo "::error::failed to parse 'runpodctl pod list' JSON output"
+            exit 1
+          fi
 
-          scanned=0 deleted=0 kept=0
+          scanned=0 deleted=0 kept=0 failed=0
           while IFS=$'\t' read -r name id; do
             [ -z "${name}" ] && continue
             case "${name}" in smoketest-*) ;; *) continue ;; esac
@@ -134,13 +161,24 @@ jobs:
 
             if [ "${DRY_RUN}" = "true" ]; then
               echo "[dry-run] would delete ${name} (${id}) age ${age}s"
+              deleted=$((deleted + 1))
+            elif runpodctl pod delete "${id}"; then
+              echo "deleted ${name} (${id}) age ${age}s"
+              deleted=$((deleted + 1))
             else
-              echo "deleting ${name} (${id}) age ${age}s"
-              runpodctl pod delete "${id}" || echo "::warning::failed to delete ${id}"
+              # A failed delete is NOT a reap — count it separately so the
+              # summary doesn't overstate progress, and fail the job so a pod
+              # that won't die keeps surfacing until someone intervenes.
+              echo "::warning::failed to delete ${name} (${id})"
+              failed=$((failed + 1))
             fi
-            deleted=$((deleted + 1))
           done <<EOF
           ${rows}
           EOF
 
-          echo "smoketest pods scanned: ${scanned} | reaped: ${deleted} | kept: ${kept} | dry_run=${DRY_RUN}"
+          echo "smoketest pods scanned: ${scanned} | reaped: ${deleted} | kept: ${kept} | failed: ${failed} | dry_run=${DRY_RUN}"
+
+          if [ "${failed}" -gt 0 ]; then
+            echo "::error::${failed} pod deletion(s) failed"
+            exit 1
+          fi
