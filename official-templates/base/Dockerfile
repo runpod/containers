@@ -109,18 +109,6 @@ RUN python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
     python /tmp/scrub-stale-metadata.py /requirements.txt && \
     rm /tmp/scrub-stale-metadata.py
 
-# Install filebrowser (pinned + SHA-256 verified, avoids `curl | bash`).
-# Bump FILEBROWSER_VERSION + FILEBROWSER_SHA256 together when updating.
-# Checksums: https://github.com/filebrowser/filebrowser/releases
-ARG FILEBROWSER_VERSION=2.63.21
-ARG FILEBROWSER_SHA256=8e3954467067aa6f4988dc6dd7357129fe38d2e445fa2936bebf99620bc07ec7
-RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/filebrowser.tar.gz \
-        "https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" && \
-    echo "${FILEBROWSER_SHA256}  /tmp/filebrowser.tar.gz" | sha256sum -c - && \
-    tar -xzf /tmp/filebrowser.tar.gz -C /usr/local/bin filebrowser && \
-    chmod +x /usr/local/bin/filebrowser && \
-    rm /tmp/filebrowser.tar.gz
-
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
 COPY --from=proxy snippets /etc/nginx/snippets
