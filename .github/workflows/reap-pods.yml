@@ -15,9 +15,6 @@ name: Reap Leaked Smoke-Test Pods
 # never deletes a human's pod.
 
 on:
-  # TEMP(TEM-13): run on PRs so the reaper can be verified end-to-end. Forced to
-  # dry-run in the step below — a PR run NEVER deletes. Remove before merge.
-  pull_request:
   schedule:
     - cron: "0 * * * *" # hourly
   workflow_dispatch:
@@ -76,11 +73,6 @@ jobs:
             DRY_RUN="false"
           else
             DRY_RUN="${INPUT_DRY_RUN:-true}"
-          fi
-          # TEMP(TEM-13): a PR-triggered run is always a preview, never a real
-          # delete. Remove together with the pull_request trigger above.
-          if [ "${EVENT}" = "pull_request" ]; then
-            DRY_RUN="true"
           fi
           MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
           # Validate before arithmetic — a non-integer would make `$(( ))`

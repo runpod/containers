@@ -16,10 +16,7 @@ name: Cleanup RC Tags on PR Close
 
 on:
   pull_request:
-    # TEMP(TEM-13): also run on open/update/reopen (not just close) so this can
-    # be verified on an open PR. A PR run is forced to dry-run in the step below
-    # — it NEVER deletes. Revert to `types: [closed]` before merge.
-    types: [opened, synchronize, reopened, closed]
+    types: [closed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -73,11 +70,6 @@ jobs:
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           else
             DRY_RUN="false"
-          fi
-          # TEMP(TEM-13): a PR-triggered run is always a preview, never a real
-          # delete. Remove together with the `types:` override above.
-          if [ "${EVENT}" = "pull_request" ]; then
-            DRY_RUN="true"
           fi
           echo "Removing runpod/*:*-rc.${PR}-* tags | dry_run=${DRY_RUN}"
 
