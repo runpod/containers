@@ -75,14 +75,13 @@ jobs:
             DRY_RUN="${INPUT_DRY_RUN:-true}"
           fi
           MAX_AGE_MIN="${INPUT_MAX_AGE:-60}"
-          # Validate before arithmetic — a non-integer would make `$(( ))`
-          # error out (or silently evaluate to 0 and delete in-flight pods).
-          case "${MAX_AGE_MIN}" in
-            ''|*[!0-9]*)
-              echo "::error::max_age_minutes must be a positive integer, got '${MAX_AGE_MIN}'"
-              exit 1
-              ;;
-          esac
+          # Must be a positive integer with no leading zero. Rejecting 0 avoids
+          # reaping every in-flight pod; rejecting leading zeros avoids Bash
+          # octal parsing in `$(( ))` below (e.g. 08 -> error).
+          if [[ ! "${MAX_AGE_MIN}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::max_age_minutes must be a positive integer (^[1-9][0-9]*$), got '${MAX_AGE_MIN}'"
+            exit 1
+          fi
           MAX_AGE_SEC=$(( MAX_AGE_MIN * 60 ))
           NOW=$(date -u +%s)
           echo "dry_run=${DRY_RUN} | max_age=${MAX_AGE_MIN}m (${MAX_AGE_SEC}s)"

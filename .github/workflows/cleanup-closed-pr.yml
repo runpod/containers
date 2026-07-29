@@ -56,13 +56,12 @@ jobs:
           REPOS=(base pytorch nvidia-pytorch autoresearch)
 
           PR="${PR_NUMBER:-}"
-          # Must be a bare positive integer
-          case "${PR}" in
-            ''|*[!0-9]*)
-              echo "::error::PR number must be a positive integer, got '${PR}'"
-              exit 1
-              ;;
-          esac
+          # Must be a positive integer with no leading zero — it's interpolated
+          # straight into the `-rc.${PR}` tag match below.
+          if [[ ! "${PR}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::PR number must be a positive integer (^[1-9][0-9]*$), got '${PR}'"
+            exit 1
+          fi
 
           # A real PR-close event always deletes. A manual (workflow_dispatch)
           # run defaults to dry-run so an operator can preview first.
