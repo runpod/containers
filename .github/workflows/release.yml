@@ -165,3 +165,12 @@ jobs:
 
       - name: Summary
         run: echo "Released ${{ needs.version.outputs.tag }} (bump ${{ needs.version.outputs.bump }})"
+
+  # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
+  # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
+  # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
+  cleanup:
+    needs: [version, release]
+    if: needs.version.outputs.should-release == 'true'
+    uses: ./.github/workflows/cleanup.yml
+    secrets: inherit

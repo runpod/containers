@@ -232,9 +232,11 @@ def create_pod(
         "--container-disk-in-gb", str(disk_gb),
         "--ports", ",".join(ports),
         "--name", name,
-        # MUST be recomputed per pod, not read from a cached constant —
-        # see config.auto_terminate_deadline docstring for the cautionary
-        # tale of the overnight charge.
+        # Server-side backstop: RunPod auto-terminates the pod at this
+        # RFC3339 datetime (the format --terminate-after wants), so a leaked
+        # pod can't run forever. MUST be recomputed per pod — see
+        # config.auto_terminate_deadline. The reap-pods.yml cron is the
+        # primary sweep; this is defense-in-depth.
         "--terminate-after", config.auto_terminate_deadline(),
         "-o", "json",
     ]
