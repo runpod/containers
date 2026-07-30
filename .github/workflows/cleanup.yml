@@ -1,0 +1,220 @@
+name: Docker Hub Tag Cleanup
+
+# Prunes ephemeral image tags from Docker Hub once they age out:
+#   * -rc.<PR#>   release-candidate images built for pull requests
+#   * -dev / -dev-* images built by manual (workflow_dispatch) runs
+# Release tags (e.g. 1.2.3-ubuntu2204, 1.2.3-cuda1281-ubuntu2404) and `latest`
+# are never eligible — the delete filter only matches the -rc./-dev markers.
+#
+# It also removes orphaned Cosign signatures (`sha256-<digest>.sig` / `.att`):
+# a signature is deleted only when no live image tag still references its
+# digest, so signatures of retained release images are always kept.
+#
+# Triggers:
+#   * schedule          weekly sweep (actually deletes)
+#   * workflow_dispatch  manual run (dry-run by default; flip the input to delete)
+#   * workflow_call      so release.yml can run it right after cutting a release
+#                        (add once #138 lands; see README/RELEASE docs)
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted without deleting"
+        type: boolean
+        default: true
+      retention_days:
+        description: "Delete ephemeral tags older than this many days"
+        type: string
+        default: "14"
+  workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+      retention_days:
+        type: string
+        default: "14"
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-tag-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune ephemeral Docker Hub tags
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          # Must be a Docker Hub access token with DELETE permission on the
+          # runpod/* repos. A read/write push token is NOT enough — the DELETE
+          # calls below will 401/403 and fail the job.
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_RETENTION: ${{ inputs.retention_days }}
+        run: |
+          set -euo pipefail
+
+          NAMESPACE="runpod"
+          REPOS=(base pytorch nvidia-pytorch autoresearch)
+
+          RETENTION_DAYS="${INPUT_RETENTION:-14}"
+          # Must be a positive integer with no leading zero. Rejecting 0 avoids
+          # a cutoff of "now" that would sweep essentially every ephemeral tag;
+          # rejecting leading zeros avoids surprises in date arithmetic.
+          if [[ ! "${RETENTION_DAYS}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::retention_days must be a positive integer (^[1-9][0-9]*$), got '${RETENTION_DAYS}'"
+            exit 1
+          fi
+          # A scheduled run has no inputs and should actually delete. A manual
+          # run defaults to dry-run so an operator can preview first. A caller
+          # (workflow_call) passes its own value.
+          if [ "$EVENT" = "schedule" ]; then
+            DRY_RUN="false"
+          else
+            DRY_RUN="${INPUT_DRY_RUN:-true}"
+          fi
+
+          CUTOFF=$(date -u -d "${RETENTION_DAYS} days ago" +%s)
+          echo "Dry run: ${DRY_RUN} | retention: ${RETENTION_DAYS} days | cutoff: $(date -u -d @"${CUTOFF}")"
+
+          # Try to exchange username + token for a short-lived management JWT.
+          # Deletion REQUIRES it (and a token type allowed to delete tags, which
+          # PAT/OAT are not — see RELEASE docs). Listing public repos works
+          # WITHOUT it, so a dry-run can still preview what would be deleted even
+          # if login fails. Keep this soft (no -f / || true) so a 401 does not
+          # abort the whole script under `set -e -o pipefail`.
+          LOGIN_RESP=$(curl -sS -H "Content-Type: application/json" \
+            -d "{\"username\": \"${DOCKERHUB_USERNAME}\", \"password\": \"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/ 2>/dev/null || true)
+          TOKEN=$(printf '%s' "${LOGIN_RESP}" | jq -r '.token // empty' 2>/dev/null || true)
+          if [ -z "${TOKEN}" ]; then
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning::Docker Hub login failed; continuing unauthenticated (dry-run previews public repos only)"
+            else
+              echo "::error::Docker Hub login failed and this is not a dry-run — cannot delete."
+              exit 1
+            fi
+          fi
+
+          # GET with the JWT when we have one, anonymously otherwise (public
+          # repos). Prints the response body; returns 0 on 2xx, 44 on 404 so a
+          # caller can skip a repo that doesn't exist yet, and 1 on any other
+          # HTTP/transport error.
+          api_get() { # <url>
+            local body_file code
+            body_file="$(mktemp)"
+            if [ -n "${TOKEN}" ]; then
+              code=$(curl -sS -o "${body_file}" -w '%{http_code}' -H "Authorization: JWT ${TOKEN}" "$1" || echo 000)
+            else
+              code=$(curl -sS -o "${body_file}" -w '%{http_code}' "$1" || echo 000)
+            fi
+            cat "${body_file}"; rm -f "${body_file}"
+            case "${code}" in
+              2*) return 0 ;;
+              404) return 44 ;;
+              *) echo "::error::GET $1 returned HTTP ${code}" >&2; return 1 ;;
+            esac
+          }
+
+          del() { # <repo> <tag>
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "[dry-run] would delete ${NAMESPACE}/$1:$2"
+            else
+              echo "deleting ${NAMESPACE}/$1:$2"
+              curl -fsS -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                "https://hub.docker.com/v2/repositories/${NAMESPACE}/$1/tags/$2/"
+            fi
+          }
+
+          scanned=0 img_del=0 sig_del=0 kept=0
+          for repo in "${REPOS[@]}"; do
+            echo "::group::${NAMESPACE}/${repo}"
+
+            # Snapshot every tag once (name, manifest digest, last_updated) so
+            # we can make two passes over the same data.
+            tags="$(mktemp)"
+            url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/?page_size=100"
+            while [ -n "${url}" ] && [ "${url}" != "null" ]; do
+              rc=0
+              resp=$(api_get "${url}") || rc=$?
+              if [ "${rc}" -eq 44 ]; then
+                echo "::warning::Skipping ${NAMESPACE}/${repo}: repository not found (404) — likely not published yet"
+                break
+              elif [ "${rc}" -ne 0 ]; then
+                exit 1
+              fi
+              echo "${resp}" | jq -r '.results[] | [.name, (.digest // ""), .last_updated] | @tsv' >> "${tags}"
+              url=$(echo "${resp}" | jq -r '.next // empty')
+            done
+
+            # Pass 1: delete aged-out ephemeral image tags (-rc./-dev). Record
+            # the digest of every tag we KEEP so pass 2 can tell which cosign
+            # signatures still back a live image.
+            declare -A LIVE=()
+            del_images=()
+            while IFS=$'\t' read -r name digest updated; do
+              [ -z "${name}" ] && continue
+              scanned=$((scanned + 1))
+              case "${name}" in
+                *.sig|*.att) continue ;; # signatures handled in pass 2
+              esac
+              eligible=false
+              case "${name}" in *-rc.*|*-dev|*-dev-*) eligible=true ;; esac
+              ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo "")
+              if [ -z "${ts}" ]; then
+                # Unparseable/missing last_updated: NEVER treat as age 0 (which
+                # would look ancient and delete a possibly-live tag). Keep it,
+                # and mark its digest live so pass 2 preserves any signature.
+                echo "::warning::${NAMESPACE}/${repo}:${name} has unparseable last_updated ('${updated}') — keeping"
+                kept=$((kept + 1))
+                [ -n "${digest}" ] && LIVE["${digest#sha256:}"]=1
+              elif [ "${eligible}" = "true" ] && [ "${ts}" -lt "${CUTOFF}" ]; then
+                del_images+=("${name}")
+              else
+                kept=$((kept + 1))
+                [ -n "${digest}" ] && LIVE["${digest#sha256:}"]=1
+              fi
+            done < "${tags}"
+
+            # Pass 2: a cosign signature is tagged `sha256-<digest>.sig`/`.att`.
+            # If <digest> is no longer backed by a live image tag (we just
+            # deleted it, or it went in a previous run) the signature is
+            # orphaned and safe to remove; release signatures stay in LIVE.
+            del_sigs=()
+            while IFS=$'\t' read -r name digest updated; do
+              [ -z "${name}" ] && continue
+              case "${name}" in
+                *.sig|*.att) : ;;
+                *) continue ;;
+              esac
+              hex="${name#sha256-}"; hex="${hex%.*}"
+              if [ -z "${LIVE[${hex}]:-}" ]; then
+                del_sigs+=("${name}")
+              else
+                kept=$((kept + 1))
+              fi
+            done < "${tags}"
+
+            for t in "${del_images[@]:-}"; do [ -n "${t}" ] && { del "${repo}" "${t}"; img_del=$((img_del + 1)); }; done
+            for t in "${del_sigs[@]:-}";   do [ -n "${t}" ] && { del "${repo}" "${t}"; sig_del=$((sig_del + 1)); }; done
+
+            unset LIVE
+            rm -f "${tags}"
+            echo "::endgroup::"
+          done
+
+          echo "Scanned: ${scanned} | image tags: ${img_del} | signatures: ${sig_del} | kept: ${kept} | dry_run=${DRY_RUN}"

@@ -1,0 +1,176 @@
+name: Build and Release
+
+# Single orchestrator for image builds + release. It computes the version ONCE
+# and passes it to the reusable per-family build workflows (base.yml, nvidia.yml,
+# rocm.yml), waits for all of them, and only then — on a releasable push to
+# main — tags vX.Y.Z and publishes a GitHub Release.
+#
+# This replaces the previous decoupled model where every workflow recomputed the
+# version independently and release.yml tagged without waiting for the builds
+# (so a release could be cut before/despite a failed or missing image family).
+on:
+  # Directory globs (not individual files) so no build-relevant input — e.g.
+  # requirements.txt, pre_start.sh, start.sh — is missed. Pipeline-only (ci:)
+  # changes to the workflow/action files intentionally do NOT trigger a build.
+  pull_request:
+    paths:
+      - "official-templates/**"
+      - "container-template/**"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# PR: cancel superseded runs (per ref). Push to main: SERIALIZE — a constant
+# group with cancel-in-progress:false makes a 2nd merge wait for the 1st to
+# finish (and create its tag), so two merges landing close together can't both
+# compute the same next version and race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'main-release' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Single source of truth for the version — computed once, passed to every build.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      suffix: ${{ steps.v.outputs.suffix }}
+      base-version: ${{ steps.v.outputs.base-version }}
+      should-build: ${{ steps.v.outputs.should-build }}
+      should-release: ${{ steps.v.outputs.should-release }}
+      tag: ${{ steps.v.outputs.tag }}
+      bump: ${{ steps.v.outputs.bump }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute version
+        id: v
+        uses: ./.github/actions/compute-version
+
+  # Per-family "does this PR touch anything that affects the family?" gate.
+  # Only needed on PRs (push/dispatch build every family). The `base` group is
+  # broad because base.yml builds the whole base -> pytorch -> {autoresearch,
+  # cluster} chain and its foundation image must exist for the RC.
+  changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      base: ${{ steps.f.outputs.base_any_changed }}
+      nvidia: ${{ steps.f.outputs.nvidia_any_changed }}
+      rocm: ${{ steps.f.outputs.rocm_any_changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed families
+        id: f
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
+        with:
+          files_yaml: |
+            base:
+              - 'official-templates/base/**'
+              - 'official-templates/pytorch/**'
+              - 'official-templates/autoresearch/**'
+              - 'official-templates/pytorch-cluster/**'
+              - 'official-templates/shared/**'
+              - 'container-template/**'
+            nvidia:
+              - 'official-templates/nvidia-pytorch/**'
+              - 'official-templates/base/**'
+              - 'official-templates/shared/**'
+              - 'container-template/**'
+            rocm:
+              - 'official-templates/rocm/**'
+              - 'official-templates/base/**'
+              - 'official-templates/shared/**'
+              - 'container-template/**'
+
+  base:
+    needs: [version, changes]
+    # !cancelled(): still run when `changes` was skipped (push/dispatch). Then
+    # build only if there's something to build (should-build) and, on a PR, only
+    # when a base-family input changed.
+    if: >-
+      !cancelled() && needs.version.outputs.should-build == 'true'
+      && (github.event_name != 'pull_request' || needs.changes.outputs.base == 'true')
+    uses: ./.github/workflows/base.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
+      suffix: ${{ needs.version.outputs.suffix }}
+      base_version: ${{ needs.version.outputs.base-version }}
+
+  nvidia:
+    needs: [version, changes]
+    if: >-
+      !cancelled() && needs.version.outputs.should-build == 'true'
+      && (github.event_name != 'pull_request' || needs.changes.outputs.nvidia == 'true')
+    uses: ./.github/workflows/nvidia.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
+      suffix: ${{ needs.version.outputs.suffix }}
+
+  rocm:
+    needs: [version, changes]
+    if: >-
+      !cancelled() && needs.version.outputs.should-build == 'true'
+      && (github.event_name != 'pull_request' || needs.changes.outputs.rocm == 'true')
+    uses: ./.github/workflows/rocm.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
+      suffix: ${{ needs.version.outputs.suffix }}
+
+  # Tag + GitHub Release ONLY on a releasable push to main, and ONLY after every
+  # family built and smoke-tested successfully — so we never publish a release
+  # that's missing an image family or built on a broken one.
+  release:
+    needs: [version, base, nvidia, rocm]
+    if: >-
+      github.event_name == 'push'
+      && needs.version.outputs.should-release == 'true'
+      && needs.base.result == 'success'
+      && needs.nvidia.result == 'success'
+      && needs.rocm.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create tag and GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: echo "Released ${{ needs.version.outputs.tag }} (bump ${{ needs.version.outputs.bump }})"
+
+  # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
+  # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
+  # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
+  cleanup:
+    needs: [version, release]
+    if: needs.version.outputs.should-release == 'true'
+    uses: ./.github/workflows/cleanup.yml
+    secrets: inherit

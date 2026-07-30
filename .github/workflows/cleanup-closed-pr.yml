@@ -1,0 +1,175 @@
+name: Cleanup RC Tags on PR Close
+
+# When a pull request is closed (merged or not) its release-candidate images
+# are no longer needed, so remove them promptly instead of waiting for the
+# age-based sweep. This deletes every
+#   runpod/<repo>:<version>-rc.<PR#>-<variant>
+# tag for the closed PR across all image repos, plus the cosign signatures
+# those images left behind (sha256-<digest>.sig / .att).
+#
+# The scheduled "Docker Hub Tag Cleanup" workflow still runs as the safety net:
+# it prunes -rc./-dev tags of long-idle OPEN PRs by age (>14 days), which this
+# event-driven cleanup deliberately does not touch.
+#
+# Note on scope: rocm images publish to runpod/base (as ...-rocm644-... tags),
+# so the four repos below cover every family.
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number whose -rc.<PR#> tags to remove"
+        required: true
+        type: string
+      dry_run:
+        description: "List what would be deleted without deleting"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cleanup-rc-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup-rc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete RC tags + signatures for the closed PR
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          # Must be a Docker Hub access token with DELETE permission on the
+          # runpod/* repos. A read/write push token is NOT enough.
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          NAMESPACE="runpod"
+          REPOS=(base pytorch nvidia-pytorch autoresearch)
+
+          PR="${PR_NUMBER:-}"
+          # Must be a positive integer with no leading zero — it's interpolated
+          # straight into the `-rc.${PR}` tag match below.
+          if [[ ! "${PR}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::PR number must be a positive integer (^[1-9][0-9]*$), got '${PR}'"
+            exit 1
+          fi
+
+          # A real PR-close event always deletes. A manual (workflow_dispatch)
+          # run defaults to dry-run so an operator can preview first.
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            DRY_RUN="${INPUT_DRY_RUN:-true}"
+          else
+            DRY_RUN="false"
+          fi
+          echo "Removing runpod/*:*-rc.${PR}-* tags | dry_run=${DRY_RUN}"
+
+          # Try to exchange username + token for a short-lived management JWT.
+          # Deletion REQUIRES it (PAT/OAT can't delete tags — see RELEASE docs).
+          # Listing public repos works WITHOUT it, so a dry-run can still
+          # preview. Soft (no -f / || true) so a 401 doesn't abort the script.
+          LOGIN_RESP=$(curl -sS -H "Content-Type: application/json" \
+            -d "{\"username\": \"${DOCKERHUB_USERNAME}\", \"password\": \"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/ 2>/dev/null || true)
+          TOKEN=$(printf '%s' "${LOGIN_RESP}" | jq -r '.token // empty' 2>/dev/null || true)
+          if [ -z "${TOKEN}" ]; then
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning::Docker Hub login failed; continuing unauthenticated (dry-run previews public repos only)"
+            else
+              echo "::error::Docker Hub login failed and this is not a dry-run — cannot delete."
+              exit 1
+            fi
+          fi
+
+          # GET with the JWT when we have one, anonymously otherwise (public
+          # repos). Prints the response body; returns 0 on 2xx, 44 on 404 so a
+          # caller can skip a repo that doesn't exist yet, and 1 on any other
+          # HTTP/transport error.
+          api_get() { # <url>
+            local body_file code
+            body_file="$(mktemp)"
+            if [ -n "${TOKEN}" ]; then
+              code=$(curl -sS -o "${body_file}" -w '%{http_code}' -H "Authorization: JWT ${TOKEN}" "$1" || echo 000)
+            else
+              code=$(curl -sS -o "${body_file}" -w '%{http_code}' "$1" || echo 000)
+            fi
+            cat "${body_file}"; rm -f "${body_file}"
+            case "${code}" in
+              2*) return 0 ;;
+              404) return 44 ;;
+              *) echo "::error::GET $1 returned HTTP ${code}" >&2; return 1 ;;
+            esac
+          }
+
+          del() { # <repo> <tag>
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "[dry-run] would delete ${NAMESPACE}/$1:$2"
+            else
+              echo "deleting ${NAMESPACE}/$1:$2"
+              curl -fsS -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                "https://hub.docker.com/v2/repositories/${NAMESPACE}/$1/tags/$2/"
+            fi
+          }
+
+          img_del=0 sig_del=0
+          for repo in "${REPOS[@]}"; do
+            echo "::group::${NAMESPACE}/${repo}"
+
+            # Snapshot every tag once (name + manifest digest).
+            tags="$(mktemp)"; delset="$(mktemp)"; liveset="$(mktemp)"
+            url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${repo}/tags/?page_size=100"
+            while [ -n "${url}" ] && [ "${url}" != "null" ]; do
+              rc=0
+              resp=$(api_get "${url}") || rc=$?
+              if [ "${rc}" -eq 44 ]; then
+                echo "::warning::Skipping ${NAMESPACE}/${repo}: repository not found (404) — likely not published yet"
+                break
+              elif [ "${rc}" -ne 0 ]; then
+                exit 1
+              fi
+              echo "${resp}" | jq -r '.results[] | [.name, (.digest // "")] | @tsv' >> "${tags}"
+              url=$(echo "${resp}" | jq -r '.next // empty')
+            done
+
+            # Pass 1: delete this PR's RC image tags; record their digests
+            # (delset) and the digests of everything we keep (liveset). The
+            # -rc.${PR}- / -rc.${PR} match is boundary-safe (rc.42 != rc.420).
+            while IFS=$'\t' read -r name digest; do
+              [ -z "${name}" ] && continue
+              case "${name}" in *.sig|*.att) continue ;; esac  # signatures -> pass 2
+              case "${name}" in
+                *-rc.${PR}-*|*-rc.${PR})
+                  del "${repo}" "${name}"; img_del=$((img_del + 1))
+                  [ -n "${digest}" ] && printf '%s\n' "${digest#sha256:}" >> "${delset}"
+                  ;;
+                *)
+                  [ -n "${digest}" ] && printf '%s\n' "${digest#sha256:}" >> "${liveset}"
+                  ;;
+              esac
+            done < "${tags}"
+
+            # Pass 2: delete signatures that backed a removed RC image and are
+            # not still referenced by a surviving tag.
+            while IFS=$'\t' read -r name digest; do
+              [ -z "${name}" ] && continue
+              case "${name}" in *.sig|*.att) : ;; *) continue ;; esac
+              hex="${name#sha256-}"; hex="${hex%.*}"
+              if grep -qxF "${hex}" "${delset}" 2>/dev/null \
+                 && ! grep -qxF "${hex}" "${liveset}" 2>/dev/null; then
+                del "${repo}" "${name}"; sig_del=$((sig_del + 1))
+              fi
+            done < "${tags}"
+
+            rm -f "${tags}" "${delset}" "${liveset}"
+            echo "::endgroup::"
+          done
+
+          echo "PR #${PR} | image tags: ${img_del} | signatures: ${sig_del} | dry_run=${DRY_RUN}"

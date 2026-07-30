@@ -1,4 +1,8 @@
-RELEASE_VERSION = "1.0.8"
+variable "RELEASE_VERSION" {
+  # Fallback for local `docker buildx bake` runs. In CI this is overridden
+  # from the latest git tag + Conventional Commits (see compute-version action).
+  default = "1.0.7"
+}
 
 variable "RELEASE_SUFFIX" {
   default = "" # Set by CI, not used by humans.

@@ -3,3 +3,9 @@
 *.pth
 
 __pycache__/
+
+# OS / editor artifacts
+.DS_Store
+**/.DS_Store
+Thumbs.db
+desktop.ini

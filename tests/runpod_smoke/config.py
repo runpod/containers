@@ -89,23 +89,22 @@ STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 REGISTRY_AUTH_ID = os.environ.get("REGISTRY_AUTH_ID", "")
 REGISTRY_AUTH_NAME = os.environ.get("REGISTRY_AUTH_NAME", "")
 
-# Every pod we create carries this absolute deadline so anything we
-# leak (crash before cleanup, hung SSH, KeyboardInterrupt without
-# cleanup, …) auto-terminates within AUTO_TERMINATE_HOURS hours.
+# Server-side auto-terminate window, passed to `--terminate-after` so
+# RunPod self-destructs anything we leak (crash before cleanup, hung SSH,
+# or — the common one — a GitHub Actions `cancel-in-progress` cancel that
+# SIGKILLs us before cleanup_all() finishes).
 #
-# NB: this MUST be recomputed per-pod, not once at module import.
-# Earlier we stored a module-level constant (`AUTO_TERMINATE = now+2h`),
-# which silently expired after the first 2h of any long-running session:
-# all pods created later got a `--terminate-after` timestamp IN THE
-# PAST, which RunPod accepts without complaint but never acts on, and
-# the pods kept burning credits until the user noticed. After a single
-# overnight run that cost real money this was changed to a function.
+# FORMAT: `runpodctl pod create --terminate-after` wants an RFC3339
+# DATETIME (`--help`: "auto-terminate datetime (e.g., 2026-04-15T00:00:00Z)"),
+# NOT a duration. So we pass an absolute `now + AUTO_TERMINATE_HOURS`
+# timestamp, recomputed per pod.
 AUTO_TERMINATE_HOURS = int(os.environ.get("AUTO_TERMINATE_HOURS", "2"))
 
 
 def auto_terminate_deadline() -> str:
     """Return an RFC3339 'Z' timestamp AUTO_TERMINATE_HOURS hours from
-    NOW. Always call this at pod-create time — never cache the result.
+    NOW — the datetime format `--terminate-after` expects. Always call
+    this at pod-create time; never cache the result.
     """
     return (
         datetime.now(timezone.utc) + timedelta(hours=AUTO_TERMINATE_HOURS)
