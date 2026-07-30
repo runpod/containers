@@ -1,0 +1,82 @@
+name: "Bake with retry"
+description: >-
+  Runs `docker buildx bake` once using the sticky-disk cache. If it fails
+  (most often a transient BuildKit sticky-disk cache corruption, e.g.
+  "failed to compute cache key ... unexpected commit digest ... failed
+  precondition"), it prunes the builder cache and retries ONCE with
+  --no-cache so the retry can't trip over the same poisoned cache entry.
+  Centralises the retry so every bake step stays a single one-line call.
+
+inputs:
+  files:
+    description: "Newline-separated list of bake definition files (HCL)."
+    required: true
+  targets:
+    description: "Optional newline-separated bake targets. Empty = default group."
+    required: false
+    default: ""
+  release-version:
+    description: "RELEASE_VERSION passed to bake (semver without leading v)."
+    required: true
+  release-suffix:
+    description: "RELEASE_SUFFIX passed to bake (empty for releases)."
+    required: false
+    default: ""
+  pytorch-base-version:
+    description: "PYTORCH_BASE_VERSION for cluster builds; ignored elsewhere."
+    required: false
+    default: ""
+
+outputs:
+  metadata:
+    description: "Bake metadata JSON from whichever attempt succeeded."
+    value: ${{ steps.build.outputs.metadata || steps.build_retry.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    # Attempt 1: normal build, WITH cache (fast path). continue-on-error so a
+    # transient cache failure doesn't abort the job before the retry runs.
+    - name: Bake
+      id: build
+      continue-on-error: true
+      uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+      env:
+        BUILDX_BAKE_ENTITLEMENTS_FS: 0
+        RELEASE_VERSION: ${{ inputs.release-version }}
+        RELEASE_SUFFIX: ${{ inputs.release-suffix }}
+        PYTORCH_BASE_VERSION: ${{ inputs.pytorch-base-version }}
+      with:
+        source: .
+        files: ${{ inputs.files }}
+        targets: ${{ inputs.targets }}
+        load: true
+        push: false
+
+    # Only runs if attempt 1 failed. Drop the (possibly poisoned) sticky-disk
+    # cache so the retry rebuilds the affected layers from scratch.
+    - name: Prune BuildKit cache before retry
+      if: steps.build.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::bake failed; pruning BuildKit cache (possible sticky-disk corruption) and retrying with --no-cache"
+        docker buildx prune --all --force || true
+
+    # Attempt 2: only on failure, WITHOUT cache. No continue-on-error here, so a
+    # second failure fails the job for real.
+    - name: Bake (retry, no cache)
+      id: build_retry
+      if: steps.build.outcome == 'failure'
+      uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+      env:
+        BUILDX_BAKE_ENTITLEMENTS_FS: 0
+        RELEASE_VERSION: ${{ inputs.release-version }}
+        RELEASE_SUFFIX: ${{ inputs.release-suffix }}
+        PYTORCH_BASE_VERSION: ${{ inputs.pytorch-base-version }}
+      with:
+        source: .
+        files: ${{ inputs.files }}
+        targets: ${{ inputs.targets }}
+        load: true
+        push: false
+        no-cache: true

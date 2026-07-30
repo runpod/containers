@@ -49,18 +49,13 @@ jobs:
 
       - name: Build base images
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
-        env:
-          BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+        uses: ./.github/actions/bake-retry
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          load: true
-          push: false
+          release-version: ${{ inputs.version }}
+          release-suffix: ${{ inputs.suffix }}
 
       - name: Extract image refs
         id: refs
@@ -183,18 +178,13 @@ jobs:
       - name: Build autoresearch images
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
-        env:
-          BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+        uses: ./.github/actions/bake-retry
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
-          load: true
-          push: false
+          release-version: ${{ inputs.version }}
+          release-suffix: ${{ inputs.suffix }}
 
       - name: Extract image refs
         id: refs
@@ -342,19 +332,14 @@ jobs:
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
-        env:
-          BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+        uses: ./.github/actions/bake-retry
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
           targets: ${{ matrix.cuda }}
-          load: true
-          push: false
+          release-version: ${{ inputs.version }}
+          release-suffix: ${{ inputs.suffix }}
 
       - name: Extract image refs
         id: refs
@@ -507,25 +492,20 @@ jobs:
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
-        env:
-          BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          # The cluster's OWN tag: version + suffix (RC/-dev/release).
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
-          # Which published runpod/pytorch to build FROM. If pytorch was
-          # (re)built in this run (push/dispatch, or a PR that changed pytorch),
-          # use that in-run tag (version+suffix). Otherwise (cluster-only PR)
-          # fall back to the last released pytorch — the only one that exists.
-          PYTORCH_BASE_VERSION: ${{ (github.event_name != 'pull_request' || needs.build-pytorch.outputs.changed == 'true') && format('{0}{1}', inputs.version, inputs.suffix) || inputs.base_version }}
+        uses: ./.github/actions/bake-retry
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch-cluster/docker-bake.hcl
           targets: ${{ matrix.cuda }}
-          load: true
-          push: false
+          # The cluster's OWN tag: version + suffix (RC/-dev/release).
+          release-version: ${{ inputs.version }}
+          release-suffix: ${{ inputs.suffix }}
+          # Which published runpod/pytorch to build FROM. If pytorch was
+          # (re)built in this run (push/dispatch, or a PR that changed pytorch),
+          # use that in-run tag (version+suffix). Otherwise (cluster-only PR)
+          # fall back to the last released pytorch — the only one that exists.
+          pytorch-base-version: ${{ (github.event_name != 'pull_request' || needs.build-pytorch.outputs.changed == 'true') && format('{0}{1}', inputs.version, inputs.suffix) || inputs.base_version }}
 
       - name: Extract image refs
         id: refs

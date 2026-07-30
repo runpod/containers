@@ -1,0 +1,78 @@
+name: Manual Release (break-glass)
+
+# BREAK-GLASS ONLY. Use this when a version's images were ALREADY built and
+# pushed by a prior "Build and Release" run, but that run's `release` job got
+# stuck in `skipped` — e.g. a flaky build failed and turned the strict
+# release gate false, and GitHub's "Re-run failed jobs" never resurrects a
+# job that ended up `skipped` (only `failure`/`cancelled` ones). See
+# release.yml. This workflow does NOT build, scan, sign or push anything; it
+# only creates the git tag + GitHub Release the stuck run failed to publish.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Exact tag to publish, e.g. v1.1.0. Images for this version MUST already be built and pushed."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Share the push-release lane from release.yml (group is a cross-workflow
+# string) so a manual release can't run while a real push release is in
+# flight for main.
+concurrency:
+  group: "Build and Release-main-release"
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Guard — main only
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Manual release must be run from main (got ${{ github.ref }})"
+          exit 1
+
+      - name: Validate tag input
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must look like vMAJOR.MINOR.PATCH (got '$TAG')"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Ensure tag does not already exist
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::tag ${TAG} already exists — nothing to do (release already published?)"
+            exit 1
+          fi
+
+      - name: Create tag and GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: echo "Manually released ${{ inputs.tag }} at ${GITHUB_SHA} (images assumed already pushed)."
