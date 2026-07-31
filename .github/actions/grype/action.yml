@@ -1,5 +1,5 @@
 name: Grype
-description: "Scan Docker images with Grype. For now it's report-only and doesn't fail the build, until we fix the vulnerabilities."
+description: "Scan Docker images with Grype. Report-only by default; set fail-on-findings to fail the build on CRITICAL/HIGH (fixed) vulnerabilities."
 
 inputs:
   image-refs:
@@ -9,6 +9,10 @@ inputs:
     description: "Maximum number of Grype scans to run concurrently"
     required: false
     default: "2"
+  fail-on-findings:
+    description: "When 'true', fail the build if any CRITICAL/HIGH (fixed) vulnerabilities are found. When 'false' (default), only report them."
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -42,6 +46,7 @@ runs:
       env:
         IMAGE_REFS: ${{ inputs.image-refs }}
         MAX_PARALLEL_SCANS: ${{ inputs.max-parallel-scans }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
       run: |
         set -uo pipefail
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
@@ -102,7 +107,10 @@ runs:
         if [ ${#failed[@]} -gt 0 ]; then
           echo "::error::Grype found CRITICAL/HIGH vulnerabilities in:"
           printf '  - %s\n' "${failed[@]}"
-          # exit 1 # TODO: Uncomment this when we fix the vulnerabilities
+          if [ "${FAIL_ON_FINDINGS}" = "true" ]; then
+            exit 1
+          fi
+          echo "fail-on-findings is not enabled; reporting only."
         else
           echo "All images clean of CRITICAL/HIGH (fixed) vulnerabilities."
         fi

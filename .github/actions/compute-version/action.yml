@@ -65,9 +65,9 @@ runs:
         HEAD_SHA="$(git rev-parse HEAD)"
 
         # Highest release tag that is a proper ancestor of HEAD. Two filters:
-        #   * skip tags ON HEAD — keeps the computation stable even if
-        #     release.yml already tagged this same push (avoids an empty commit
-        #     range -> a false "none" bump).
+        #   * skip tags ON HEAD — if release.yml already tagged this same push,
+        #     we must still base off the PREVIOUS release, not HEAD's own tag,
+        #     so re-running recomputes the same version instead of bumping again.
         #   * skip tags NOT reachable from HEAD — so re-running an OLDER commit
         #     after a newer release exists doesn't pick that newer, unrelated
         #     tag as its base (it would compute a wrong/backwards version).
@@ -84,10 +84,8 @@ runs:
 
         if [ -n "$LATEST" ]; then
           BASE="${LATEST#v}"
-          RANGE="${LATEST}..HEAD"
         else
           BASE="$FALLBACK"
-          RANGE=""
         fi
 
         # Detect the Conventional Commits bump level for a block of text.
@@ -109,13 +107,11 @@ runs:
           # Squash merge: the PR title is the future main commit subject.
           BUMP="$(detect_bump "$PR_TITLE")"
         else
-          # Push/release: read the actual commits landed since the base.
-          if [ -n "$RANGE" ]; then
-            LOG="$(git log "$RANGE" --pretty=format:'%s%n%b%n--END--')"
-          else
-            LOG="$(git log --pretty=format:'%s%n%b%n--END--')"
-          fi
-          BUMP="$(detect_bump "$LOG")"
+          # Push/release: we squash-merge, so HEAD is the single commit that
+          # just landed on main and its SUBJECT is the PR title. Detect the
+          # bump from that subject ONLY.
+          SUBJECT="$(git log -1 --pretty=format:'%s')"
+          BUMP="$(detect_bump "$SUBJECT")"
         fi
 
         IFS='.' read -r MAJOR MINOR PATCH <<<"$BASE"

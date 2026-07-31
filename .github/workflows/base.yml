@@ -45,6 +45,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/base
 
       - name: Build base images
         id: build
@@ -71,6 +72,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -176,6 +178,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/autoresearch
 
       - name: Build autoresearch images
         id: build
@@ -334,6 +337,7 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
           max-parallelism: 6
+          cache-key: ${{ github.repository }}/pytorch-${{ matrix.cuda }}
 
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
@@ -364,6 +368,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
@@ -497,6 +502,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}
 
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
