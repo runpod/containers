@@ -45,15 +45,20 @@ jobs:
 
       - name: Build rocm images (${{ matrix.rocm }})
         id: build
-        uses: ./.github/actions/bake-retry
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUFFIX: ${{ inputs.suffix }}
         with:
+          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/rocm/docker-bake.hcl
+          load: true
+          push: false
           targets: |
             ${{ matrix.rocm }}
-          release-version: ${{ inputs.version }}
-          release-suffix: ${{ inputs.suffix }}
 
       - name: Extract image refs
         id: refs
