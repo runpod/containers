@@ -27,13 +27,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG DCGM_PACKAGE=datacenter-gpu-manager-4-cuda12
 
 # RDMA/InfiniBand user-space stack, supervisor (process manager for the
-# monitoring daemons), and the DCGM runtime (provides libdcgm for the
-# embedded dcgm-exporter). The NVIDIA CUDA apt repo is already configured in
-# the base image.
+# monitoring daemons), the DCGM runtime (provides libdcgm for the embedded
+# dcgm-exporter), and MariaDB (server + client) for the Slurm accounting
+# (slurmdbd) backend on node-0. The NVIDIA CUDA apt repo is already configured
+# in the base image.
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         libibverbs1 ibverbs-providers rdma-core ibverbs-utils infiniband-diags perftest \
         supervisor \
+        unzip \
+        mariadb-server mariadb-client \
         "${DCGM_PACKAGE}" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -73,6 +76,33 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/grafana.tar.gz \
     ln -sf /usr/share/grafana/bin/grafana /usr/local/bin/grafana && \
     rm -f /tmp/grafana.tar.gz
 
+# Loki — log aggregation store, head-node only (pinned + SHA-256 verified).
+# Ships as a zip (bare `loki-linux-amd64` binary, no wrapping dir) — hence unzip
+# above, unlike the tar.gz downloads. ⚠️ Re-verify the extracted name on bumps.
+ARG LOKI_VERSION=3.7.3
+ARG LOKI_SHA256=cd28bc1e12f005c39fdf3c49e6be793206749b0f16db5eed742727b484a027ae
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/loki.zip \
+        "https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}/loki-linux-amd64.zip" && \
+    echo "${LOKI_SHA256}  /tmp/loki.zip" | sha256sum -c - && \
+    unzip -o /tmp/loki.zip -d /tmp && \
+    mv /tmp/loki-linux-amd64 /usr/local/bin/loki && \
+    chmod +x /usr/local/bin/loki && \
+    rm -f /tmp/loki.zip
+
+# Grafana Alloy — log shipper, runs on every node (pinned + SHA-256 verified).
+# Alloy is the supported successor to Promtail (Promtail is EOL and was dropped
+# from Loki releases after 3.5.x). Separate repo/versioning from Loki. Ships as
+# a zip with a bare `alloy-linux-amd64` binary.
+ARG ALLOY_VERSION=1.17.1
+ARG ALLOY_SHA256=b92bfa2815a0a2c51477b4965d1ace3bf2ffc7b841e1361bd4cda6069e8c65bd
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/alloy.zip \
+        "https://github.com/grafana/alloy/releases/download/v${ALLOY_VERSION}/alloy-linux-amd64.zip" && \
+    echo "${ALLOY_SHA256}  /tmp/alloy.zip" | sha256sum -c - && \
+    unzip -o /tmp/alloy.zip -d /tmp && \
+    mv /tmp/alloy-linux-amd64 /usr/local/bin/alloy && \
+    chmod +x /usr/local/bin/alloy && \
+    rm -f /tmp/alloy.zip
+
 # dcgm-exporter — GPU metrics (embedded DCGM mode; links libdcgm from apt).
 COPY --from=dcgm-exporter-src /usr/bin/dcgm-exporter /usr/local/bin/dcgm-exporter
 COPY --from=dcgm-exporter-src /etc/dcgm-exporter /etc/dcgm-exporter
@@ -84,6 +114,11 @@ COPY config/dcgm/extended-counters.csv /etc/dcgm-exporter/extended-counters.csv
 COPY config/supervisor/cluster.conf /etc/supervisor/conf.d/cluster.conf
 COPY config/grafana.ini /etc/grafana/grafana.ini
 COPY config/provisioning /etc/grafana/provisioning
+# Log-aggregation config: Loki (head-node store) + Alloy (per-node shipper).
+COPY config/loki/loki.yaml /etc/loki/loki.yaml
+COPY config/alloy/config.alloy /etc/alloy/config.alloy
+# MariaDB drop-in tuning for the Slurm accounting backend (head-node only).
+COPY config/mariadb/99-slurm-acct.cnf /etc/mysql/mariadb.conf.d/99-slurm-acct.cnf
 # Tiny shared-token front proxy for Grafana (mirrors Jupyter's token model and
 # reuses the same JUPYTER_PASSWORD secret, passed in the URL as ?token=). Pure
 # stdlib — no extra deps. It checks the token and injects the auth.proxy header.
@@ -93,7 +128,8 @@ COPY config/dashboards /var/lib/grafana/dashboards
 COPY --chmod=755 post_start.sh /post_start.sh
 
 RUN mkdir -p /etc/prometheus /var/lib/prometheus \
-             /var/lib/grafana /var/log/grafana /var/log/supervisor
+             /var/lib/grafana /var/log/grafana /var/log/supervisor \
+             /var/lib/loki /var/lib/alloy/data
 
 # Exposed service: the Grafana UI is served on 8889 (via the auth proxy). The
 # Runpod template for this variant must map 8889/HTTP named "Grafana".
