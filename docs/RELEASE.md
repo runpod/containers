@@ -26,7 +26,9 @@ cut while a family is still building or has failed.
 ## TL;DR
 
 1. Open a PR. **The PR title must be a Conventional Commit** (e.g. `feat: add X`) —
-   we squash-merge, so the PR title becomes the commit on `main`.
+   we squash-merge, so the PR title becomes the commit subject on `main`. For a
+   breaking change use `feat!: …` in the title and preferably a `BREAKING CHANGE:`
+   footer in the description.
 2. CI builds **release-candidate** images for your PR, tagged `X.Y.Z-rc.<PR#>`.
 3. Merge the PR. CI:
    - computes the next version from the commit type,
@@ -45,7 +47,7 @@ Commit type:
 | ----------------------------------------- | -------------------------------- | ------ | --------------- |
 | `feat:`                                   | `feat: add comfyui template`     | minor  | `1.1.0`         |
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
-| `feat!:` / any type with `!` / `BREAKING CHANGE` | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
+| `feat!:` / any type with `!` in the title, or a `BREAKING CHANGE:` footer | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
 | `ci:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build`   | none   | no release      |
 
 Notes:
@@ -56,6 +58,10 @@ Notes:
 - One global version covers **all** image families (base, pytorch,
   nvidia-pytorch, rocm, autoresearch). A release tags every family with the same
   version.
+- **Breaking changes:** mark the PR title with `!` (`feat!: …`) and preferably
+  add a `BREAKING CHANGE:` footer in the description. If the title has no `!`
+  but the description has a proper `BREAKING CHANGE:` / `BREAKING-CHANGE:`
+  footer (own line, with a colon), the release is still **major**.
 
 ---
 
@@ -137,8 +143,10 @@ Key behaviours:
   HEAD** (skipping any tag on the current commit, to stay stable during the
   release step, and any tag not in HEAD's history, so re-running an older commit
   doesn't pick up a newer unrelated tag). It reads the Conventional Commit type
-  and applies the bump. On PRs it reads the **PR title** (we squash-merge); on
-  `main` it reads the actual commits.
+  and applies the bump. `feat`/`fix`/`perf`/`none` come from the **PR title**
+  (squash-commit subject). A major bump is `type!:` in that title **or** a
+  git-trailer `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer in the description.
+  Body lines like `* feat: …` from a squash are ignored.
 - **Release waits for the builds.** The `release` job `needs` every family and
   only tags/releases when all of them succeeded on a `push` to `main` — never a
   partial release. Pushes to `main` are serialized via `concurrency` to avoid a
@@ -172,8 +180,23 @@ Key behaviours:
 
 ### Ship a breaking change (major)
 
-- Use `!` after the type or a `BREAKING CHANGE:` footer, e.g. `feat!: remove
-  python 3.10 images`. This bumps the major version.
+Mark it in the **PR title** with `!` after the type, and preferably also add a
+footer in the PR description:
+
+```
+feat!: remove python 3.10 images
+
+BREAKING CHANGE: python 3.10 images are no longer published
+```
+
+On squash-merge the title becomes the commit subject and the description
+becomes the body, so both signals land in git.
+
+If the title has no `!` but the description contains a footer on its own line
+(`BREAKING CHANGE:` or `BREAKING-CHANGE:`, with a colon), the release is still
+major. A mention of "BREAKING CHANGE" in prose that is not that footer does
+not count. `feat:` / `fix:` lines listed in the squash body do not count
+either.
 
 ### Test a change without releasing
 
@@ -235,6 +258,10 @@ Key behaviours:
   checks to these names — the old standalone workflow names no longer report.
 - **Merge strategy:** the repo uses **squash merge**. The PR title is what drives
   the version, so keep it Conventional-Commit compliant.
+- **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
+  (`docker-setup`) so they cannot poison the keys used by main/release. Also
+  enable Sticky Disk **Branch Protection** in the Blacksmith dashboard — that
+  setting is not in git.
 
 ---
 

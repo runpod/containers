@@ -7,6 +7,10 @@ name: Manual Release (break-glass)
 # job that ended up `skipped` (only `failure`/`cancelled` ones). See
 # release.yml. This workflow does NOT build, scan, sign or push anything; it
 # only creates the git tag + GitHub Release the stuck run failed to publish.
+#
+# The tag is created on the source run's commit, not on whatever main happens
+# to be at dispatch time. Passing only a tag would otherwise label a newer
+# main commit whose tree (and generated notes) do not match the images.
 on:
   workflow_dispatch:
     inputs:
@@ -14,9 +18,14 @@ on:
         description: "Exact tag to publish, e.g. v1.1.0. Images for this version MUST already be built and pushed."
         required: true
         type: string
+      source_run_id:
+        description: "ID of the original Build and Release run that built and pushed this version. The git tag is created on that run's commit."
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 # Share the push-release lane from release.yml (group is a cross-workflow
 # string) so a manual release can't run while a real push release is in
@@ -30,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Guard — main only
         if: github.ref != 'refs/heads/main'
@@ -47,11 +57,96 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout
+      - name: Resolve source run
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::source_run_id must be a numeric workflow run ID (got '$SOURCE_RUN_ID')"
+            exit 1
+          fi
+
+          RUN_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
+          HEAD_SHA="$(jq -r '.head_sha' <<<"$RUN_JSON")"
+          HEAD_BRANCH="$(jq -r '.head_branch // empty' <<<"$RUN_JSON")"
+          EVENT="$(jq -r '.event' <<<"$RUN_JSON")"
+          PATH_NAME="$(jq -r '.path' <<<"$RUN_JSON")"
+          RUN_URL="$(jq -r '.html_url' <<<"$RUN_JSON")"
+
+          if [ "$PATH_NAME" != ".github/workflows/release.yml" ]; then
+            echo "::error::source_run_id ${SOURCE_RUN_ID} is ${PATH_NAME}, not Build and Release (.github/workflows/release.yml)"
+            exit 1
+          fi
+          if [ "$EVENT" != "push" ]; then
+            echo "::error::source run ${SOURCE_RUN_ID} event is '${EVENT}', expected push (${RUN_URL})"
+            exit 1
+          fi
+          if [ "$HEAD_BRANCH" != "main" ]; then
+            echo "::error::source run ${SOURCE_RUN_ID} head_branch is '${HEAD_BRANCH}', expected main (${RUN_URL})"
+            exit 1
+          fi
+
+          # Require every job to have succeeded, except orchestrator jobs that
+          # are skipped by design on this path (`release` is the break-glass
+          # gap; `changes` is PR-only). New image families show up as
+          # "<family> / <job>" and are covered automatically.
+          built=0
+          bad=0
+          while IFS=$'\t' read -r name conclusion; do
+            [ -z "$name" ] && continue
+            case "$name" in
+              release|changes|cleanup) continue ;;
+            esac
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::source run ${SOURCE_RUN_ID} job '${name}' is '${conclusion}', expected success (${RUN_URL})"
+              bad=$((bad + 1))
+            fi
+            case "$name" in
+              *" / "*) built=$((built + 1)) ;;
+            esac
+          done < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs" \
+              --jq '.jobs[] | [.name, .conclusion] | @tsv'
+          )
+
+          if [ "$built" -eq 0 ]; then
+            echo "::error::source run ${SOURCE_RUN_ID} has no family build jobs (${RUN_URL})"
+            exit 1
+          fi
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::${bad} job(s) on source run ${SOURCE_RUN_ID} did not succeed — refusing to tag"
+            exit 1
+          fi
+
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "run_url=${RUN_URL}" >> "$GITHUB_OUTPUT"
+          echo "Source run ${SOURCE_RUN_ID}: ${RUN_URL}"
+          echo "Will tag at ${HEAD_SHA}"
+
+      - name: Checkout source commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
           fetch-tags: true
+          ref: ${{ steps.source.outputs.head_sha }}
+
+      - name: Verify commit belongs to main
+        env:
+          HEAD_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::error::checkout HEAD $(git rev-parse HEAD) does not match source run SHA ${HEAD_SHA}"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
+            echo "::error::${HEAD_SHA} is not an ancestor of origin/main — refusing to tag a commit that is not on main"
+            exit 1
+          fi
 
       - name: Ensure tag does not already exist
         env:
@@ -69,10 +164,12 @@ jobs:
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.source.outputs.head_sha }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
-        run: echo "Manually released ${{ inputs.tag }} at ${GITHUB_SHA} (images assumed already pushed)."
+        run: |
+          echo "Manually released ${{ inputs.tag }} at ${{ steps.source.outputs.head_sha }}"
+          echo "Source run: ${{ steps.source.outputs.run_url }}"

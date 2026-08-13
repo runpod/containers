@@ -12,7 +12,10 @@ inputs:
     required: false
     default: 8
   cache-key:
-    description: 'Sticky-disk cache lineage key. Use a distinct value per image family (e.g. base, pytorch, rocm) so families do not thrash each other''s BuildKit cache. Required by setup-docker-builder v2.'
+    description: >-
+      Sticky-disk cache lineage key for this image family (e.g. runpod/containers/base).
+      Trusted main builds use this key as-is. Pull requests and off-main dispatches
+      get a `/pr` suffix so they cannot commit into the release cache lineage.
     required: true
 
 runs:
@@ -65,11 +68,31 @@ runs:
         username: ${{ inputs.dockerhub-username }}
         password: ${{ inputs.dockerhub-token }}
 
+    - name: Resolve sticky-disk cache key
+      id: cache
+      shell: bash
+      env:
+        FAMILY_KEY: ${{ inputs.cache-key }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+      run: |
+        set -euo pipefail
+        # PR jobs share sticky disks with main by default and can poison the
+        # snapshot release builds hydrate from. Isolate untrusted writes:
+        # https://docs.blacksmith.sh/blacksmith-caching/dependencies-sticky-disks
+        if [ "$EVENT_NAME" != "pull_request" ] && [ "$REF" = "refs/heads/main" ]; then
+          KEY="$FAMILY_KEY"
+        else
+          KEY="${FAMILY_KEY}/pr"
+        fi
+        echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+        echo "Sticky-disk cache key: ${KEY}"
+
     - name: Set up Docker Build
       uses: useblacksmith/setup-docker-builder@1e75355f81cbb3f93cba1eb5dd5e5b05110ca8f9 # v2.0.1
       with:
         max-parallelism: ${{ inputs.max-parallelism }}
-        cache-key: ${{ inputs.cache-key }}
+        cache-key: ${{ steps.cache.outputs.key }}
 
     - name: Inspect buildx builder
       shell: bash

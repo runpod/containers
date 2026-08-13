@@ -97,7 +97,7 @@ RUN mkdir -p /etc/prometheus /var/lib/prometheus \
 
 # Exposed service: the Grafana UI is served on 8889 (via the auth proxy). The
 # Runpod template for this variant must map 8889/HTTP named "Grafana".
-# (Inherited from pytorch/base: 8888 Jupyter, 22 SSH, 8080 filebrowser.)
+# (Inherited from pytorch/base: 8888 Jupyter, 22 SSH.)
 EXPOSE 8889
 LABEL com.runpod.template.variant="pytorch-cluster" \
       com.runpod.ports.8889="Grafana (HTTP)"
