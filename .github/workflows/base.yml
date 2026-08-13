@@ -147,7 +147,7 @@ jobs:
 
   build-autoresearch:
     needs: build-base
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: needs.build-base.result == 'success'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -294,8 +294,7 @@ jobs:
 
   build-pytorch:
     needs: build-base
-    # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: needs.build-base.result == 'success'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
@@ -465,8 +464,7 @@ jobs:
   # skips the pytorch rebuild and layers on the last released pytorch instead.
   build-cluster:
     needs: build-pytorch
-    # always() forces run even if build-pytorch is skipped (but not if it failed).
-    if: always() && (needs.build-pytorch.result == 'success' || needs.build-pytorch.result == 'skipped')
+    if: needs.build-pytorch.result == 'success'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read
