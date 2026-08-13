@@ -7,6 +7,10 @@ name: Manual Release (break-glass)
 # job that ended up `skipped` (only `failure`/`cancelled` ones). See
 # release.yml. This workflow does NOT build, scan, sign or push anything; it
 # only creates the git tag + GitHub Release the stuck run failed to publish.
+#
+# The tag is created on the source run's commit, not on whatever main happens
+# to be at dispatch time. Passing only a tag would otherwise label a newer
+# main commit whose tree (and generated notes) do not match the images.
 on:
   workflow_dispatch:
     inputs:
@@ -14,9 +18,14 @@ on:
         description: "Exact tag to publish, e.g. v1.1.0. Images for this version MUST already be built and pushed."
         required: true
         type: string
+      source_run_id:
+        description: "ID of the original Build and Release run that built and pushed this version. The git tag is created on that run's commit."
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 # Share the push-release lane from release.yml (group is a cross-workflow
 # string) so a manual release can't run while a real push release is in
@@ -30,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Guard — main only
         if: github.ref != 'refs/heads/main'
@@ -47,11 +57,109 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout
+      - name: Resolve and verify source run
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::source_run_id must be a numeric workflow run ID (got '$SOURCE_RUN_ID')"
+            exit 1
+          fi
+
+          RUN_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
+          HEAD_SHA="$(jq -r '.head_sha' <<<"$RUN_JSON")"
+          HEAD_BRANCH="$(jq -r '.head_branch // empty' <<<"$RUN_JSON")"
+          EVENT="$(jq -r '.event' <<<"$RUN_JSON")"
+          PATH_NAME="$(jq -r '.path' <<<"$RUN_JSON")"
+          RUN_URL="$(jq -r '.html_url' <<<"$RUN_JSON")"
+
+          if [ "$PATH_NAME" != ".github/workflows/release.yml" ]; then
+            echo "::error::source_run_id ${SOURCE_RUN_ID} is ${PATH_NAME}, not Build and Release (.github/workflows/release.yml)"
+            exit 1
+          fi
+          if [ "$EVENT" != "push" ]; then
+            echo "::error::source run ${SOURCE_RUN_ID} event is '${EVENT}', expected push to main (${RUN_URL})"
+            exit 1
+          fi
+          if [ "$HEAD_BRANCH" != "main" ]; then
+            echo "::error::source run ${SOURCE_RUN_ID} head_branch is '${HEAD_BRANCH}', expected main (${RUN_URL})"
+            exit 1
+          fi
+
+          # Reusable-workflow jobs are flattened as "base / build-base",
+          # "nvidia / test-nvidia (pytorch2511)", etc. Require version plus
+          # every base/nvidia/rocm job to have succeeded (release is skipped
+          # in the break-glass case we recover from).
+          version_conclusion=""
+          bad=0
+          declare -A family_seen
+          while IFS=$'\t' read -r name conclusion; do
+            [ -z "$name" ] && continue
+            if [ "$name" = "version" ]; then
+              version_conclusion="$conclusion"
+              continue
+            fi
+            case "$name" in
+              "base /"*|"nvidia /"*|"rocm /"*)
+                family="${name%% /*}"
+                family_seen["$family"]=1
+                if [ "$conclusion" != "success" ]; then
+                  echo "::error::source run ${SOURCE_RUN_ID} job '${name}' conclusion is '${conclusion}', expected success (${RUN_URL})"
+                  bad=$((bad + 1))
+                fi
+                ;;
+            esac
+          done < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs" \
+              --jq '.jobs[] | [.name, .conclusion] | @tsv'
+          )
+
+          if [ "$version_conclusion" != "success" ]; then
+            echo "::error::source run ${SOURCE_RUN_ID} job 'version' conclusion is '${version_conclusion:-missing}', expected success (${RUN_URL})"
+            exit 1
+          fi
+          for family in base nvidia rocm; do
+            if [ -z "${family_seen[$family]:-}" ]; then
+              echo "::error::source run ${SOURCE_RUN_ID} has no '${family} / …' jobs (${RUN_URL})"
+              exit 1
+            fi
+          done
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::${bad} family job(s) on source run ${SOURCE_RUN_ID} did not succeed — refusing to tag"
+            exit 1
+          fi
+
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "run_url=${RUN_URL}" >> "$GITHUB_OUTPUT"
+          echo "Source run ${SOURCE_RUN_ID}: ${RUN_URL}"
+          echo "Will tag ${TAG} at ${HEAD_SHA}"
+
+      - name: Checkout source commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
           fetch-tags: true
+          ref: ${{ steps.source.outputs.head_sha }}
+
+      - name: Verify commit belongs to main
+        env:
+          HEAD_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          RESOLVED="$(git rev-parse HEAD)"
+          if [ "$RESOLVED" != "$HEAD_SHA" ]; then
+            echo "::error::checkout HEAD ${RESOLVED} does not match source run SHA ${HEAD_SHA}"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
+            echo "::error::${HEAD_SHA} is not an ancestor of origin/main — refusing to tag a commit that is not on main"
+            exit 1
+          fi
 
       - name: Ensure tag does not already exist
         env:
@@ -64,15 +172,83 @@ jobs:
             exit 1
           fi
 
+      - name: Confirm computed version matches the tag
+        uses: ./.github/actions/compute-version
+        id: version
+
+      - name: Check version matches
+        env:
+          TAG: ${{ inputs.tag }}
+          COMPUTED: ${{ steps.version.outputs.tag }}
+          BUMP: ${{ steps.version.outputs.bump }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPUTED" != "$TAG" ]; then
+            echo "::error::compute-version at this commit produced ${COMPUTED} (bump ${BUMP}), not ${TAG}"
+            exit 1
+          fi
+
+      - name: Verify published image manifests
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          export RELEASE_VERSION="$VERSION"
+          export RELEASE_SUFFIX=""
+          export PYTORCH_BASE_VERSION="$VERSION"
+
+          bake_tags() {
+            local file="$1"
+            shift
+            docker buildx bake \
+              --print \
+              --progress=quiet \
+              --file official-templates/shared/versions.hcl \
+              --file "$file" \
+              "$@" \
+              | jq -r '.target | to_entries[] | .value.tags[]? // empty'
+          }
+
+          mapfile -t tags < <({
+            bake_tags official-templates/base/docker-bake.hcl
+            bake_tags official-templates/pytorch/docker-bake.hcl
+            bake_tags official-templates/pytorch-cluster/docker-bake.hcl
+            bake_tags official-templates/nvidia-pytorch/docker-bake.hcl pytorch2511
+            bake_tags official-templates/rocm/docker-bake.hcl rocm644
+            bake_tags official-templates/autoresearch/docker-bake.hcl
+          } | awk 'NF && !seen[$0]++')
+
+          if [ ${#tags[@]} -eq 0 ]; then
+            echo "::error::bake --print produced no image tags"
+            exit 1
+          fi
+
+          echo "Checking ${#tags[@]} image manifests for ${VERSION}"
+          missing=0
+          for ref in "${tags[@]}"; do
+            echo "::group::inspect ${ref}"
+            if ! docker buildx imagetools inspect "$ref"; then
+              echo "::error::missing image manifest: ${ref}"
+              missing=$((missing + 1))
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::${missing} expected image(s) for ${VERSION} are not in the registry — refusing to tag"
+            exit 1
+          fi
+
       - name: Create tag and GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.source.outputs.head_sha }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
-        run: echo "Manually released ${{ inputs.tag }} at ${GITHUB_SHA} (images assumed already pushed)."
+        run: |
+          echo "Manually released ${{ inputs.tag }} at ${{ steps.source.outputs.head_sha }}"
+          echo "Source run: ${{ steps.source.outputs.run_url }}"

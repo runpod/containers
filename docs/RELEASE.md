@@ -45,7 +45,7 @@ Commit type:
 | ----------------------------------------- | -------------------------------- | ------ | --------------- |
 | `feat:`                                   | `feat: add comfyui template`     | minor  | `1.1.0`         |
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
-| `feat!:` / any type with `!` / `BREAKING CHANGE` | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
+| `feat!:` / any type with `!` in the subject, or a `BREAKING CHANGE:` footer | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
 | `ci:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build`   | none   | no release      |
 
 Notes:
@@ -121,7 +121,8 @@ Image repositories: `runpod/base`, `runpod/pytorch`, `runpod/nvidia-pytorch`,
 | File                                             | Role                                                                 |
 | ------------------------------------------------ | -------------------------------------------------------------------- |
 | `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, computes the version once (`version` job), gates which families build on a PR (`changes` job), calls the reusable build workflows, and creates the tag `vX.Y.Z` + GitHub Release once every family succeeds. |
-| `.github/actions/compute-version/action.yml`     | Computes version, suffix, `base-version`, and the `should-build` / `should-release` flags from the latest tag + commits/PR title. |
+| `.github/actions/compute-version/action.yml`     | Computes version, suffix, `base-version`, and the `should-build` / `should-release` flags from the latest tag + commit subject / `BREAKING CHANGE:` footer. |
+| `.github/workflows/manual-release.yml`           | Break-glass: creates the git tag + GitHub Release for an already-built version, pinned to the original *Build and Release* run's commit after verifying that run and the image manifests. |
 | `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Builds base → pytorch → {autoresearch, pytorch-cluster}. |
 | `.github/workflows/nvidia.yml`                   | **Reusable** (`workflow_call`). Builds nvidia-pytorch. |
 | `.github/workflows/rocm.yml`                     | **Reusable** (`workflow_call`). Builds rocm. |
@@ -137,8 +138,11 @@ Key behaviours:
   HEAD** (skipping any tag on the current commit, to stay stable during the
   release step, and any tag not in HEAD's history, so re-running an older commit
   doesn't pick up a newer unrelated tag). It reads the Conventional Commit type
-  and applies the bump. On PRs it reads the **PR title** (we squash-merge); on
-  `main` it reads the actual commits.
+  and applies the bump. The **subject** (PR title / squash-commit first line)
+  decides `feat`/`fix`/`perf`/`none`; a major bump is `type!:` in that subject
+  **or** a git-trailer `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer. Body
+  lines like `* feat: …` from a squash description are ignored, so they cannot
+  phantom-bump a `ci:`/`chore:` merge.
 - **Release waits for the builds.** The `release` job `needs` every family and
   only tags/releases when all of them succeeded on a `push` to `main` — never a
   partial release. Pushes to `main` are serialized via `concurrency` to avoid a
@@ -172,8 +176,14 @@ Key behaviours:
 
 ### Ship a breaking change (major)
 
-- Use `!` after the type or a `BREAKING CHANGE:` footer, e.g. `feat!: remove
-  python 3.10 images`. This bumps the major version.
+- Put `!` after the type in the **PR title** (the squash subject), e.g.
+  `feat!: remove python 3.10 images`, **or** add a git-trailer footer on its
+  own line in the PR description:
+  ```
+  BREAKING CHANGE: remove the previous interface
+  ```
+  Either form bumps the major version. A `BREAKING CHANGE` mention in prose
+  that is not a trailer (no leading `BREAKING CHANGE:`) does not.
 
 ### Test a change without releasing
 
@@ -197,6 +207,23 @@ Key behaviours:
   same version and re-publishes the images, and the release step only fires once
   every family succeeds. The GitHub Release step is a no-op if the tag already
   exists.
+
+### Recover a skipped `release` job (break-glass)
+
+If a flaky family build failed, `release` was **skipped**, and "Re-run failed
+jobs" later made the builds succeed but left `release` skipped, do **not**
+dispatch *Manual Release* with only a tag — that would tag current `main`,
+which may already have moved.
+
+1. Note the original *Build and Release* run ID (the run that pushed the
+   images) and the version tag it computed (e.g. `v1.1.0`).
+2. On `main`, run **Actions → Manual Release (break-glass) → Run workflow**
+   with `tag=v1.1.0` and `source_run_id=<that run ID>`.
+3. The workflow verifies the run was a `push` to `main` of `release.yml`,
+   that `version`/`base`/`nvidia`/`rocm` succeeded, that the run's commit is
+   still on `main`, that `compute-version` at that commit matches the tag,
+   and that every bake-defined image manifest for that version exists. It
+   then creates the git tag **on that commit** and the GitHub Release.
 
 ### First release after adding this system (bootstrap)
 
@@ -235,6 +262,10 @@ Key behaviours:
   checks to these names — the old standalone workflow names no longer report.
 - **Merge strategy:** the repo uses **squash merge**. The PR title is what drives
   the version, so keep it Conventional-Commit compliant.
+- **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
+  from main/release (see `docker-setup`). Also enable Sticky Disk **Branch
+  Protection** in the Blacksmith dashboard so untrusted jobs cannot commit into
+  trusted disks even if a key is shared by mistake.
 
 ---
 
@@ -247,5 +278,5 @@ Key behaviours:
 | A family is missing the new version tag            | On a release all families build. If one is missing, open the *Build and Release* run and check that family's job for a build/push failure. |
 | Version didn't increment as expected               | Check the latest `vX.Y.Z` tag — the bump is relative to it, not to the image tags in Docker Hub. |
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |
-| No release despite a `feat`/`fix` merge to `main`  | The `release` job only fires after **every** family succeeds. If a build/test failed, no tag/Release is created — fix the failure and re-run the *Build and Release* run. |
+| No release despite a `feat`/`fix` merge to `main`  | The `release` job only fires after **every** family succeeds. If a build/test failed, no tag/Release is created — fix the failure and re-run the *Build and Release* run. If `release` stayed `skipped` after a successful re-run of failed jobs, use [Manual Release](#recover-a-skipped-release-job-break-glass) with the original run ID. |
 | PR checks are stuck "Expected"/pending             | Branch-protection required checks likely still reference the old workflow names. Update them to the `Build and Release / …` check names. |

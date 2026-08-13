@@ -1,9 +1,11 @@
 name: Compute Version
 description: >-
   Derive the next semantic version from the latest git tag and the Conventional
-  Commits made since it. Produces the RELEASE_VERSION / RELEASE_SUFFIX values the
-  docker-bake files consume, plus flags telling the caller whether to build and
-  whether to publish a release.
+  Commits made since it. The commit subject (PR title on squash-merge) decides
+  feat/fix/perf; a major bump is `type!:` in that subject or a `BREAKING CHANGE:`
+  footer. Body lines listing branch commits cannot phantom-bump. Produces the
+  RELEASE_VERSION / RELEASE_SUFFIX values the docker-bake files consume, plus
+  flags telling the caller whether to build and whether to publish a release.
 
 inputs:
   fallback-version:
@@ -53,11 +55,16 @@ runs:
         # We squash-merge, so the PR title becomes the single commit subject on
         # main. Deriving the RC bump from the title (not the branch commits)
         # makes the release-candidate version match what the merge will produce.
+        # Body is JSON-encoded so a multiline PR description survives the env.
         PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY_JSON: ${{ toJSON(github.event.pull_request.body) }}
         FALLBACK: ${{ inputs.fallback-version }}
         RELEASE_BRANCH: ${{ inputs.release-branch }}
       run: |
         set -euo pipefail
+
+        # shellcheck source=detect-bump.sh
+        source "${GITHUB_ACTION_PATH}/detect-bump.sh"
 
         # Make sure tags are present even on shallow-ish checkouts.
         git fetch --tags --force --quiet || true
@@ -88,30 +95,19 @@ runs:
           BASE="$FALLBACK"
         fi
 
-        # Detect the Conventional Commits bump level for a block of text.
-        detect_bump() {
-          local text="$1"
-          if grep -qE '(^|[[:space:]])BREAKING[ -]CHANGE' <<<"$text" \
-            || grep -qiE '^[a-z]+(\([^)]*\))?!:' <<<"$text"; then
-            echo "major"
-          elif grep -qiE '^feat(\([^)]*\))?:' <<<"$text"; then
-            echo "minor"
-          elif grep -qiE '^(fix|perf)(\([^)]*\))?:' <<<"$text"; then
-            echo "patch"
-          else
-            echo "none"
-          fi
-        }
-
         if [ "$EVENT_NAME" = "pull_request" ]; then
-          # Squash merge: the PR title is the future main commit subject.
-          BUMP="$(detect_bump "$PR_TITLE")"
+          # Squash merge: PR title → commit subject, PR body → commit body.
+          # Type (feat/fix/…) comes from the title; a BREAKING CHANGE footer in
+          # the description is still a major bump. Listed branch commits in the
+          # body cannot trigger feat/fix bumps.
+          PR_BODY="$(printf '%s' "${PR_BODY_JSON:-null}" | jq -r 'if . == null then "" else . end')"
+          BUMP="$(detect_bump "${PR_TITLE}"$'\n\n'"${PR_BODY}")"
         else
           # Push/release: we squash-merge, so HEAD is the single commit that
-          # just landed on main and its SUBJECT is the PR title. Detect the
-          # bump from that subject ONLY.
-          SUBJECT="$(git log -1 --pretty=format:'%s')"
-          BUMP="$(detect_bump "$SUBJECT")"
+          # just landed on main. Use the full message so a BREAKING CHANGE
+          # footer is honoured; detect_bump still ignores body feat:/fix: lines.
+          MESSAGE="$(git log -1 --pretty=format:'%B')"
+          BUMP="$(detect_bump "$MESSAGE")"
         fi
 
         IFS='.' read -r MAJOR MINOR PATCH <<<"$BASE"
