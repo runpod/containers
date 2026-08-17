@@ -148,6 +148,51 @@ jobs:
             exit 1
           fi
 
+      - name: Confirm computed version matches the tag
+        uses: ./.github/actions/compute-version
+        id: version
+
+      - name: Check version matches
+        env:
+          TAG: ${{ inputs.tag }}
+          COMPUTED: ${{ steps.version.outputs.tag }}
+          BUMP: ${{ steps.version.outputs.bump }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPUTED" != "$TAG" ]; then
+            echo "::error::compute-version at this commit produced ${COMPUTED} (bump ${BUMP}), not ${TAG}"
+            exit 1
+          fi
+
+      - name: Verify published image manifests
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # One always-built tag per family (not the full bake matrix). If this
+          # version was actually pushed, these refs must resolve in the registry.
+          refs=(
+            "runpod/base:${VERSION}-ubuntu2204"
+            "runpod/pytorch:${VERSION}-cu1281-torch280-ubuntu2204"
+            "runpod/pytorch:${VERSION}-cu1281-torch280-ubuntu2204-cluster"
+            "runpod/nvidia-pytorch:${VERSION}-25.11"
+            "runpod/base:${VERSION}-rocm644-ubuntu2204-py310-pytorch260"
+            "runpod/autoresearch:${VERSION}-cuda1281-ubuntu2204"
+          )
+          missing=0
+          for ref in "${refs[@]}"; do
+            echo "::group::inspect ${ref}"
+            if ! docker buildx imagetools inspect "$ref"; then
+              echo "::error::missing image manifest: ${ref}"
+              missing=$((missing + 1))
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::${missing} expected image(s) for ${VERSION} are not in the registry — refusing to tag"
+            exit 1
+          fi
+
       - name: Ensure tag does not already exist
         env:
           TAG: ${{ inputs.tag }}
