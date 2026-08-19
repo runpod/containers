@@ -45,6 +45,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/base
 
       - name: Build base images
         id: build
@@ -71,6 +72,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -145,7 +147,7 @@ jobs:
 
   build-autoresearch:
     needs: build-base
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: needs.build-base.result == 'success'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -176,6 +178,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/autoresearch
 
       - name: Build autoresearch images
         id: build
@@ -291,8 +294,7 @@ jobs:
 
   build-pytorch:
     needs: build-base
-    # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    if: needs.build-base.result == 'success'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
@@ -334,6 +336,7 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
           max-parallelism: 6
+          cache-key: ${{ github.repository }}/pytorch-${{ matrix.cuda }}
 
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
@@ -364,6 +367,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
@@ -460,8 +464,7 @@ jobs:
   # skips the pytorch rebuild and layers on the last released pytorch instead.
   build-cluster:
     needs: build-pytorch
-    # always() forces run even if build-pytorch is skipped (but not if it failed).
-    if: always() && (needs.build-pytorch.result == 'success' || needs.build-pytorch.result == 'skipped')
+    if: needs.build-pytorch.result == 'success'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -497,6 +500,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}
 
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
