@@ -52,6 +52,7 @@ jobs:
         with:
           source: .
           files: |
+            official-templates/shared/versions.hcl
             official-templates/comfyui/docker-bake.hcl
           load: true
           push: false

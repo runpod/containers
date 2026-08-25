@@ -97,6 +97,7 @@ jobs:
               - 'container-template/**'
             comfyui:
               - 'official-templates/comfyui/**'
+              - 'official-templates/shared/**'
 
   base:
     needs: [version, changes]
