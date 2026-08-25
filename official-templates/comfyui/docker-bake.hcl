@@ -62,14 +62,14 @@ variable "COMPATIBLE_BUILDS" {
 
 group "default" {
   targets = [
-    for combination in CUDA_TORCH_COMBINATIONS:
+    for combination in COMPATIBLE_BUILDS:
       "cuda${combination.cuda_version_code}"
   ]
 }
 
 group "cuda128" {
   targets = [
-    for combination in CUDA_TORCH_COMBINATIONS:
+    for combination in COMPATIBLE_BUILDS:
       "cuda${combination.cuda_version_code}"
       if combination.cuda_version == "12.8"
   ]
@@ -78,7 +78,7 @@ group "cuda128" {
 group "cuda13" {
 
   targets = [
-    for combination in CUDA_TORCH_COMBINATIONS:
+    for combination in COMPATIBLE_BUILDS:
       "cuda${combination.cuda_version_code}"
       if combination.cuda_version == "13.0"
   ]

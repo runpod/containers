@@ -6,7 +6,6 @@ BAKED_COMFYUI_DIR="/opt/comfyui-baked"
 BUNDLE_VERSION_FILE=".runpod-bundle-version"
 VENV_DIR="$COMFYUI_DIR/.venv-cu128"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
-FILEBROWSER_CONFIG="/root/.config/filebrowser/config.json"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
 BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
@@ -55,10 +54,10 @@ export_env_vars() {
     cp "$PAM_ENV_FILE" "${PAM_ENV_FILE}.bak" 2>/dev/null || true
     
     # Clear files
-    > "$ENV_FILE"
-    > "$PAM_ENV_FILE"
+    : > "$ENV_FILE"
+    : > "$PAM_ENV_FILE"
     mkdir -p /root/.ssh
-    > "$SSH_ENV_DIR"
+    : > "$SSH_ENV_DIR"
     
     # Export to multiple locations for maximum compatibility
     printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=' | while read -r line; do
@@ -223,16 +222,16 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
     cd "$COMFYUI_DIR"
     python3.12 -m venv --system-site-packages "$VENV_DIR"
+    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
     python -m ensurepip
     # Skip nodes baked into the image — their deps are in system site-packages
-    BAKED_NODES="ComfyUI-Manager ComfyUI-KJNodes Civicomfy ComfyUI-RunpodDirect"
     CURRENT=0
     INSTALLED=0
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         if [ -f "$req" ]; then
             NODE_NAME=$(basename "$(dirname "$req")")
-            case " $BAKED_NODES " in
+            case " ${BAKED_NODES[*]} " in
                 *" $NODE_NAME "*) continue ;;
             esac
             CURRENT=$((CURRENT + 1))
@@ -262,6 +261,7 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     if [ ! -d "$VENV_DIR" ]; then
         cd "$COMFYUI_DIR"
         python3.12 -m venv --system-site-packages "$VENV_DIR"
+        # shellcheck disable=SC1091
         source "$VENV_DIR/bin/activate"
 
         # Ensure pip is available in the venv (needed for ComfyUI-Manager)
@@ -272,6 +272,7 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     fi
 else
     # Just activate the existing venv
+    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
     echo "Using existing ComfyUI installation"
 fi
