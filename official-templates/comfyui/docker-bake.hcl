@@ -48,8 +48,12 @@ variable "COMPATIBLE_BUILDS" {
     for combination in CUDA_TORCH_COMBINATIONS:
       [
         { cuda_version = combination.cuda_version, 
-        cuda_version_code = replace(combination.cuda_version, ".", "")
-  
+          cuda_version_code = replace(combination.cuda_version, ".", ""),
+          cuda_version_dash = replace(combination.cuda_version, ".", "-"),
+          torch_index_suffix = "cu${combination.cuda_version_code}",
+          torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
+          torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
+          torchaudio_version = "${combination.torchaudio_version}+${combination.torch_index_suffix}",
          },
       ]
     ]
@@ -103,14 +107,14 @@ target "comfyui-matrix" {
     RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
     FILEBROWSER_VERSION = FILEBROWSER_VERSION
     FILEBROWSER_SHA256  = FILEBROWSER_SHA256
-    TORCH_VERSION       = TORCH_VERSION_5090
-    TORCHVISION_VERSION = TORCHVISION_VERSION_5090
-    TORCHAUDIO_VERSION  = TORCHAUDIO_VERSION_5090
-    CUDA_VERSION_DASH   = "13-0"
-    TORCH_INDEX_SUFFIX  = "cu130"
+    TORCH_VERSION       = build.torch_version
+    TORCHVISION_VERSION = build.torchvision_version
+    TORCHAUDIO_VERSION  = build.torchaudio_version
+    CUDA_VERSION_DASH   = build.cuda_version_dash
+    TORCH_INDEX_SUFFIX  = build.torch_index_suffix
   }
 
   tags = [
-    "runpod/comfyui:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${build.comfyui_code}-cuda${build.cuda_code}"
+    "runpod/comfyui:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
   ]
 }
