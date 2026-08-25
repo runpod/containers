@@ -51,9 +51,9 @@ variable "COMPATIBLE_BUILDS" {
           cuda_version_code = replace(combination.cuda_version, ".", ""),
           cuda_version_dash = replace(combination.cuda_version, ".", "-"),
           torch_index_suffix = "cu${replace(combination.cuda_version, ".", "")}",
-          torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
-          torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
-          torchaudio_version = "${combination.torchaudio_version}+${combination.torch_index_suffix}",
+          torch_version = "${combination.torch_version}+cu${replace(combination.cuda_version, ".", "")}",
+          torchvision_version = "${combination.torchvision_version}+cu${replace(combination.cuda_version, ".", "")}",
+          torchaudio_version = "${combination.torchaudio_version}+cu${replace(combination.cuda_version, ".", "")}",
          },
       ]
     ]
