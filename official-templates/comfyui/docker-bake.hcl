@@ -86,7 +86,7 @@ group "cuda13" {
 
 # Common settings for all targets (defaults to regular CUDA 12.8 / cu128)
 target "common" {
-  context    = "."
+  context    = "official-templates/comfyui"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
 }
