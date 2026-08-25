@@ -78,12 +78,19 @@ def render_yaml(groups: dict) -> str:
             "manufacturer",
             "min_cuda_version",
             "test_jupyter",
+            "check_all_gpu",
+            "test_comfyui",
+            "test_comfyui_functional",
         ):
             if key in body:
                 val = body[key]
                 if isinstance(val, bool):
                     val = "true" if val else "false"
                 lines.append(f"    {key}: {val}")
+        if body.get("test_ports"):
+            lines.append("    test_ports:")
+            for port in body["test_ports"]:
+                lines.append(f"    - {port}")
         # exclude_instances is a list, emitted at the bottom of the group so
         # it's visually grouped with other "filter" options. Patterns are
         # double-quoted to keep glob-leading characters ('*', '?') safe from
@@ -103,6 +110,10 @@ def build_groups(
     min_vram_gb: int,
     manufacturer: str,
     test_jupyter: bool = False,
+    test_ports: list[int] | None = None,
+    test_comfyui: bool = False,
+    test_comfyui_functional: bool = False,
+    check_all_gpu: bool = False,
     exclude_instances: list[str] | None = None,
     min_cuda_version: str | None = None,
 ) -> dict:
@@ -131,10 +142,24 @@ def build_groups(
     CUDA 13.0 and refuses to run on hosts with a 12.x driver.
     """
     exclude_instances = list(exclude_instances or [])
+    test_ports = list(test_ports or [])
 
-    def _decorate(body: dict) -> dict:
+    def _decorate(body: dict, *, gpu_group: bool) -> dict:
+        if gpu_group:
+            if check_all_gpu:
+                body["check_all_gpu"] = True
+            else:
+                body["max_price_per_hour"] = budget
+            body["min_vram_gb"] = min_vram_gb
+            body["manufacturer"] = manufacturer
         if test_jupyter:
             body["test_jupyter"] = True
+        if test_ports:
+            body["test_ports"] = list(test_ports)
+        if test_comfyui:
+            body["test_comfyui"] = True
+        if test_comfyui_functional:
+            body["test_comfyui_functional"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if min_cuda_version:
@@ -152,14 +177,9 @@ def build_groups(
         gpu = [r for r in refs if is_gpu_ref(r)]
         groups: dict = {}
         if cpu:
-            groups["base_cpu"] = _decorate({"images": cpu})
+            groups["base_cpu"] = _decorate({"images": cpu}, gpu_group=False)
         if gpu:
-            groups["base_gpu"] = _decorate({
-                "images": gpu,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
+            groups["base_gpu"] = _decorate({"images": gpu}, gpu_group=True)
         return groups
 
     if profile == "gpu":
@@ -168,12 +188,7 @@ def build_groups(
         # is picked from the IMAGE REF by runpod_smoke.checks, so the group
         # name 'base_gpu' is purely conventional here.
         return {
-            "base_gpu": _decorate({
-                "images": refs,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
+            "base_gpu": _decorate({"images": refs}, gpu_group=True)
         }
 
     raise ValueError(f"unknown profile: {profile!r}")
@@ -222,6 +237,17 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--test-port",
+        action="append",
+        default=[],
+        type=int,
+        metavar="PORT",
+        help="HTTP port to expose and probe. Repeat for multiple ports.",
+    )
+    ap.add_argument("--test-comfyui", action="store_true")
+    ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument("--check-all-gpu", action="store_true")
+    ap.add_argument(
         "--exclude-instance",
         action="append",
         default=[],
@@ -265,6 +291,10 @@ def main() -> int:
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
+        test_ports=args.test_port,
+        test_comfyui=args.test_comfyui,
+        test_comfyui_functional=args.test_comfyui_functional,
+        check_all_gpu=args.check_all_gpu,
         exclude_instances=args.exclude_instance,
         min_cuda_version=(args.min_cuda_version or None),
     )

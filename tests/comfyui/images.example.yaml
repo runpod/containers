@@ -1,0 +1,18 @@
+# Example manifest for local ComfyUI smoke tests.
+#
+# From the repository root (with runpodctl authenticated and an SSH key
+# registered on the RunPod account):
+#
+#   python3 tests/test_images.py tests/comfyui/images.example.yaml comfyui
+#
+# `test_comfyui` checks public :8188 reachability. The functional flag also
+# provisions the models in models.json, runs the workflow, and validates the
+# PNG returned through the public proxy. It implies `test_comfyui`.
+comfyui:
+    images:
+    - runpod/comfyui:1.1.1-comfyui0.30.0-cuda13.0
+    instances:
+    - "RTX A5000"
+    - "RTX 4090"
+    - "RTX A4000"
+    test_comfyui_functional: true

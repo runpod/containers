@@ -1,4 +1,4 @@
-name: ROCm Images Build
+name: ComfyUI Images Build
 
 # Reusable building block invoked by the release orchestrator (release.yml),
 # which computes the version ONCE and passes it in. Not triggered on its own —
@@ -15,6 +15,11 @@ on:
         required: false
         default: ""
         type: string
+      run-functional-tests:
+        description: "Run ComfyUI model-generation validation and upload its PNG."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -145,3 +150,10 @@ jobs:
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
           create-timeout: "1200"
+          test-jupyter: "true"
+          test-comfyui: "true"
+          test-comfyui-functional: ${{ inputs.run-functional-tests }}
+          save-comfyui-images: ${{ inputs.run-functional-tests }}
+          comfyui-images-artifact-name: comfyui-generated-images-${{ matrix.comfyui }}
+          test-ports: |
+            - 8080

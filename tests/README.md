@@ -1,9 +1,8 @@
 # Smoke tests for RunPod container images
 
 Spins up each image on a real RunPod pod, waits for it to stay healthy
-for `DWELL_SEC` seconds, runs an image-appropriate functional check
-(CUDA / `nvidia-smi` / `torch.cuda` / optional JupyterLab), then
-terminates the pod. Designed to catch the failure modes that **only
+for `DWELL_SEC` seconds, runs image-appropriate CUDA, HTTP, and optional
+ComfyUI functional checks, then terminates the pod. Designed to catch the failure modes that **only
 appear on a real GPU host** and that local `docker run` would miss:
 driver-version mismatches, broken NCCL/NVRTC, missing CUDA libs,
 `start.sh` regressions, JupyterLab proxy misconfiguration, etc.
@@ -18,6 +17,7 @@ The code is split into a small package next to the entry point:
 tests/
 ├── README.md               ← you are here
 ├── test_images.py          ← entry point: main() + summary + CLI
+├── comfyui/                ← ComfyUI functional-test models and workflow
 └── runpod_smoke/
     ├── config.py           ← env vars, sentinels, shared mutable state
     ├── log.py              ← thread-tagged logging
@@ -25,7 +25,8 @@ tests/
     ├── runpodctl.py        ← subprocess wrappers around the `runpodctl` binary
     ├── instances.py        ← GPU catalog, budget resolution, exclude filter, CUDA detection
     ├── pod.py              ← pod create/lifecycle/signals, registry auth
-    ├── checks.py           ← SSH probe, CUDA functional check, Jupyter probes, log dumper
+    ├── checks.py           ← SSH/proxy checks, CUDA functional check, REST API v2 log diagnostics
+    ├── comfyui.py          ← ComfyUI proxy, model, workflow, and PNG checks
     └── runner.py           ← test_pair / test_image (per-image orchestration)
 ```
 
@@ -112,17 +113,23 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `runpodctl pod create` (with `--gpu-id`, `--container-disk-in-gb`, `--ports`, registry auth, optional `--min-cuda-version`). Transient `5xx` / `Something went wrong` errors are retried silently up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity for this instance type — try next) / `CREATE_FAIL` (bad image tag, registry auth, malformed request — any non-capacity, non-transient orchestrator error after retries are exhausted) |
-| 2 | Poll `runpodctl pod get` until `ssh.ip` / `ssh.port` are assigned and one-shot `ssh root@ip -p port 'echo ready'` succeeds (the real readiness signal — `desiredStatus` is always `RUNNING` after create) | `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` (almost always a bad host in the scheduler pool — try another instance type) |
+| 2 | Poll `runpodctl pod get` and REST API v2 status until `ssh.ip` / `ssh.port` are assigned and one-shot `ssh root@ip -p port 'echo ready'` succeeds (SSH is the readiness signal; v2 surfaces terminal `ERROR` states the CLI misses) | `FAIL` on a terminal status; `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
-| 4 | **JupyterLab in-pod check** (only when `test_jupyter: true`) — see [Jupyter check](#jupyter-check-opt-in). SSH in, wait for `:8888` to bind, `jupyter server list`, `curl /api/status` with token | `FAIL` (`start.sh` didn't bring up Jupyter — usually wrong python interpreter) |
-| 5 | **JupyterLab public-proxy check** (only when `test_jupyter: true`) — `GET https://<pod-id>-8888.proxy.runpod.net/api/status` from the test machine | `FAIL` (port not exposed as `8888/http`, or proxy never registered) |
-| 6 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 7 | `dump_pod_logs` — pull `uname`, `syslog`, `dmesg`, `/var/log/*.log`, `nvidia-smi` via SSH for the run log | _(diagnostic only)_ |
-| 8 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
+| 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
+| 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
+| 6 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
+| 7 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
+| 8 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
+| 9 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
+| 10 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
+| 11 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
+| 12 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
 result was `UNAVAILABLE` or `STUCK`, and short-circuits on `PASS`,
-`FAIL`, or `CREATE_FAIL`.
+`FAIL`, or `CREATE_FAIL`. With `check_all_gpu: true`, each resolved GPU is
+instead run as an independent job, so the summary shows compatibility across
+the full selected GPU set.
 
 
 ## Outcomes
@@ -195,6 +202,10 @@ ON_SKIP=warn ./test_images.py images.yaml
 
 # Fully lenient — script exits 0 on SKIP with no annotation.
 ON_SKIP=pass ./test_images.py images.yaml
+
+# Run the checked-in ComfyUI end-to-end example. This downloads the configured
+# model and can take several minutes.
+python3 ./tests/test_images.py ./tests/comfyui/images.example.yaml comfyui
 ```
 
 If a pod gets stuck (rare), `Ctrl-C` cleans up — `SIGINT`/`SIGTERM` are
@@ -229,7 +240,10 @@ groupname:
     exclude_instances:        # subtract fnmatch patterns from candidates
     - "*Blackwell*"
     min_cuda_version: "13.0"  # 'X.Y' string for --min-cuda-version (fallback only)
+    check_all_gpu: true       # test every matching GPU independently
     test_jupyter: true        # opt-in JupyterLab in-pod + proxy check
+    test_ports:               # optional generic HTTP services
+    - 8080
 ```
 
 Field reference:
@@ -242,14 +256,22 @@ Field reference:
 | `min_vram_gb` | Extra filter for budget mode (default 0). |
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
 | `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list — e.g. `"*Blackwell*"` skips every Blackwell GPU (sm\_100 / sm\_120 are not in the kernel set of PyTorch ≤ 2.6 wheels). |
-| `min_cuda_version` | `X.Y` string passed to `runpodctl pod create --min-cuda-version`. Only used as a **fallback** when the image tag itself doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`). Image tags like `cu1281` / `cuda1281` always win. |
+| `min_cuda_version` | `X.Y` string passed to `runpodctl pod create --min-cuda-version`. Only used as a **fallback** when the image tag itself doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`). Image tags like `cu1281` / `cuda1281` and `cuda13.0` always win. |
+| `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening. Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
+| `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
+| `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
+| `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
 
 The `base_cpu` group is special: `runpodctl` 2.3.0 does not let us pick
 a specific CPU flavor (`--gpu-id` is rejected for `--compute-type CPU`),
 so the manifest needs ONLY an `images:` list for that group — no
 `instances:` / `max_price_per_hour:` / `min_vram_gb:`. RunPod picks a
 CPU flavor for us.
+
+The functional workflow and model manifest live under `tests/comfyui/`.
+Set `COMFYUI_SAVE_DIR` to retain the validated PNG locally; the composite
+action uploads it when `save-comfyui-images: "true"`.
 
 
 ## Example manifest (the real one used in this repo)
@@ -347,10 +369,24 @@ pytorch:
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
 | `CREATE_RETRY_BACKOFF` | `10` | Seconds between retries (linear backoff). |
 | `STALL_HINT_AFTER` | `180` | Seconds without an SSH endpoint before the script prints a hint about slow pulls / possible Docker Hub rate limit. |
-| `SSH_LOG_FETCH` | `1` | `1`/`0` — fetch container logs via direct SSH at PASS/FAIL. |
+| `LOG_ERROR_SCAN` | `1` | `1`/`0` — scan REST API v2 container logs for error markers after the functional checks. |
+| `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex used by the container-log scan. |
+| `LOG_API_TAIL` | `1000` | Number of historical lines to fetch from the REST API v2 log stream. |
+| `SYS_LOG_ERROR_PATTERN` | error/failure/crash regex | Case-insensitive regex for host-side REST API system-log diagnostics during a failed boot. |
+| `SSH_LOG_FETCH` | `1` | `1`/`0` — fetch only the GPU SMI diagnostic over SSH. Container logs use REST API v2. |
 | `RUNPOD_SSH_KEY` | _(empty)_ | Path to private key matching the `PUBLIC_KEY` `runpodctl` injects into pods. Auto-discovered from common locations if not set. |
 | `JUPYTER_WAIT_TIMEOUT` | `30` | Seconds the in-pod Jupyter probe waits for `:8888` to bind. |
 | `JUPYTER_PROXY_TIMEOUT` | `60` | Seconds the proxy probe retries while RunPod's ingress registers the new pod. |
+| `PORT_WAIT_TIMEOUT` | `300` | Seconds the SSH diagnostic probe waits for a `test_ports` service to bind and return HTTP 200. |
+| `PORT_PROXY_TIMEOUT` | `300` | Seconds the public-proxy check retries each `test_ports` service before failing. |
+| `COMFYUI_PORT` | `8188` | HTTP port exposed for the ComfyUI public-proxy checks. |
+| `COMFYUI_WORKFLOW` | `tests/comfyui/workflows/gsl_starter_1_1.api.json` | API workflow submitted by the functional test. |
+| `COMFYUI_MODELS_MANIFEST` | `tests/comfyui/models.json` | Models provisioned through ComfyUI-RunpodDirect before the workflow runs. |
+| `COMFYUI_WAIT_TIMEOUT` | `300` | Maximum wait for ComfyUI `/system_stats`. |
+| `COMFYUI_ROUTES_TIMEOUT` | `120` | Maximum wait for ComfyUI-RunpodDirect routes. |
+| `COMFYUI_DOWNLOAD_TIMEOUT` | `1800` | Maximum wait for each functional-test model download. |
+| `COMFYUI_GEN_TIMEOUT` | `600` | Maximum wait for workflow execution and its image output. |
+| `COMFYUI_SAVE_DIR` | _(empty)_ | Directory where validated ComfyUI PNGs are retained for artifact upload. |
 
 
 ## Functional check
@@ -379,19 +415,10 @@ groups don't silently skip the check:
 
 ## Jupyter check (opt-in via manifest `test_jupyter: true`)
 
-Two stages, both must pass:
-
-1. **In-pod.** SSH into the pod and `curl http://127.0.0.1:8888/api/status`
-   with our token. Catches silent `start.sh` failures (e.g. `python3 -m
-   jupyter` not finding the module on Ubuntu 22.04 — the kind of bug
-   that prints `Jupyter Lab started` in the container log while no
-   server is actually running).
-2. **Public proxy.** From the test machine, `GET
-   https://<pod-id>-8888.proxy.runpod.net/api/status` with the token.
-   Catches port-type misconfigurations (`8888/tcp` instead of
-   `8888/http` — the proxy never wires up non-http ports) and DNS /
-   proxy registration issues that would prevent real users from
-   reaching Jupyter from the RunPod console.
+The public proxy is checked first. If it returns HTTP 200, the service is
+both running and exposed as `8888/http`, so SSH is skipped. On failure the
+test SSHes in and probes `/api/status` to distinguish a Jupyter startup
+problem from an HTTP exposure/proxy problem.
 
 
 ## Running in CI
@@ -409,10 +436,12 @@ wraps everything in this script needs for a clean CI run:
 4. Generates a manifest from the `image-refs` JSON array using
    `.github/scripts/generate_test_manifest.py`, applying the
    `profile`, `budget-usd-per-hour`, `min-vram-gb`, `manufacturer`,
-   `test-jupyter`, and `exclude-instances` inputs.
+   `test-jupyter`, `test-ports`, `test-comfyui`,
+   `test-comfyui-functional`, `check-all-gpu`, and
+   `exclude-instances` inputs.
 5. Invokes `python3 tests/test_images.py <generated-manifest>` with
-   `MAX_PARALLEL=<max-parallel>` and `continue-on-error: true` so a
-   single broken image doesn't take the whole pipeline down.
+   `MAX_PARALLEL=<max-parallel>`. A failed image makes the smoke-test
+   action fail, which prevents a release from being created.
 
 Typical caller (from a per-image-family build workflow):
 

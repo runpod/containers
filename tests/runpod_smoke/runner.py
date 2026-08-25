@@ -24,10 +24,14 @@ from .checks import (
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
+    run_port_check,
+    run_port_proxy_check,
+    scan_pod_logs_for_errors,
     ssh_probe,
 )
+from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
-from .log import log
+from .log import log, set_worker_context
 from .pod import (
     TRANSIENT_RE,
     UNAVAILABLE_RE,
@@ -105,11 +109,15 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
+        test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
+        if config.GROUP_TEST_COMFYUI.get(group, False):
+            test_ports.append(config.COMFYUI_PORT)
         pod_id, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
             test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
+            test_ports=test_ports,
             cloud_type=cloud_override,
             data_center_ids=dc_ids,
         )
@@ -194,34 +202,10 @@ def _run_jupyter_steps(
 ) -> Optional[_Outcome]:
     """Jupyter checks: only when the group opted in via `test_jupyter`.
 
-    Two stages, both must pass:
-      1. IN-POD: SSH into the pod and probe 127.0.0.1:8888. Catches
-         start.sh regressions (e.g. wrong python interpreter for
-         `-m jupyter`) that don't surface in container stdout.
-      2. PROXY: from the test machine, hit
-         https://<pod-id>-8888.proxy.runpod.net/. Catches port-type
-         mistakes (`8888/tcp` instead of `8888/http`) — proxy never
-         registers a non-http port, so end users can't reach Jupyter
-         even though the in-pod check would happily pass."""
+    Checks the public proxy first — the end-user path. SSH only diagnoses
+    a proxy failure, so a healthy public endpoint avoids redundant work."""
     if not (host and port and config.GROUP_TEST_JUPYTER.get(group, False)):
         return None
-
-    log(
-        f"running Jupyter Lab check (in-pod) for group '{group}'...",
-        indent=2,
-    )
-    ok, output = run_jupyter_check(host, port)
-    for line in (output or "").splitlines():
-        log(f"  {line}", indent=2)
-    if not ok:
-        log(
-            "jupyter check (in-pod) FAILED -- start.sh did not "
-            "bring up JupyterLab",
-            indent=2,
-        )
-        dump_pod_logs(pod_id, image)
-        return "FAIL", "Jupyter Lab check failed (in-pod)"
-    log("jupyter check (in-pod) passed", indent=2)
 
     log(
         f"running Jupyter Lab check (public proxy) for pod {pod_id}...",
@@ -230,16 +214,128 @@ def _run_jupyter_steps(
     ok, output = run_jupyter_proxy_check(pod_id)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
-    if not ok:
+    if ok:
+        log("jupyter check (public proxy) passed — in-pod check skipped", indent=2)
+        return None
+
+    log(
+        "jupyter check (public proxy) FAILED — running in-pod check "
+        "to diagnose...",
+        indent=2,
+    )
+    ok, output = run_jupyter_check(host, port)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
         log(
-            "jupyter check (public proxy) FAILED -- port likely "
-            "not exposed as 8888/http",
+            "in-pod check passed -> Jupyter is up but unreachable via "
+            "proxy — port likely not exposed as 8888/http",
             indent=2,
         )
         dump_pod_logs(pod_id, image)
-        return "FAIL", "Jupyter Lab check failed (public proxy)"
-    log("jupyter check (public proxy) passed", indent=2)
+        return "FAIL", "Jupyter reachable in-pod but not via proxy"
+    log("in-pod check FAILED too -> JupyterLab did not start", indent=2)
+    dump_pod_logs(pod_id, image)
+    return "FAIL", "Jupyter Lab not running (proxy + in-pod failed)"
+
+
+def _check_port_proxy_first(
+    host: str, port: int, pod_id: str, test_port: int, label: str,
+) -> Optional[_Outcome]:
+    """Check public reachability first; use SSH only to diagnose failure."""
+    log(
+        f"running {label} check (public proxy) for pod {pod_id}...",
+        indent=2,
+    )
+    ok, output = run_port_proxy_check(pod_id, test_port)
+    for line in output.splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
+        log(f"{label} check (public proxy) passed — in-pod check skipped", indent=2)
+        return None
+
+    log(
+        f"{label} check (public proxy) FAILED — running in-pod check "
+        "to diagnose...",
+        indent=2,
+    )
+    ok, detail = run_port_check(
+        host, port, test_port, on_line=lambda line: log(f"  {line}", indent=2)
+    )
+    if ok:
+        failure = f"{label}: reachable in-pod but not via proxy"
+    else:
+        failure = f"{label}: service not responding (proxy + in-pod)"
+        if detail:
+            failure += f" — {detail}"
+    log(f"{failure} -- FAIL", indent=2)
+    return "FAIL", failure
+
+
+def _run_port_steps(
+    host: str, port: int, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Run each generic `test_ports` check."""
+    for test_port in config.GROUP_TEST_PORTS.get(group) or []:
+        outcome = _check_port_proxy_first(
+            host, port, pod_id, test_port, f"port {test_port}",
+        )
+        if outcome is not None:
+            dump_pod_logs(pod_id, image)
+            return outcome
     return None
+
+
+def _run_comfyui_steps(
+    host: str, port: int, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Run the labelled ComfyUI proxy-first reachability smoke."""
+    if not (host and port and config.GROUP_TEST_COMFYUI.get(group, False)):
+        return None
+    outcome = _check_port_proxy_first(
+        host, port, pod_id, config.COMFYUI_PORT, "ComfyUI reachability",
+    )
+    if outcome is not None:
+        dump_pod_logs(pod_id, image)
+        return outcome
+    if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
+        return None
+
+    log("running ComfyUI functional check (via proxy)...", indent=2)
+    ok, detail = run_comfyui_check(
+        pod_id,
+        on_line=lambda line: log(f"  {line}", indent=2),
+        save_dir=config.COMFYUI_SAVE_DIR,
+        tag=pod_id,
+    )
+    if ok:
+        log("ComfyUI functional check passed", indent=2)
+        return None
+    log(f"ComfyUI functional check FAILED -- {detail}", indent=2)
+    dump_pod_logs(pod_id, image)
+    return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
+
+
+def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
+    """Scan the REST API container-log backfill for boot error markers."""
+    if not config.LOG_ERROR_SCAN:
+        return None
+    log("scanning container logs for error markers (via API)...", indent=2)
+    ok, report = scan_pod_logs_for_errors(pod_id)
+    for line in report.splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
+        log("log scan passed", indent=2)
+        return None
+
+    detail = (
+        "log scan unverified — log API returned no container logs"
+        if report.startswith("log scan UNVERIFIED")
+        else "error markers found in container logs"
+    )
+    log(f"log scan FAILED -- {detail}", indent=2)
+    dump_pod_logs(pod_id, image)
+    return "FAIL", detail
 
 
 def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
@@ -267,6 +363,33 @@ def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
         "container crashed after initial boot "
         f"({config.DWELL_SEC}s dwell re-probe failed: {err})"
     )
+
+
+def _run_post_dwell_steps(
+    pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Re-probe ComfyUI and scan logs after the dwell window."""
+    if config.DWELL_SEC <= 0:
+        return None
+    if (
+        config.GROUP_TEST_COMFYUI.get(group, False)
+        or config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False)
+    ):
+        log("re-probing ComfyUI after dwell...", indent=2)
+        ok, detail = probe_comfyui_alive(pod_id)
+        if not ok:
+            log(
+                f"ComfyUI re-probe FAILED after dwell ({detail})",
+                indent=2,
+            )
+            dump_pod_logs(pod_id, image)
+            return "FAIL", (
+                f"ComfyUI stopped answering during the {config.DWELL_SEC}s "
+                f"dwell (post-dwell probe: {detail})"
+            )
+        log(f"ComfyUI re-probe passed ({detail})", indent=2)
+    log("re-scanning container logs after dwell...", indent=2)
+    return _run_log_scan_step(pod_id, image)
 
 
 def test_pair(image: str, instance: str, group: str) -> _Outcome:
@@ -328,7 +451,19 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         outcome = _run_jupyter_steps(host, port, pod_id, image, group)
         if outcome is not None:
             return outcome
+        outcome = _run_port_steps(host, port, pod_id, image, group)
+        if outcome is not None:
+            return outcome
+        outcome = _run_comfyui_steps(host, port, pod_id, image, group)
+        if outcome is not None:
+            return outcome
+        outcome = _run_log_scan_step(pod_id, image)
+        if outcome is not None:
+            return outcome
         outcome = _run_dwell_step(pod_id, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_post_dwell_steps(pod_id, image, group)
         if outcome is not None:
             return outcome
 
@@ -357,10 +492,15 @@ def test_image(
     """
     log(f"image: {image}")
     stuck_instances: list[str] = []
+    unavailable_instances: list[str] = []
     last_create_error = ""
     last_create_inst = ""
     for inst in instances:
-        result, detail = test_pair(image, inst, group)
+        set_worker_context(inst)
+        try:
+            result, detail = test_pair(image, inst, group)
+        finally:
+            set_worker_context(None)
         if result == "PASS":
             return "PASS", "", inst
         if result == "FAIL":
@@ -379,7 +519,8 @@ def test_image(
             continue
         if result == "STUCK":
             stuck_instances.append(inst)
-        # UNAVAILABLE: silently try next
+        if result == "UNAVAILABLE":
+            unavailable_instances.append(inst)
     if last_create_error:
         # We never got past pod-create on any instance and the errors
         # weren't capacity-shortages. Surface the last orchestrator error
@@ -401,11 +542,11 @@ def test_image(
                 f"{len(stuck_instances)} instance type(s) — likely a "
                 "scheduler issue, try again later"
             ),
-            "",
+            ", ".join(stuck_instances),
         )
     log(f"all {len(instances)} instances unavailable (no capacity)", indent=1)
     return (
         "SKIP",
         f"no capacity on any of {len(instances)} candidate instance type(s)",
-        "",
+        ", ".join(unavailable_instances),
     )

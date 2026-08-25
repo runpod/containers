@@ -48,10 +48,9 @@ from runpod_smoke.runner import test_image
 # entry; the runner iterates instances internally until something settles.
 Job = tuple[str, str, list[str]]
 
-# Per-image outcome: (summary_status, note, instance_used). status is one
-# of "PASS" / "FAIL" / "SKIP". instance_used is "" when the test never
-# landed on any host (all UNAVAILABLE / STUCK).
-Result = tuple[str, str, str]
+# Per-attempt outcome: (image, status, note, instance_used). A list avoids
+# overwriting rows when `check_all_gpu` creates one job per GPU.
+Result = tuple[str, str, str, str]
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +124,38 @@ def _init_registry_auth() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _coerce_ports(raw_ports: object, group: str) -> list[int]:
+    """Coerce optional `test_ports` list entries to valid TCP port numbers."""
+    if not isinstance(raw_ports, list):
+        return []
+    ports: list[int] = []
+    for entry in raw_ports:
+        try:
+            port = int(str(entry).strip())
+        except (TypeError, ValueError):
+            log(
+                f"warn: group '{group}': test_ports entry {entry!r} "
+                "is not a valid TCP port — skipping"
+            )
+            continue
+        if 1 <= port <= 65535:
+            ports.append(port)
+        else:
+            log(
+                f"warn: group '{group}': test_ports entry {entry!r} "
+                "is outside 1–65535 — skipping"
+            )
+    return ports
+
+
 def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     """Populate the per-group dicts on `config` that `pod.create_pod` and
     `runner.test_pair` consult at run-time: `GROUP_MIN_CUDA` (fallback
     CUDA version for tag-less images like NGC `nvidia-pytorch:25.11`)
-    and `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes)."""
+    `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes), and
+    `GROUP_TEST_PORTS` (generic public HTTP service probes),
+    `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), and the
+    ComfyUI reachability / functional-generation opt-ins."""
     for grp, contents in manifest.items():
         normalized = _normalize_cuda_version(contents.get("min_cuda_version"))
         if normalized:
@@ -148,6 +174,35 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
             log(
                 f"group '{grp}': test_jupyter=true "
                 "(JUPYTER_PASSWORD=<redacted>, expose 8888/http)"
+            )
+    for grp, contents in manifest.items():
+        ports = _coerce_ports(contents.get("test_ports"), grp)
+        if ports:
+            config.GROUP_TEST_PORTS[grp] = ports
+            log(
+                f"group '{grp}': test_ports={ports} "
+                "(expose as <port>/http, probe public proxy first)"
+            )
+    for grp, contents in manifest.items():
+        if _normalize_bool(contents.get("check_all_gpu")):
+            config.GROUP_CHECK_ALL_GPU[grp] = True
+            log(
+                f"group '{grp}': check_all_gpu=true "
+                "(one independent smoke job per resolved GPU)"
+            )
+        reach = _normalize_bool(contents.get("test_comfyui"))
+        functional = _normalize_bool(contents.get("test_comfyui_functional"))
+        if functional:
+            config.GROUP_TEST_COMFYUI_FUNCTIONAL[grp] = True
+            log(
+                f"group '{grp}': test_comfyui_functional=true "
+                "(provision model, run workflow, validate PNG)"
+            )
+        if reach or functional:
+            config.GROUP_TEST_COMFYUI[grp] = True
+            log(
+                f"group '{grp}': test_comfyui=true "
+                f"(proxy-first reachability on :{config.COMFYUI_PORT})"
             )
 
 
@@ -208,7 +263,7 @@ def _build_jobs(
     manifest: dict[str, dict],
     resolved: dict[str, list[str]],
     group_filter: Optional[str],
-    results: dict[str, Result],
+    results: list[Result],
 ) -> list[Job]:
     """Flatten the manifest into a list of `(image, group, instances)`
     jobs that can run independently. Groups with no resolvable instances
@@ -222,14 +277,18 @@ def _build_jobs(
         if not instances:
             log(
                 f"skipping group '{group}': no instances resolved "
-                "(neither 'instances:' nor 'max_price_per_hour:' produced "
-                "any candidates)"
+                "(none of 'instances:', 'max_price_per_hour:' or "
+                "'check_all_gpu:' produced candidates)"
             )
             for img in contents.get("images", []):
-                results[img] = ("SKIP", "no instances configured", "")
+                results.append((img, "SKIP", "no instances configured", ""))
             continue
+        check_all = config.GROUP_CHECK_ALL_GPU.get(group, False)
         for img in contents.get("images", []):
-            jobs.append((img, group, instances))
+            if check_all:
+                jobs.extend((img, group, [inst]) for inst in instances)
+            else:
+                jobs.append((img, group, instances))
     return jobs
 
 
@@ -238,7 +297,7 @@ def _build_jobs(
 # ---------------------------------------------------------------------------
 
 
-def _run_jobs_serial(jobs: list[Job], results: dict[str, Result]) -> None:
+def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
     """Single-threaded run — no worker tags, simpler logs, group-header
     banner each time the group changes."""
     current_group: Optional[str] = None
@@ -247,32 +306,32 @@ def _run_jobs_serial(jobs: list[Job], results: dict[str, Result]) -> None:
             print()
             log(f"---------- group: {group} ----------")
             current_group = group
-        results[img] = test_image(img, instances, group)
+        status, note, instance = test_image(img, instances, group)
+        results.append((img, status, note, instance))
 
 
-def _run_one_tagged_job(job: Job) -> tuple[str, Result]:
+def _run_one_tagged_job(job: Job) -> Result:
     """ThreadPool worker. The W<N> tag is assigned to the THREAD (not the
     job), so e.g. with 5 jobs and 3 workers you still see only W1/W2/W3,
     each handling 1-2 jobs sequentially."""
     img, grp, insts = job
     ensure_worker_tag()
     log(f"start [group={grp}] image={img}")
-    res = test_image(img, insts, grp)
-    log(f"done  [group={grp}] image={img} -> {res[0]}")
-    return img, res
+    status, note, instance = test_image(img, insts, grp)
+    log(f"done  [group={grp}] image={img} -> {status}")
+    return img, status, note, instance
 
 
-def _run_jobs_parallel(jobs: list[Job], results: dict[str, Result]) -> None:
+def _run_jobs_parallel(jobs: list[Job], results: list[Result]) -> None:
     """ThreadPool fan-out capped at MAX_PARALLEL. Each worker holds at
     most one pod at a time."""
     with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL) as pool:
         futures = [pool.submit(_run_one_tagged_job, job) for job in jobs]
         for fut in as_completed(futures):
-            img, res = fut.result()
-            results[img] = res
+            results.append(fut.result())
 
 
-def _run_jobs(jobs: list[Job], results: dict[str, Result]) -> None:
+def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
     if not jobs:
         log("no jobs to run after filtering")
         return
@@ -304,7 +363,7 @@ def _format_result_line(want: str, img: str, status: str, note: str,
     return f"  {want:6s} {img}{inst_str}{note_str}"
 
 
-def _print_summary(results: dict[str, Result]) -> int:
+def _print_summary(results: list[Result]) -> int:
     """Print the SUMMARY block and return the exit code.
 
     FAIL is ALWAYS fatal (exit 1) — a broken container is never something
@@ -328,7 +387,7 @@ def _print_summary(results: dict[str, Result]) -> int:
     print(" SUMMARY ".center(84, "="))
     print("=" * 84)
     counts: dict[str, int] = defaultdict(int)
-    for status, _, _ in results.values():
+    for _img, status, _note, _instance in results:
         counts[status] += 1
     print(
         f"totals: {counts['PASS']} PASS, "
@@ -336,7 +395,7 @@ def _print_summary(results: dict[str, Result]) -> int:
         f"{counts['SKIP']} SKIP\n"
     )
     for want in ("FAIL", "SKIP", "PASS"):
-        for img, (status, note, instance) in results.items():
+        for img, status, note, instance in results:
             line = _format_result_line(want, img, status, note, instance)
             if line is not None:
                 print(line)
@@ -382,13 +441,17 @@ def main() -> int:
     _init_registry_auth()
 
     manifest = parse_manifest(manifest_path)
-    _apply_manifest_overrides(manifest)
+    try:
+        _apply_manifest_overrides(manifest)
+    except ValueError as exc:
+        log(f"error: {exc}")
+        return 1
 
     resolved = _resolve_all_instances(manifest)
     _warn_unknown_instances(resolved)
     _log_budget_picks(manifest, resolved)
 
-    results: dict[str, Result] = {}
+    results: list[Result] = []
     jobs = _build_jobs(manifest, resolved, group_filter, results)
     _run_jobs(jobs, results)
 

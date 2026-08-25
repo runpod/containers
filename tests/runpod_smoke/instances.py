@@ -22,14 +22,15 @@ from typing import Optional
 
 from . import config
 from .log import log
+from .manifest import _normalize_bool
 from .runpodctl import runpodctl_json
 
 
-# Extract CUDA version from image tag. Supports both `cuda1281` and
-# `cu1281` (interpreted as 12.8.1). Returns "X.Y" suitable for
-# --min-cuda-version, or None for images without an embedded CUDA version
-# (CPU images, ROCm, NGC). Anchored with \b so we don't match e.g. 'cudnn'.
-CUDA_TAG_RE = re.compile(r"\bcu(?:da)?(\d{2})(\d)(\d)\b", re.IGNORECASE)
+# Supports `cuda1281` / `cu1300` and the ComfyUI `cuda13.0` convention.
+CUDA_TAG_RE = re.compile(
+    r"\bcu(?:da)?(\d{2})(?:(\d)(\d)|\.(\d))\b",
+    re.IGNORECASE,
+)
 
 
 def detect_cuda_version(image: str) -> Optional[str]:
@@ -38,6 +39,7 @@ def detect_cuda_version(image: str) -> Optional[str]:
     Examples:
         runpod/base:...-cuda1281-ubuntu2204     -> '12.8'
         runpod/pytorch:...-cu1300-torch290-...  -> '13.0'
+        runpod/comfyui:cuda13.0                 -> '13.0'
         runpod/base:...-rocm644-...             -> None
         runpod/base:...-ubuntu2404              -> None
         runpod/nvidia-pytorch:...-25.11         -> None (NGC tag, unknown CUDA)
@@ -50,7 +52,8 @@ def detect_cuda_version(image: str) -> Optional[str]:
     m = CUDA_TAG_RE.search(image)
     if not m:
         return None
-    major, minor, _patch = m.groups()
+    major = m.group(1)
+    minor = m.group(2) or m.group(4)
     return f"{int(major)}.{int(minor)}"
 
 
@@ -248,6 +251,30 @@ def _select_by_budget(group_name: str, group_config: dict) -> list[str]:
     return [name for _, name in candidates]
 
 
+def _select_all_gpus(group_name: str, group_config: dict) -> list[str]:
+    """Return every catalog GPU matching optional vRAM/vendor filters."""
+    if not config.GPU_CATALOG:
+        log(
+            f"warn: group '{group_name}' uses check_all_gpu but the "
+            "GPU catalog is empty — set RUNPOD_API_KEY or use explicit "
+            "instances"
+        )
+        return []
+    min_vram = int(group_config.get("min_vram_gb", 0))
+    manufacturer = (group_config.get("manufacturer") or "").lower()
+    names = [
+        gpu["displayName"]
+        for gpu in config.GPU_CATALOG
+        if gpu.get("displayName")
+        and gpu.get("memoryInGb", 0) >= min_vram
+        and (
+            not manufacturer
+            or (gpu.get("manufacturer") or "").lower() == manufacturer
+        )
+    ]
+    return sorted(set(names))
+
+
 def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     """Decide which GPU display names this group should try, in order.
 
@@ -263,6 +290,8 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
       1. Explicit `instances:` list in the manifest — wins, used as-is.
       2. `max_price_per_hour: X` (+ optional `min_vram_gb`, `manufacturer`)
          — auto-pick from RunPod catalog, sorted cheapest first.
+      3. `check_all_gpu: true` — every catalog GPU matching the optional
+         vRAM/vendor filters, for compatibility-matrix runs.
 
     After candidate selection, an optional `exclude_instances:` list of
     fnmatch-style patterns is subtracted. Use this to block known-bad
@@ -285,6 +314,8 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
         names = list(explicit)
     elif group_config.get("max_price_per_hour") is not None:
         names = _select_by_budget(group_name, group_config)
+    elif _normalize_bool(group_config.get("check_all_gpu")):
+        names = _select_all_gpus(group_name, group_config)
     else:
         return []
 

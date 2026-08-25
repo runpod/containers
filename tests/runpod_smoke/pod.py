@@ -18,7 +18,7 @@ import time
 from typing import Optional
 
 from . import config
-from .checks import ssh_probe
+from .checks import pod_status_api, ssh_probe, system_log_errors
 from .instances import detect_cuda_version
 from .log import log
 from .runpodctl import runpodctl, runpodctl_json
@@ -182,6 +182,7 @@ def create_pod(
     compute_type: str = "GPU",
     group: Optional[str] = None,
     test_jupyter: bool = False,
+    test_ports: Optional[list[int]] = None,
     cloud_type: Optional[str] = None,
     data_center_ids: str = "",
 ) -> tuple[Optional[str], str]:
@@ -220,11 +221,17 @@ def create_pod(
         - `--ports` gains `8888/http`
         - `--env` sets `JUPYTER_PASSWORD` (the value start.sh checks before
           starting Jupyter)
+
+    `test_ports` exposes each generic HTTP service as `<port>/http`.
     """
     disk_gb = config.CPU_DISK_GB if compute_type == "CPU" else config.DISK_GB
     ports = ["22/tcp"]
     if test_jupyter:
         ports.append("8888/http")
+    for test_port in test_ports or []:
+        spec = f"{test_port}/http"
+        if spec not in ports:
+            ports.append(spec)
     args = [
         "pod", "create",
         "--image", image,
@@ -402,6 +409,20 @@ def pod_runtime_error(pod_id: str) -> Optional[str]:
 
 # Pod-lifecycle states that mean "we will never become RUNNING — stop polling".
 _TERMINAL_DESIRED = {"EXITED", "FAILED", "DEAD", "TERMINATED"}
+_TERMINAL_API_STATUSES = {"EXITED", "ERROR", "TERMINATED"}
+
+
+def _log_system_errors(pod_id: str, context: str) -> None:
+    """Print host-side API log errors when the pod cannot become ready."""
+    errors = system_log_errors(pod_id)
+    if errors is None:
+        log("system logs unavailable (no API key / request failed)", indent=2)
+    elif not errors:
+        log(f"system logs: no error markers ({context})", indent=2)
+    else:
+        log(f"system-log error markers ({context}):", indent=2)
+        for line in errors:
+            log(f"  {line}", indent=2)
 
 
 def _print_stall_hint(pod_id: str, elapsed: int) -> None:
@@ -482,6 +503,7 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
     start = time.time()
     deadline = start + config.CREATE_TIMEOUT
     last_summary: Optional[tuple] = None
+    last_api_status: Optional[str] = None
     ssh_attempts = 0
     stall_hinted = False  # one-time hint when pod has no ssh endpoint for a while
 
@@ -496,8 +518,17 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
         port = st.get("ssh_port") or 0
         elapsed = int(time.time() - start)
 
-        if desired in _TERMINAL_DESIRED:
-            return "TERMINAL", f"pod entered {desired} after {elapsed}s"
+        api_status = pod_status_api(pod_id)
+        if api_status and api_status != last_api_status:
+            log(f"t+{elapsed}s API status: {api_status}", indent=2)
+            last_api_status = api_status
+
+        if desired in _TERMINAL_DESIRED or api_status in _TERMINAL_API_STATUSES:
+            terminal = (
+                api_status if api_status in _TERMINAL_API_STATUSES else desired
+            )
+            _log_system_errors(pod_id, f"pod entered {terminal}")
+            return "TERMINAL", f"pod entered {terminal} after {elapsed}s"
 
         if host and port:
             ssh_attempts += 1
@@ -507,10 +538,11 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
             if outcome is not None:
                 return outcome
         else:
-            summary = (desired, host, port, False)
+            summary = (desired, api_status, host, port, False)
             if summary != last_summary:
                 log(
                     f"t+{elapsed}s desired={desired!r} "
+                    f"api_status={api_status!r} "
                     f"uptime={st.get('uptime') or 0}s "
                     "ssh endpoint not assigned yet",
                     indent=2,
@@ -518,14 +550,17 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
                 last_summary = summary
             if elapsed >= config.STALL_HINT_AFTER and not stall_hinted:
                 _print_stall_hint(pod_id, elapsed)
+                _log_system_errors(pod_id, f"stalled {elapsed}s")
                 stall_hinted = True
 
         time.sleep(config.POLL_INTERVAL)
 
+    _log_system_errors(pod_id, f"timeout after {config.CREATE_TIMEOUT}s")
     return "TIMEOUT", (
         f"SSH endpoint never became reachable in {config.CREATE_TIMEOUT}s "
         f"({ssh_attempts} probes) — pod stuck initializing. Likely causes: "
         "(1) slow/throttled image pull (check UI for pull progress), "
         "(2) Docker Hub rate limit if many parallel pulls of the same image, "
-        "(3) host scheduling delay on a saturated DC"
+        "(3) host scheduling delay on a saturated DC — "
+        "see system-log error markers above (if any)"
     )

@@ -13,6 +13,8 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+_TESTS_DIR = os.path.dirname(_PKG_DIR)
 
 # ---------------------------------------------------------------------------
 # Pod / scheduling
@@ -115,10 +117,9 @@ def auto_terminate_deadline() -> str:
 # SSH
 # ---------------------------------------------------------------------------
 
-# Container logs aren't exposed via runpodctl 2.3.0's JSON, so we SSH
-# directly to the pod's exposed port 22 (mapped to a random high port on
-# a public IP by RunPod) to grab them. The endpoint is discovered from
-# `pod get`'s ssh.ip / ssh.port fields once the pod is scheduled.
+# `runpodctl` does not expose container logs in JSON. REST API v2 is the
+# primary log source; SSH is retained only for the GPU SMI diagnostic.
+# The SSH endpoint is discovered from `pod get` once the pod is scheduled.
 #   Override SSH_IDENTITY if your key lives in a non-standard location.
 #   Set SSH_LOG_FETCH=0 to skip SSH-based log fetching entirely.
 SSH_IDENTITY = os.environ.get("RUNPOD_SSH_KEY", "")
@@ -136,6 +137,29 @@ SSH_OPTS = [
     "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
     "-o", "HostKeyAlgorithms=+ssh-rsa",
 ]
+
+# ---------------------------------------------------------------------------
+# Container logs via REST API (v2)
+# ---------------------------------------------------------------------------
+
+# `GET /v2/pods/{id}/logs` streams container stdout as SSE — the one source
+# SSH cannot read (PID-1 stdout is not readable from a separate process).
+# The same API is used for the always-on error scan and diagnostic dumps.
+#   LOG_ERROR_SCAN=0        disables the error-scan step
+#   LOG_ERROR_PATTERN=...   overrides the case-insensitive regex
+#   LOG_API_TAIL=N          historical lines to backfill (max 5000)
+LOG_ERROR_SCAN = os.environ.get("LOG_ERROR_SCAN", "1") == "1"
+LOG_ERROR_PATTERN = os.environ.get(
+    "LOG_ERROR_PATTERN", r"\berr(or)?s?\b|\bcrash(ed|es|ing)?\b"
+)
+LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
+
+# System logs contain host-side failures that never reach container stdout:
+# image-pull errors and `runc` container-init aborts, for example.
+SYS_LOG_ERROR_PATTERN = os.environ.get(
+    "SYS_LOG_ERROR_PATTERN",
+    r"\berr(or)?s?\b|\bfail(ed|ure)?\b|\bcrash(ed|es|ing)?\b",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +181,32 @@ JUPYTER_WAIT_TIMEOUT = int(os.environ.get("JUPYTER_WAIT_TIMEOUT", "30"))
 # few seconds to register newly-exposed ports — we retry up to this many
 # seconds before giving up.
 JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
+
+# ---------------------------------------------------------------------------
+# Generic per-port checks (test_ports manifest field)
+# ---------------------------------------------------------------------------
+
+# Each requested port is exposed as `<port>/http` and checked proxy-first.
+# These independent limits include both app cold-start and proxy registration.
+PORT_WAIT_TIMEOUT = int(os.environ.get("PORT_WAIT_TIMEOUT", "300"))
+PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
+
+# ComfyUI listens on this HTTP port. `test_comfyui` exposes it as
+# `<port>/http` and runs a labelled proxy-first reachability check.
+COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
+COMFYUI_WORKFLOW = os.environ.get(
+    "COMFYUI_WORKFLOW",
+    os.path.join(_TESTS_DIR, "comfyui", "workflows", "gsl_starter_1_1.api.json"),
+)
+COMFYUI_MODELS_MANIFEST = os.environ.get(
+    "COMFYUI_MODELS_MANIFEST",
+    os.path.join(_TESTS_DIR, "comfyui", "models.json"),
+)
+COMFYUI_WAIT_TIMEOUT = int(os.environ.get("COMFYUI_WAIT_TIMEOUT", "600"))
+COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
+COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900"))
+COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
+COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
 
 
 # ---------------------------------------------------------------------------
@@ -312,3 +362,19 @@ GROUP_MIN_CUDA: dict[str, str] = {}
 # JUPYTER_PASSWORD env var and exposes :8888, and `runner.test_pair` runs
 # the Jupyter probes after the CUDA functional check.
 GROUP_TEST_JUPYTER: dict[str, bool] = {}
+
+# Per-group HTTP ports populated from the optional `test_ports:` manifest
+# list. They are exposed as `<port>/http` and checked through the public
+# proxy first; SSH only diagnoses a proxy failure.
+GROUP_TEST_PORTS: dict[str, list[int]] = {}
+
+# ComfyUI-specific public-proxy reachability smoke.
+GROUP_TEST_COMFYUI: dict[str, bool] = {}
+
+# End-to-end ComfyUI generation test. It implies GROUP_TEST_COMFYUI so the
+# public reachability check always runs before model provisioning.
+GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
+
+# Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
+# rather than stopping after the first passing candidate.
+GROUP_CHECK_ALL_GPU: dict[str, bool] = {}

@@ -4,7 +4,7 @@
   * cuda_check_command / run_cuda_check — torch.cuda or nvidia-smi assertion
   * jupyter_check_command / run_jupyter_check — in-pod Jupyter probe over SSH
   * run_jupyter_proxy_check — public proxy probe from the test machine
-  * fetch_logs_via_ssh / dump_pod_logs — pull diagnostic info before terminating
+ * REST API v2 log helpers / dump_pod_logs — diagnose failures before termination
 
 Selection of the CUDA check is driven by the IMAGE REF, not the manifest
 group name: new groups added in the future won't silently skip the check.
@@ -12,13 +12,15 @@ group name: new groups added in the future won't silently skip the check.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Callable, Optional
 
 from . import config
 from .log import log
@@ -322,6 +324,147 @@ def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
     return (r.returncode == 0), combined
 
 
+# ---------------------------------------------------------------------------
+# Generic per-port checks (test_ports manifest field)
+# ---------------------------------------------------------------------------
+
+def port_check_command(test_port: int, wait_timeout: int) -> str:
+    """Wait for localhost HTTP readiness; 4xx is a valid app response."""
+    return (
+        "set -e; "
+        f"echo 'Probing 127.0.0.1:{test_port} (timeout {wait_timeout}s)...'; "
+        "CODE=pending; "
+        f"for i in $(seq 1 {wait_timeout}); do "
+        f"  if (echo > /dev/tcp/127.0.0.1/{test_port}) 2>/dev/null; then "
+        f"    CODE=$(curl -sS --max-time 5 -o /dev/null "
+        f"      -w '%{{http_code}}' 'http://127.0.0.1:{test_port}/' "
+        "      || echo 'curl_failed'); "
+        "    case \"$CODE\" in "
+        f"      [1234]*) echo \"port {test_port} responsive after $i"
+        "s: http=$CODE\"; break ;; "
+        "      *) ;; "
+        "    esac; "
+        "  fi; "
+        "  if [ $((i % 30)) -eq 0 ]; then "
+        f"    echo \"  ...still probing :{test_port} at ${{i}}s/{wait_timeout}s "
+        "(last code=$CODE)\"; "
+        "  fi; "
+        "  sleep 1; "
+        "done; "
+        "case \"$CODE\" in "
+        f"  [1234]*) echo 'port {test_port} OK' ;; "
+        f"  pending) echo 'FAIL: nothing ever listened on 127.0.0.1:{test_port} "
+        f"within {wait_timeout}s'; exit 1 ;; "
+        f"  *) echo \"FAIL: port {test_port} never returned HTTP <500 "
+        f"within {wait_timeout}s (last code: $CODE)\"; exit 1 ;; "
+        "esac"
+    )
+
+
+def run_port_check(
+    host: str,
+    port: int,
+    test_port: int,
+    on_line: Optional[Callable[[str], None]] = None,
+) -> tuple[bool, str]:
+    """Run the in-pod fallback probe with live progress and a hard timeout."""
+    ssh_cmd = [
+        *_ssh_command_prefix(host, port),
+        port_check_command(test_port, config.PORT_WAIT_TIMEOUT),
+    ]
+    outer_timeout = config.PORT_WAIT_TIMEOUT + 60
+    try:
+        proc = subprocess.Popen(
+            ssh_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        return False, _SSH_BINARY_NOT_FOUND
+    assert proc.stdout is not None
+
+    timed_out = [False]
+
+    def kill_on_timeout() -> None:
+        timed_out[0] = True
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+    watchdog = threading.Timer(outer_timeout, kill_on_timeout)
+    watchdog.daemon = True
+    watchdog.start()
+    last_line = ""
+    try:
+        for raw in iter(proc.stdout.readline, ""):
+            line = raw.rstrip("\n")
+            if line:
+                if on_line:
+                    on_line(line)
+                last_line = line
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return False, f"port {test_port} check errored: {exc}"
+    finally:
+        watchdog.cancel()
+
+    if timed_out[0]:
+        return False, (
+            f"port {test_port} check wall-clock timeout after {outer_timeout}s"
+        )
+    return proc.returncode == 0, last_line
+
+
+def _proxy_status_ok(code: int) -> bool:
+    """A service is healthy through the public proxy only on HTTP 200."""
+    return code == 200
+
+
+def run_port_proxy_check(pod_id: str, test_port: int) -> tuple[bool, str]:
+    """Probe a generic HTTP service through RunPod's public proxy."""
+    url = f"https://{pod_id}-{test_port}.proxy.runpod.net/"
+    deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
+    lines = [f"GET {url}"]
+    last_error = ""
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                code = response.status
+                body = response.read(256).decode("utf-8", errors="replace")
+                lines.append(
+                    f"attempt #{attempt}: HTTP {code} body={body[:160]!r}"
+                )
+                if _proxy_status_ok(code):
+                    return True, "\n".join(lines)
+                last_error = f"HTTP {code}"
+        except urllib.error.HTTPError as exc:
+            last_error = f"HTTP {exc.code} {exc.reason}"
+            lines.append(f"attempt #{attempt}: {last_error}")
+        except OSError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            lines.append(f"attempt #{attempt}: {last_error}")
+        time.sleep(5)
+    lines.append(
+        f"FAIL: no HTTP 200 via proxy after {config.PORT_PROXY_TIMEOUT}s "
+        f"({attempt} attempts), last error: {last_error}"
+    )
+    return False, "\n".join(lines)
+
+
 def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     """Hit `https://<pod-id>-8888.proxy.runpod.net/api/status?token=admin`
     from the test machine. Verifies that:
@@ -386,6 +529,140 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Container logs via REST API (v2) + error scan
+# ---------------------------------------------------------------------------
+
+def fetch_pod_logs_api(
+    pod_id: str,
+    tail: int = 0,
+    source: str = "container",
+    deadline_sec: int = 15,
+) -> Optional[list[str]]:
+    """Fetch the SSE backfill from `GET /v2/pods/{id}/logs`.
+
+    The endpoint stays open for live logs. Stop after its historical
+    backfill is drained (socket idle) or the deadline expires.
+    """
+    from .instances import _load_runpod_api_key
+
+    api_key = _load_runpod_api_key()
+    if not api_key:
+        return None
+    tail = tail or config.LOG_API_TAIL
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}/logs?source={source}&tail={tail}",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "text/event-stream",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    lines: list[str] = []
+    deadline = time.monotonic() + deadline_sec
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            while time.monotonic() < deadline:
+                try:
+                    raw = resp.readline()
+                except OSError:
+                    break
+                if not raw:
+                    break
+                text = raw.decode("utf-8", errors="replace").strip()
+                if not text.startswith("data:"):
+                    continue
+                try:
+                    payload = json.loads(text[len("data:"):].strip())
+                except json.JSONDecodeError:
+                    continue
+                line = payload.get("line")
+                if line is not None:
+                    lines.append(line.rstrip())
+    except (urllib.error.HTTPError, OSError) as exc:
+        log(f"  (log API fetch failed: {exc})", indent=2)
+        return None
+    return lines
+
+
+def pod_status_api(pod_id: str) -> Optional[str]:
+    """Return lifecycle status from `GET /v2/pods/{id}`, if available."""
+    from .instances import _load_runpod_api_key
+
+    api_key = _load_runpod_api_key()
+    if not api_key:
+        return None
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read())
+    except (urllib.error.HTTPError, OSError, json.JSONDecodeError):
+        return None
+    status = payload.get("status")
+    return status if isinstance(status, str) else None
+
+
+def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
+    """Return error-marker lines from the host-side REST system-log stream."""
+    lines = fetch_pod_logs_api(pod_id, source="system")
+    if lines is None:
+        return None
+    pattern = re.compile(config.SYS_LOG_ERROR_PATTERN, re.IGNORECASE)
+    return [line for line in lines if pattern.search(line)][:max_lines]
+
+
+_LOG_SCAN_ATTEMPTS = 3
+_LOG_SCAN_RETRY_SLEEP_SEC = 10
+
+
+def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
+    """Scan container stdout for configured errors.
+
+    Empty API responses are retried and then fail as unverified: every
+    supported image emits boot logs, so zero lines cannot prove a clean boot.
+    """
+    from .instances import _load_runpod_api_key
+
+    if not _load_runpod_api_key():
+        return True, "(no API key — log scan skipped)"
+    failures: list[str] = []
+    for attempt in range(1, _LOG_SCAN_ATTEMPTS + 1):
+        lines = fetch_pod_logs_api(pod_id)
+        if lines:
+            break
+        failures.append(
+            f"attempt #{attempt}: "
+            + ("fetch failed" if lines is None else "0 log lines")
+        )
+        if attempt < _LOG_SCAN_ATTEMPTS:
+            time.sleep(_LOG_SCAN_RETRY_SLEEP_SEC)
+    else:
+        return False, (
+            "log scan UNVERIFIED — the log API returned no container logs "
+            f"after {_LOG_SCAN_ATTEMPTS} attempts ({'; '.join(failures)})"
+        )
+
+    pattern = re.compile(config.LOG_ERROR_PATTERN, re.IGNORECASE)
+    matches = [line for line in lines if pattern.search(line)]
+    if not matches:
+        return True, f"scanned {len(lines)} log lines — no error markers"
+    report = [
+        f"scanned {len(lines)} log lines — "
+        f"{len(matches)} matched /{config.LOG_ERROR_PATTERN}/i:"
+    ]
+    report.extend(f"  {line}" for line in matches[:40])
+    if len(matches) > 40:
+        report.append(f"  ... (+{len(matches) - 40} more)")
+    return False, "\n".join(report)
+
+
+# ---------------------------------------------------------------------------
 # Diagnostic log fetch
 # ---------------------------------------------------------------------------
 
@@ -419,26 +696,15 @@ def _gpu_smi_block(image: str) -> str:
 
 
 def fetch_logs_via_ssh(
-    host: str, port: int, image: str, tail: int = 20,
+    host: str, port: int, image: str,
 ) -> Optional[str]:
-    """SSH to the pod and grab the most useful diagnostic info from inside
-    the container. Returns stdout on success, None if SSH didn't work."""
+    """Fetch the GPU SMI snapshot, the remaining SSH-only diagnostic."""
     if not config.SSH_LOG_FETCH:
         return None
-    remote_cmd = (
-        "set +e; "
-        "echo '=== uname / hostname ==='; uname -a; hostname; "
-        f"echo '=== last {tail} /var/log/syslog lines ==='; "
-        f"tail -n {tail} /var/log/syslog 2>/dev/null || echo '(no /var/log/syslog)'; "
-        f"echo '=== last {tail} dmesg lines ==='; "
-        f"dmesg --no-pager 2>/dev/null | tail -n {tail} || echo '(dmesg unavailable)'; "
-        "echo '=== /var/log/*.log tails ==='; "
-        "for f in /var/log/*.log; do "
-        "  [ -f \"$f\" ] || continue; "
-        "  echo \"--- $f ---\"; tail -n 5 \"$f\" 2>/dev/null; "
-        "done; "
-        + _gpu_smi_block(image)
-    )
+    smi_block = _gpu_smi_block(image)
+    if not smi_block:
+        return None
+    remote_cmd = "set +e; " + smi_block
     cmd = [*_ssh_command_prefix(host, port), remote_cmd]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
@@ -451,8 +717,8 @@ def fetch_logs_via_ssh(
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
-def dump_pod_logs(pod_id: str, image: str, tail: int = 20) -> None:
-    """Print pod metadata + container logs (via direct SSH) before terminating."""
+def dump_pod_logs(pod_id: str, image: str) -> None:
+    """Print metadata, API container logs, system errors, and GPU SMI."""
     data = runpodctl_json("pod", "get", pod_id, timeout=30)
     if not isinstance(data, dict):
         log("(could not fetch pod state)", indent=2)
@@ -472,17 +738,30 @@ def dump_pod_logs(pod_id: str, image: str, tail: int = 20) -> None:
     ]:
         log(f"  {key:20s} = {val!r}", indent=2)
 
+    api_lines = fetch_pod_logs_api(pod_id)
+    if api_lines:
+        log(f"--- container logs via API ({len(api_lines)} lines) ---", indent=2)
+        for line in api_lines:
+            log(f"  {line}", indent=2)
+
+    sys_errors = system_log_errors(pod_id)
+    if sys_errors:
+        log(
+            f"--- system-log error markers via API ({len(sys_errors)}) ---",
+            indent=2,
+        )
+        for line in sys_errors:
+            log(f"  {line}", indent=2)
+
     if not (host and port):
-        log("  (no SSH endpoint yet — skipping log fetch)", indent=2)
+        log("  (no SSH endpoint yet — skipping GPU SMI fetch)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
         return
 
-    log(f"--- container/system logs via SSH (root@{host}:{port}) ---", indent=2)
-    logs = fetch_logs_via_ssh(host, int(port), image, tail=tail)
+    logs = fetch_logs_via_ssh(host, int(port), image)
     if logs is None:
-        log("  (SSH log fetch disabled or ssh binary not found)", indent=2)
-        log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
         return
+    log(f"--- GPU SMI via SSH (root@{host}:{port}) ---", indent=2)
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:

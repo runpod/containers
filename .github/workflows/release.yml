@@ -146,18 +146,20 @@ jobs:
     with:
       version: ${{ needs.version.outputs.version }}
       suffix: ${{ needs.version.outputs.suffix }}
+      run-functional-tests: true
 
   # Tag + GitHub Release ONLY on a releasable push to main, and ONLY after every
   # family built and smoke-tested successfully — so we never publish a release
   # that's missing an image family or built on a broken one.
   release:
-    needs: [version, base, nvidia, rocm]
+    needs: [version, base, nvidia, rocm, comfyui]
     if: >-
       github.event_name == 'push'
       && needs.version.outputs.should-release == 'true'
       && needs.base.result == 'success'
       && needs.nvidia.result == 'success'
       && needs.rocm.result == 'success'
+      && needs.comfyui.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
