@@ -66,6 +66,7 @@ jobs:
       base: ${{ steps.f.outputs.base_any_changed }}
       nvidia: ${{ steps.f.outputs.nvidia_any_changed }}
       rocm: ${{ steps.f.outputs.rocm_any_changed }}
+      comfyui: ${{ steps.f.outputs.comfyui_any_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
