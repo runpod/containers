@@ -41,6 +41,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/rocm
 
       - name: Build rocm images (${{ matrix.rocm }})
         id: build
