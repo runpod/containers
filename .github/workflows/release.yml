@@ -94,6 +94,8 @@ jobs:
               - 'official-templates/base/**'
               - 'official-templates/shared/**'
               - 'container-template/**'
+            comfyui:
+              - 'official-templates/comfyui/**'
 
   base:
     needs: [version, changes]
@@ -127,6 +129,17 @@ jobs:
       !cancelled() && needs.version.outputs.should-build == 'true'
       && (github.event_name != 'pull_request' || needs.changes.outputs.rocm == 'true')
     uses: ./.github/workflows/rocm.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
+      suffix: ${{ needs.version.outputs.suffix }}
+
+  comfyui:
+    needs: [version, changes]
+    if: >-
+      !cancelled() && needs.version.outputs.should-build == 'true'
+      && (github.event_name != 'pull_request' || needs.changes.outputs.comfyui == 'true')
+    uses: ./.github/workflows/comfyui.yml
     secrets: inherit
     with:
       version: ${{ needs.version.outputs.version }}

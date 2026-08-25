@@ -292,7 +292,7 @@ if [ -s "$ARGS_FILE" ]; then
 fi
 
 echo "Starting ComfyUI with args: $FIXED_ARGS"
-python main.py $FIXED_ARGS &
+python main.py "$FIXED_ARGS" &
 COMFY_PID=$!
 
 # Distinguish a real ComfyUI crash from the pod being stopped/restarted/
