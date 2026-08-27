@@ -22,11 +22,37 @@ variable "TORCH_META" {
     "2.6.0" = {
       torchvision = "0.21.0"
     }
+    # torchaudio's last release is 2.11.0 — it was dropped from the PyTorch
+    # release process starting with 2.12 (decode/encode moved to TorchCodec).
+    # Upstream states 2.11.0 is compatible with future torch versions, and its
+    # wheel declares no dependencies, so it will not downgrade torch.
+    "2.12.0" = {
+      torchvision = "0.27.0"
+      torchaudio  = "2.11.0"
+    }
+    "2.12.1" = {
+      torchvision = "0.27.1"
+      torchaudio  = "2.11.0"
+    }
+    "2.13.0" = {
+      torchvision = "0.28.0"
+      torchaudio  = "2.11.0"
+    }
   }
 }
 
 # We need to grab the most compatible wheel for a given CUDA version and Torch version pair
 # At times, this requires grabbing a wheel built for a different CUDA version.
+# Torch 2.12+ ships no cu128 wheels: CUDA 12.8 was deprecated in 2.12 and
+# removed from the build matrix in 2.13. cu129 is the substitute for the
+# 12.x bases — it stays in the 2.12/2.13 release matrices (see CUDA_ARCHES
+# in .github/scripts/generate_binary_build_matrix.py on release/2.12 and
+# release/2.13) and carries the same SM list as cu130 on x86_64. The other
+# 12.x option, cu126, stops at sm_90 and ships no PTX, so it cannot run on
+# Blackwell at all — avoid it for these versions.
+#
+# 2.12.0 is CUDA 13 only: cu129 landed in the 2.12 matrix after .0, so
+# 2.12.0+cu129 wheels do not exist. 2.12.1 covers the 12.x bases instead.
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8.1", torch = "2.6.0", whl_src = "126" },
@@ -34,18 +60,25 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.8.1", torch = "2.8.0", whl_src = "128" },
     { cuda_version = "12.8.1", torch = "2.9.0", whl_src = "128" },
     { cuda_version = "12.8.1", torch = "2.9.1", whl_src = "128" },
+    { cuda_version = "12.8.1", torch = "2.12.1", whl_src = "129" },
+    { cuda_version = "12.8.1", torch = "2.13.0", whl_src = "129" },
     
     { cuda_version = "12.9.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "12.9.0", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.8.0", whl_src = "129" },
     { cuda_version = "12.9.0", torch = "2.9.0", whl_src = "129" },
     { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "129" },
+    { cuda_version = "12.9.0", torch = "2.12.1", whl_src = "129" },
+    { cuda_version = "12.9.0", torch = "2.13.0", whl_src = "129" },
 
     { cuda_version = "13.0.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "13.0.0", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "13.0.0", torch = "2.8.0", whl_src = "129" },
     { cuda_version = "13.0.0", torch = "2.9.0", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.9.1", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.12.0", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.12.1", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.13.0", whl_src = "130" },
   ]
 }
 
@@ -62,6 +95,7 @@ variable "COMPATIBLE_BUILDS" {
           torch          = combo.torch
           torch_code     = replace(combo.torch, ".", "")
           torch_vision   = lookup(TORCH_META[combo.torch], "torchvision", "")
+          torch_audio    = lookup(TORCH_META[combo.torch], "torchaudio", combo.torch)
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
       ]
     ]
@@ -124,7 +158,7 @@ target "pytorch-matrix" {
   args = {
     BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
-    TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""} torchaudio==${build.torch}"
+    TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}${build.torch_audio != "" ? " torchaudio==${build.torch_audio}" : ""}"
     PILLOW_VERSION = PILLOW_VERSION
   }
   
