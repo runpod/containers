@@ -217,7 +217,7 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
 ENV NVIDIA_REQUIRE_CUDA=""
 ENV NVIDIA_DISABLE_REQUIRE=true
 ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # Jupyter is included in the lock file and installed in the builder stage
 
