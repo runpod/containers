@@ -48,7 +48,7 @@ jobs:
           # instead of the full ~30-type catalog.
           check-all-gpu: "true"
           manufacturer: Nvidia
-          min-vram-gb: "80"
+          min-vram-gb: "0"
           max-parallel: "3"
 
           # Deliberately NOT set: the floor is derived from the tag (12.8), so
