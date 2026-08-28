@@ -228,7 +228,7 @@ PY
         || true)
     if [ -n "$local_packages" ]; then
         echo "  locally installed CUDA-sensitive packages:"
-        echo "$local_packages" | sed 's/^/    /'
+        echo "    ${local_packages//$'\n'/$'\n'    }"
     else
         echo "  locally installed CUDA-sensitive packages: none"
     fi
@@ -304,6 +304,8 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
     cd "$COMFYUI_DIR"
     python3.12 -m venv --system-site-packages "$VENV_DIR"
+    # The venv is created at runtime, so there is nothing for shellcheck to follow.
+    # shellcheck source=/dev/null
     source "$VENV_DIR/bin/activate"
     python -m ensurepip
     # Skip nodes baked into the image — their deps are in system site-packages
@@ -342,6 +344,7 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     if [ ! -d "$VENV_DIR" ]; then
         cd "$COMFYUI_DIR"
         python3.12 -m venv --system-site-packages "$VENV_DIR"
+        # shellcheck source=/dev/null
         source "$VENV_DIR/bin/activate"
 
         # Ensure pip is available in the venv (needed for ComfyUI-Manager)
@@ -352,7 +355,7 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     fi
 else
     # Just activate the existing venv
-    # shellcheck disable=SC1091
+    # shellcheck source=/dev/null
     source "$VENV_DIR/bin/activate"
     echo "Using existing ComfyUI installation"
 fi
