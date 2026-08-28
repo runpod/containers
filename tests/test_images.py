@@ -13,10 +13,12 @@ Requirements: runpodctl (logged in), python3 >= 3.9
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -48,7 +50,7 @@ from runpod_smoke.runner import test_image
 # entry; the runner iterates instances internally until something settles.
 Job = tuple[str, str, list[str]]
 
-# Per-attempt outcome: (image, status, note, instance_used, host_gpu). A list
+# Per-attempt outcome: (image, status, note, instance_used, host_cuda). A list
 # avoids overwriting rows when `check_all_gpu` creates one job per GPU.
 Result = tuple[str, str, str, str, str]
 
@@ -306,8 +308,8 @@ def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
             print()
             log(f"---------- group: {group} ----------")
             current_group = group
-        status, note, instance, host_gpu = test_image(img, instances, group)
-        results.append((img, status, note, instance, host_gpu))
+        status, note, instance, host_cuda = test_image(img, instances, group)
+        results.append((img, status, note, instance, host_cuda))
 
 
 def _run_one_tagged_job(job: Job) -> Result:
@@ -317,9 +319,9 @@ def _run_one_tagged_job(job: Job) -> Result:
     img, grp, insts = job
     ensure_worker_tag()
     log(f"start [group={grp}] image={img}")
-    status, note, instance, host_gpu = test_image(img, insts, grp)
+    status, note, instance, host_cuda = test_image(img, insts, grp)
     log(f"done  [group={grp}] image={img} -> {status}")
-    return img, status, note, instance, host_gpu
+    return img, status, note, instance, host_cuda
 
 
 def _run_jobs_parallel(jobs: list[Job], results: list[Result]) -> None:
@@ -352,20 +354,104 @@ def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
 
 
 def _format_result_line(want: str, img: str, status: str, note: str,
-                        instance: str, host_gpu: str = "") -> Optional[str]:
+                        instance: str, host_cuda: str = "") -> Optional[str]:
     """Format one row of the summary, or None when this result doesn't
     belong in the `want` bucket. CPU labels ('cpu-secure', 'cpu-community',
     …) are already human-readable, so they go to the summary verbatim.
 
-    `host_gpu` is the CUDA/driver the pod actually ran on — reported because
+    `host_cuda` is the CUDA version the pod actually ran on — reported because
     the image tag only sets a floor, so the tag alone doesn't tell you what
     the run proved."""
     if status != want:
         return None
-    label = f"{instance} - {host_gpu}" if instance and host_gpu else instance
+    label = f"{instance} - CUDA {host_cuda}" if instance and host_cuda else instance
     inst_str = f" [{label}]" if label else ""
     note_str = f" -- {note}" if note else ""
     return f"  {want:6s} {img}{inst_str}{note_str}"
+
+
+_STATUS_ICON = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⚠️ SKIP"}
+
+
+def _md_cell(value: str) -> str:
+    """Escape a value for a markdown table cell."""
+    return (value or "").replace("|", "\\|").replace("\n", " ") or "—"
+
+
+def _emit_step_summary(results: list[Result], counts: dict[str, int]) -> None:
+    """Append the matrix to $GITHUB_STEP_SUMMARY as a markdown table.
+
+    The stdout matrix is only reachable by downloading the job log, which
+    needs repo admin. The step summary renders on the run page for anyone.
+    No-op outside Actions; never fatal.
+    """
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    images = {r[0] for r in results}
+    single = next(iter(images)) if len(images) == 1 else ""
+    head = ["Status", "Instance", "CUDA", "Note"]
+    if not single:
+        head.insert(1, "Image")
+    lines = [
+        "## Smoke-test matrix",
+        "",
+        f"**{counts['PASS']} PASS · {counts['FAIL']} FAIL · {counts['SKIP']} SKIP**",
+        "",
+    ]
+    if single:
+        lines += [f"Image: `{single}`", ""]
+    lines.append("| " + " | ".join(head) + " |")
+    lines.append("|" + "|".join(["---"] * len(head)) + "|")
+    for want in ("FAIL", "SKIP", "PASS"):
+        for img, status, note, instance, host_cuda in results:
+            if status != want:
+                continue
+            row = [
+                _STATUS_ICON.get(status, status),
+                _md_cell(instance),
+                _md_cell(host_cuda),
+                _md_cell(note),
+            ]
+            if not single:
+                row.insert(1, f"`{img}`")
+            lines.append("| " + " | ".join(row) + " |")
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        log(f"warn: could not write step summary: {exc}")
+
+
+def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
+    """Write the matrix to $SMOKE_RESULTS_JSON so CI can keep it as an
+    artifact and diff runs against each other. No-op when unset."""
+    path = os.environ.get("SMOKE_RESULTS_JSON")
+    if not path:
+        return
+    payload = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "totals": {k: counts[k] for k in ("PASS", "FAIL", "SKIP")},
+        "results": [
+            {
+                "image": img,
+                "status": status,
+                "instance": instance,
+                "cuda": host_cuda,
+                "note": note,
+            }
+            for img, status, note, instance, host_cuda in results
+        ],
+    }
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        log(f"wrote results JSON -> {path}")
+    except OSError as exc:
+        log(f"warn: could not write results JSON: {exc}")
 
 
 def _print_summary(results: list[Result]) -> int:
@@ -392,7 +478,7 @@ def _print_summary(results: list[Result]) -> int:
     print(" SUMMARY ".center(84, "="))
     print("=" * 84)
     counts: dict[str, int] = defaultdict(int)
-    for _img, status, _note, _instance, _host_gpu in results:
+    for _img, status, _note, _instance, _host_cuda in results:
         counts[status] += 1
     print(
         f"totals: {counts['PASS']} PASS, "
@@ -400,12 +486,15 @@ def _print_summary(results: list[Result]) -> int:
         f"{counts['SKIP']} SKIP\n"
     )
     for want in ("FAIL", "SKIP", "PASS"):
-        for img, status, note, instance, host_gpu in results:
+        for img, status, note, instance, host_cuda in results:
             line = _format_result_line(
-                want, img, status, note, instance, host_gpu
+                want, img, status, note, instance, host_cuda
             )
             if line is not None:
                 print(line)
+
+    _emit_step_summary(results, counts)
+    _write_results_json(results, counts)
 
     if counts["FAIL"] > 0:
         return 1

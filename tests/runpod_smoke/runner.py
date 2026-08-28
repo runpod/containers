@@ -46,21 +46,23 @@ from .pod import (
 
 _Outcome = tuple[str, str]
 
-# test_pair records the host's CUDA/driver here instead of returning it, so
+# test_pair records the host's CUDA version here instead of returning it, so
 # the ~15 outcome returns in that function keep their 2-tuple shape.
 # test_image reads it on the same thread right after test_pair returns.
+# Stored bare ('13.0') — the 'CUDA ' prefix is added at render time so the
+# JSON report can carry the raw value.
 _thread_local = threading.local()
 
 
-def _set_host_gpu(label: str) -> None:
-    _thread_local.host_gpu = label
+def _set_host_cuda(version: str) -> None:
+    _thread_local.host_cuda = version
 
 
-def _take_host_gpu() -> str:
-    """Read and clear the label left by the last test_pair on this thread."""
-    label = getattr(_thread_local, "host_gpu", "") or ""
-    _thread_local.host_gpu = ""
-    return label
+def _take_host_cuda() -> str:
+    """Read and clear the version left by the last test_pair on this thread."""
+    version = getattr(_thread_local, "host_cuda", "") or ""
+    _thread_local.host_cuda = ""
+    return version
 
 
 def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, str]:
@@ -433,7 +435,7 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
     is used to select the appropriate GPU/CUDA functional check."""
     # Clear first so a label from a previous instance can't leak into an
     # attempt that never reaches the probe (UNAVAILABLE, STUCK).
-    _set_host_gpu("")
+    _set_host_cuda("")
     is_cpu, gpu_id = _log_attempt_header(image, instance, group)
 
     pod_id, early, early_detail = _create_pod_with_retries(
@@ -464,7 +466,7 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 
         host_cuda = fetch_pod_cuda_version(pod_id)
         if host_cuda:
-            _set_host_gpu(f"CUDA {host_cuda}")
+            _set_host_cuda(host_cuda)
             log(f"host CUDA: {host_cuda}", indent=2)
 
         # Sequence the checks. Each returns None on pass/skip, or a FAIL
@@ -503,14 +505,14 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 def test_image(
     image: str, instances: list[str], group: str
 ) -> tuple[str, str, str, str]:
-    """Returns (status, note, instance_used, host_gpu).
+    """Returns (status, note, instance_used, host_cuda).
 
     `instance_used` is the GPU display name that produced the terminal
     status. For PASS / FAIL it's the actual instance the test landed on.
     For SKIP (no capacity / all stuck), it's an empty string — the test
     never settled on any one instance.
 
-    `host_gpu` is the CUDA/driver the pod actually landed on, or '' when no
+    `host_cuda` is the CUDA version the pod actually landed on, or '' when no
     pod ever booted (SKIP) or the host isn't NVIDIA.
 
     Iterates instance types until one PASSes. Stops early on FAIL (real
@@ -530,15 +532,15 @@ def test_image(
             result, detail = test_pair(image, inst, group)
         finally:
             set_worker_context(None)
-        host_gpu = _take_host_gpu()
+        host_cuda = _take_host_cuda()
         if result == "PASS":
-            return "PASS", "", inst, host_gpu
+            return "PASS", "", inst, host_cuda
         if result == "FAIL":
             return (
                 "FAIL",
                 detail or "container did not stay healthy",
                 inst,
-                host_gpu,
+                host_cuda,
             )
         if result == "CREATE_FAIL":
             # Last create error is most informative — capacity-shortage 5xx

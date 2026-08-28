@@ -39,17 +39,19 @@ jobs:
       - name: GPU compat probe
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: '["docker.io/runpod/pytorch:1.2.0-rc.162-cu1281-torch2121-ubuntu2404"]'
+          image-refs: '["docker.io/runpod/pytorch:1.2.0-rc.162-cu1300-torch260-ubuntu2404"]'
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
 
-          # One pod per GPU, bounded to >=80GB cards so this stays ~7 pods
-          # instead of the full ~30-type catalog.
+          # min-vram-gb 0 = the whole NVIDIA catalog (~46 attempts).
           check-all-gpu: "true"
           manufacturer: Nvidia
           min-vram-gb: "0"
           max-parallel: "3"
+
+          upload-results-json: "true"
+          results-artifact-name: gpu-matrix-${{ github.run_id }}
 
           # Deliberately NOT set: the floor is derived from the tag (12.8), so
           # the summary shows whether the host was actually newer.

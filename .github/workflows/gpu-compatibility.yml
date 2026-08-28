@@ -209,6 +209,12 @@ jobs:
           save-comfyui-images: ${{ inputs.test-comfyui-functional }}
           comfyui-images-artifact-name: comfyui-images-gpu-matrix-${{ github.run_id }}
 
+          # The matrix goes to the job's step summary either way; the JSON
+          # artifact is what lets you diff sweeps and spot the fleet moving
+          # to a new CUDA.
+          upload-results-json: "true"
+          results-artifact-name: gpu-matrix-${{ github.run_id }}
+
           # A catalog-wide sweep always hits GPUs with no free capacity.
           # Those are SKIPs, not defects; real FAILs stay fatal.
           on-skip: pass

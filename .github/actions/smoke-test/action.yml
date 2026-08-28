@@ -86,6 +86,23 @@ inputs:
     description: "Retention period for the generated ComfyUI images artifact."
     required: false
     default: "14"
+  upload-results-json:
+    description: |
+      Upload the result matrix (status / instance / host CUDA / note per
+      attempt) as a JSON artifact. The markdown table in the job's step
+      summary is always written and needs no flag; this is for diffing runs
+      against each other. Give each call a distinct results-artifact-name
+      when one run invokes this action more than once.
+    required: false
+    default: "false"
+  results-artifact-name:
+    description: "Artifact name used with upload-results-json."
+    required: false
+    default: "smoke-results"
+  results-retention-days:
+    description: "Retention period for the results JSON artifact."
+    required: false
+    default: "90"
   check-all-gpu:
     description: |
       Test every GPU matching the vendor/vRAM filters independently instead
@@ -354,6 +371,9 @@ runs:
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
         SAVE_COMFYUI_IMAGES: ${{ inputs.save-comfyui-images }}
+        # test_images.py appends the matrix to $GITHUB_STEP_SUMMARY (always)
+        # and writes this JSON, so results are readable without log access.
+        SMOKE_RESULTS_JSON: ${{ runner.temp }}/smoke-results/results.json
       run: |
         set -uo pipefail
         if [[ "${SAVE_COMFYUI_IMAGES,,}" == "true" ]]; then
@@ -361,6 +381,18 @@ runs:
           mkdir -p "${COMFYUI_SAVE_DIR}"
         fi
         python3 "${GITHUB_WORKSPACE}/tests/test_images.py" "${MANIFEST_PATH}"
+
+    # Opt-in: upload-artifact rejects duplicate names within a run, and the
+    # matrix workflows call this action from several jobs. Enable it where you
+    # want to diff runs, passing a distinct results-artifact-name per job.
+    - name: Upload results JSON
+      if: ${{ always() && inputs.upload-results-json == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.results-artifact-name }}
+        path: ${{ runner.temp }}/smoke-results/results.json
+        retention-days: ${{ inputs.results-retention-days }}
+        if-no-files-found: warn
 
     - name: Upload generated ComfyUI images
       if: ${{ always() && inputs.save-comfyui-images == 'true' }}
