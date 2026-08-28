@@ -365,17 +365,22 @@ time python -m pip --version
 log_cuda_venv_diagnostics
 
 # Start ComfyUI — keep container alive if it crashes so SSH/Jupyter remain accessible
-cd $COMFYUI_DIR
-FIXED_ARGS="--listen 0.0.0.0 --port 8188 --enable-cors-header"
+cd "$COMFYUI_DIR"
+
+# Array, not a string: argparse needs each flag as its own argv entry.
+COMFY_ARGS=(--listen 0.0.0.0 --port 8188 --enable-cors-header)
+
+# One array element per word, since a line may hold `--foo bar`.
 if [ -s "$ARGS_FILE" ]; then
-    CUSTOM_ARGS=$(grep -v '^#' "$ARGS_FILE" | tr '\n' ' ')
-    if [ ! -z "$CUSTOM_ARGS" ]; then
-        FIXED_ARGS="$FIXED_ARGS $CUSTOM_ARGS"
-    fi
+    while read -r word; do
+        if [ -n "$word" ]; then
+            COMFY_ARGS+=("$word")
+        fi
+    done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
 fi
 
-echo "Starting ComfyUI with args: $FIXED_ARGS"
-python main.py $FIXED_ARGS &
+echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
+python main.py "${COMFY_ARGS[@]}" &
 COMFY_PID=$!
 
 # Distinguish a real ComfyUI crash from the pod being stopped/restarted/
@@ -402,7 +407,7 @@ echo "  Check the logs above for the error/traceback."
 echo "  SSH and JupyterLab are still available."
 echo "  To restart after fixing:"
 echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
-echo "    python main.py $FIXED_ARGS"
+echo "    python main.py ${COMFY_ARGS[*]}"
 echo "============================================="
 
 sleep infinity

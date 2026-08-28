@@ -21,6 +21,7 @@ from . import config
 from .checks import (
     cuda_check_command,
     dump_pod_logs,
+    fetch_pod_cuda_version,
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
@@ -45,6 +46,22 @@ from .pod import (
 
 _Outcome = tuple[str, str]
 
+# test_pair records the host's CUDA/driver here instead of returning it, so
+# the ~15 outcome returns in that function keep their 2-tuple shape.
+# test_image reads it on the same thread right after test_pair returns.
+_thread_local = threading.local()
+
+
+def _set_host_gpu(label: str) -> None:
+    _thread_local.host_gpu = label
+
+
+def _take_host_gpu() -> str:
+    """Read and clear the label left by the last test_pair on this thread."""
+    label = getattr(_thread_local, "host_gpu", "") or ""
+    _thread_local.host_gpu = ""
+    return label
+
 
 def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, str]:
     """Log the per-attempt header line and resolve the gpu_id.
@@ -67,7 +84,8 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
         )
         return True, ""
     gpu_id = resolve_gpu_id(instance)
-    cuda = detect_cuda_version(image) or config.GROUP_MIN_CUDA.get(group)
+    # Same precedence as create_pod: explicit request wins, tag is fallback.
+    cuda = config.GROUP_MIN_CUDA.get(group) or detect_cuda_version(image)
     cuda_note = f", min-cuda={cuda}" if cuda else ""
     log(
         f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
@@ -413,6 +431,9 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and
     is used to select the appropriate GPU/CUDA functional check."""
+    # Clear first so a label from a previous instance can't leak into an
+    # attempt that never reaches the probe (UNAVAILABLE, STUCK).
+    _set_host_gpu("")
     is_cpu, gpu_id = _log_attempt_header(image, instance, group)
 
     pod_id, early, early_detail = _create_pod_with_retries(
@@ -440,6 +461,11 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         st = pod_state(pod_id)
         host = st.get("ssh_ip") or ""
         port = int(st.get("ssh_port") or 0)
+
+        host_cuda = fetch_pod_cuda_version(pod_id)
+        if host_cuda:
+            _set_host_gpu(f"CUDA {host_cuda}")
+            log(f"host CUDA: {host_cuda}", indent=2)
 
         # Sequence the checks. Each returns None on pass/skip, or a FAIL
         # outcome to surface to the caller. Kept as straight-line code
@@ -476,13 +502,16 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 
 def test_image(
     image: str, instances: list[str], group: str
-) -> tuple[str, str, str]:
-    """Returns (status, note, instance_used).
+) -> tuple[str, str, str, str]:
+    """Returns (status, note, instance_used, host_gpu).
 
     `instance_used` is the GPU display name that produced the terminal
     status. For PASS / FAIL it's the actual instance the test landed on.
     For SKIP (no capacity / all stuck), it's an empty string — the test
     never settled on any one instance.
+
+    `host_gpu` is the CUDA/driver the pod actually landed on, or '' when no
+    pod ever booted (SKIP) or the host isn't NVIDIA.
 
     Iterates instance types until one PASSes. Stops early on FAIL (real
     image bug — no point trying another GPU). UNAVAILABLE (capacity) and
@@ -501,13 +530,15 @@ def test_image(
             result, detail = test_pair(image, inst, group)
         finally:
             set_worker_context(None)
+        host_gpu = _take_host_gpu()
         if result == "PASS":
-            return "PASS", "", inst
+            return "PASS", "", inst, host_gpu
         if result == "FAIL":
             return (
                 "FAIL",
                 detail or "container did not stay healthy",
                 inst,
+                host_gpu,
             )
         if result == "CREATE_FAIL":
             # Last create error is most informative — capacity-shortage 5xx
@@ -525,7 +556,7 @@ def test_image(
         # We never got past pod-create on any instance and the errors
         # weren't capacity-shortages. Surface the last orchestrator error
         # — this is usually an image / auth / registry problem.
-        return "FAIL", last_create_error, last_create_inst
+        return "FAIL", last_create_error, last_create_inst, ""
     if stuck_instances:
         # We tried every instance and RunPod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at
@@ -543,10 +574,12 @@ def test_image(
                 "scheduler issue, try again later"
             ),
             ", ".join(stuck_instances),
+            "",
         )
     log(f"all {len(instances)} instances unavailable (no capacity)", indent=1)
     return (
         "SKIP",
         f"no capacity on any of {len(instances)} candidate instance type(s)",
         ", ".join(unavailable_instances),
+        "",
     )

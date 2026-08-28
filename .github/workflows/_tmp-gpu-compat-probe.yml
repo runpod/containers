@@ -1,0 +1,60 @@
+name: TEMP GPU compat probe
+
+# ============================================================================
+# TEMPORARY — DELETE BEFORE MERGING THIS PR.
+#
+# workflow_dispatch only appears in the UI once the file is on the default
+# branch, so gpu-compatibility.yml can't be run by hand yet. This fires on the
+# PR instead, purely to confirm the new `cudaVersion` column comes back
+# populated and to see whether a cu1281 image actually lands on 12.8.
+#
+# Every push matching `paths` below spends real GPU money.
+# ============================================================================
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/_tmp-gpu-compat-probe.yml'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+# Queue rather than cancel: a cancel SIGKILLs the runner before test_images.py
+# can delete its pods.
+concurrency:
+  group: tmp-gpu-compat-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: GPU compat probe
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: '["docker.io/runpod/pytorch:1.2.0-rc.162-cu1281-torch2121-ubuntu2404"]'
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+
+          # One pod per GPU, bounded to >=80GB cards so this stays ~7 pods
+          # instead of the full ~30-type catalog.
+          check-all-gpu: "true"
+          manufacturer: Nvidia
+          min-vram-gb: "80"
+          max-parallel: "3"
+
+          # Deliberately NOT set: the floor is derived from the tag (12.8), so
+          # the summary shows whether the host was actually newer.
+          # min-cuda-version:
+
+          test-jupyter: "true"
+          on-skip: pass
+          create-timeout: "1200"

@@ -262,34 +262,32 @@ def create_pod(
         # request a specific tier with this subcommand.
     else:
         args.extend(["--gpu-id", gpu_id, "--gpu-count", "1"])
-        # Constrain scheduling to hosts whose driver supports this image's
-        # CUDA. Without this, RunPod may land a cu13.0 image on an
-        # older-driver host and the container fails at startup with
-        # `nvidia-container-cli: cuda>=13.0`. Image tag wins; the manifest
-        # `min_cuda_version` is only consulted for opaque tags (NGC etc.).
+        # Pin scheduling to hosts whose driver supports the image's CUDA,
+        # else a cu130 image dies with `nvidia-container-cli: cuda>=13.0`.
+        # An explicit manifest value wins; the tag is the fallback.
         tag_cuda = detect_cuda_version(image)
         manifest_cuda = (
             config.GROUP_MIN_CUDA.get(group) if group else None
         )
-        cuda_version = tag_cuda or manifest_cuda
+        cuda_version = manifest_cuda or tag_cuda
         if cuda_version:
             args.extend(["--min-cuda-version", cuda_version])
-        # Emit a one-line trace of which source won, so reading the logs
-        # later (or chasing why scheduling picked a particular host) you
-        # can see whether the tag or the manifest fallback was used —
-        # and notice when a manifest value got ignored because the tag
-        # already had one.
-        if tag_cuda and manifest_cuda and tag_cuda != manifest_cuda:
+        if manifest_cuda and tag_cuda and manifest_cuda != tag_cuda:
             log(
-                f"min-cuda-version: tag='{tag_cuda}' wins over "
-                f"manifest='{manifest_cuda}' (tag is the source of truth "
-                "for image-encoded CUDA; manifest is fallback-only)",
+                f"min-cuda-version: requested '{manifest_cuda}' overrides "
+                f"tag-derived '{tag_cuda}'",
+                indent=1,
+            )
+        elif tag_cuda and not manifest_cuda:
+            log(
+                f"min-cuda-version: none requested, derived '{tag_cuda}' "
+                "from the image tag",
                 indent=1,
             )
         elif manifest_cuda and not tag_cuda:
             log(
-                f"min-cuda-version: tag has none, using manifest "
-                f"fallback '{manifest_cuda}'",
+                f"min-cuda-version: requested '{manifest_cuda}' (tag has "
+                "no CUDA marker to derive from)",
                 indent=1,
             )
     if config.REGISTRY_AUTH_ID:

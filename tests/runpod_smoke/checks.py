@@ -141,6 +141,45 @@ def _image_expects_rocm(image: str) -> bool:
     return bool(_ROCM_TAG_RE.search(image))
 
 
+def fetch_pod_cuda_version(pod_id: str, attempts: int = 3) -> str:
+    """Return the CUDA version the host reported, e.g. '13.0'.
+
+    `min_cuda_version` is only a floor, so the scheduler may place the pod on
+    any host at or above it — this reports what it actually got, which is the
+    point of a compatibility matrix. `runpodctl` drops the field, so it comes
+    from `GET /v2/pods/{id}` rather than `pod get`.
+
+    Nullable per the API: CPU pods and hosts that never reported one give ''.
+    Retried a few times because the value only lands once the scheduler has
+    assigned a machine. Reporting only — never turns a PASS into a FAIL.
+    """
+    from .instances import _load_runpod_api_key
+
+    api_key = _load_runpod_api_key()
+    if not api_key:
+        return ""
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+        except (OSError, ValueError):
+            data = None
+        cuda = (data or {}).get("cudaVersion")
+        if cuda:
+            return str(cuda).strip()
+        if attempt < attempts:
+            time.sleep(2)
+    return ""
+
+
 def cuda_check_command(image: str) -> str:
     """Return a shell command that functionally validates the GPU/CUDA stack
     for a given image, or '' to skip the check (CPU images).

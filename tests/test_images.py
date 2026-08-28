@@ -48,9 +48,9 @@ from runpod_smoke.runner import test_image
 # entry; the runner iterates instances internally until something settles.
 Job = tuple[str, str, list[str]]
 
-# Per-attempt outcome: (image, status, note, instance_used). A list avoids
-# overwriting rows when `check_all_gpu` creates one job per GPU.
-Result = tuple[str, str, str, str]
+# Per-attempt outcome: (image, status, note, instance_used, host_gpu). A list
+# avoids overwriting rows when `check_all_gpu` creates one job per GPU.
+Result = tuple[str, str, str, str, str]
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +281,7 @@ def _build_jobs(
                 "'check_all_gpu:' produced candidates)"
             )
             for img in contents.get("images", []):
-                results.append((img, "SKIP", "no instances configured", ""))
+                results.append((img, "SKIP", "no instances configured", "", ""))
             continue
         check_all = config.GROUP_CHECK_ALL_GPU.get(group, False)
         for img in contents.get("images", []):
@@ -306,8 +306,8 @@ def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
             print()
             log(f"---------- group: {group} ----------")
             current_group = group
-        status, note, instance = test_image(img, instances, group)
-        results.append((img, status, note, instance))
+        status, note, instance, host_gpu = test_image(img, instances, group)
+        results.append((img, status, note, instance, host_gpu))
 
 
 def _run_one_tagged_job(job: Job) -> Result:
@@ -317,9 +317,9 @@ def _run_one_tagged_job(job: Job) -> Result:
     img, grp, insts = job
     ensure_worker_tag()
     log(f"start [group={grp}] image={img}")
-    status, note, instance = test_image(img, insts, grp)
+    status, note, instance, host_gpu = test_image(img, insts, grp)
     log(f"done  [group={grp}] image={img} -> {status}")
-    return img, status, note, instance
+    return img, status, note, instance, host_gpu
 
 
 def _run_jobs_parallel(jobs: list[Job], results: list[Result]) -> None:
@@ -352,13 +352,18 @@ def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
 
 
 def _format_result_line(want: str, img: str, status: str, note: str,
-                        instance: str) -> Optional[str]:
+                        instance: str, host_gpu: str = "") -> Optional[str]:
     """Format one row of the summary, or None when this result doesn't
     belong in the `want` bucket. CPU labels ('cpu-secure', 'cpu-community',
-    …) are already human-readable, so they go to the summary verbatim."""
+    …) are already human-readable, so they go to the summary verbatim.
+
+    `host_gpu` is the CUDA/driver the pod actually ran on — reported because
+    the image tag only sets a floor, so the tag alone doesn't tell you what
+    the run proved."""
     if status != want:
         return None
-    inst_str = f" [{instance}]" if instance else ""
+    label = f"{instance} - {host_gpu}" if instance and host_gpu else instance
+    inst_str = f" [{label}]" if label else ""
     note_str = f" -- {note}" if note else ""
     return f"  {want:6s} {img}{inst_str}{note_str}"
 
@@ -387,7 +392,7 @@ def _print_summary(results: list[Result]) -> int:
     print(" SUMMARY ".center(84, "="))
     print("=" * 84)
     counts: dict[str, int] = defaultdict(int)
-    for _img, status, _note, _instance in results:
+    for _img, status, _note, _instance, _host_gpu in results:
         counts[status] += 1
     print(
         f"totals: {counts['PASS']} PASS, "
@@ -395,8 +400,10 @@ def _print_summary(results: list[Result]) -> int:
         f"{counts['SKIP']} SKIP\n"
     )
     for want in ("FAIL", "SKIP", "PASS"):
-        for img, status, note, instance in results:
-            line = _format_result_line(want, img, status, note, instance)
+        for img, status, note, instance, host_gpu in results:
+            line = _format_result_line(
+                want, img, status, note, instance, host_gpu
+            )
             if line is not None:
                 print(line)
 

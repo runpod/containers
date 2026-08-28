@@ -1,0 +1,218 @@
+name: GPU Compatibility Matrix
+
+# Manual sweep for any image: boots it on EVERY GPU in the RunPod catalog
+# independently and reports a per-GPU pass/fail matrix.
+#
+# COST: ~30 NVIDIA types x 5-10 min per pod, far longer with the ComfyUI
+# functional check. Narrow with min-vram-gb / exclude-instances.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Image ref WITH tag, e.g. runpod/comfyui:1.0.7-comfyuiv0.30.0-cuda12.8"
+        type: string
+        required: true
+      test-ports:
+        description: "HTTP ports to probe, comma- or space-separated (e.g. 8080, 8888). Empty = none."
+        type: string
+        required: false
+        default: ""
+      cuda-version:
+        description: "CUDA the host driver must support, X.Y (e.g. 13.0). Empty = derive from the image tag."
+        type: string
+        required: false
+        default: ""
+      test-comfyui:
+        description: "ComfyUI smoke test — is ComfyUI up and reachable on :8188"
+        type: boolean
+        required: false
+        default: false
+      test-comfyui-functional:
+        description: "ComfyUI functional test — download model, run workflow, validate PNG (forces the smoke test first)"
+        type: boolean
+        required: false
+        default: false
+      exclude-instances:
+        description: "GPUs to skip: comma-separated fnmatch patterns (e.g. *Blackwell*, RTX A4000)"
+        type: string
+        required: false
+        default: ""
+      test-jupyter:
+        description: "JupyterLab probe on :8888 — only for images using container-template/start.sh"
+        type: boolean
+        required: false
+        default: false
+      manufacturer:
+        description: "GPU vendor to sweep (AMD for ROCm images)"
+        type: choice
+        required: false
+        default: "Nvidia"
+        options:
+          - Nvidia
+          - AMD
+      min-vram-gb:
+        description: "Skip GPUs below this vRAM. 0 = sweep the whole catalog."
+        type: string
+        required: false
+        default: "0"
+      max-parallel:
+        description: "Pods under test at once (each worker holds one pod — this is the cost throttle)"
+        type: string
+        required: false
+        default: "2"
+
+permissions:
+  contents: read
+
+# cancel-in-progress is false on purpose: a cancel SIGKILLs the runner before
+# test_images.py can terminate its pods, so queue rather than leak paid pods.
+concurrency:
+  group: gpu-compat-${{ inputs.image }}
+  cancel-in-progress: false
+
+jobs:
+  compatibility:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # A full sweep outlives the 360-minute default.
+    timeout-minutes: 720
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Normalize inputs
+        id: prep
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+          PORTS: ${{ inputs.test-ports }}
+          EXCLUDE: ${{ inputs.exclude-instances }}
+        run: |
+          set -euo pipefail
+
+          # Dispatch gives single-line strings; smoke-test wants one entry per
+          # line. Ports also accept spaces, exclude patterns must not — GPU
+          # display names contain them ("RTX A4000").
+          to_lines() {
+            printf '%s' "$1" \
+              | tr ',' '\n' \
+              | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+              | grep -v '^$' || true
+          }
+
+          emit_multiline() {
+            {
+              echo "$1<<__GH_EOF__"
+              to_lines "$2"
+              echo "__GH_EOF__"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          IMAGE_TRIMMED=$(printf '%s' "${IMAGE}" | tr -d '[:space:]')
+          if [[ -z "${IMAGE_TRIMMED}" ]]; then
+            echo "::error::image input is empty"
+            exit 1
+          fi
+          if [[ "${IMAGE_TRIMMED}" != *:* ]]; then
+            echo "::error::image '${IMAGE_TRIMMED}' has no tag — pass an explicit tag, not a bare repository"
+            exit 1
+          fi
+          printf 'image-refs=["%s"]\n' "${IMAGE_TRIMMED}" >> "$GITHUB_OUTPUT"
+          printf 'image=%s\n' "${IMAGE_TRIMMED}" >> "$GITHUB_OUTPUT"
+
+          emit_multiline ports "$(printf '%s' "${PORTS}" | tr ' ' ',')"
+          emit_multiline exclude "${EXCLUDE}"
+
+      - name: Validate numeric inputs
+        shell: bash
+        env:
+          MIN_VRAM: ${{ inputs.min-vram-gb }}
+          MAX_PARALLEL: ${{ inputs.max-parallel }}
+          CUDA: ${{ inputs.cuda-version }}
+        run: |
+          set -euo pipefail
+          # Fail before the runpodctl install and catalog fetch, not with an
+          # int()/float() traceback deep in the harness.
+          [[ "${MIN_VRAM}" =~ ^[0-9]+$ ]] \
+            || { echo "::error::min-vram-gb must be a whole number, got '${MIN_VRAM}'"; exit 1; }
+          [[ "${MAX_PARALLEL}" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "::error::max-parallel must be a positive integer, got '${MAX_PARALLEL}'"; exit 1; }
+          [[ -z "${CUDA}" || "${CUDA}" =~ ^[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::cuda-version must be X.Y (e.g. 13.0) or empty, got '${CUDA}'"; exit 1; }
+
+      - name: Summarize run parameters
+        shell: bash
+        env:
+          # Free-text inputs go through env so shell metacharacters can't
+          # break out of the echo.
+          IMAGE: ${{ steps.prep.outputs.image }}
+          PORTS: ${{ steps.prep.outputs.ports }}
+          EXCLUDE: ${{ steps.prep.outputs.exclude }}
+          CUDA: ${{ inputs.cuda-version }}
+          VENDOR: ${{ inputs.manufacturer }}
+          MIN_VRAM: ${{ inputs.min-vram-gb }}
+          MAX_PARALLEL: ${{ inputs.max-parallel }}
+          JUPYTER: ${{ inputs.test-jupyter }}
+          COMFY_SMOKE: ${{ inputs.test-comfyui || inputs.test-comfyui-functional }}
+          COMFY_FUNC: ${{ inputs.test-comfyui-functional }}
+        run: |
+          set -euo pipefail
+          # Not `paste -sd', '` — -d takes a delimiter LIST and alternates
+          # through it, yielding '8080,8888 9000'.
+          ports_1l=$(printf '%s' "${PORTS}" | paste -sd, - | sed 's/,/, /g')
+          exclude_1l=$(printf '%s' "${EXCLUDE}" | paste -sd, - | sed 's/,/, /g')
+          {
+            echo "### GPU compatibility sweep"
+            echo
+            echo "| Setting | Value |"
+            echo "| --- | --- |"
+            echo "| Image | \`${IMAGE}\` |"
+            echo "| CUDA floor | ${CUDA:-derived from tag} |"
+            echo "| Vendor | ${VENDOR} |"
+            echo "| Min vRAM | ${MIN_VRAM} GB |"
+            echo "| Ports | ${ports_1l:-none} |"
+            echo "| Excluded GPUs | ${exclude_1l:-none} |"
+            echo "| Jupyter | ${JUPYTER} |"
+            echo "| ComfyUI smoke | ${COMFY_SMOKE} |"
+            echo "| ComfyUI functional | ${COMFY_FUNC} |"
+            echo "| Parallel pods | ${MAX_PARALLEL} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run compatibility matrix
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.prep.outputs.image-refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+
+          # One pod per GPU, no first-PASS short-circuit. This also drops the
+          # budget filter, so min-vram-gb and exclude-instances are the only
+          # ways to narrow the sweep.
+          check-all-gpu: "true"
+          manufacturer: ${{ inputs.manufacturer }}
+          min-vram-gb: ${{ inputs.min-vram-gb }}
+          exclude-instances: ${{ steps.prep.outputs.exclude }}
+
+          # Empty = derived from the tag by instances.detect_cuda_version.
+          min-cuda-version: ${{ inputs.cuda-version }}
+
+          test-ports: ${{ steps.prep.outputs.ports }}
+          test-jupyter: ${{ inputs.test-jupyter }}
+
+          # test_images.py also forces this, but OR-ing keeps the generated
+          # manifest self-explanatory.
+          test-comfyui: ${{ inputs.test-comfyui || inputs.test-comfyui-functional }}
+          test-comfyui-functional: ${{ inputs.test-comfyui-functional }}
+          save-comfyui-images: ${{ inputs.test-comfyui-functional }}
+          comfyui-images-artifact-name: comfyui-images-gpu-matrix-${{ github.run_id }}
+
+          # A catalog-wide sweep always hits GPUs with no free capacity.
+          # Those are SKIPs, not defects; real FAILs stay fatal.
+          on-skip: pass
+
+          # Worst case across images: rocm/* bases are 30-50 GB.
+          create-timeout: "1200"
+          max-parallel: ${{ inputs.max-parallel }}
