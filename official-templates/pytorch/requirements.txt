@@ -1,4 +1,8 @@
-setuptools==78.1.1
+# torch 2.12.x caps setuptools at <82. 81.0.0 is the highest release under that cap and
+# the first one whose setuptools/_vendor/ copies of jaraco.context and wheel clear
+# CVE-2026-23949 / CVE-2026-24049 — Grype catalogs those vendored dist-info dirs, so the
+# top-level pins below do not clear the findings on their own.
+setuptools==81.0.0
 jaraco-context==6.1.0
 wheel==0.46.2
 pillow==12.3.0

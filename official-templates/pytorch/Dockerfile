@@ -19,9 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
 
-# torchvision pulls Pillow from the PyTorch wheel index, which lags PyPI and
-# ships releases with known HIGH CVEs. Re-install a patched Pillow from PyPI,
-# but only when it's already present (torch builds without torchvision have none).
+# Patched pins for packages that Grype reports as HIGH in the layers above.
 COPY --from=requirements requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install --upgrade -r /requirements.txt
