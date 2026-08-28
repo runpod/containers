@@ -1,12 +1,5 @@
 # https://pytorch.org/get-started/locally/
 
-# Patched Pillow pulled from PyPI to override the outdated (CVE-affected) copy
-# that torchvision drags in from the PyTorch wheel index. Keep in sync with the
-# pin used by the nvidia-pytorch / rocm requirements.txt files.
-variable "PILLOW_VERSION" {
-  default = "12.3.0"
-}
-
 variable "TORCH_META" {
   default = {
     "2.9.1" = {}
@@ -144,6 +137,9 @@ target "pytorch-base" {
   context = "official-templates/pytorch"
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64"]
+  contexts = {
+    requirements = "official-templates/pytorch"
+  }
 }
 
 target "pytorch-matrix" {
@@ -159,7 +155,6 @@ target "pytorch-matrix" {
     BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
     TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}${build.torch_audio != "" ? " torchaudio==${build.torch_audio}" : ""}"
-    PILLOW_VERSION = PILLOW_VERSION
   }
   
   tags = [
