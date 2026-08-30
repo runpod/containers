@@ -1,0 +1,88 @@
+// Grafana Alloy — per-node log shipper (the supported successor to Promtail).
+// Runs on EVERY node (autostart=true; see cluster.conf), tails the local Slurm
+// logs, parses them, and pushes them to the head-node Loki at
+// http://node-0:3100.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// Discover Slurm log files on this node. Slurm is provisioned at RUNTIME by
+// RunPod (only the slurm-wlm package is baked into the base image), and its
+// logs land in the distro-standard /var/log/slurm/. Override the glob at
+// runtime with the SLURM_LOG_GLOB env var. The `job`/`node` map keys become
+// Loki stream labels; `node` is the container hostname (node-0, node-1, ...).
+local.file_match "slurm" {
+  path_targets = [{
+    __path__ = coalesce(sys.env("SLURM_LOG_GLOB"), "/var/log/slurm/*.log"),
+    job      = "slurm",
+    node     = constants.hostname,
+  }]
+}
+
+loki.source.file "slurm" {
+  targets    = local.file_match.slurm.targets
+  forward_to = [loki.process.slurm.receiver]
+}
+
+// Parse each Slurm log line to add useful, low-cardinality labels + structured
+// metadata, and re-stamp the entry with its own event time:
+//   component  slurmctld|slurmd|slurmdbd|...  (label, derived from the filename)
+//   level      info|verbose|debug|warning|error|fatal  (label; colours + filters)
+//   job_id     Slurm JobId=<n>                (structured metadata — high card.)
+loki.process "slurm" {
+  forward_to = [loki.write.default.receiver]
+
+  // component from the source filename, e.g. /var/log/slurm/slurmctld.log.
+  stage.regex {
+    source     = "filename"
+    expression = `(?P<component>slurm[a-z]*)\.log$`
+  }
+  stage.labels {
+    values = { component = "" }
+  }
+
+  // Slurm line: "[2025-07-17T10:23:45.123] error: message". The level prefix is
+  // optional (info/verbose lines have none).
+  stage.regex {
+    expression = `^\[(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]\s*(?:(?P<level>error|fatal|warning|verbose|debug\d*|info):\s*)?(?P<message>.*)$`
+  }
+
+  // Re-stamp with the event time. Slurm writes local time without an offset and
+  // the RunPod images run UTC; on parse failure keep the ingestion time (skip).
+  stage.timestamp {
+    source            = "timestamp"
+    format            = "2006-01-02T15:04:05.000"
+    fallback_formats  = ["2006-01-02T15:04:05"]
+    location          = "UTC"
+    action_on_failure = "skip"
+  }
+
+  // Normalise the level: default un-prefixed lines to info; collapse debugN.
+  stage.template {
+    source   = "level"
+    template = `{{ if .Value }}{{ if hasPrefix "debug" .Value }}debug{{ else }}{{ .Value }}{{ end }}{{ else }}info{{ end }}`
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+
+  // JobId is high-cardinality, so attach it as structured metadata rather than
+  // a stream label (queryable without multiplying streams).
+  stage.regex {
+    expression = `JobId=(?P<job_id>\d+)`
+  }
+  stage.structured_metadata {
+    values = { job_id = "" }
+  }
+}
+
+// Ship to the head-node Loki. `node-0` resolves via /etc/hosts on every node
+// (the repo's node-naming convention). loki.write buffers and retries with
+// backoff, so starting before node-0's Loki is up is safe and self-healing.
+loki.write "default" {
+  endpoint {
+    url = "http://node-0:3100/loki/api/v1/push"
+  }
+}

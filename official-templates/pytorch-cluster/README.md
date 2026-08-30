@@ -8,6 +8,13 @@ It layers two things on top of `runpod/pytorch`:
 2. **A self-contained monitoring stack**, managed by `supervisord`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
+3. **Log aggregation**, also managed by `supervisord`:
+   - **Grafana Alloy** (per-node log shipper) runs on **every** node and tails the
+     Slurm logs, pushing them to the head node.
+   - **Loki** (`0.0.0.0:3100`) runs **only on `node-0`** and stores the logs;
+     Grafana queries it over loopback.
+4. **Slurm job accounting backend** — **MariaDB** (`127.0.0.1:3306`) runs **only
+   on `node-0`** with an empty `slurm_acct_db` database ready for `slurmdbd`.
 
 Image tags follow the pytorch scheme with a `-cluster` suffix, e.g.
 `runpod/pytorch:<version>-cu1281-torch280-ubuntu2404-cluster`.
@@ -20,11 +27,97 @@ shipped here. On start, `post_start.sh`:
 1. If `hostname` is **`node-0`**, renders `/etc/prometheus/prometheus.yml` with a
    `node` (`:9100`) and `dcgm` (`:9400`) scrape target for **every peer found in
    `/etc/hosts` whose name starts with `node-`** (falls back to localhost).
-2. Starts `supervisord`, which brings up the exporters on every node.
-3. If `hostname` is `node-0`, starts Prometheus + Grafana via `supervisorctl`.
+2. Starts `supervisord`, which brings up the exporters **and the Alloy log
+   shipper** on every node.
+3. If `hostname` is `node-0`, starts Loki + Prometheus + Grafana via `supervisorctl`.
 
 Grafana is pre-provisioned with a Prometheus datasource pointing at
-`http://127.0.0.1:9090`, so the query traffic never leaves the head node.
+`http://127.0.0.1:9090` and a Loki datasource pointing at `http://127.0.0.1:3100`,
+so the query traffic never leaves the head node.
+
+## Log aggregation (Slurm)
+
+Slurm itself is provisioned at **runtime** by Runpod (the image only bakes in the
+`slurm-wlm` package); its logs land in the distro-standard `/var/log/slurm/`.
+**Grafana Alloy** runs on every node (`autostart=true`, like the exporters),
+tails `/var/log/slurm/*.log`, and pushes each line to the head-node **Loki** at
+`http://node-0:3100`. Loki binds `0.0.0.0:3100` so compute-node shippers can
+reach it; it stays on the private cluster network (only Grafana `:8889` is
+public). Logs are queryable in the **Slurm Logs** dashboard or Grafana's Explore
+view via the **Loki** datasource.
+
+Alloy parses each line (`config/alloy/config.alloy`) before shipping, so logs
+arrive with useful, low-cardinality **labels** — and the entry is re-stamped with
+the log's own event time:
+
+| Field | Kind | Values |
+| --- | --- | --- |
+| `node` | label | container hostname (`node-0`, `node-1`, …) |
+| `component` | label | `slurmctld` / `slurmd` / `slurmdbd` (from the filename) |
+| `level` | label | `info` / `verbose` / `debug` / `warning` / `error` / `fatal` |
+| `job_id` | structured metadata | Slurm `JobId=<n>` (kept off the label set to avoid high cardinality) |
+
+- Override the tailed path with the **`SLURM_LOG_GLOB`** env var (default
+  `/var/log/slurm/*.log`).
+- Alloy on compute nodes retries with backoff until `node-0`'s Loki is up, so
+  startup order doesn't matter.
+- Slurm writes local time without an offset; the images run **UTC**, so the
+  timestamp is parsed as UTC. On parse failure the ingestion time is kept.
+- **Note:** Alloy replaces Promtail, which Grafana declared end-of-life and
+  dropped from Loki releases after the 3.5.x line.
+
+## Slurm job accounting (MariaDB)
+
+Slurm's accounting backend (`slurmdbd`) needs a MySQL/MariaDB database.
+**MariaDB** (server + client) is installed in the image and runs **only on
+`node-0`** (`autostart=false`; started by `post_start.sh`). It binds loopback
+`127.0.0.1:3306`, so the accounting DB never leaves the head node.
+
+On `node-0`, `post_start.sh` (idempotently, every boot):
+
+1. Initialises the MariaDB data directory at
+   **`/workspace/slurm-acct-db/$RUNPOD_POD_ID`** on first boot — on the RunPod
+   persistent volume, scoped by node-0's pod id (see the note below).
+2. Starts `mariadbd`.
+3. Ensures the accounting database and login user exist:
+   - database **`slurm_acct_db`**
+   - user **`slurm`@`localhost`** with `GRANT ALL` on that database
+
+> **Why the pod-id subdirectory?** RunPod exposes no stable per-cluster id, and
+> two clusters can be attached to the same `/workspace` network volume. Scoping
+> the datadir by node-0's `RUNPOD_POD_ID` guarantees two clusters never point two
+> `mariadbd` instances at one InnoDB datadir (which would corrupt it). The
+> trade-off: the pod id changes when a cluster is recreated, so **accounting
+> history does not carry across a recreation** — each cluster instance gets its
+> own datadir. Stale per-instance directories accumulate on the volume and can be
+> pruned by hand.
+
+> **Run user.** `/workspace` is a network volume that usually forbids `chown`
+> (root is squashed). `post_start.sh` tries to give the datadir to the `mysql`
+> user and, if that fails, runs `mariadbd` **as root** so it matches the volume's
+> ownership — the resolved `user=` is written into the runtime-rendered
+> `zz-slurm-acct-datadir.cnf`. A partial datadir left by a failed init is cleared
+> before re-initialising.
+
+`slurmdbd` **creates and owns the accounting tables itself** on first connect —
+there is no schema dump to load; this only prepares the empty database and a
+user it can authenticate as. Point `slurmdbd.conf` at it:
+
+```ini
+StorageType   = accounting_storage/mysql
+StorageHost   = localhost
+StorageLoc    = slurm_acct_db
+StorageUser   = slurm
+StoragePass   = slurm
+```
+
+Overridable via env (set them **before** first boot; `StoragePass` in
+`slurmdbd.conf` must match): `SLURM_ACCT_DB_NAME`, `SLURM_ACCT_DB_USER`,
+`SLURM_ACCT_DB_PASSWORD` (all default as above). InnoDB tuning follows SchedMD's
+recommendations (`config/mariadb/99-slurm-acct.cnf`).
+
+> Slurm itself (`slurmctld` / `slurmd` / `slurmdbd` / `munge`) is provisioned at
+> runtime by RunPod — the image only supplies the MariaDB backend.
 
 ## Pre-baked dashboards
 
@@ -40,8 +133,16 @@ default landing page (replacing Grafana's welcome page):
   clocks, PCIe/NVLink throughput, and XID/ECC/replay errors.
 - **Node & System** — CPU, memory, disk I/O, network, filesystem, load (from
   node_exporter).
-- **Fabric & Interconnect** — InfiniBand RX/TX, NVLink & PCIe throughput, and
-  PCIe replay rate.
+- **Fabric & Interconnect** — grouped by fabric: **InfiniBand / RoCE** (port &
+  physical state now and over time, adapter inventory, link signal-rate
+  capacity), **PCIe (DCGM)** (per-GPU link gen/width and replay rate),
+  **Ethernet Fabric** (throughput, packet rate, errors/drops, carrier flaps),
+  **TCP Health** (retransmits, established/in-use sockets), and **Clock Sync**
+  (NTP offset, time-sync status).
+- **Slurm Logs** — Slurm logs from every node (via Loki): error/warning stat
+  tiles, log-volume timelines by level and by node, a dedicated errors &
+  warnings stream, and the full log stream — all filterable by node, component,
+  level, and a full-text search box.
 
 The training signals (Tensor Core / DRAM / NVLink activity) come from DCGM
 profiling (DCP) metrics, so dcgm-exporter runs with Runpod's extended counter
