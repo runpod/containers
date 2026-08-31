@@ -602,15 +602,6 @@ def fetch_pod_logs_api(
     return lines
 
 
-def pod_status_api(pod_id: str) -> Optional[str]:
-    """Return lifecycle status from `GET /v2/pods/{id}`, if available."""
-    status, data = api.request("GET", f"/pods/{pod_id}", timeout=10)
-    if not (200 <= status < 300) or not isinstance(data, dict):
-        return None
-    value = data.get("status")
-    return value if isinstance(value, str) else None
-
-
 def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
     """Return error-marker lines from the host-side REST system-log stream."""
     lines = fetch_pod_logs_api(pod_id, source="system")

@@ -483,7 +483,10 @@ def test_pair(
         host = st.get("ssh_ip") or ""
         port = int(st.get("ssh_port") or 0)
 
-        host_cuda = fetch_pod_cuda_version(pod_id)
+        # pod_state already carries cudaVersion, so the common path costs no
+        # extra request. It is nullable until the scheduler has assigned a
+        # machine, hence the retrying fallback.
+        host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
         if host_cuda:
             _set_host_cuda(host_cuda)
             log(f"host CUDA: {host_cuda}", indent=2)
