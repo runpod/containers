@@ -22,9 +22,8 @@ import urllib.error
 import urllib.request
 from typing import Callable, Optional
 
-from . import config
+from . import api, config
 from .log import log
-from .runpodctl import runpodctl_json
 
 
 # Error string returned by every helper that shells out to `ssh` and fails
@@ -146,34 +145,16 @@ def fetch_pod_cuda_version(pod_id: str, attempts: int = 3) -> str:
 
     `min_cuda_version` is only a floor, so the scheduler may place the pod on
     any host at or above it — this reports what it actually got, which is the
-    point of a compatibility matrix. `runpodctl` drops the field, so it comes
-    from `GET /v2/pods/{id}` rather than `pod get`.
+    point of a compatibility matrix.
 
     Nullable per the API: CPU pods and hosts that never reported one give ''.
     Retried a few times because the value only lands once the scheduler has
     assigned a machine. Reporting only — never turns a PASS into a FAIL.
     """
-    from .instances import _load_runpod_api_key
-
-    api_key = _load_runpod_api_key()
-    if not api_key:
-        return ""
-    req = urllib.request.Request(
-        f"https://api.runpod.io/v2/pods/{pod_id}",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
-        },
-    )
     for attempt in range(1, attempts + 1):
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read())
-        except (OSError, ValueError):
-            data = None
-        cuda = (data or {}).get("cudaVersion")
-        if cuda:
+        status, data = api.request("GET", f"/pods/{pod_id}", timeout=15)
+        cuda = data.get("cudaVersion") if isinstance(data, dict) else None
+        if 200 <= status < 300 and cuda:
             return str(cuda).strip()
         if attempt < attempts:
             time.sleep(2)
@@ -582,9 +563,7 @@ def fetch_pod_logs_api(
     The endpoint stays open for live logs. Stop after its historical
     backfill is drained (socket idle) or the deadline expires.
     """
-    from .instances import _load_runpod_api_key
-
-    api_key = _load_runpod_api_key()
+    api_key = api.load_api_key()
     if not api_key:
         return None
     tail = tail or config.LOG_API_TAIL
@@ -625,26 +604,11 @@ def fetch_pod_logs_api(
 
 def pod_status_api(pod_id: str) -> Optional[str]:
     """Return lifecycle status from `GET /v2/pods/{id}`, if available."""
-    from .instances import _load_runpod_api_key
-
-    api_key = _load_runpod_api_key()
-    if not api_key:
+    status, data = api.request("GET", f"/pods/{pod_id}", timeout=10)
+    if not (200 <= status < 300) or not isinstance(data, dict):
         return None
-    req = urllib.request.Request(
-        f"https://api.runpod.io/v2/pods/{pod_id}",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read())
-    except (urllib.error.HTTPError, OSError, json.JSONDecodeError):
-        return None
-    status = payload.get("status")
-    return status if isinstance(status, str) else None
+    value = data.get("status")
+    return value if isinstance(value, str) else None
 
 
 def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
@@ -666,9 +630,7 @@ def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
     Empty API responses are retried and then fail as unverified: every
     supported image emits boot logs, so zero lines cannot prove a clean boot.
     """
-    from .instances import _load_runpod_api_key
-
-    if not _load_runpod_api_key():
+    if not api.load_api_key():
         return True, "(no API key — log scan skipped)"
     failures: list[str] = []
     for attempt in range(1, _LOG_SCAN_ATTEMPTS + 1):
@@ -758,22 +720,25 @@ def fetch_logs_via_ssh(
 
 def dump_pod_logs(pod_id: str, image: str) -> None:
     """Print metadata, API container logs, system errors, and GPU SMI."""
-    data = runpodctl_json("pod", "get", pod_id, timeout=30)
-    if not isinstance(data, dict):
-        log("(could not fetch pod state)", indent=2)
+    status, data = api.request("GET", f"/pods/{pod_id}", timeout=30)
+    if not (200 <= status < 300) or not isinstance(data, dict):
+        api.log_error("(could not fetch pod state)", status, data, indent=2)
         return
     ssh = data.get("ssh") or {}
-    host, port = ssh.get("ip"), ssh.get("port")
+    direct = ssh.get("direct") or {}
+    proxy = ssh.get("proxy") or {}
+    host, port = direct.get("host"), direct.get("port")
 
     log(f"--- pod metadata for {pod_id} ---", indent=2)
     for key, val in [
-        ("desiredStatus",    data.get("desiredStatus")),
-        ("uptimeSeconds",    data.get("uptimeSeconds")),
-        ("ssh.ip:port",      f"{host}:{port}" if host and port else None),
-        ("ssh.error",        ssh.get("error")),
-        ("ssh.key_in_account", (ssh.get("ssh_key") or {}).get("in_account")),
-        ("imageName",        data.get("imageName")),
-        ("lastStatusChange", data.get("lastStatusChange")),
+        ("status",           data.get("status")),
+        ("cudaVersion",      data.get("cudaVersion")),
+        ("dataCenterId",     data.get("dataCenterId")),
+        ("cost",             data.get("cost")),
+        ("ssh.direct",       f"{host}:{port}" if host and port else None),
+        ("ssh.proxy",        proxy.get("host") or None),
+        ("image",            data.get("image")),
+        ("startedAt",        data.get("startedAt")),
     ]:
         log(f"  {key:20s} = {val!r}", indent=2)
 

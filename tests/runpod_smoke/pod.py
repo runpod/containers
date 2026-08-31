@@ -1,5 +1,7 @@
 """Pod creation, lifecycle tracking, signal-safe cleanup, registry auth.
 
+Everything here talks to REST API v2 (see api.py) — no runpodctl.
+
 Owns the `ACTIVE_POD_IDS` set + lock — the source of truth for "what's
 still alive on RunPod" across all workers. atexit + SIGINT/SIGTERM
 handlers are installed at import time so anything we leak on crash
@@ -9,7 +11,6 @@ gets terminated.
 from __future__ import annotations
 
 import atexit
-import json
 import re
 import signal
 import sys
@@ -17,51 +18,19 @@ import threading
 import time
 from typing import Optional
 
-from . import config
-from .checks import pod_status_api, ssh_probe, system_log_errors
-from .instances import detect_cuda_version
+from . import api, config
+from .checks import ssh_probe, system_log_errors
+from .instances import detect_cuda_version, pick_cpu_flavor
 from .log import log
-from .runpodctl import runpodctl, runpodctl_json
 
 
 # ---------------------------------------------------------------------------
 # Error-classification regexes
 # ---------------------------------------------------------------------------
 
-UNAVAILABLE_RE = re.compile(
-    # RunPod-specific phrasings observed in pod-create errors:
-    r"no\s+longer\s+any\s+instances\s+available"
-    r"|please\s+refresh\s+and\s+try\s+again"
-    # "This machine does not have the resources to deploy your pod. Please
-    # try a different machine" — RunPod returns this when a candidate host
-    # was picked but couldn't actually fit the pod (vRAM, disk, CPU). Same
-    # remediation as "no capacity": move on to the next instance type.
-    r"|does\s+not\s+have\s+the\s+resources"
-    r"|try\s+a\s+different\s+machine"
-    # Generic capacity-shortage phrasings:
-    r"|no\s+(?:machines|capacity|hosts|gpus|instances)\s+available"
-    r"|insufficient\s+capacity"
-    r"|unavailable"
-    r"|out\s+of\s+stock"
-    r"|sold\s+out",
-    re.IGNORECASE,
-)
-
-# Generic "RunPod orchestrator hiccupped" errors that we should retry rather
-# than treat as a real failure. These appear when several workers race for
-# the same scarce GPU at the same instant, or the API is just transiently
-# flaky.
-TRANSIENT_RE = re.compile(
-    r"something\s+went\s+wrong"
-    r"|please\s+try\s+again\s+later"
-    r"|contact\s+support"
-    r"|internal\s+server\s+error"
-    r"|timeout|timed\s+out"
-    r"|502|503|504"
-    r"|connection\s+(?:reset|refused)",
-    re.IGNORECASE,
-)
-
+# Capacity / transient classification of API failures lives in
+# api.classify_error. This one is different: it scans pod-get FIELDS for a
+# container-runtime failure that happened before the pod reached RUNNING.
 RUNTIME_ERROR_RE = re.compile(
     r"toomanyrequests"
     r"|rate\s+limit"
@@ -95,12 +64,26 @@ def unregister_pod(pod_id: str) -> None:
         ACTIVE_POD_IDS.discard(pod_id)
 
 
+def _terminate_pod(pod_id: str) -> tuple[bool, str]:
+    """DELETE the pod. 404 counts as success — it's already gone."""
+    status, data = api.request_with_retries(
+        "DELETE", f"/pods/{pod_id}", timeout=30
+    )
+    if 200 <= status < 300 or status == 404:
+        return True, ""
+    return False, api.error_detail(status, data)
+
+
 def cleanup_pod(pod_id: str) -> None:
     """Delete a single pod and unregister it from the tracking set."""
     if not pod_id:
         return
     log(f"Cleaning up pod {pod_id}...")
-    runpodctl("pod", "delete", pod_id, timeout=30)
+    ok, detail = _terminate_pod(pod_id)
+    if not ok:
+        # Loud, because a pod we failed to delete keeps billing until
+        # reap-pods.yml catches it.
+        log(f"  WARNING: could not delete {pod_id}: {detail}")
     unregister_pod(pod_id)
 
 
@@ -113,7 +96,9 @@ def cleanup_all() -> None:
     log(f"Cleaning up {len(leftover)} leftover pod(s)...")
     for pid in leftover:
         try:
-            runpodctl("pod", "delete", pid, timeout=30)
+            ok, detail = _terminate_pod(pid)
+            if not ok:
+                log(f"  WARNING: could not delete {pid}: {detail}")
         except Exception as exc:  # noqa: BLE001
             log(f"  failed to delete {pid}: {exc}")
         unregister_pod(pid)
@@ -138,16 +123,18 @@ for _sig in (signal.SIGINT, signal.SIGTERM):
 
 
 def discover_registry_auth(prefer_name: str = "") -> Optional[str]:
-    """Find a registry auth id from `runpodctl registry list`."""
-    data = runpodctl_json("registry", "list", timeout=30)
-    if not isinstance(data, list) or not data:
+    """Find a registry credential id from `GET /v2/registries`."""
+    status, data = api.request_with_retries("GET", "/registries", timeout=30)
+    if not (200 <= status < 300) or not isinstance(data, dict):
+        return None
+    registries = data.get("registries")
+    if not isinstance(registries, list) or not registries:
         return None
     if prefer_name:
-        for item in data:
+        for item in registries:
             if (item.get("name") or "").lower() == prefer_name.lower():
-                return item.get("id") or item.get("registryAuthId")
-    first = data[0]
-    return first.get("id") or first.get("registryAuthId")
+                return item.get("id")
+    return registries[0].get("id")
 
 
 # ---------------------------------------------------------------------------
@@ -155,23 +142,34 @@ def discover_registry_auth(prefer_name: str = "") -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_error(raw: str) -> str:
-    """Pull a concise error string out of runpodctl's noisy create-failure
-    output (which usually dumps the JSON error followed by a full `--help`
-    listing)."""
-    for line in raw.splitlines():
-        line = line.strip()
-        if line.startswith("{") and '"error"' in line:
-            try:
-                return json.loads(line).get("error", line)
-            except json.JSONDecodeError:
-                return line
-        if line and line.split()[0] in {"Usage:", "Flags:", "Aliases:",
-                                         "Examples:", "Global"}:
-            break
-        if line:
-            return line
-    return raw[:200]
+def _resolve_min_cuda(image: str, group: Optional[str]) -> Optional[str]:
+    """Pick the CUDA floor and log which source won.
+
+    An explicit manifest value wins; the image tag is the fallback. Without
+    a floor a cu130 image can land on a 12.x driver and die with
+    `nvidia-container-cli: cuda>=13.0`.
+    """
+    tag_cuda = detect_cuda_version(image)
+    manifest_cuda = config.GROUP_MIN_CUDA.get(group) if group else None
+    if manifest_cuda and tag_cuda and manifest_cuda != tag_cuda:
+        log(
+            f"min-cuda-version: requested '{manifest_cuda}' overrides "
+            f"tag-derived '{tag_cuda}'",
+            indent=1,
+        )
+    elif tag_cuda and not manifest_cuda:
+        log(
+            f"min-cuda-version: none requested, derived '{tag_cuda}' "
+            "from the image tag",
+            indent=1,
+        )
+    elif manifest_cuda and not tag_cuda:
+        log(
+            f"min-cuda-version: requested '{manifest_cuda}' (tag has "
+            "no CUDA marker to derive from)",
+            indent=1,
+        )
+    return manifest_cuda or tag_cuda
 
 
 def create_pod(
@@ -185,44 +183,30 @@ def create_pod(
     test_ports: Optional[list[int]] = None,
     cloud_type: Optional[str] = None,
     data_center_ids: str = "",
-) -> tuple[Optional[str], str]:
-    """Create a pod via `runpodctl pod create`. Returns (pod_id, raw_output).
+    allowed_cuda_versions: Optional[list[str]] = None,
+) -> tuple[Optional[str], str, str]:
+    """Create a pod via `POST /v2/pods`.
 
-    compute_type='GPU' uses --gpu-id to target a specific GPU type (caller
-    must pass a non-empty gpu_id).
-    compute_type='CPU' creates a CPU pod. `runpodctl pod create` doesn't
-    accept a CPU-flavor flag, so RunPod picks the flavor based on
-    container disk size + selected cloud/DC. The caller varies CPU
-    candidates by overriding `cloud_type` (SECURE vs COMMUNITY) and
-    optionally `data_center_ids`. gpu_id is ignored in CPU mode.
+    Returns `(pod_id, kind, detail)`:
+      * success      -> (id,   "",            "")
+      * no capacity  -> (None, "UNAVAILABLE", detail)
+      * retry me     -> (None, "TRANSIENT",   detail)
+      * give up      -> (None, "FATAL",       detail)
 
-    `cloud_type` overrides the global `config.CLOUD_TYPE` for this call
-    only — used by the CPU-candidate retry loop to try SECURE first
-    and then COMMUNITY. When None, `config.CLOUD_TYPE` is used.
+    compute_type='GPU' targets `gpu_id`; 'CPU' picks a flavor from the CPU
+    catalog (v2 requires an explicit `cpu.id` + `vcpuCount`, unlike the old
+    CLI which let RunPod choose).
 
-    `data_center_ids` is a csv that, when non-empty, becomes
-    `--data-center-ids <csv>` and pins the pod to those DCs.
+    `cloud_type` overrides `config.CLOUD_TYPE` for this call only — used by
+    the CPU-candidate loop to try SECURE then COMMUNITY. `data_center_ids`
+    is a csv that, when non-empty, pins placement.
 
-    `group` is used to look up `min_cuda_version` from the manifest when
-    the image tag doesn't encode a CUDA version (e.g. NGC
-    `nvidia-pytorch:25.11`). Two-step resolution:
-      1. Try to parse the CUDA version out of the image tag itself
-         (`cu1281` / `cuda1300` / ...). Tag wins because it's the most
-         accurate source — it's literally the CUDA the image was built
-         against.
-      2. Fall back to the manifest's `min_cuda_version` when the tag has
-         no CUDA marker. This is the ONLY case where the manifest field
-         takes effect — for explicit-CUDA tags, the manifest value is
-         ignored even when set.
-    The merged result is forwarded to `runpodctl --min-cuda-version` so
-    RunPod's scheduler only picks hosts whose driver supports it.
+    `allowed_cuda_versions` pins the host to those exact CUDA versions.
+    Mutually exclusive with the derived floor: the API rejects
+    `allowedCudaVersions` and `minCudaVersion` together with a 400.
 
-    `test_jupyter=True` expands the pod config so JupyterLab can be tested:
-        - `--ports` gains `8888/http`
-        - `--env` sets `JUPYTER_PASSWORD` (the value start.sh checks before
-          starting Jupyter)
-
-    `test_ports` exposes each generic HTTP service as `<port>/http`.
+    NOTE: v2 has no `terminateAfter`, so there is no server-side deadline
+    to fall back on any more — reap-pods.yml is the only backstop.
     """
     disk_gb = config.CPU_DISK_GB if compute_type == "CPU" else config.DISK_GB
     ports = ["22/tcp"]
@@ -232,120 +216,99 @@ def create_pod(
         spec = f"{test_port}/http"
         if spec not in ports:
             ports.append(spec)
-    args = [
-        "pod", "create",
-        "--image", image,
-        "--cloud-type", cloud_type or config.CLOUD_TYPE,
-        "--container-disk-in-gb", str(disk_gb),
-        "--ports", ",".join(ports),
-        "--name", name,
-        # Server-side backstop: RunPod auto-terminates the pod at this
-        # RFC3339 datetime (the format --terminate-after wants), so a leaked
-        # pod can't run forever. MUST be recomputed per pod — see
-        # config.auto_terminate_deadline. The reap-pods.yml cron is the
-        # primary sweep; this is defense-in-depth.
-        "--terminate-after", config.auto_terminate_deadline(),
-        "-o", "json",
-    ]
+
+    body: dict = {
+        "name": name,
+        "image": image,
+        "cloud": (cloud_type or config.CLOUD_TYPE).upper(),
+        "disk": disk_gb,
+        "ports": ports,
+        # Injects PUBLIC_KEY from the account's registered keys, which is
+        # what makes the SSH readiness probe work.
+        "startSsh": True,
+    }
     if data_center_ids:
-        args.extend(["--data-center-ids", data_center_ids])
+        body["dataCenterIds"] = [
+            d.strip() for d in data_center_ids.split(",") if d.strip()
+        ]
     if test_jupyter:
-        # runpodctl wants --env as a single JSON-object string.
-        env_obj = {"JUPYTER_PASSWORD": config.JUPYTER_TEST_PASSWORD}
-        args.extend(["--env", json.dumps(env_obj)])
-    if compute_type == "CPU":
-        args.extend(["--compute-type", "CPU"])
-        # CPU images have no CUDA, no GPU — `--min-cuda-version` would be
-        # nonsensical and `--gpu-id` is rejected by runpodctl for CPU pods.
-        # CPU flavor (vCPU/RAM tier) is chosen by RunPod from the
-        # selected cloud+DC's pool based on container disk size; we can't
-        # request a specific tier with this subcommand.
-    else:
-        args.extend(["--gpu-id", gpu_id, "--gpu-count", "1"])
-        # Pin scheduling to hosts whose driver supports the image's CUDA,
-        # else a cu130 image dies with `nvidia-container-cli: cuda>=13.0`.
-        # An explicit manifest value wins; the tag is the fallback.
-        tag_cuda = detect_cuda_version(image)
-        manifest_cuda = (
-            config.GROUP_MIN_CUDA.get(group) if group else None
-        )
-        cuda_version = manifest_cuda or tag_cuda
-        if cuda_version:
-            args.extend(["--min-cuda-version", cuda_version])
-        if manifest_cuda and tag_cuda and manifest_cuda != tag_cuda:
-            log(
-                f"min-cuda-version: requested '{manifest_cuda}' overrides "
-                f"tag-derived '{tag_cuda}'",
-                indent=1,
-            )
-        elif tag_cuda and not manifest_cuda:
-            log(
-                f"min-cuda-version: none requested, derived '{tag_cuda}' "
-                "from the image tag",
-                indent=1,
-            )
-        elif manifest_cuda and not tag_cuda:
-            log(
-                f"min-cuda-version: requested '{manifest_cuda}' (tag has "
-                "no CUDA marker to derive from)",
-                indent=1,
-            )
+        body["env"] = {"JUPYTER_PASSWORD": config.JUPYTER_TEST_PASSWORD}
     if config.REGISTRY_AUTH_ID:
-        args.extend(["--registry-auth-id", config.REGISTRY_AUTH_ID])
-    proc = runpodctl(*args, timeout=120)
-    raw = (proc.stderr + proc.stdout).strip()
-    if proc.returncode != 0:
-        return None, _extract_error(raw)
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return None, _extract_error(raw)
-    pod_id = data.get("id") or (data.get("pod") or {}).get("id")
-    return pod_id, raw
+        body["registry"] = config.REGISTRY_AUTH_ID
+
+    if compute_type == "CPU":
+        flavor_id, vcpu = pick_cpu_flavor()
+        if not flavor_id:
+            return None, "FATAL", (
+                "no CPU flavor available from GET /v2/catalog/cpus — set "
+                "CPU_FLAVOR_ID to choose one explicitly"
+            )
+        body["cpu"] = {"id": flavor_id, "vcpuCount": vcpu}
+    else:
+        gpu: dict = {"id": gpu_id, "count": 1}
+        if allowed_cuda_versions:
+            gpu["allowedCudaVersions"] = list(allowed_cuda_versions)
+            log(
+                "allowedCudaVersions: pinned to "
+                f"{', '.join(allowed_cuda_versions)}",
+                indent=1,
+            )
+        else:
+            cuda_version = _resolve_min_cuda(image, group)
+            if cuda_version:
+                gpu["minCudaVersion"] = cuda_version
+        body["gpu"] = gpu
+
+    status, data = api.request("POST", "/pods", body=body, timeout=120)
+    if 200 <= status < 300 and isinstance(data, dict):
+        pod_id = data.get("id")
+        if pod_id:
+            return pod_id, "", ""
+        return None, "FATAL", "pod create returned no id"
+    return None, api.classify_error(status, data), api.error_detail(status, data)
 
 
 def pod_state(pod_id: str) -> dict:
     """Return the relevant subset of pod state for decision-making.
 
-    When the pod is created with `--ports 22/tcp` (which we do), `pod get`
-    populates a useful `ssh` block with `ip`, `port`, and
-    `ssh_key.in_account` once the pod is scheduled. We use these as the
-    real readiness signal.
+    `status` is the real observed PodStatus enum (PROVISIONING / STARTING /
+    RUNNING / EXITED / ERROR / TERMINATED) — unlike the CLI's
+    `desiredStatus`, which was always RUNNING and could only ever detect
+    terminal states.
+
+    `ssh.direct` is null until the pod has a machine assignment and a public
+    port for `22/tcp`; that transition is the readiness signal we poll for.
     """
-    data = runpodctl_json("pod", "get", pod_id, timeout=30)
-    if not isinstance(data, dict):
+    status, data = api.request_with_retries("GET", f"/pods/{pod_id}", timeout=30)
+    if not (200 <= status < 300) or not isinstance(data, dict):
         return {}
     ssh = data.get("ssh") or {}
+    direct = ssh.get("direct") or {}
     return {
-        "desired": data.get("desiredStatus"),
-        "uptime": data.get("uptimeSeconds") or 0,
-        "ssh_ip": ssh.get("ip") or "",
-        "ssh_port": ssh.get("port") or 0,
-        "ssh_error": ssh.get("error") or "",
-        "ssh_key_in_account": (ssh.get("ssh_key") or {}).get("in_account"),
-        "last_status_change": data.get("lastStatusChange"),
+        "status": data.get("status"),
+        "ssh_ip": direct.get("host") or "",
+        "ssh_port": int(direct.get("port") or 0),
+        "cuda_version": data.get("cudaVersion") or "",
+        "cost": data.get("cost"),
+        "data_center": data.get("dataCenterId") or "",
+        "started_at": data.get("startedAt"),
         "raw": data,
     }
 
 
 def pod_status(pod_id: str) -> Optional[str]:
-    """Returns `desiredStatus` — note this is always RUNNING after creation
-    so it can ONLY be used to detect terminal states (EXITED/FAILED/DEAD)."""
-    return pod_state(pod_id).get("desired")
+    """Observed PodStatus, or None when the pod could not be read."""
+    return pod_state(pod_id).get("status")
 
 
-# Top-level fields on `pod get` that may carry a runtime error message
-# directly. Checked verbatim with `isinstance(value, str)`.
-_DIRECT_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage",
-                        "lastStatusChange")
+# Fields on the pod object that may carry a runtime error message directly.
+_DIRECT_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage")
 
-# Same as above but expected on the nested `runtime` dict that RunPod
-# returns alongside top-level fields.
+# Same, on the nested `runtime` dict.
 _RUNTIME_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage")
 
 # Fields whose value is a list of event objects (or strings); each item's
-# `message` is harvested. `events` is the standard one; the other two
-# show up on older `pod get` responses.
+# `message` is harvested.
 _EVENT_LIST_FIELDS = ("events", "statusEvents", "containerEvents")
 
 # Fields whose value is a single block of log lines that may contain
@@ -373,6 +336,8 @@ def _gather_runtime_error_candidates(data: dict) -> list[str]:
     return a flat list of candidate lines. Doesn't filter — that's
     `pod_runtime_error`'s job."""
     runtime = data.get("runtime") or {}
+    if not isinstance(runtime, dict):
+        runtime = {}
     candidates: list[str] = []
     for key in _DIRECT_ERROR_FIELDS:
         _collect_string_field(candidates, data, key)
@@ -388,10 +353,11 @@ def _gather_runtime_error_candidates(data: dict) -> list[str]:
 
 
 def pod_runtime_error(pod_id: str) -> Optional[str]:
-    """Inspect pod-get response for container-runtime errors (pull failures,
+    """Inspect the pod object for container-runtime errors (pull failures,
     bad images, etc.) that appear *before* the pod ever reaches RUNNING.
     Returns a short error string or None."""
-    data = runpodctl_json("pod", "get", pod_id, timeout=30)
+    state = pod_state(pod_id)
+    data = state.get("raw")
     if not isinstance(data, dict):
         return None
     for line in _gather_runtime_error_candidates(data):
@@ -405,9 +371,8 @@ def pod_runtime_error(pod_id: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-# Pod-lifecycle states that mean "we will never become RUNNING — stop polling".
-_TERMINAL_DESIRED = {"EXITED", "FAILED", "DEAD", "TERMINATED"}
-_TERMINAL_API_STATUSES = {"EXITED", "ERROR", "TERMINATED"}
+# PodStatus values that mean "we will never become RUNNING — stop polling".
+_TERMINAL_STATUSES = {"EXITED", "ERROR", "TERMINATED"}
 
 
 def _log_system_errors(pod_id: str, context: str) -> None:
@@ -426,7 +391,7 @@ def _log_system_errors(pod_id: str, context: str) -> None:
 def _print_stall_hint(pod_id: str, elapsed: int) -> None:
     """One-time hint for pods that sit with no SSH endpoint for too long.
 
-    RunPod doesn't surface pull progress via API/CLI, so this points the
+    RunPod doesn't surface pull progress via the API, so this points the
     user at the UI plus the single most common root cause — Docker Hub
     rate-limiting an anonymous pull.
     """
@@ -448,7 +413,7 @@ def _print_stall_hint(pod_id: str, elapsed: int) -> None:
 def _probe_ssh_endpoint(
     host: str,
     port: int,
-    desired: object,
+    pod_status_value: object,
     elapsed: int,
     ssh_attempts: int,
     last_summary: Optional[tuple],
@@ -461,7 +426,7 @@ def _probe_ssh_endpoint(
     caller compares against `last_summary` to dedup the log line.
     """
     ok, err = ssh_probe(host, port, timeout=8)
-    summary = (desired, host, port, ok)
+    summary = (pod_status_value, host, port, ok)
     if summary != last_summary:
         log(
             f"t+{elapsed}s endpoint=root@{host}:{port} "
@@ -480,28 +445,23 @@ def _probe_ssh_endpoint(
 
 def wait_for_running(pod_id: str) -> tuple[str, str]:
     """Returns (outcome, detail). Outcome is one of:
-        'RUNNING'   SSH probe to root@<ssh.ip>:<ssh.port> succeeded — the
-                    container's sshd is up, which means the container has
-                    fully booted and we can trust it as healthy.
-        'TERMINAL'  desiredStatus flipped to EXITED/FAILED/DEAD/TERMINATED.
+        'RUNNING'   SSH probe to root@<ssh.direct.host>:<port> succeeded —
+                    the container's sshd is up, which means it has fully
+                    booted and we can trust it as healthy.
+        'TERMINAL'  status reached EXITED / ERROR / TERMINATED.
         'TIMEOUT'   SSH never reachable within CREATE_TIMEOUT — pod stuck
                     initializing (capacity issue or image broken).
 
-    SSH probing is the real health-check now. We poll `pod get` to discover
-    ssh.ip / ssh.port (assigned by RunPod once a machine is allocated), then
-    try `ssh root@ip -p port 'echo ready'` until it succeeds. This works
-    because:
-      * `--ports 22/tcp` in pod create makes RunPod NAT a public port to the
-        container's 22, so the container's sshd is reachable from anywhere.
-      * The PUBLIC_KEY env we inject lands in /root/.ssh/authorized_keys.
-      * A successful SSH means the container booted + sshd started — the
-        canonical signal of readiness, much stronger than `desiredStatus`
-        (always RUNNING) or `uptimeSeconds` (stale in this CLI version).
+    SSH probing is the real health-check. We poll `GET /v2/pods/{id}` for
+    `ssh.direct` (populated once a machine is allocated and `22/tcp` gets a
+    public port), then try `ssh root@host -p port 'echo ready'` until it
+    succeeds. A successful SSH means the container booted and sshd started —
+    a much stronger signal than any status field.
     """
     start = time.time()
     deadline = start + config.CREATE_TIMEOUT
     last_summary: Optional[tuple] = None
-    last_api_status: Optional[str] = None
+    last_status: Optional[str] = None
     ssh_attempts = 0
     stall_hinted = False  # one-time hint when pod has no ssh endpoint for a while
 
@@ -511,37 +471,34 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
             time.sleep(config.POLL_INTERVAL)
             continue
 
-        desired = st.get("desired")
+        pod_status_value = st.get("status")
         host = st.get("ssh_ip") or ""
         port = st.get("ssh_port") or 0
         elapsed = int(time.time() - start)
 
-        api_status = pod_status_api(pod_id)
-        if api_status and api_status != last_api_status:
-            log(f"t+{elapsed}s API status: {api_status}", indent=2)
-            last_api_status = api_status
+        if pod_status_value != last_status:
+            log(f"t+{elapsed}s status: {pod_status_value}", indent=2)
+            last_status = pod_status_value
 
-        if desired in _TERMINAL_DESIRED or api_status in _TERMINAL_API_STATUSES:
-            terminal = (
-                api_status if api_status in _TERMINAL_API_STATUSES else desired
+        if pod_status_value in _TERMINAL_STATUSES:
+            _log_system_errors(pod_id, f"pod entered {pod_status_value}")
+            return "TERMINAL", (
+                f"pod entered {pod_status_value} after {elapsed}s"
             )
-            _log_system_errors(pod_id, f"pod entered {terminal}")
-            return "TERMINAL", f"pod entered {terminal} after {elapsed}s"
 
         if host and port:
             ssh_attempts += 1
             outcome, last_summary = _probe_ssh_endpoint(
-                host, int(port), desired, elapsed, ssh_attempts, last_summary,
+                host, int(port), pod_status_value, elapsed, ssh_attempts,
+                last_summary,
             )
             if outcome is not None:
                 return outcome
         else:
-            summary = (desired, api_status, host, port, False)
+            summary = (pod_status_value, host, port, False)
             if summary != last_summary:
                 log(
-                    f"t+{elapsed}s desired={desired!r} "
-                    f"api_status={api_status!r} "
-                    f"uptime={st.get('uptime') or 0}s "
+                    f"t+{elapsed}s status={pod_status_value!r} "
                     "ssh endpoint not assigned yet",
                     indent=2,
                 )

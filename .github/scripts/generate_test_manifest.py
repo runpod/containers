@@ -91,6 +91,14 @@ def render_yaml(groups: dict) -> str:
             lines.append("    test_ports:")
             for port in body["test_ports"]:
                 lines.append(f"    - {port}")
+        # cuda_versions is either the literal `all` or a list of X.Y
+        # versions; the scalar form goes through the key loop above.
+        if isinstance(body.get("cuda_versions"), list):
+            lines.append("    cuda_versions:")
+            for version in body["cuda_versions"]:
+                lines.append(f"    - {version}")
+        elif body.get("cuda_versions"):
+            lines.append(f"    cuda_versions: {body['cuda_versions']}")
         # exclude_instances is a list, emitted at the bottom of the group so
         # it's visually grouped with other "filter" options. Patterns are
         # double-quoted to keep glob-leading characters ('*', '?') safe from
@@ -116,6 +124,7 @@ def build_groups(
     check_all_gpu: bool = False,
     exclude_instances: list[str] | None = None,
     min_cuda_version: str | None = None,
+    cuda_versions: list[str] | None = None,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -134,6 +143,12 @@ def build_groups(
     landing on a Blackwell host fails with 'no kernel image is available
     for execution on the device'.
 
+    `cuda_versions` turns on the GPU x CUDA axis: `['all']` tests every
+    version each GPU reports capacity for, an explicit list tests just
+    those. Each version becomes its own job and is pinned with
+    `gpu.allowedCudaVersions`, so it supersedes `min_cuda_version` — the
+    API rejects both fields on one request.
+
     `min_cuda_version` is the floor CUDA driver version (X.Y) the pod's
     host driver must support. test_images.py only consults this for
     images whose tag has no embedded CUDA marker (NGC nvidia-pytorch:25.11
@@ -143,6 +158,8 @@ def build_groups(
     """
     exclude_instances = list(exclude_instances or [])
     test_ports = list(test_ports or [])
+    cuda_versions = list(cuda_versions or [])
+    wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
 
     def _decorate(body: dict, *, gpu_group: bool) -> dict:
         if gpu_group:
@@ -162,16 +179,21 @@ def build_groups(
             body["test_comfyui_functional"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
-        if min_cuda_version:
+        if gpu_group and wants_all_cuda:
+            body["cuda_versions"] = "all"
+        elif gpu_group and cuda_versions:
+            body["cuda_versions"] = list(cuda_versions)
+        # The floor is meaningless once exact versions are pinned, and
+        # sending both makes the API reject the create outright.
+        if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
             body["min_cuda_version"] = min_cuda_version
         return body
 
     if profile == "base":
         # Split refs into CPU- vs GPU-targeted images by tag content.
-        # CPU images: tested via runpodctl --compute-type CPU. RunPod selects
-        #   the CPU flavor for us — runpodctl 2.3.0 doesn't expose --gpu-id
-        #   for CPU, so we can't (and don't) constrain the manifest with an
-        #   `instances:` or `max_price_per_hour:` field for CPU groups.
+        # CPU images: the harness picks a CPU flavor from
+        #   GET /v2/catalog/cpus, so CPU groups carry no `instances:` or
+        #   `max_price_per_hour:` field.
         # GPU images: tested with the normal --gpu-id flow and budget filter.
         cpu = [r for r in refs if not is_gpu_ref(r)]
         gpu = [r for r in refs if is_gpu_ref(r)]
@@ -271,6 +293,20 @@ def main() -> int:
             "Empty (default) = no floor."
         ),
     )
+    ap.add_argument(
+        "--cuda-version",
+        action="append",
+        default=[],
+        dest="cuda_versions",
+        metavar="X.Y|all",
+        help=(
+            "Turn on the GPU x CUDA axis: test each candidate GPU once per "
+            "CUDA version instead of once overall. Repeat for several "
+            "versions, or pass 'all' to use every version each GPU reports "
+            "capacity for. Versions are pinned exactly via "
+            "gpu.allowedCudaVersions, so this supersedes --min-cuda-version."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -297,6 +333,7 @@ def main() -> int:
         check_all_gpu=args.check_all_gpu,
         exclude_instances=args.exclude_instance,
         min_cuda_version=(args.min_cuda_version or None),
+        cuda_versions=args.cuda_versions,
     )
 
     if not groups:

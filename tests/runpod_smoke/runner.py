@@ -34,8 +34,6 @@ from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log, set_worker_context
 from .pod import (
-    TRANSIENT_RE,
-    UNAVAILABLE_RE,
     cleanup_pod,
     create_pod,
     pod_state,
@@ -65,11 +63,13 @@ def _take_host_cuda() -> str:
     return version
 
 
-def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, str]:
+def _log_attempt_header(
+    image: str, instance: str, group: str, cuda_pin: str = "",
+) -> tuple[bool, str]:
     """Log the per-attempt header line and resolve the gpu_id.
 
     Returns (is_cpu, gpu_id). CPU attempts get an empty gpu_id since
-    runpodctl doesn't accept --gpu-id together with --compute-type CPU.
+    CPU pods carry a `cpu` block instead of a `gpu` one, so no gpu_id.
     Per-candidate (cloud_type, data_center_ids) is looked up separately
     by the caller via `config.cpu_candidate_for(instance)`."""
     if config.is_cpu_instance(instance):
@@ -86,9 +86,12 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
         )
         return True, ""
     gpu_id = resolve_gpu_id(instance)
-    # Same precedence as create_pod: explicit request wins, tag is fallback.
-    cuda = config.GROUP_MIN_CUDA.get(group) or detect_cuda_version(image)
-    cuda_note = f", min-cuda={cuda}" if cuda else ""
+    if cuda_pin:
+        cuda_note = f", cuda-pinned={cuda_pin}"
+    else:
+        # Same precedence as create_pod: explicit request wins, tag is fallback.
+        cuda = config.GROUP_MIN_CUDA.get(group) or detect_cuda_version(image)
+        cuda_note = f", min-cuda={cuda}" if cuda else ""
     log(
         f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
         indent=1,
@@ -98,6 +101,7 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
 
 def _create_pod_with_retries(
     image: str, instance: str, gpu_id: str, is_cpu: bool, group: str,
+    cuda_pin: str = "",
 ) -> tuple[Optional[str], str, str]:
     """Drive `create_pod` through the transient-error retry budget.
 
@@ -132,7 +136,7 @@ def _create_pod_with_retries(
         test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
-        pod_id, raw = create_pod(
+        pod_id, kind, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
@@ -140,13 +144,14 @@ def _create_pod_with_retries(
             test_ports=test_ports,
             cloud_type=cloud_override,
             data_center_ids=dc_ids,
+            allowed_cuda_versions=[cuda_pin] if cuda_pin else None,
         )
         if pod_id:
             return pod_id, "", ""
-        if UNAVAILABLE_RE.search(raw):
+        if kind == "UNAVAILABLE":
             log(f"instance unavailable, will try next ({raw[:120]})", indent=2)
             return None, "UNAVAILABLE", ""
-        if TRANSIENT_RE.search(raw) and attempt < config.CREATE_RETRIES:
+        if kind == "TRANSIENT" and attempt < config.CREATE_RETRIES:
             backoff = config.CREATE_RETRY_BACKOFF * attempt
             log(
                 f"transient pod-create error ({raw[:120]}), "
@@ -412,7 +417,9 @@ def _run_post_dwell_steps(
     return _run_log_scan_step(pod_id, image)
 
 
-def test_pair(image: str, instance: str, group: str) -> _Outcome:
+def test_pair(
+    image: str, instance: str, group: str, cuda_pin: str = "",
+) -> _Outcome:
     """Returns (status, detail). Statuses:
         'PASS'         — image booted, CUDA check OK, survived dwell
         'FAIL'         — pod was created and the CONTAINER itself proved
@@ -436,10 +443,10 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
     # Clear first so a label from a previous instance can't leak into an
     # attempt that never reaches the probe (UNAVAILABLE, STUCK).
     _set_host_cuda("")
-    is_cpu, gpu_id = _log_attempt_header(image, instance, group)
+    is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin)
 
     pod_id, early, early_detail = _create_pod_with_retries(
-        image, instance, gpu_id, is_cpu, group,
+        image, instance, gpu_id, is_cpu, group, cuda_pin,
     )
     if early:
         return early, early_detail
@@ -503,7 +510,7 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 
 
 def test_image(
-    image: str, instances: list[str], group: str
+    image: str, instances: list[str], group: str, cuda_pin: str = "",
 ) -> tuple[str, str, str, str]:
     """Returns (status, note, instance_used, host_cuda).
 
@@ -529,7 +536,7 @@ def test_image(
     for inst in instances:
         set_worker_context(inst)
         try:
-            result, detail = test_pair(image, inst, group)
+            result, detail = test_pair(image, inst, group, cuda_pin)
         finally:
             set_worker_context(None)
         host_cuda = _take_host_cuda()

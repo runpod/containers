@@ -3,25 +3,34 @@ name: TEMP GPU compat probe
 # ============================================================================
 # TEMPORARY — DELETE BEFORE MERGING THIS PR.
 #
-# workflow_dispatch only appears in the UI once the file is on the default
-# branch, so gpu-compatibility.yml can't be run by hand yet. This fires on the
-# PR instead, purely to confirm the new `cudaVersion` column comes back
-# populated and to see whether a cu1281 image actually lands on 12.8.
+# Verifies the new pieces end-to-end in CI:
+#   * the CUDA axis (`cuda-versions`) expanding into per-version jobs
+#   * `gpu.allowedCudaVersions` pinning the host to an exact version
+#   * the GPU x CUDA pivot in the job's step summary
+#   * the results JSON artifact carrying `requested_cuda`
+#   * the whole pod lifecycle on REST API v2 (create / get / delete)
 #
-# Every push matching `paths` below spends real GPU money.
+# Deliberately the CHEAP mode: no check-all-gpu, so the axis produces one
+# job per CUDA version rather than a full GPU x CUDA matrix, and each job
+# short-circuits on the first card that passes. With the budget filter the
+# candidate list is cheapest-first, so this lands on ~$0.24/hr cards —
+# roughly $0.08 for the run instead of the ~32 pods a matrix would spend.
 # ============================================================================
 
 on:
   pull_request:
     paths:
       - '.github/workflows/_tmp-gpu-compat-probe.yml'
+      - '.github/actions/smoke-test/**'
+      - '.github/scripts/generate_test_manifest.py'
       - 'tests/**'
 
 permissions:
   contents: read
 
-# Queue rather than cancel: a cancel SIGKILLs the runner before test_images.py
-# can delete its pods.
+# Queue rather than cancel: a cancel SIGKILLs the runner before
+# test_images.py can delete its pods, and v2 has no server-side
+# terminate-after to fall back on.
 concurrency:
   group: tmp-gpu-compat-probe
   cancel-in-progress: false
@@ -29,7 +38,7 @@ concurrency:
 jobs:
   probe:
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 240
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -39,24 +48,27 @@ jobs:
       - name: GPU compat probe
         uses: ./.github/actions/smoke-test
         with:
-          image-refs: '["docker.io/runpod/pytorch:1.2.0-rc.162-cu1300-torch260-ubuntu2404"]'
+          # torch 2.12 supports every current architecture, so a FAIL here
+          # means our plumbing, not the image.
+          image-refs: '["docker.io/runpod/pytorch:1.2.0-rc.162-cu1281-torch2121-ubuntu2404"]'
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
 
-          # min-vram-gb 0 = the whole NVIDIA catalog (~46 attempts).
-          check-all-gpu: "true"
+          # THE THING UNDER TEST. Two versions -> two jobs. The tag says
+          # cu1281, so pinning 13.0 also proves the pin beats the
+          # tag-derived floor.
+          cuda-versions: "12.8, 13.0"
+
+          # No check-all-gpu on purpose — see the header.
+          budget-usd-per-hour: "1.0"
           manufacturer: Nvidia
-          min-vram-gb: "0"
-          max-parallel: "3"
+          min-vram-gb: "16"
+          max-parallel: "2"
 
           upload-results-json: "true"
           results-artifact-name: gpu-matrix-${{ github.run_id }}
 
-          # Deliberately NOT set: the floor is derived from the tag (12.8), so
-          # the summary shows whether the host was actually newer.
-          # min-cuda-version:
-
           test-jupyter: "true"
           on-skip: pass
-          create-timeout: "1200"
+          create-timeout: "600"

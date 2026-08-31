@@ -103,6 +103,22 @@ inputs:
     description: "Retention period for the results JSON artifact."
     required: false
     default: "90"
+  cuda-versions:
+    description: |
+      Turn on the GPU x CUDA axis: test each candidate GPU once per CUDA
+      version instead of once overall, pinning the host with
+      `gpu.allowedCudaVersions`. Newline- or comma-separated X.Y versions,
+      or the literal `all` for every version each GPU reports capacity for.
+
+      Only pairings the catalog reports capacity for are attempted —
+      matching is exact, so a version no machine reports yields a capacity
+      error rather than a fallback. Supersedes min-cuda-version, which the
+      API rejects alongside it.
+
+      Empty (default) = no axis; one job per GPU and the floor comes from
+      the image tag, exactly as before.
+    required: false
+    default: ""
   check-all-gpu:
     description: |
       Test every GPU matching the vendor/vRAM filters independently instead
@@ -128,7 +144,7 @@ inputs:
       Floor CUDA driver version that the pod host's driver must support
       (e.g. '13.0'). Emitted as `min_cuda_version` on every produced
       manifest group. test_images.py forwards this to
-      `runpodctl --min-cuda-version` for images whose tag has no embedded
+      `gpu.minCudaVersion` for images whose tag has no embedded
       CUDA marker — NGC nvidia-pytorch:25.11 and similar opaque tags.
       Use this for NGC PyTorch which ships torch built against CUDA 13.0
       and refuses to run on hosts with a 12.x driver
@@ -178,47 +194,24 @@ inputs:
       flips the safer default off.
     required: false
     default: "fail"
-  runpodctl-version:
-    description: "runpodctl release tag"
-    required: false
-    default: "v2.3.0"
-  runpodctl-sha256:
-    description: "SHA-256 of runpodctl-linux-amd64.tar.gz for the pinned version"
-    required: false
-    default: "908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169"
 
 runs:
   using: composite
   steps:
-    - name: Install runpodctl
+    - name: Configure RunPod credentials
       shell: bash
       env:
-        VERSION: ${{ inputs.runpodctl-version }}
-        SHA256: ${{ inputs.runpodctl-sha256 }}
-      run: |
-        set -euo pipefail
-        curl -fsSL --proto '=https' --tlsv1.2 \
-          "https://github.com/runpod/runpodctl/releases/download/${VERSION}/runpodctl-linux-amd64.tar.gz" \
-          -o /tmp/runpodctl.tar.gz
-        echo "${SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c -
-        sudo tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl
-        rm /tmp/runpodctl.tar.gz
-        runpodctl version
-
-    - name: Configure runpodctl
-      shell: bash
-      env:
-        # `runpodctl config --apiKey` is deprecated. The CLI (and our
-        # tests/test_images.py) both read RUNPOD_API_KEY out of the env,
-        # so we just propagate the secret through $GITHUB_ENV — every
-        # subsequent step in this composite action gets it automatically.
-        # GitHub keeps the secret masked in logs because the value still
-        # matches `secrets.RUNPOD_API_KEY`.
+        # tests/test_images.py reads RUNPOD_API_KEY out of the env, so the
+        # secret is propagated through $GITHUB_ENV and every subsequent step
+        # in this composite action gets it. GitHub keeps it masked in logs
+        # because the value still matches `secrets.RUNPOD_API_KEY`.
         RUNPOD_API_KEY: ${{ inputs.runpod-api-key }}
       run: |
         set -euo pipefail
-        # Validate auth before we attempt any pod operations — fail loud, fast.
-        runpodctl user >/dev/null
+        if [[ -z "${RUNPOD_API_KEY}" ]]; then
+          echo "::error::runpod-api-key input is empty"
+          exit 1
+        fi
         echo "RUNPOD_API_KEY=${RUNPOD_API_KEY}" >> "${GITHUB_ENV}"
 
     - name: Write SSH private key
@@ -301,6 +294,7 @@ runs:
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
+        CUDA_VERSIONS: ${{ inputs.cuda-versions }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -337,6 +331,19 @@ runs:
         if [[ -n "${MIN_CUDA_VERSION}" ]]; then
           EXTRA_ARGS+=(--min-cuda-version "${MIN_CUDA_VERSION}")
         fi
+        # Split CUDA_VERSIONS on commas AND newlines into one
+        # --cuda-version per entry. Accepts '12.8, 13.0', a newline list, or
+        # the literal 'all'.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          line="${line#-}"
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" ]] && continue
+          EXTRA_ARGS+=(--cuda-version "${line}")
+        done <<< "$(printf '%s' "${CUDA_VERSIONS}" | tr ',' '\n')"
         # Split EXCLUDE_INSTANCES on newlines into one --exclude-instance
         # per non-empty, non-whitespace, non-comment line. Each item is
         # passed as a single argv element so glob chars (*, ?) stay literal
@@ -362,7 +369,7 @@ runs:
       shell: bash
       env:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
-        # 'Configure runpodctl' and 'Write SSH private key' steps above.
+        # 'Configure RunPod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
         # ON_SKIP is validated by config._coerce_on_skip (unknown values
         # collapse to 'fail') so we just propagate the raw input.
