@@ -125,6 +125,7 @@ def build_groups(
     exclude_instances: list[str] | None = None,
     min_cuda_version: str | None = None,
     cuda_versions: list[str] | None = None,
+    explicit_budget: bool = False,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -165,6 +166,11 @@ def build_groups(
         if gpu_group:
             if check_all_gpu:
                 body["check_all_gpu"] = True
+                # A matrix run means EVERY GPU by default — no price filter.
+                # A budget is honoured only when the caller passed one
+                # explicitly, as a deliberate way to trim an expensive sweep.
+                if explicit_budget:
+                    body["max_price_per_hour"] = budget
             else:
                 body["max_price_per_hour"] = budget
             body["min_vram_gb"] = min_vram_gb
@@ -234,8 +240,12 @@ def main() -> int:
     ap.add_argument(
         "--budget",
         type=float,
-        default=1.0,
-        help="Max USD/hr for GPU instance selection (default: 1.0)",
+        default=None,
+        help=(
+            "Max USD/hr for GPU instance selection (default: 1.0). Ignored "
+            "under --check-all-gpu unless passed explicitly, since a matrix "
+            "run is meant to cover every GPU."
+        ),
     )
     ap.add_argument(
         "--min-vram-gb",
@@ -323,7 +333,8 @@ def main() -> int:
     groups = build_groups(
         args.profile,
         refs,
-        budget=args.budget,
+        budget=1.0 if args.budget is None else args.budget,
+        explicit_budget=args.budget is not None,
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,

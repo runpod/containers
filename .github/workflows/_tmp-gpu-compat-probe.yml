@@ -10,11 +10,12 @@ name: TEMP GPU compat probe
 #   * the results JSON artifact carrying `requested_cuda`
 #   * the whole pod lifecycle on REST API v2 (create / get / delete)
 #
-# Deliberately the CHEAP mode: no check-all-gpu, so the axis produces one
-# job per CUDA version rather than a full GPU x CUDA matrix, and each job
-# short-circuits on the first card that passes. With the budget filter the
-# candidate list is cheapest-first, so this lands on ~$0.24/hr cards —
-# roughly $0.08 for the run instead of the ~32 pods a matrix would spend.
+# A REAL matrix: check-all-gpu makes every card its own job, so there is no
+# short-circuit and the pivot table actually has rows. Trimmed with an
+# explicit budget-usd-per-hour — under check-all-gpu that cap is opt-in, and
+# without it this sweep would pull in B300 at $7.89/hr and cost ~$10.
+#   $0.6/hr cap -> ~11 pods across ~7 GPUs, roughly $0.66.
+# Raise or drop the cap to widen it.
 # ============================================================================
 
 on:
@@ -55,16 +56,17 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
 
-          # THE THING UNDER TEST. Two versions -> two jobs. The tag says
-          # cu1281, so pinning 13.0 also proves the pin beats the
-          # tag-derived floor.
-          cuda-versions: "12.8, 13.0"
+          # THE THING UNDER TEST: every GPU x every CUDA version it reports
+          # capacity for. The tag says cu1281, so the 13.0 cells also prove
+          # the pin beats the tag-derived floor.
+          cuda-versions: all
+          check-all-gpu: "true"
 
-          # No check-all-gpu on purpose — see the header.
-          budget-usd-per-hour: "1.0"
+          # Opt-in cap so the matrix stays under a dollar — see the header.
+          # budget-usd-per-hour: "0.6"
           manufacturer: Nvidia
           min-vram-gb: "16"
-          max-parallel: "2"
+          max-parallel: "3"
 
           upload-results-json: "true"
           results-artifact-name: gpu-matrix-${{ github.run_id }}

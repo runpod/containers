@@ -33,9 +33,13 @@ inputs:
       into the pod for the GPU/CUDA functional check and log capture.
     required: true
   budget-usd-per-hour:
-    description: "Max USD/hr for GPU instance selection"
+    description: |
+      Max USD/hr for GPU instance selection. Empty (default) means the
+      generator's own 1.0 default for budget mode, and NO price filter at
+      all under check-all-gpu — a matrix run is meant to cover every GPU.
+      Set it explicitly to trim an expensive matrix.
     required: false
-    default: "1.0"
+    default: ""
   min-vram-gb:
     description: "Min vRAM (GB) for GPU instance selection"
     required: false
@@ -121,8 +125,12 @@ inputs:
     default: ""
   check-all-gpu:
     description: |
-      Test every GPU matching the vendor/vRAM filters independently instead
-      of selecting by hourly budget. This can be expensive.
+      Test every matching GPU as its own job instead of walking the
+      candidate list and stopping at the first PASS. Without this, a run
+      proves "the image works somewhere"; with it you get a per-GPU matrix.
+
+      Covers the whole catalog (subject to vendor/vRAM/exclude filters)
+      unless budget-usd-per-hour is set explicitly. This can be expensive.
     required: false
     default: "false"
   exclude-instances:
@@ -325,6 +333,11 @@ runs:
           [[ -z "${line}" ]] && continue
           EXTRA_ARGS+=(--test-port "${line}")
         done <<< "${TEST_PORTS}"
+        # Same treatment as --min-cuda-version: an empty budget must not
+        # reach the generator, or check-all-gpu would always be price-filtered.
+        if [[ -n "${BUDGET}" ]]; then
+          EXTRA_ARGS+=(--budget "${BUDGET}")
+        fi
         # Only pass --min-cuda-version when the input is non-empty; the
         # generator treats empty as "no floor" and we want to keep the
         # argv free of stray empty strings so argparse doesn't choke.
@@ -358,7 +371,6 @@ runs:
         python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
           --profile "${PROFILE}" \
           --refs "${REFS}" \
-          --budget "${BUDGET}" \
           --min-vram-gb "${MIN_VRAM_GB}" \
           --manufacturer "${MANUFACTURER}" \
           "${EXTRA_ARGS[@]}" \
