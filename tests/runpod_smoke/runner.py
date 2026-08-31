@@ -176,6 +176,18 @@ def _create_pod_with_retries(
     )
 
 
+def _over_candidates(count: int) -> str:
+    """Suffix naming how many candidates were tried, or '' for exactly one.
+
+    With a CUDA axis or check_all_gpu every job carries a single candidate,
+    and "no capacity on any of 1 candidate instance type(s)" reads like a
+    bug. Saying nothing is right there: the row already names the GPU.
+    """
+    if count <= 1:
+        return ""
+    return f" on any of {count} candidate instance types"
+
+
 def _classify_non_running(
     state: str, detail: str, pod_id: str, image: str,
 ) -> _Outcome:
@@ -578,9 +590,9 @@ def test_image(
         return (
             "SKIP",
             (
-                f"RunPod never assigned an SSH endpoint on "
-                f"{len(stuck_instances)} instance type(s) — likely a "
-                "scheduler issue, try again later"
+                "RunPod never assigned an SSH endpoint"
+                + _over_candidates(len(stuck_instances))
+                + " — likely a scheduler issue, try again later"
             ),
             ", ".join(stuck_instances),
             "",
@@ -588,7 +600,7 @@ def test_image(
     log(f"all {len(instances)} instances unavailable (no capacity)", indent=1)
     return (
         "SKIP",
-        f"no capacity on any of {len(instances)} candidate instance type(s)",
+        "no capacity" + _over_candidates(len(instances)),
         ", ".join(unavailable_instances),
         "",
     )

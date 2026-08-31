@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from runpod_smoke import api, config
 from runpod_smoke.instances import (
     cuda_axis_for,
+    cuda_versions_offered,
     discover_gpu_catalog,
     discover_gpu_id_map,
     is_known_gpu,
@@ -371,9 +372,17 @@ def _cuda_matrix_jobs(
     for inst in instances:
         versions = cuda_axis_for(group, inst)
         if not versions:
+            offered = cuda_versions_offered(inst, only_available=False)
+            detail = (
+                f"offers {', '.join(offered)} but none had capacity"
+                if offered else "reports no CUDA versions"
+            )
+            # No version reached a pod-create, so requested_cuda stays empty
+            # and the pivot shows this GPU as an all-dots row. The note has
+            # to carry the scope, since the CUDA column has nothing to show.
             results.append((
                 image, "SKIP",
-                "no requested CUDA version has capacity on this GPU",
+                f"GPU not covered: {detail}",
                 inst, "", "",
             ))
             continue
@@ -401,6 +410,45 @@ def _cuda_per_version_jobs(
         (image, group, candidates, version)
         for version, candidates in sorted(per_version.items(), reverse=True)
     ]
+
+
+def _warn_unviable_cuda_axis(
+    manifest: dict[str, dict], resolved: dict[str, list[str]],
+) -> None:
+    """Warn when a CUDA axis could never have produced a single job.
+
+    Runs before any pod is created. Without this the run is silent: every
+    GPU turns into a SKIP row, `ON_SKIP=pass` keeps the job green, and a
+    sweep that tested nothing looks the same as one that passed.
+
+    Only misconfiguration is reported. "Versions exist and match, but none
+    has capacity right now" is transient, already visible as per-GPU SKIP
+    rows, and would fire on healthy runs — so it stays silent here.
+    """
+    for group in manifest:
+        candidates = resolved.get(group, [])
+        if not candidates:
+            continue
+        all_mode = config.GROUP_CUDA_ALL.get(group, False)
+        requested = config.GROUP_CUDA_VERSIONS.get(group) or []
+        if not (all_mode or requested):
+            continue
+        offered: set[str] = set()
+        for inst in candidates:
+            offered |= set(cuda_versions_offered(inst, only_available=False))
+        if not offered:
+            log(
+                f"::warning::group '{group}': cuda_versions is set but none "
+                f"of the {len(candidates)} candidate GPUs reports any CUDA "
+                "version, so no pod can be created. The axis only applies "
+                "to NVIDIA — drop cuda_versions for a ROCm/AMD sweep."
+            )
+        elif requested and not set(requested) & offered:
+            log(
+                f"::warning::group '{group}': cuda_versions="
+                f"{sorted(requested)} but the candidate GPUs only offer "
+                f"{sorted(offered)}, so nothing will be tested."
+            )
 
 
 def _cap_jobs(jobs: list[Job]) -> list[Job]:
@@ -509,21 +557,28 @@ _CELL_ICON = {"PASS": "✅", "FAIL": "❌", "SKIP": "⚠️"}
 def _emit_cuda_pivot(results: list[Result]) -> list[str]:
     """GPU-by-CUDA pivot table, or [] when no CUDA axis was requested.
 
-    A flat list is unreadable at 34+ rows, and the whole point of the axis
+    A flat list is unreadable at 30+ rows, and the whole point of the axis
     is comparing one GPU across versions — so rows are GPUs, columns are
-    CUDA versions, and a blank cell means that pairing was never attempted
-    (the catalog reported no capacity for it).
+    CUDA versions.
+
+    Every resolved GPU gets a row, including ones where no version had
+    capacity and no pod was ever created. Those come out as a full row of
+    `·`, which is the honest answer: "not covered". Leaving them out would
+    make an untested GPU indistinguishable from one that doesn't exist.
     """
-    rows = [r for r in results if r[5]]
-    if not rows:
+    attempted = [r for r in results if r[5]]
+    if not attempted:
         return []
     versions = sorted(
-        {r[5] for r in rows},
+        {r[5] for r in attempted},
         key=lambda v: tuple(int(p) for p in v.split(".")) if "." in v else (0,),
     )
-    gpus = sorted({r[3] for r in rows})
+    # A comma in the label means a multi-candidate SKIP, which can't be a
+    # single row — the axis produces one instance per job, so this only
+    # guards against a non-axis group sneaking into the same run.
+    gpus = sorted({r[3] for r in results if r[3] and ", " not in r[3]})
     cell: dict[tuple[str, str], str] = {}
-    for _img, status, _note, inst, _host, req in rows:
+    for _img, status, _note, inst, _host, req in attempted:
         cell[(inst, req)] = _CELL_ICON.get(status, status)
     out = ["", "### GPU x CUDA", ""]
     out.append("| GPU | " + " | ".join(f"CUDA {v}" for v in versions) + " |")
@@ -531,7 +586,12 @@ def _emit_cuda_pivot(results: list[Result]) -> list[str]:
     for gpu in gpus:
         cells = [cell.get((gpu, v), "·") for v in versions]
         out.append(f"| {_md_cell(gpu)} | " + " | ".join(cells) + " |")
-    out += ["", "✅ pass · ❌ fail · ⚠️ skip · · not offered / no capacity", ""]
+    out += [
+        "",
+        "✅ pass · ❌ fail · ⚠️ skip (pod attempted, no capacity) · "
+        "· not attempted (no capacity at planning time)",
+        "",
+    ]
     return out
 
 
@@ -704,6 +764,7 @@ def main() -> int:
 
     resolved = _resolve_all_instances(manifest)
     _warn_unknown_instances(resolved)
+    _warn_unviable_cuda_axis(manifest, resolved)
     _log_budget_picks(manifest, resolved)
 
     results: list[Result] = []
