@@ -199,17 +199,20 @@ def _classify_non_running(
 ) -> _Outcome:
     """Map a non-RUNNING terminal state to STUCK or FAIL.
 
-    TIMEOUT with no SSH endpoint ever assigned is almost always a
-    scheduler/host issue, not the image: a different GPU type lands on
-    a different host pool and usually works. Anything else (EXITED,
-    TERMINATED, FAILED, RUNNING-then-died) is a container problem — the
-    image is broken, another GPU won't help.
+    TIMEOUT is a host/infrastructure verdict, so it retries on another
+    instance type. Every timeout observed so far was one: RunPod not
+    allocating a direct TCP port, an unreachable assigned port, or
+    provisioning that never finished. It used to be split by whether an
+    endpoint had been assigned, and the assigned-but-silent half was called
+    a broken image — 7 timeouts in one catalog sweep, none of them an image
+    fault, is what retired that theory.
 
-    A container-init rejection overrides that heuristic. It looks identical
-    from the outside — no SSH, no RUNNING — but it is a verdict about the
-    image, so it must not be reported as a retryable host problem."""
-    st = pod_state(pod_id)
-    ever_had_ssh = bool(st.get("ssh_ip") and st.get("ssh_port"))
+    Anything else (EXITED, TERMINATED, FAILED, RUNNING-then-died) is a
+    container problem — the image is broken and another GPU won't help.
+
+    A container-init rejection overrides all of it. It looks identical from
+    the outside — no SSH, no RUNNING — but it is a verdict about the image,
+    so it must not be reported as a retryable host problem."""
     # Dumped before the verdict so the classification can use its findings.
     sys_errors = dump_pod_logs(pod_id, image)
     blocker = host_incompatibility(sys_errors)
@@ -221,10 +224,9 @@ def _classify_non_running(
             indent=2,
         )
         return "FAIL", f"container init rejected the image: {blocker}"
-    if state == "TIMEOUT" and not ever_had_ssh:
+    if state == "TIMEOUT":
         log(
-            f"{state.lower()} -- {detail} -- STUCK (no SSH endpoint "
-            "was ever assigned; trying next instance type)",
+            f"{state.lower()} -- {detail} -- STUCK (trying next instance type)",
             indent=2,
         )
         return "STUCK", ""
@@ -494,14 +496,16 @@ def test_pair(
     )
 
     try:
-        state, wait_detail = wait_for_running(pod_id)
+        state, wait_detail, endpoint = wait_for_running(pod_id)
         if state != "RUNNING":
             return _classify_non_running(state, wait_detail, pod_id, image)
 
         log(f"smoke check passed: {wait_detail}", indent=2)
         st = pod_state(pod_id)
-        host = st.get("ssh_ip") or ""
-        port = int(st.get("ssh_port") or 0)
+        # The endpoint that answered the readiness probe, which may be the
+        # proxy — RunPod does not always allocate a direct TCP port, so
+        # re-reading ssh.direct here would throw away a working connection.
+        host, port = endpoint
 
         # pod_state already carries cudaVersion, so the common path costs no
         # extra request. It is nullable until the scheduler has assigned a

@@ -118,7 +118,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `POST /v2/pods` with `gpu.id` (or an auto-picked `cpu.id` + `vcpuCount`), `disk`, `ports`, `startSsh`, registry credential, and either `gpu.minCudaVersion` or `gpu.allowedCudaVersions`. Transient failures (429, 5xx, transport) are retried up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity — try next instance) / `CREATE_FAIL` (bad image tag, auth, malformed request — any non-capacity, non-transient error after retries) |
-| 2 | Poll `GET /v2/pods/{id}` until `status` is `RUNNING`, `ssh.direct` is populated, and one-shot `ssh root@host -p port 'echo ready'` succeeds. SSH is the readiness signal; `status` is the real observed `PodStatus`, so terminal `EXITED`/`ERROR`/`TERMINATED` stop the poll immediately. | `FAIL` on a terminal status, or when the system log shows a container-init rejection; `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` |
+| 2 | Poll `GET /v2/pods/{id}` until `status` is `RUNNING` and a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the readiness signal; `status` is the real observed `PodStatus`, so terminal `EXITED`/`ERROR`/`TERMINATED` stop the poll immediately. | `FAIL` on a terminal status, or when the system log shows a container-init rejection; `STUCK` if neither endpoint answers within `CREATE_TIMEOUT` |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
 | 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
@@ -136,6 +136,44 @@ result was `UNAVAILABLE` or `STUCK`, and short-circuits on `PASS`,
 instead run as an independent job, so the summary shows compatibility across
 the full selected GPU set. Adding `cuda_versions:` splits it further — one
 job per (GPU, CUDA version) — see [CUDA axis](#cuda-axis).
+
+
+## SSH endpoints
+
+`GET /v2/pods/{id}` returns two ways in, and the harness tries both:
+
+| | `ssh.direct` | `ssh.proxy` |
+|---|---|---|
+| target | the container's sshd, straight over TCP | `ssh.runpod.io`, relayed |
+| login | `root` | an opaque routing token from `username` |
+| needs | RunPod to allocate a public port for `22/tcp` | only a machine assignment |
+| supports | everything | interactive shell and remote commands only — no SCP, SFTP or port forwarding |
+
+**RunPod does not always allocate the direct port.** Such a pod shows only
+"SSH" in the console, with no "SSH over exposed TCP" block, and
+`ssh.direct` stays null however long you wait. Before the fallback existed
+those pods burned the whole `CREATE_TIMEOUT` and were reported as stuck
+initializing, which was wrong — they were ready in a minute.
+
+Direct is tried first (one fewer hop), the proxy on the same poll if direct
+is absent or refuses. Whichever answers is reused by every later check, so a
+pod validated through the proxy runs the same CUDA, Jupyter, port and
+ComfyUI checks — none of them need SCP or port forwarding. The readiness
+line names the endpoint and its kind, so the log shows which path was used.
+
+The proxy invocation comes from `ssh.proxy.command` rather than being
+assembled by hand, plus the `-i` and `-o StrictHostKeyChecking=no` that the
+field's own description says to add, plus `-tt`: the proxy rejects a
+connection with `Your SSH client doesn't support PTY` when no terminal is
+allocated, and a single `-t` declines to allocate one because the harness's
+stdin is not a terminal. Output is stripped of the `\r` a PTY introduces so
+it parses the same as a direct connection.
+
+**Proxy-only pods give up early.** When only `ssh.proxy` exists and it has
+already refused, nothing will change by waiting, so the poll stops at
+`DIRECT_PORT_TIMEOUT` (default 300s) instead of billing the pod until
+`CREATE_TIMEOUT`. The outcome is `STUCK`, so the next instance type is
+tried — a different host usually does get a port.
 
 
 ## Outcomes
@@ -256,11 +294,11 @@ Field reference:
 | field | description |
 |---|---|
 | `images` | Docker images to test. **Required.** |
-| `instances` | Explicit list of GPU display names, tried in order. One of `instances:` or `max_price_per_hour:` is required (except for `base_cpu`). |
+| `instances` | Explicit list of GPU display names, tried in order as a **fallback chain** — the group gets one pod per image, on the first candidate with capacity. One pod per GPU is `check_all_gpu`, not this. One of `instances:` or `max_price_per_hour:` is required (except for `base_cpu`). |
 | `max_price_per_hour` | USD/hr budget — auto-pick any GPU at this price or below, cheapest first. Loses to explicit `instances:` if both are set. |
 | `min_vram_gb` | Extra filter for budget mode (default 0). |
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
-| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list — e.g. `"*Blackwell*"` skips every Blackwell GPU (sm\_100 / sm\_120 are not in the kernel set of PyTorch ≤ 2.6 wheels). |
+| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200`, `B300`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing. |
 | `min_cuda_version` | `X.Y` floor sent as `gpu.minCudaVersion`. Used as a **fallback** when the image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`); tags like `cu1281` / `cuda1281` / `cuda13.0` are parsed and win. Superseded by `cuda_versions` — the API rejects both fields on one request. |
 | `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
@@ -342,6 +380,9 @@ each tier:
 ```sh
 CLOUD_TYPE=ALL ON_SKIP=pass python3 tests/test_images.py <manifest> <group>
 ```
+
+[`gpu-compat.example.yaml`](gpu-compat.example.yaml) is a ready full-catalog
+sweep in this shape — every GPU, every CUDA version it reports capacity for.
 
 Planning happens once per tier, since availability, CUDA versions and
 prices are all scoped to one; the resulting jobs then share a single worker
@@ -501,6 +542,7 @@ pytorch:
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `GET /v2/registries` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
+| `DIRECT_PORT_TIMEOUT` | `300` | Give up this early when only `ssh.proxy` exists and it has already refused — RunPod never allocated a port for `22/tcp` and waiting out `CREATE_TIMEOUT` only bills an unreachable pod. `0` waits the full `CREATE_TIMEOUT`. See [SSH endpoints](#ssh-endpoints). |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
@@ -572,11 +614,14 @@ wraps everything in this script needs for a clean CI run:
    `.github/scripts/generate_test_manifest.py`, applying the
    `profile`, `budget-usd-per-hour`, `min-vram-gb`, `manufacturer`,
    `test-jupyter`, `test-ports`, `test-comfyui`,
-   `test-comfyui-functional`, `check-all-gpu`, `cuda-versions`,
-   `min-cuda-version`, and `exclude-instances` inputs.
+   `test-comfyui-functional`, `check-all-gpu`, `instances`,
+   `cuda-versions`, `min-cuda-version`, and `exclude-instances` inputs.
+   `instances` and `check-all-gpu` are mutually exclusive — passing both
+   fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with
-   `MAX_PARALLEL=<max-parallel>`. A failed image makes the smoke-test
-   action fail, which prevents a release from being created.
+   `MAX_PARALLEL=<max-parallel>` and `CLOUD_TYPE=<cloud-type>`. A failed
+   image makes the smoke-test action fail, which prevents a release from
+   being created.
 
 Typical caller (from a per-image-family build workflow):
 
@@ -616,13 +661,14 @@ fields.
 | `warn: no GPU catalog` | `GET /v2/catalog/gpus` failed — usually a bad/absent key | fix the key; budget and `check_all_gpu` selection are disabled without it |
 | `warn: no registry auth configured` | no Docker Hub credential on the account | add one in the RunPod console (paid Hub account strongly recommended for parallel runs) |
 | every pod SKIPs with an SSH failure | private key not mode `600`, or its public half isn't registered | `chmod 600 <key>`; verify the fingerprint appears in `GET /v2/account/ssh-keys` |
+| `no ssh endpoint assigned yet` for the whole timeout | the pod never got a machine, so neither `ssh.direct` nor `ssh.proxy` exists | genuine provisioning failure — retry, or check the pod in the console. A missing *direct* port alone no longer causes this: the proxy is used instead |
 | `cuda_versions is set but none of the N candidate GPUs reports any CUDA version in the SECURE cloud` | CUDA axis on a ROCm/AMD sweep, or every candidate lives in the other cloud tier | drop `cuda_versions` for ROCm — the axis is NVIDIA-only; otherwise rerun with the other `CLOUD_TYPE` |
 | `GPU not covered: not offered in the SECURE cloud` | community-only GPU (all GeForce cards, both V100s, `A100 SXM 40GB`) — `cudaVersions` is scoped to `CLOUD_TYPE` | use `CLOUD_TYPE=ALL` to sweep both tiers in one run; the note says `(covered by the COMMUNITY pass)` when it already did |
 | every group says `no capacity on any of N candidate instance type(s)` | budget too low / VRAM too high / region saturated | raise `max_price_per_hour`, drop `min_vram_gb`, or set explicit `instances:` |
 | only the `base_cpu` group says `no capacity` while GPU groups pass | the cloud(s) you target don't have CPU capacity right now | by default we already try SECURE then COMMUNITY. If both are full, add DC-pinned candidates: `CPU_CANDIDATES="cpu-secure:SECURE,cpu-community:COMMUNITY,cpu-eu:COMMUNITY:EU-RO-1+EU-NL-1,cpu-us:COMMUNITY:US-OR-1"` |
 | pod stays in `ssh endpoint not assigned yet` past `STALL_HINT_AFTER` | slow image pull or Docker Hub `toomanyrequests` | add registry auth, reduce `MAX_PARALLEL`, or wait 6 h for the Hub rate limit to reset |
 | `ssh_probe=FAIL — Permission denied (publickey)` | wrong SSH key | export `RUNPOD_SSH_KEY=/path/to/private/key` whose public half is on the RunPod account |
-| `pod entered TIMEOUT state` repeatedly on Blackwell GPUs for a `pytorch` group | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels | add `exclude_instances: ["*Blackwell*"]` to the group |
+| `pod entered TIMEOUT state` repeatedly on Blackwell GPUs for a `pytorch` group | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels | add `exclude_instances: ["B200", "B300", "RTX 5090", "RTX PRO *", "PRO 6000 MIG *"]` — the display names never contain the word `Blackwell` |
 | `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=X.Y` in pod logs | image needs a newer driver than the host has | set `min_cuda_version: "X.Y"` in the manifest (only needed for tags without a `cuXYZW`/`cudaXYZW` marker) |
 | `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (classic Ubuntu 22.04 `python3` → 3.10 vs `python` → 3.12) | fix `container-template/start.sh` to use `python -m jupyter lab` |
 | `jupyter check (public proxy) FAILED` but in-pod check passed | port exposed as `8888/tcp` instead of `8888/http`, OR proxy hasn't registered the pod yet | check `pod create --ports` arg; bump `JUPYTER_PROXY_TIMEOUT` if proxy is just slow |

@@ -122,6 +122,7 @@ def build_groups(
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
     check_all_gpu: bool = False,
+    instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
     min_cuda_version: str | None = None,
     cuda_versions: list[str] | None = None,
@@ -158,12 +159,25 @@ def build_groups(
     CUDA 13.0 and refuses to run on hosts with a 12.x driver.
     """
     exclude_instances = list(exclude_instances or [])
+    instances = list(instances or [])
     test_ports = list(test_ports or [])
     cuda_versions = list(cuda_versions or [])
     wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
 
+    if instances and check_all_gpu:
+        raise ValueError(
+            "instances and check_all_gpu are mutually exclusive: an explicit "
+            "list wins over catalog selection, so passing both silently "
+            "ignores one of them"
+        )
+
     def _decorate(body: dict, *, gpu_group: bool) -> dict:
-        if gpu_group:
+        if gpu_group and instances:
+            # An explicit list wins over catalog selection in
+            # instances.resolve_instances, so the budget / vRAM / vendor
+            # filters would be dead weight in the manifest.
+            body["instances"] = list(instances)
+        elif gpu_group:
             if check_all_gpu:
                 body["check_all_gpu"] = True
                 # A matrix run means EVERY GPU by default — no price filter.
@@ -317,6 +331,19 @@ def main() -> int:
             "gpu.allowedCudaVersions, so this supersedes --min-cuda-version."
         ),
     )
+    ap.add_argument(
+        "--instance",
+        action="append",
+        default=[],
+        dest="instances",
+        metavar="DISPLAY_NAME",
+        help=(
+            "Test exactly this GPU display name (repeat for several). "
+            "Emitted as `instances:`, which wins over catalog selection — so "
+            "it cannot be combined with --check-all-gpu, and the budget / "
+            "vRAM / vendor filters no longer apply."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -328,6 +355,14 @@ def main() -> int:
 
     if not isinstance(refs, list) or not refs:
         print("--refs must be a non-empty JSON array", file=sys.stderr)
+        return 1
+
+    if args.instances and args.check_all_gpu:
+        print(
+            "--instance and --check-all-gpu are mutually exclusive: an "
+            "explicit instance list wins over catalog selection",
+            file=sys.stderr,
+        )
         return 1
 
     groups = build_groups(
@@ -342,6 +377,7 @@ def main() -> int:
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
         check_all_gpu=args.check_all_gpu,
+        instances=args.instances,
         exclude_instances=args.exclude_instance,
         min_cuda_version=(args.min_cuda_version or None),
         cuda_versions=args.cuda_versions,

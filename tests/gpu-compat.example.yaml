@@ -1,0 +1,29 @@
+# Local GPU × CUDA compatibility sweep — every catalog GPU, every CUDA
+# version that GPU reports capacity for. Prerequisites in ./README.md
+# (RUNPOD_API_KEY + an SSH key registered on the account).
+#
+#   CLOUD_TYPE=ALL ON_SKIP=pass MAX_PARALLEL=4 \
+#     python3 tests/test_images.py tests/gpu-compat.example.yaml pytorch
+#
+# CUDA versions are scoped per cloud tier and the tiers don't nest, so
+# CLOUD_TYPE=ALL is what reaches both the datacenter cards and the
+# community-only ones (every GeForce, both V100s). Drop it for SECURE only.
+#
+# Do not add `max_price_per_hour` — it takes precedence over
+# check_all_gpu and would filter GPUs out of the sweep.
+pytorch:
+    images:
+    - runpod/pytorch:1.1.0-cu1290-torch280-ubuntu2404-cluster
+    check_all_gpu: true
+    cuda_versions: all
+    # Narrow the sweep instead of the whole catalog:
+    # cuda_versions:
+    # - "12.8"
+    # - "13.0"
+    # min_vram_gb: 24
+    # manufacturer: Nvidia
+    # exclude_instances:
+    # - "*B200*"
+    #
+    # Drop this to test bootability only — it adds the :8888 Jupyter probes.
+    test_jupyter: true

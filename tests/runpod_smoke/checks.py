@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -59,14 +60,62 @@ def _resolve_ssh_identity() -> Optional[str]:
     return None
 
 
+# How to address each endpoint. Direct SSH lands in the container as root;
+# the RunPod proxy needs an opaque routing token and a pseudo-terminal, and
+# the API hands us the exact invocation in `ssh.proxy.command`, so we build
+# on that instead of guessing. `pod.wait_for_running` registers what it
+# found; everything else keeps identifying endpoints by (host, port).
+_SSH_ENDPOINTS: dict[tuple[str, int], tuple[str, str, bool]] = {}
+
+
+def set_ssh_endpoint(
+    host: str, port: int, user: str, command: str = "", *, pty: bool = False,
+) -> None:
+    if host and port and user:
+        _SSH_ENDPOINTS[(host, int(port))] = (user, command or "", pty)
+
+
+def ssh_user_for(host: str, port: int) -> str:
+    entry = _SSH_ENDPOINTS.get((host, int(port)))
+    return entry[0] if entry else "root"
+
+
 def _ssh_command_prefix(host: str, port: int) -> list[str]:
-    """Build the `ssh ... root@<host> -p <port>` prefix common to all SSH calls."""
-    cmd = ["ssh", *config.SSH_OPTS, "-p", str(port)]
+    """Build the `ssh ... <user>@<host>` prefix common to all SSH calls.
+
+    For a registered endpoint the API's own invocation is the base, with the
+    flags its description tells us to add (`-i`, `-o StrictHostKeyChecking`)
+    plus `-tt` when the endpoint insists on a terminal. Everything else gets
+    the plain `root@host -p port` form.
+    """
+    user, api_command, pty = _SSH_ENDPOINTS.get(
+        (host, int(port)), ("root", "", False)
+    )
     identity = _resolve_ssh_identity()
+    target = f"{user}@{host}"
+    if api_command:
+        # Keep only the target from the API string: the flags we add below
+        # are the ones it documents as missing, and re-using its argv
+        # verbatim would fight with SSH_OPTS.
+        parts = shlex.split(api_command)
+        target = next((p for p in parts[1:] if "@" in p), target)
+    cmd = ["ssh", *config.SSH_OPTS]
+    if pty:
+        # -tt, not -t: the local stdin is not a terminal under subprocess,
+        # and single -t silently declines to allocate one in that case.
+        cmd.append("-tt")
+    if int(port) != 22:
+        cmd.extend(["-p", str(port)])
     if identity:
         cmd.extend(["-i", identity])
-    cmd.append(f"root@{host}")
+    cmd.append(target)
     return cmd
+
+
+def _strip_cr(text: str) -> str:
+    """A PTY turns every \\n into \\r\\n; undo that so parsing and logs match
+    what a direct, terminal-less connection would have produced."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def ssh_probe(host: str, port: int, timeout: int = 8) -> tuple[bool, str]:
@@ -263,7 +312,7 @@ def run_cuda_check(host: str, port: int, image: str) -> tuple[bool, str]:
         return False, "cuda check timed out after 60s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
-    combined = (r.stdout + r.stderr).strip()
+    combined = _strip_cr(r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
 
 
@@ -340,7 +389,7 @@ def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
         return False, f"jupyter check timed out after {outer_timeout}s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
-    combined = (r.stdout + r.stderr).strip()
+    combined = _strip_cr(r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
 
 
@@ -732,7 +781,7 @@ def fetch_logs_via_ssh(
     except FileNotFoundError:
         return None
     if r.returncode == 0 and r.stdout.strip():
-        return r.stdout
+        return _strip_cr(r.stdout)
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
@@ -751,6 +800,14 @@ def dump_pod_logs(pod_id: str, image: str) -> list[str]:
     direct = ssh.get("direct") or {}
     proxy = ssh.get("proxy") or {}
     host, port = direct.get("host"), direct.get("port")
+    # Fall back to the proxy so the SMI snapshot still gets fetched on pods
+    # that never received a direct TCP port.
+    if not (host and port) and proxy.get("host") and proxy.get("username"):
+        host, port = proxy.get("host"), proxy.get("port")
+        set_ssh_endpoint(
+            host, int(port or 0), str(proxy["username"]),
+            str(proxy.get("command") or ""), pty=True,
+        )
 
     log(f"--- pod metadata for {pod_id} ---", indent=2)
     for key, val in [
@@ -788,7 +845,10 @@ def dump_pod_logs(pod_id: str, image: str) -> list[str]:
     logs = fetch_logs_via_ssh(host, int(port), image)
     if logs is None:
         return sys_errors
-    log(f"--- GPU SMI via SSH (root@{host}:{port}) ---", indent=2)
+    log(
+        f"--- GPU SMI via SSH ({ssh_user_for(host, int(port))}@{host}:{port}) ---",
+        indent=2,
+    )
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:

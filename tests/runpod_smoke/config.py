@@ -94,6 +94,13 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # — just an informational note in the logs.
 STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 
+# RunPod sometimes never allocates the public port for 22/tcp — such a pod
+# shows only `ssh.proxy` in the console and `ssh.direct` stays null forever.
+# Once the proxy has also refused, waiting out CREATE_TIMEOUT just bills a
+# pod that will never be reachable, so give up at this mark instead. Set to
+# 0 to wait the full CREATE_TIMEOUT.
+DIRECT_PORT_TIMEOUT = int(os.environ.get("DIRECT_PORT_TIMEOUT", "300"))
+
 # Docker Hub authenticated pulls — without this, RunPod datacenters share
 # an anonymous IP pool that hits Docker Hub's `toomanyrequests` rate limit
 # fast. Either set REGISTRY_AUTH_ID explicitly, or REGISTRY_AUTH_NAME to

@@ -133,6 +133,17 @@ inputs:
       unless budget-usd-per-hour is set explicitly. This can be expensive.
     required: false
     default: "false"
+  instances:
+    description: |
+      Newline-separated GPU display names, one per line, exactly as
+      `GET /v2/catalog/gpus` reports them ('RTX A4000', 'A100 SXM'). Emitted
+      as `instances:`, which wins over catalog selection — mutually exclusive
+      with check-all-gpu, and it makes budget-usd-per-hour / min-vram-gb /
+      manufacturer inert. Empty (default) leaves selection to the catalog.
+      The list is a fallback chain, not a matrix: one pod per image lands on
+      the first entry with capacity. One pod per GPU needs check-all-gpu.
+    required: false
+    default: ""
   cloud-type:
     description: |
       Cloud tier(s) to sweep: SECURE, COMMUNITY, a comma list of both, or
@@ -310,6 +321,7 @@ runs:
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
+        INSTANCES: ${{ inputs.instances }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
@@ -378,6 +390,14 @@ runs:
           [[ -z "${line}" || "${line}" == \#* ]] && continue
           EXTRA_ARGS+=(--exclude-instance "${line}")
         done <<< "${EXCLUDE_INSTANCES}"
+        # Same treatment for INSTANCES. Display names contain spaces
+        # ('RTX A4000'), so each line must stay one argv element.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--instance "${line}")
+        done <<< "${INSTANCES}"
         python3 "${GITHUB_ACTION_PATH}/../../scripts/generate_test_manifest.py" \
           --profile "${PROFILE}" \
           --refs "${REFS}" \

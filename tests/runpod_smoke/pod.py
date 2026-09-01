@@ -18,7 +18,12 @@ import time
 from typing import Optional
 
 from . import api, config
-from .checks import ssh_probe, system_log_errors
+from .checks import (
+    set_ssh_endpoint,
+    ssh_probe,
+    ssh_user_for,
+    system_log_errors,
+)
 from .instances import detect_cuda_version, pick_cpu_flavor
 from .log import log
 
@@ -257,17 +262,24 @@ def pod_state(pod_id: str) -> dict:
     terminal states.
 
     `ssh.direct` is null until the pod has a machine assignment and a public
-    port for `22/tcp`; that transition is the readiness signal we poll for.
+    port for `22/tcp`. RunPod does not always allocate that port — the pod
+    then shows only `ssh.proxy` in the console — so both endpoints are
+    returned and the readiness poll accepts whichever answers.
     """
     status, data = api.request_with_retries("GET", f"/pods/{pod_id}", timeout=30)
     if not (200 <= status < 300) or not isinstance(data, dict):
         return {}
     ssh = data.get("ssh") or {}
     direct = ssh.get("direct") or {}
+    proxy = ssh.get("proxy") or {}
     return {
         "status": data.get("status"),
         "ssh_ip": direct.get("host") or "",
         "ssh_port": int(direct.get("port") or 0),
+        "proxy_host": proxy.get("host") or "",
+        "proxy_port": int(proxy.get("port") or 0),
+        "proxy_user": proxy.get("username") or "",
+        "proxy_command": proxy.get("command") or "",
         "cuda_version": data.get("cudaVersion") or "",
         "cost": data.get("cost"),
         "data_center": data.get("dataCenterId") or "",
@@ -320,26 +332,52 @@ def _print_stall_hint(pod_id: str, elapsed: int) -> None:
     )
 
 
+def _ssh_endpoints(st: dict) -> list[tuple[str, str, int]]:
+    """Reachable-SSH candidates for this pod, best first: (kind, host, port).
+
+    Direct comes first because it is a plain TCP hop to the container's sshd.
+    The proxy adds a relay, is documented as carrying an interactive shell
+    only, and rejects a connection with "Your SSH client doesn't support PTY"
+    unless a terminal is allocated — so it is registered with the API's own
+    invocation and a forced `-tt`. Registration keys on (host, port) so every
+    later SSH call can keep addressing endpoints the same way.
+    """
+    out: list[tuple[str, str, int]] = []
+    host, port = st.get("ssh_ip") or "", int(st.get("ssh_port") or 0)
+    if host and port:
+        out.append(("direct", host, port))
+    p_host, p_port = st.get("proxy_host") or "", int(st.get("proxy_port") or 0)
+    if p_host and p_port and st.get("proxy_user"):
+        set_ssh_endpoint(
+            p_host, p_port, str(st["proxy_user"]),
+            str(st.get("proxy_command") or ""), pty=True,
+        )
+        out.append(("proxy", p_host, p_port))
+    return out
+
+
 def _probe_ssh_endpoint(
+    kind: str,
     host: str,
     port: int,
     pod_status_value: object,
     elapsed: int,
     ssh_attempts: int,
     last_summary: Optional[tuple],
-) -> tuple[Optional[tuple[str, str]], tuple]:
+) -> tuple[Optional[tuple[str, str, tuple[str, int]]], tuple]:
     """One SSH probe against an assigned endpoint. Returns:
         (outcome | None, summary_for_dedup)
 
-    `outcome` is `("RUNNING", detail)` when the probe succeeds; otherwise
-    None — caller keeps polling. `summary_for_dedup` is the value the
-    caller compares against `last_summary` to dedup the log line.
+    `outcome` is `("RUNNING", detail, (host, port))` when the probe succeeds;
+    otherwise None — caller keeps polling. `summary_for_dedup` is the value
+    the caller compares against `last_summary` to dedup the log line.
     """
+    label = f"{ssh_user_for(host, port)}@{host}:{port}"
     ok, err = ssh_probe(host, port, timeout=8)
     summary = (pod_status_value, host, port, ok)
     if summary != last_summary:
         log(
-            f"t+{elapsed}s endpoint=root@{host}:{port} "
+            f"t+{elapsed}s endpoint={label} ({kind}) "
             f"ssh_probe={'OK' if ok else 'FAIL'} (#{ssh_attempts})"
             + (f" — {err}" if not ok and err else ""),
             indent=2,
@@ -348,29 +386,32 @@ def _probe_ssh_endpoint(
         return (
             "RUNNING",
             f"ssh probe succeeded after {elapsed}s "
-            f"({ssh_attempts} attempts, endpoint root@{host}:{port})",
+            f"({ssh_attempts} attempts, {kind} endpoint {label})",
+            (host, port),
         ), summary
     return None, summary
 
 
-def wait_for_running(pod_id: str) -> tuple[str, str]:
-    """Returns (outcome, detail). Outcome is one of:
-        'RUNNING'   SSH probe to root@<ssh.direct.host>:<port> succeeded —
-                    the container's sshd is up, which means it has fully
-                    booted and we can trust it as healthy.
+def wait_for_running(pod_id: str) -> tuple[str, str, tuple[str, int]]:
+    """Returns (outcome, detail, endpoint). `endpoint` is the (host, port)
+    that answered — direct or proxy — and ('', 0) when nothing did. Outcome
+    is one of:
+        'RUNNING'   an SSH probe succeeded, so the container's sshd is up,
+                    which means it has fully booted and we can trust it as
+                    healthy. Every later check reuses this endpoint.
         'TERMINAL'  status reached EXITED / ERROR / TERMINATED.
         'TIMEOUT'   SSH never reachable within CREATE_TIMEOUT — pod stuck
                     initializing (capacity issue or image broken).
 
     SSH probing is the real health-check. We poll `GET /v2/pods/{id}` for
-    `ssh.direct` (populated once a machine is allocated and `22/tcp` gets a
-    public port), then try `ssh root@host -p port 'echo ready'` until it
-    succeeds. A successful SSH means the container booted and sshd started —
-    a much stronger signal than any status field.
+    either endpoint, then try `ssh <user>@host 'echo ready'` against each
+    until one succeeds. A successful SSH means the container booted and sshd
+    started — a much stronger signal than any status field.
     """
     start = time.time()
     deadline = start + config.CREATE_TIMEOUT
-    last_summary: Optional[tuple] = None
+    last_summary: Optional[tuple] = None      # the "no endpoint yet" line
+    last_summaries: dict[tuple[str, int], tuple] = {}   # one per endpoint
     last_status: Optional[str] = None
     ssh_attempts = 0
     stall_hinted = False  # one-time hint when pod has no ssh endpoint for a while
@@ -394,22 +435,47 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
             _log_system_errors(pod_id, f"pod entered {pod_status_value}")
             return "TERMINAL", (
                 f"pod entered {pod_status_value} after {elapsed}s"
-            )
+            ), ("", 0)
 
-        if host and port:
-            ssh_attempts += 1
-            outcome, last_summary = _probe_ssh_endpoint(
-                host, int(port), pod_status_value, elapsed, ssh_attempts,
-                last_summary,
-            )
-            if outcome is not None:
-                return outcome
+        endpoints = _ssh_endpoints(st)
+        kinds = {kind for kind, _h, _p in endpoints}
+        # Proxy-only for this long means RunPod never allocated the direct
+        # port and the proxy has already refused us, so nothing will change
+        # by waiting — stop billing the pod.
+        if (
+            config.DIRECT_PORT_TIMEOUT
+            and kinds == {"proxy"}
+            and ssh_attempts
+            and elapsed >= config.DIRECT_PORT_TIMEOUT
+        ):
+            _log_system_errors(pod_id, f"proxy-only after {elapsed}s")
+            return "TIMEOUT", (
+                f"RunPod never allocated a public port for 22/tcp in "
+                f"{elapsed}s and the SSH proxy refused {ssh_attempts} "
+                "probe(s) — the pod is running but unreachable. Giving up "
+                f"early (DIRECT_PORT_TIMEOUT={config.DIRECT_PORT_TIMEOUT}s) "
+                f"instead of waiting out CREATE_TIMEOUT="
+                f"{config.CREATE_TIMEOUT}s"
+            ), ("", 0)
+        if endpoints:
+            for kind, e_host, e_port in endpoints:
+                ssh_attempts += 1
+                # Dedup per endpoint: two endpoints alternating would each
+                # look like a change to a single shared `last_summary`, so a
+                # stuck pod would log every probe instead of just the first.
+                key = (e_host, e_port)
+                outcome, last_summaries[key] = _probe_ssh_endpoint(
+                    kind, e_host, e_port, pod_status_value, elapsed,
+                    ssh_attempts, last_summaries.get(key),
+                )
+                if outcome is not None:
+                    return outcome
         else:
             summary = (pod_status_value, host, port, False)
             if summary != last_summary:
                 log(
                     f"t+{elapsed}s status={pod_status_value!r} "
-                    "ssh endpoint not assigned yet",
+                    "no ssh endpoint assigned yet (neither direct nor proxy)",
                     indent=2,
                 )
                 last_summary = summary
@@ -422,10 +488,10 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
 
     _log_system_errors(pod_id, f"timeout after {config.CREATE_TIMEOUT}s")
     return "TIMEOUT", (
-        f"SSH endpoint never became reachable in {config.CREATE_TIMEOUT}s "
-        f"({ssh_attempts} probes) — pod stuck initializing. Likely causes: "
-        "(1) slow/throttled image pull (check UI for pull progress), "
-        "(2) Docker Hub rate limit if many parallel pulls of the same image, "
-        "(3) host scheduling delay on a saturated DC — "
-        "see system-log error markers above (if any)"
-    )
+        f"no SSH endpoint became reachable in {config.CREATE_TIMEOUT}s "
+        f"({ssh_attempts} probes, direct and proxy) — pod stuck "
+        "initializing. Likely causes: (1) slow/throttled image pull (check "
+        "UI for pull progress), (2) Docker Hub rate limit if many parallel "
+        "pulls of the same image, (3) host scheduling delay on a saturated "
+        "DC — see system-log error markers above (if any)"
+    ), ("", 0)
