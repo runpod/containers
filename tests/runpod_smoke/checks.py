@@ -611,6 +611,33 @@ def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
     return [line for line in lines if pattern.search(line)][:max_lines]
 
 
+# `nvidia-container-cli` aborts the prestart hook when the image's
+# NVIDIA_REQUIRE_CUDA floor is above the host driver.
+_HOST_INCOMPATIBLE_RE = re.compile(
+    r"nvidia-container-cli:[^\n]*requirement error"
+    r"|unsatisfied condition:\s*cuda",
+    re.IGNORECASE,
+)
+_CUDA_CONDITION_RE = re.compile(
+    r"unsatisfied condition:\s*(cuda\s*[<>=!]+\s*[\d.]+)", re.IGNORECASE
+)
+
+
+def host_incompatibility(sys_errors: Optional[list[str]]) -> str:
+    """Summarize a container-init rejection, or '' if there wasn't one.
+
+    Unlike a dead host, this verdict is deterministic: the same image on the
+    same pinned CUDA is rejected by every host, so the caller must not retry
+    other instance types.
+    """
+    for line in sys_errors or []:
+        if not _HOST_INCOMPATIBLE_RE.search(line):
+            continue
+        match = _CUDA_CONDITION_RE.search(line)
+        return match.group(1) if match else line.strip()[:200]
+    return ""
+
+
 _LOG_SCAN_ATTEMPTS = 3
 _LOG_SCAN_RETRY_SLEEP_SEC = 10
 
@@ -709,12 +736,17 @@ def fetch_logs_via_ssh(
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
-def dump_pod_logs(pod_id: str, image: str) -> None:
-    """Print metadata, API container logs, system errors, and GPU SMI."""
+def dump_pod_logs(pod_id: str, image: str) -> list[str]:
+    """Print metadata, API container logs, system errors, and GPU SMI.
+
+    Returns the system-log error markers so a caller classifying the failure
+    can read them without fetching the stream a second time.
+    """
+    sys_errors: list[str] = []
     status, data = api.request("GET", f"/pods/{pod_id}", timeout=30)
     if not (200 <= status < 300) or not isinstance(data, dict):
         api.log_error("(could not fetch pod state)", status, data, indent=2)
-        return
+        return sys_errors
     ssh = data.get("ssh") or {}
     direct = ssh.get("direct") or {}
     proxy = ssh.get("proxy") or {}
@@ -739,7 +771,7 @@ def dump_pod_logs(pod_id: str, image: str) -> None:
         for line in api_lines:
             log(f"  {line}", indent=2)
 
-    sys_errors = system_log_errors(pod_id)
+    sys_errors = system_log_errors(pod_id) or []
     if sys_errors:
         log(
             f"--- system-log error markers via API ({len(sys_errors)}) ---",
@@ -751,17 +783,18 @@ def dump_pod_logs(pod_id: str, image: str) -> None:
     if not (host and port):
         log("  (no SSH endpoint yet — skipping GPU SMI fetch)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return
+        return sys_errors
 
     logs = fetch_logs_via_ssh(host, int(port), image)
     if logs is None:
-        return
+        return sys_errors
     log(f"--- GPU SMI via SSH (root@{host}:{port}) ---", indent=2)
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:
             log(f"    {line}", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return
+        return sys_errors
     for line in logs.splitlines():
         log(f"  {line}", indent=2)
+    return sys_errors

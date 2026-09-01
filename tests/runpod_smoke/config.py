@@ -19,7 +19,23 @@ _TESTS_DIR = os.path.dirname(_PKG_DIR)
 # Pod / scheduling
 # ---------------------------------------------------------------------------
 
-CLOUD_TYPE = os.environ.get("CLOUD_TYPE", "SECURE")
+VALID_CLOUDS = ("SECURE", "COMMUNITY")
+
+
+def _parse_cloud_types(raw: str) -> list[str]:
+    """One tier, a comma-separated list, or `ALL`. Unknown names are dropped."""
+    wanted = [part.strip().upper() for part in raw.split(",") if part.strip()]
+    if "ALL" in wanted:
+        return list(VALID_CLOUDS)
+    ordered = [c for c in VALID_CLOUDS if c in wanted]
+    return ordered or ["SECURE"]
+
+
+# The catalog's `cudaVersions` and availability are scoped to one tier and the
+# tiers do not nest, so full coverage needs a planning pass each. CLOUD_TYPES
+# is every requested tier; CLOUD_TYPE is the one being planned right now.
+CLOUD_TYPES = _parse_cloud_types(os.environ.get("CLOUD_TYPE", "SECURE"))
+CLOUD_TYPE = CLOUD_TYPES[0]
 DISK_GB = int(os.environ.get("DISK_GB", "100"))
 # CPU pods on RunPod cap container disk by flavor: the cheapest flavors
 # (cpu3c-2-4 and similar) reject >20 GB outright; larger ones cap at 30 GB.

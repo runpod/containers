@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: "Image ref WITH tag, e.g. runpod/comfyui:1.0.7-comfyuiv0.30.0-cuda12.8"
+        description: "Image ref WITH tag, e.g. runpod/pytorch:1.1.0-cu1290-torch280-ubuntu2404-cluster"
         type: string
         required: true
       test-ports:
@@ -175,6 +175,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Image | \`${IMAGE}\` |"
             echo "| CUDA axis | ${CUDA:-none (floor from tag)} |"
+            echo "| Cloud tiers | SECURE + COMMUNITY |"
             echo "| Vendor | ${VENDOR} |"
             echo "| Min vRAM | ${MIN_VRAM} GB |"
             echo "| Ports | ${ports_1l:-none} |"
@@ -200,6 +201,12 @@ jobs:
           manufacturer: ${{ inputs.manufacturer }}
           min-vram-gb: ${{ inputs.min-vram-gb }}
           exclude-instances: ${{ steps.prep.outputs.exclude }}
+
+          # Both tiers, always: a compatibility sweep that silently skipped
+          # every community-only GPU wouldn't be a catalog sweep. Not an
+          # input because workflow_dispatch is capped at 10 of them; narrow
+          # with exclude-instances if you need one tier only.
+          cloud-type: "ALL"
 
           # Empty = no axis; one job per GPU with the floor derived from the
           # image tag by instances.detect_cuda_version.

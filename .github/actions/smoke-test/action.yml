@@ -133,6 +133,16 @@ inputs:
       unless budget-usd-per-hour is set explicitly. This can be expensive.
     required: false
     default: "false"
+  cloud-type:
+    description: |
+      Cloud tier(s) to sweep: SECURE, COMMUNITY, a comma list of both, or
+      ALL. The catalog's CUDA versions and availability are scoped per tier
+      and the tiers do not nest — 16 of 47 GPUs are community-only (every
+      GeForce card, both V100s) while A40, L4, H100 SXM, B200 and B300 have
+      no community hosts — so full catalog coverage needs both. Extra tiers
+      multiply the pod count; MAX_CUDA_COMBOS caps the combined total.
+    required: false
+    default: "SECURE"
   exclude-instances:
     description: |
       Newline-separated list of fnmatch-style GPU-display-name patterns to
@@ -383,6 +393,9 @@ runs:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
         # 'Configure RunPod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
+        # Unknown tier names are dropped by config._parse_cloud_types, which
+        # falls back to SECURE, so the raw input is safe to propagate.
+        CLOUD_TYPE: ${{ inputs.cloud-type }}
         # ON_SKIP is validated by config._coerce_on_skip (unknown values
         # collapse to 'fail') so we just propagate the raw input.
         ON_SKIP: ${{ inputs.on-skip }}

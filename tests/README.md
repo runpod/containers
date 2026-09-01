@@ -118,7 +118,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `POST /v2/pods` with `gpu.id` (or an auto-picked `cpu.id` + `vcpuCount`), `disk`, `ports`, `startSsh`, registry credential, and either `gpu.minCudaVersion` or `gpu.allowedCudaVersions`. Transient failures (429, 5xx, transport) are retried up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity — try next instance) / `CREATE_FAIL` (bad image tag, auth, malformed request — any non-capacity, non-transient error after retries) |
-| 2 | Poll `GET /v2/pods/{id}` until `status` is `RUNNING`, `ssh.direct` is populated, and one-shot `ssh root@host -p port 'echo ready'` succeeds. SSH is the readiness signal; `status` is the real observed `PodStatus`, so terminal `EXITED`/`ERROR`/`TERMINATED` stop the poll immediately. | `FAIL` on a terminal status; `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` |
+| 2 | Poll `GET /v2/pods/{id}` until `status` is `RUNNING`, `ssh.direct` is populated, and one-shot `ssh root@host -p port 'echo ready'` succeeds. SSH is the readiness signal; `status` is the real observed `PodStatus`, so terminal `EXITED`/`ERROR`/`TERMINATED` stop the poll immediately. | `FAIL` on a terminal status, or when the system log shows a container-init rejection; `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
 | 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
@@ -148,6 +148,7 @@ The granular per-pod outcomes below collapse into them:
 | `PASS` | `PASS` | Image booted, all checks passed, survived dwell. | nothing |
 | `FAIL` | `FAIL` | Pod was created and the container itself proved broken (CUDA check failed, JupyterLab didn't start, crashed during dwell, etc.). Moving to another GPU won't help — the image is the problem. | fix the image |
 | `FAIL` | `CREATE_FAIL` | Pod-create returned a non-capacity, non-transient orchestrator error (bad image tag, registry auth, malformed request, missing CUDA version). | fix the manifest / image ref / auth |
+| `FAIL` | `FAIL` (container init) | `nvidia-container-cli` rejected the container in the prestart hook — typically the image's `NVIDIA_REQUIRE_CUDA` floor is above the host driver, e.g. a `cu1290` image pinned to CUDA 12.4. Deterministic, so no other instance type is tried. | pin a CUDA version the image supports, or fix the image's requirement |
 | `SKIP` | all `UNAVAILABLE` | RunPod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
 | `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but RunPod never assigned an SSH endpoint within `CREATE_TIMEOUT` (slow pull / dead host). | retry later — usually transient |
 
@@ -326,6 +327,35 @@ so unavailable pairings are dropped at planning time instead of burning a
 pod each. A GPU with no usable version is recorded as a SKIP row and
 appears in the matrix as a full row of `·`.
 
+**`cudaVersions` is scoped to one cloud tier.** The catalog is fetched with
+`cloud=$CLOUD_TYPE` (default `SECURE`), and a GPU with no host in that tier
+comes back with an empty version list — 16 of 47 catalog GPUs are
+community-only, including every GeForce card and both V100s. Pods are
+created in the same tier, so those GPUs are genuinely untestable in that
+run, and the SKIP note names the tier rather than claiming the API reports
+nothing. The tiers do not nest (`A40`, `L4`, `H100 SXM`, `B200` and `B300`
+have no community hosts), so covering the whole catalog needs both.
+
+`CLOUD_TYPE` therefore takes a list, or `ALL`, and one invocation sweeps
+each tier:
+
+```sh
+CLOUD_TYPE=ALL ON_SKIP=pass python3 tests/test_images.py <manifest> <group>
+```
+
+Planning happens once per tier, since availability, CUDA versions and
+prices are all scoped to one; the resulting jobs then share a single worker
+pool, and each job carries its tier through to `POST /v2/pods`. Practical
+consequences:
+
+* `MAX_CUDA_COMBOS` caps the **combined** job count, so a two-tier sweep
+  can't silently double the pod count.
+* The summary labels every row with its tier, and the step summary emits
+  one GPU × CUDA pivot per tier — the same (GPU, CUDA) pairing can be
+  tested in both, and one grid would drop one of the two outcomes.
+* CPU groups are planned only once. Their candidate labels already encode a
+  tier each (see `CPU_CANDIDATES`), so they ignore this axis.
+
 `MAX_CUDA_COMBOS` (default 120) caps the fan-out; jobs past the cap are
 dropped with a warning.
 
@@ -458,7 +488,7 @@ pytorch:
 
 | var | default | description |
 |---|---|---|
-| `CLOUD_TYPE` | `SECURE` | `SECURE` or `COMMUNITY`. |
+| `CLOUD_TYPE` | `SECURE` | `SECURE`, `COMMUNITY`, both as a comma list, or `ALL`. Multiple tiers are planned and swept in one invocation — see [CUDA axis](#cuda-axis). |
 | `DISK_GB` | `100` | Container disk size for GPU pods. |
 | `CPU_DISK_GB` | `20` | Container disk size for CPU pods. RunPod caps this per CPU flavor (20 GB on the cheapest, 30 GB on larger ones); 20 is the universal safe value. |
 | `CPU_CANDIDATES` | `""` (uses `cpu-secure,cpu-community`) | CPU "instance candidates". The flavor comes from `pick_cpu_flavor()`; what varies between candidates is placement — cloud (SECURE vs COMMUNITY) and optional data centres. Each label becomes one candidate iterated by the same per-instance retry loop GPU groups use, so when SECURE is saturated COMMUNITY almost always has free CPU capacity. Format: `label:CLOUD[:DC1+DC2+…],label:CLOUD[:DC_CSV],…` (use `+` not `,` to separate DC ids inside one candidate so the outer csv stays unambiguous). CLOUD must be SECURE or COMMUNITY. Malformed entries are silently dropped; an empty/all-broken value falls back to the default 2-candidate list. |
@@ -586,7 +616,8 @@ fields.
 | `warn: no GPU catalog` | `GET /v2/catalog/gpus` failed — usually a bad/absent key | fix the key; budget and `check_all_gpu` selection are disabled without it |
 | `warn: no registry auth configured` | no Docker Hub credential on the account | add one in the RunPod console (paid Hub account strongly recommended for parallel runs) |
 | every pod SKIPs with an SSH failure | private key not mode `600`, or its public half isn't registered | `chmod 600 <key>`; verify the fingerprint appears in `GET /v2/account/ssh-keys` |
-| `cuda_versions is set but none of the N candidate GPUs reports any CUDA version` | CUDA axis on a ROCm/AMD sweep | drop `cuda_versions` — the axis is NVIDIA-only |
+| `cuda_versions is set but none of the N candidate GPUs reports any CUDA version in the SECURE cloud` | CUDA axis on a ROCm/AMD sweep, or every candidate lives in the other cloud tier | drop `cuda_versions` for ROCm — the axis is NVIDIA-only; otherwise rerun with the other `CLOUD_TYPE` |
+| `GPU not covered: not offered in the SECURE cloud` | community-only GPU (all GeForce cards, both V100s, `A100 SXM 40GB`) — `cudaVersions` is scoped to `CLOUD_TYPE` | use `CLOUD_TYPE=ALL` to sweep both tiers in one run; the note says `(covered by the COMMUNITY pass)` when it already did |
 | every group says `no capacity on any of N candidate instance type(s)` | budget too low / VRAM too high / region saturated | raise `max_price_per_hour`, drop `min_vram_gb`, or set explicit `instances:` |
 | only the `base_cpu` group says `no capacity` while GPU groups pass | the cloud(s) you target don't have CPU capacity right now | by default we already try SECURE then COMMUNITY. If both are full, add DC-pinned candidates: `CPU_CANDIDATES="cpu-secure:SECURE,cpu-community:COMMUNITY,cpu-eu:COMMUNITY:EU-RO-1+EU-NL-1,cpu-us:COMMUNITY:US-OR-1"` |
 | pod stays in `ssh endpoint not assigned yet` past `STALL_HINT_AFTER` | slow image pull or Docker Hub `toomanyrequests` | add registry auth, reduce `MAX_PARALLEL`, or wait 6 h for the Hub rate limit to reset |

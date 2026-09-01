@@ -22,6 +22,7 @@ from .checks import (
     cuda_check_command,
     dump_pod_logs,
     fetch_pod_cuda_version,
+    host_incompatibility,
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
@@ -65,6 +66,7 @@ def _take_host_cuda() -> str:
 
 def _log_attempt_header(
     image: str, instance: str, group: str, cuda_pin: str = "",
+    cloud: str = "",
 ) -> tuple[bool, str]:
     """Log the per-attempt header line and resolve the gpu_id.
 
@@ -92,8 +94,10 @@ def _log_attempt_header(
         # Same precedence as create_pod: explicit request wins, tag is fallback.
         cuda = config.GROUP_MIN_CUDA.get(group) or detect_cuda_version(image)
         cuda_note = f", min-cuda={cuda}" if cuda else ""
+    cloud_note = f", cloud={cloud}" if cloud and len(config.CLOUD_TYPES) > 1 else ""
     log(
-        f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
+        f"attempt: instance='{instance}' (--gpu-id '{gpu_id}')"
+        f"{cuda_note}{cloud_note}",
         indent=1,
     )
     return False, gpu_id
@@ -101,7 +105,7 @@ def _log_attempt_header(
 
 def _create_pod_with_retries(
     image: str, instance: str, gpu_id: str, is_cpu: bool, group: str,
-    cuda_pin: str = "",
+    cuda_pin: str = "", cloud: str = "",
 ) -> tuple[Optional[str], str, str]:
     """Drive `create_pod` through the transient-error retry budget.
 
@@ -116,13 +120,15 @@ def _create_pod_with_retries(
     We back off and retry a few times before falling through to CREATE_FAIL.
     """
     # CPU candidate (cloud_type, data_center_ids) is encoded in the
-    # instance label (see config.CPU_CANDIDATES). For GPU instances both
-    # overrides are absent → pod.create_pod falls back to the global
-    # config.CLOUD_TYPE and skips --data-center-ids.
+    # instance label (see config.CPU_CANDIDATES). GPU jobs carry the tier
+    # they were planned against, since a multi-tier sweep runs both from one
+    # pool and the global config.CLOUD_TYPE no longer identifies either.
     cpu_candidate = (
         config.cpu_candidate_for(instance) if is_cpu else None
     )
-    cloud_override = cpu_candidate.cloud_type if cpu_candidate else None
+    cloud_override = (
+        cpu_candidate.cloud_type if cpu_candidate else (cloud or None)
+    )
     dc_ids = cpu_candidate.data_center_ids if cpu_candidate else ""
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
@@ -197,19 +203,32 @@ def _classify_non_running(
     scheduler/host issue, not the image: a different GPU type lands on
     a different host pool and usually works. Anything else (EXITED,
     TERMINATED, FAILED, RUNNING-then-died) is a container problem — the
-    image is broken, another GPU won't help."""
+    image is broken, another GPU won't help.
+
+    A container-init rejection overrides that heuristic. It looks identical
+    from the outside — no SSH, no RUNNING — but it is a verdict about the
+    image, so it must not be reported as a retryable host problem."""
     st = pod_state(pod_id)
     ever_had_ssh = bool(st.get("ssh_ip") and st.get("ssh_port"))
+    # Dumped before the verdict so the classification can use its findings.
+    sys_errors = dump_pod_logs(pod_id, image)
+    blocker = host_incompatibility(sys_errors)
+    if blocker:
+        log(
+            f"{state.lower()} -- container init rejected the image "
+            f"({blocker}) -- FAIL (deterministic; not retrying other "
+            "instance types)",
+            indent=2,
+        )
+        return "FAIL", f"container init rejected the image: {blocker}"
     if state == "TIMEOUT" and not ever_had_ssh:
         log(
             f"{state.lower()} -- {detail} -- STUCK (no SSH endpoint "
             "was ever assigned; trying next instance type)",
             indent=2,
         )
-        dump_pod_logs(pod_id, image)
         return "STUCK", ""
     log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
-    dump_pod_logs(pod_id, image)
     return "FAIL", f"pod entered {state} state: {detail}"
 
 
@@ -431,6 +450,7 @@ def _run_post_dwell_steps(
 
 def test_pair(
     image: str, instance: str, group: str, cuda_pin: str = "",
+    cloud: str = "",
 ) -> _Outcome:
     """Returns (status, detail). Statuses:
         'PASS'         — image booted, CUDA check OK, survived dwell
@@ -455,10 +475,10 @@ def test_pair(
     # Clear first so a label from a previous instance can't leak into an
     # attempt that never reaches the probe (UNAVAILABLE, STUCK).
     _set_host_cuda("")
-    is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin)
+    is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin, cloud)
 
     pod_id, early, early_detail = _create_pod_with_retries(
-        image, instance, gpu_id, is_cpu, group, cuda_pin,
+        image, instance, gpu_id, is_cpu, group, cuda_pin, cloud,
     )
     if early:
         return early, early_detail
@@ -526,6 +546,7 @@ def test_pair(
 
 def test_image(
     image: str, instances: list[str], group: str, cuda_pin: str = "",
+    cloud: str = "",
 ) -> tuple[str, str, str, str]:
     """Returns (status, note, instance_used, host_cuda).
 
@@ -551,7 +572,7 @@ def test_image(
     for inst in instances:
         set_worker_context(inst)
         try:
-            result, detail = test_pair(image, inst, group, cuda_pin)
+            result, detail = test_pair(image, inst, group, cuda_pin, cloud)
         finally:
             set_worker_context(None)
         host_cuda = _take_host_cuda()

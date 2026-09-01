@@ -107,6 +107,10 @@ def discover_gpu_catalog() -> list[dict]:
     for gpu in data.get("gpus") or []:
         if not isinstance(gpu, dict):
             continue
+        # Present in neither tier means no pod can ever land on it — the
+        # catalog carries such a placeholder entry named 'unknown'.
+        if not (gpu.get("secure") or gpu.get("community")):
+            continue
         price = gpu.get("price") or {}
         cuda = [
             cv.get("version")
@@ -128,6 +132,11 @@ def discover_gpu_catalog() -> list[dict]:
             "availability": gpu.get("availability") or "",
             "cudaVersions": cuda,
             "cudaVersionsAvailable": cuda_available,
+            # Which tier the GPU exists in. `cudaVersions` is scoped to the
+            # requested cloud, so these say whether an empty list means
+            # "wrong tier" or "no capacity".
+            "secure": bool(gpu.get("secure")),
+            "community": bool(gpu.get("community")),
         })
     return out
 
@@ -156,11 +165,45 @@ def cuda_versions_offered(display_name: str, *, only_available: bool = True) -> 
     CUDA sweep from being mostly wasted attempts.
     """
     key = "cudaVersionsAvailable" if only_available else "cudaVersions"
+    entry = catalog_entry(display_name)
+    return list(entry.get(key) or []) if entry else []
+
+
+def catalog_entry(display_name: str) -> Optional[dict]:
+    """Catalog row for one GPU display name, or None if unknown."""
     lowered = display_name.lower()
     for gpu in config.GPU_CATALOG:
         if (gpu.get("displayName") or "").lower() == lowered:
-            return list(gpu.get(key) or [])
-    return []
+            return gpu
+    return None
+
+
+def uncovered_reason(display_name: str) -> str:
+    """Why a GPU yielded no (GPU, CUDA) pairing to test.
+
+    `cudaVersions` is scoped to `CLOUD_TYPE`, so an empty list has three
+    different causes needing three different actions: sweep the other tier,
+    accept that the vendor has no CUDA, or retry later.
+    """
+    cloud = config.CLOUD_TYPE.upper()
+    entry = catalog_entry(display_name)
+    if entry is None:
+        return "not in the GPU catalog"
+    offered = list(entry.get("cudaVersions") or [])
+    if offered:
+        return f"offers {', '.join(offered)} but none had capacity"
+    other = "COMMUNITY" if cloud == "SECURE" else "SECURE"
+    if not entry.get(cloud.lower(), True):
+        if other in config.CLOUD_TYPES:
+            return f"not offered in the {cloud} cloud (covered by the {other} pass)"
+        return (
+            f"not offered in the {cloud} cloud — "
+            f"rerun with CLOUD_TYPE={other} to cover it"
+        )
+    manufacturer = (entry.get("manufacturer") or "").upper()
+    if manufacturer and manufacturer != "NVIDIA":
+        return f"no CUDA versions ({entry.get('manufacturer')} GPU)"
+    return f"no CUDA versions in the {cloud} cloud right now"
 
 
 def cuda_axis_for(group: str, display_name: str) -> list[str]:
