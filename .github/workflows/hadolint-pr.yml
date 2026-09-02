@@ -24,6 +24,7 @@ jobs:
             ignore: "DL3008"
           - dockerfile: official-templates/pytorch-cluster/Dockerfile
             ignore: "DL3008"
+          - dockerfile: official-templates/comfyui/Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
