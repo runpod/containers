@@ -452,7 +452,7 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           exclude-instances: |
-            *Blackwell*
+            RTX PRO 4000
             RTX 2000 Ada
           max-parallel: "4"
 
