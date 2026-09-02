@@ -11,14 +11,31 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+_TESTS_DIR = os.path.dirname(_PKG_DIR)
 
 # ---------------------------------------------------------------------------
 # Pod / scheduling
 # ---------------------------------------------------------------------------
 
-CLOUD_TYPE = os.environ.get("CLOUD_TYPE", "SECURE")
+VALID_CLOUDS = ("SECURE", "COMMUNITY")
+
+
+def _parse_cloud_types(raw: str) -> list[str]:
+    """One tier, a comma-separated list, or `ALL`. Unknown names are dropped."""
+    wanted = [part.strip().upper() for part in raw.split(",") if part.strip()]
+    if "ALL" in wanted:
+        return list(VALID_CLOUDS)
+    ordered = [c for c in VALID_CLOUDS if c in wanted]
+    return ordered or ["SECURE"]
+
+
+# The catalog's `cudaVersions` and availability are scoped to one tier and the
+# tiers do not nest, so full coverage needs a planning pass each. CLOUD_TYPES
+# is every requested tier; CLOUD_TYPE is the one being planned right now.
+CLOUD_TYPES = _parse_cloud_types(os.environ.get("CLOUD_TYPE", "SECURE"))
+CLOUD_TYPE = CLOUD_TYPES[0]
 DISK_GB = int(os.environ.get("DISK_GB", "100"))
 # CPU pods on RunPod cap container disk by flavor: the cheapest flavors
 # (cpu3c-2-4 and similar) reject >20 GB outright; larger ones cap at 30 GB.
@@ -77,11 +94,18 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # — just an informational note in the logs.
 STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 
+# RunPod sometimes never allocates the public port for 22/tcp — such a pod
+# shows only `ssh.proxy` in the console and `ssh.direct` stays null forever.
+# Once the proxy has also refused, waiting out CREATE_TIMEOUT just bills a
+# pod that will never be reachable, so give up at this mark instead. Set to
+# 0 to wait the full CREATE_TIMEOUT.
+DIRECT_PORT_TIMEOUT = int(os.environ.get("DIRECT_PORT_TIMEOUT", "300"))
+
 # Docker Hub authenticated pulls — without this, RunPod datacenters share
 # an anonymous IP pool that hits Docker Hub's `toomanyrequests` rate limit
 # fast. Either set REGISTRY_AUTH_ID explicitly, or REGISTRY_AUTH_NAME to
 # pick by display name, or the script auto-picks the first entry from
-# `runpodctl registry list`.
+# `GET /v2/registries`.
 #
 # REGISTRY_AUTH_ID is reassigned by main() after auto-discovery — access
 # it via `config.REGISTRY_AUTH_ID` (not a bare `from config import`) to
@@ -89,36 +113,21 @@ STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 REGISTRY_AUTH_ID = os.environ.get("REGISTRY_AUTH_ID", "")
 REGISTRY_AUTH_NAME = os.environ.get("REGISTRY_AUTH_NAME", "")
 
-# Server-side auto-terminate window, passed to `--terminate-after` so
-# RunPod self-destructs anything we leak (crash before cleanup, hung SSH,
-# or — the common one — a GitHub Actions `cancel-in-progress` cancel that
-# SIGKILLs us before cleanup_all() finishes).
-#
-# FORMAT: `runpodctl pod create --terminate-after` wants an RFC3339
-# DATETIME (`--help`: "auto-terminate datetime (e.g., 2026-04-15T00:00:00Z)"),
-# NOT a duration. So we pass an absolute `now + AUTO_TERMINATE_HOURS`
-# timestamp, recomputed per pod.
-AUTO_TERMINATE_HOURS = int(os.environ.get("AUTO_TERMINATE_HOURS", "2"))
-
-
-def auto_terminate_deadline() -> str:
-    """Return an RFC3339 'Z' timestamp AUTO_TERMINATE_HOURS hours from
-    NOW — the datetime format `--terminate-after` expects. Always call
-    this at pod-create time; never cache the result.
-    """
-    return (
-        datetime.now(timezone.utc) + timedelta(hours=AUTO_TERMINATE_HOURS)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+# NO server-side auto-terminate any more. The old CLI took
+# `--terminate-after <RFC3339>`, which self-destructed anything we leaked
+# (crash before cleanup, or a GitHub Actions `cancel-in-progress` that
+# SIGKILLs us mid-cleanup_all). REST API v2 has no equivalent field, so
+# .github/workflows/reap-pods.yml — hourly, deletes `smoketest-*` older
+# than 60 min — is now the ONLY backstop. Keep it healthy.
 
 
 # ---------------------------------------------------------------------------
 # SSH
 # ---------------------------------------------------------------------------
 
-# Container logs aren't exposed via runpodctl 2.3.0's JSON, so we SSH
-# directly to the pod's exposed port 22 (mapped to a random high port on
-# a public IP by RunPod) to grab them. The endpoint is discovered from
-# `pod get`'s ssh.ip / ssh.port fields once the pod is scheduled.
+# REST API v2 is the primary log source; SSH is retained only for the GPU
+# SMI diagnostic. The endpoint comes from `ssh.direct` on GET /v2/pods/{id}
+# once the pod is scheduled.
 #   Override SSH_IDENTITY if your key lives in a non-standard location.
 #   Set SSH_LOG_FETCH=0 to skip SSH-based log fetching entirely.
 SSH_IDENTITY = os.environ.get("RUNPOD_SSH_KEY", "")
@@ -137,13 +146,36 @@ SSH_OPTS = [
     "-o", "HostKeyAlgorithms=+ssh-rsa",
 ]
 
+# ---------------------------------------------------------------------------
+# Container logs via REST API (v2)
+# ---------------------------------------------------------------------------
+
+# `GET /v2/pods/{id}/logs` streams container stdout as SSE — the one source
+# SSH cannot read (PID-1 stdout is not readable from a separate process).
+# The same API is used for the always-on error scan and diagnostic dumps.
+#   LOG_ERROR_SCAN=0        disables the error-scan step
+#   LOG_ERROR_PATTERN=...   overrides the case-insensitive regex
+#   LOG_API_TAIL=N          historical lines to backfill (max 5000)
+LOG_ERROR_SCAN = os.environ.get("LOG_ERROR_SCAN", "1") == "1"
+LOG_ERROR_PATTERN = os.environ.get(
+    "LOG_ERROR_PATTERN", r"\berr(or)?s?\b|\bcrash(ed|es|ing)?\b"
+)
+LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
+
+# System logs contain host-side failures that never reach container stdout:
+# image-pull errors and `runc` container-init aborts, for example.
+SYS_LOG_ERROR_PATTERN = os.environ.get(
+    "SYS_LOG_ERROR_PATTERN",
+    r"\berr(or)?s?\b|\bfail(ed|ure)?\b|\bcrash(ed|es|ing)?\b",
+)
+
 
 # ---------------------------------------------------------------------------
 # Jupyter
 # ---------------------------------------------------------------------------
 
 # Password we hand to start.sh via env. Not a secret — every pod we spin
-# up is auto-terminated within AUTO_TERMINATE and is only reachable through
+# up is short-lived (reaped within the hour) and is only reachable through
 # RunPod's authenticated proxy. We just need ANY non-empty value so start.sh
 # decides to launch Jupyter (see start.sh: `if [[ $JUPYTER_PASSWORD ]]`).
 JUPYTER_TEST_PASSWORD = "admin"
@@ -157,6 +189,32 @@ JUPYTER_WAIT_TIMEOUT = int(os.environ.get("JUPYTER_WAIT_TIMEOUT", "30"))
 # few seconds to register newly-exposed ports — we retry up to this many
 # seconds before giving up.
 JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
+
+# ---------------------------------------------------------------------------
+# Generic per-port checks (test_ports manifest field)
+# ---------------------------------------------------------------------------
+
+# Each requested port is exposed as `<port>/http` and checked proxy-first.
+# These independent limits include both app cold-start and proxy registration.
+PORT_WAIT_TIMEOUT = int(os.environ.get("PORT_WAIT_TIMEOUT", "300"))
+PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
+
+# ComfyUI listens on this HTTP port. `test_comfyui` exposes it as
+# `<port>/http` and runs a labelled proxy-first reachability check.
+COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
+COMFYUI_WORKFLOW = os.environ.get(
+    "COMFYUI_WORKFLOW",
+    os.path.join(_TESTS_DIR, "comfyui", "workflows", "gsl_starter_1_1.api.json"),
+)
+COMFYUI_MODELS_MANIFEST = os.environ.get(
+    "COMFYUI_MODELS_MANIFEST",
+    os.path.join(_TESTS_DIR, "comfyui", "models.json"),
+)
+COMFYUI_WAIT_TIMEOUT = int(os.environ.get("COMFYUI_WAIT_TIMEOUT", "600"))
+COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
+COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900"))
+COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
+COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
 
 
 # ---------------------------------------------------------------------------
@@ -177,15 +235,10 @@ CPU_GROUP_NAMES: frozenset[str] = frozenset({"base_cpu"})
 
 # CPU "instance" candidates.
 #
-# `runpodctl pod create` (the new subcommand we use) does NOT expose
-# `--cpu-flavor`, `--vcpu`, or `--mem`. The legacy `runpodctl create pod`
-# command does have them, but it's a different code path with different
-# flags — the new command takes (`--compute-type CPU`, `--cloud-type`,
-# optional `--data-center-ids`) and lets RunPod pick the cheapest CPU
-# flavor that fits the container disk size for the chosen cloud + DC.
-#
-# To get MULTIPLE CPU "candidates" we vary the axes runpodctl actually
-# accepts:
+# The flavor itself (`cpu.id` + `vcpuCount`) is chosen by
+# `instances.pick_cpu_flavor` from GET /v2/catalog/cpus. What varies between
+# candidates is placement, so that a full pool in one cloud doesn't end the
+# attempt:
 #   - cloud_type:        SECURE vs COMMUNITY. Totally different capacity
 #                        pools — when SECURE is full, COMMUNITY almost
 #                        always has free CPU hosts (and is cheaper).
@@ -209,12 +262,25 @@ CPU_GROUP_NAMES: frozenset[str] = frozenset({"base_cpu"})
 #   * Empty / all-malformed input falls back to DEFAULT_CPU_CANDIDATES.
 
 
+# CPU flavors from GET /v2/catalog/cpus, populated at startup. v2 requires
+# an explicit `cpu.id` + `vcpuCount` on pod create, unlike the old CLI which
+# let RunPod pick — so we choose the cheapest fitting flavor ourselves.
+CPU_CATALOG: list[dict] = []
+
+# vCPU count requested for CPU pods. Must be a power of two and inside the
+# chosen flavor's `vcpu.min..max`. 4 is the smallest that every flavor
+# offers and is plenty for a boot-and-dwell smoke test.
+CPU_VCPU_COUNT = int(os.environ.get("CPU_VCPU_COUNT", "4"))
+
+# Pin a specific CPU flavor id (e.g. 'cpu5c') instead of auto-picking the
+# cheapest one. Empty = auto.
+CPU_FLAVOR_ID = os.environ.get("CPU_FLAVOR_ID", "")
+
+
 @dataclass(frozen=True)
 class CpuCandidate:
-    """One CPU pod-create attempt — varied along the axes that
-    `runpodctl pod create` exposes for CPU pods. RunPod's scheduler
-    still picks the actual CPU flavor (vCPU/RAM tier) inside the chosen
-    cloud + DC, based on container disk size."""
+    """One CPU pod-create attempt — varied along cloud and data centre.
+    The flavor itself is chosen by `instances.pick_cpu_flavor`."""
     cloud_type: str           # 'SECURE' or 'COMMUNITY'
     data_center_ids: str = ""  # comma-separated; "" = any DC in the cloud
 
@@ -280,13 +346,13 @@ def cpu_candidate_for(instance: str) -> CpuCandidate:
 # Shared mutable state (populated at startup / from the manifest)
 # ---------------------------------------------------------------------------
 
-# Display-name -> runpodctl --gpu-id mapping. Populated at startup from
-# `runpodctl gpu list --include-unavailable`. Keeps the YAML manifest free
+# Display-name -> gpu id mapping, populated at startup from
+# `GET /v2/catalog/gpus`. Keeps the YAML manifest free
 # of RunPod-internal gpuId strings — users only put display names there.
 GPU_ID_MAP: dict[str, str] = {}
 
 # GPU catalog with pricing. Populated at startup via GraphQL since
-# `runpodctl gpu list` does NOT include price fields. Used for budget-based
+# Populated from GET /v2/catalog/gpus. Used for budget-based
 # instance selection (manifest's `max_price_per_hour`). Empty list if API
 # unreachable; in that case budget filters silently no-op and the script
 # falls back to whatever's in the manifest's explicit `instances:` list.
@@ -298,7 +364,7 @@ GPU_CATALOG: list[dict] = []
 # tag has no embedded CUDA — NGC `nvidia-pytorch:25.11` and similar
 # opaque tags).
 #
-# Despite the "min" naming (which matches runpodctl's underlying
+# Despite the "min" naming (which matches the API's underlying
 # `--min-cuda-version` flag), this field is a FALLBACK, not an override:
 # if the tag contains `cu1281` / `cuda1300` / etc., the manifest value
 # is silently ignored. By design — tag is the most accurate source for
@@ -307,8 +373,40 @@ GPU_CATALOG: list[dict] = []
 # notices.
 GROUP_MIN_CUDA: dict[str, str] = {}
 
+# Per-group CUDA axis, populated from the `cuda_versions:` manifest field.
+# When active, each candidate GPU is expanded into one job per CUDA version
+# it actually offers, and the version is pinned via
+# `gpu.allowedCudaVersions`. That overrides GROUP_MIN_CUDA for the group,
+# because the API rejects allowedCudaVersions and minCudaVersion together.
+#
+#   GROUP_CUDA_VERSIONS — explicit versions asked for, e.g. ['12.8', '13.0']
+#   GROUP_CUDA_ALL      — 'all': every version the GPU reports capacity for
+GROUP_CUDA_VERSIONS: dict[str, list[str]] = {}
+GROUP_CUDA_ALL: dict[str, bool] = {}
+
+# Safety cap on the GPU x CUDA fan-out. A catalog-wide `all` sweep is ~34
+# jobs today, but the fleet grows and a stray run shouldn't turn into a
+# day of GPU time. Jobs past the cap are dropped with a warning.
+MAX_CUDA_COMBOS = int(os.environ.get("MAX_CUDA_COMBOS", "120"))
+
 # Per-group Jupyter-check opt-in, populated in main() from the
 # `test_jupyter:` manifest field. When True, `pod.create_pod` adds the
 # JUPYTER_PASSWORD env var and exposes :8888, and `runner.test_pair` runs
 # the Jupyter probes after the CUDA functional check.
 GROUP_TEST_JUPYTER: dict[str, bool] = {}
+
+# Per-group HTTP ports populated from the optional `test_ports:` manifest
+# list. They are exposed as `<port>/http` and checked through the public
+# proxy first; SSH only diagnoses a proxy failure.
+GROUP_TEST_PORTS: dict[str, list[int]] = {}
+
+# ComfyUI-specific public-proxy reachability smoke.
+GROUP_TEST_COMFYUI: dict[str, bool] = {}
+
+# End-to-end ComfyUI generation test. It implies GROUP_TEST_COMFYUI so the
+# public reachability check always runs before model provisioning.
+GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
+
+# Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
+# rather than stopping after the first passing candidate.
+GROUP_CHECK_ALL_GPU: dict[str, bool] = {}

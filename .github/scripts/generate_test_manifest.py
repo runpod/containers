@@ -78,12 +78,27 @@ def render_yaml(groups: dict) -> str:
             "manufacturer",
             "min_cuda_version",
             "test_jupyter",
+            "check_all_gpu",
+            "test_comfyui",
+            "test_comfyui_functional",
         ):
             if key in body:
                 val = body[key]
                 if isinstance(val, bool):
                     val = "true" if val else "false"
                 lines.append(f"    {key}: {val}")
+        if body.get("test_ports"):
+            lines.append("    test_ports:")
+            for port in body["test_ports"]:
+                lines.append(f"    - {port}")
+        # cuda_versions is either the literal `all` or a list of X.Y
+        # versions; the scalar form goes through the key loop above.
+        if isinstance(body.get("cuda_versions"), list):
+            lines.append("    cuda_versions:")
+            for version in body["cuda_versions"]:
+                lines.append(f"    - {version}")
+        elif body.get("cuda_versions"):
+            lines.append(f"    cuda_versions: {body['cuda_versions']}")
         # exclude_instances is a list, emitted at the bottom of the group so
         # it's visually grouped with other "filter" options. Patterns are
         # double-quoted to keep glob-leading characters ('*', '?') safe from
@@ -103,8 +118,15 @@ def build_groups(
     min_vram_gb: int,
     manufacturer: str,
     test_jupyter: bool = False,
+    test_ports: list[int] | None = None,
+    test_comfyui: bool = False,
+    test_comfyui_functional: bool = False,
+    check_all_gpu: bool = False,
+    instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
     min_cuda_version: str | None = None,
+    cuda_versions: list[str] | None = None,
+    explicit_budget: bool = False,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -123,6 +145,12 @@ def build_groups(
     landing on a Blackwell host fails with 'no kernel image is available
     for execution on the device'.
 
+    `cuda_versions` turns on the GPU x CUDA axis: `['all']` tests every
+    version each GPU reports capacity for, an explicit list tests just
+    those. Each version becomes its own job and is pinned with
+    `gpu.allowedCudaVersions`, so it supersedes `min_cuda_version` — the
+    API rejects both fields on one request.
+
     `min_cuda_version` is the floor CUDA driver version (X.Y) the pod's
     host driver must support. test_images.py only consults this for
     images whose tag has no embedded CUDA marker (NGC nvidia-pytorch:25.11
@@ -131,35 +159,69 @@ def build_groups(
     CUDA 13.0 and refuses to run on hosts with a 12.x driver.
     """
     exclude_instances = list(exclude_instances or [])
+    instances = list(instances or [])
+    test_ports = list(test_ports or [])
+    cuda_versions = list(cuda_versions or [])
+    wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
 
-    def _decorate(body: dict) -> dict:
+    if instances and check_all_gpu:
+        raise ValueError(
+            "instances and check_all_gpu are mutually exclusive: an explicit "
+            "list wins over catalog selection, so passing both silently "
+            "ignores one of them"
+        )
+
+    def _decorate(body: dict, *, gpu_group: bool) -> dict:
+        if gpu_group and instances:
+            # An explicit list wins over catalog selection in
+            # instances.resolve_instances, so the budget / vRAM / vendor
+            # filters would be dead weight in the manifest.
+            body["instances"] = list(instances)
+        elif gpu_group:
+            if check_all_gpu:
+                body["check_all_gpu"] = True
+                # A matrix run means EVERY GPU by default — no price filter.
+                # A budget is honoured only when the caller passed one
+                # explicitly, as a deliberate way to trim an expensive sweep.
+                if explicit_budget:
+                    body["max_price_per_hour"] = budget
+            else:
+                body["max_price_per_hour"] = budget
+            body["min_vram_gb"] = min_vram_gb
+            body["manufacturer"] = manufacturer
         if test_jupyter:
             body["test_jupyter"] = True
+        if test_ports:
+            body["test_ports"] = list(test_ports)
+        if test_comfyui:
+            body["test_comfyui"] = True
+        if test_comfyui_functional:
+            body["test_comfyui_functional"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
-        if min_cuda_version:
+        if gpu_group and wants_all_cuda:
+            body["cuda_versions"] = "all"
+        elif gpu_group and cuda_versions:
+            body["cuda_versions"] = list(cuda_versions)
+        # The floor is meaningless once exact versions are pinned, and
+        # sending both makes the API reject the create outright.
+        if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
             body["min_cuda_version"] = min_cuda_version
         return body
 
     if profile == "base":
         # Split refs into CPU- vs GPU-targeted images by tag content.
-        # CPU images: tested via runpodctl --compute-type CPU. RunPod selects
-        #   the CPU flavor for us — runpodctl 2.3.0 doesn't expose --gpu-id
-        #   for CPU, so we can't (and don't) constrain the manifest with an
-        #   `instances:` or `max_price_per_hour:` field for CPU groups.
+        # CPU images: the harness picks a CPU flavor from
+        #   GET /v2/catalog/cpus, so CPU groups carry no `instances:` or
+        #   `max_price_per_hour:` field.
         # GPU images: tested with the normal --gpu-id flow and budget filter.
         cpu = [r for r in refs if not is_gpu_ref(r)]
         gpu = [r for r in refs if is_gpu_ref(r)]
         groups: dict = {}
         if cpu:
-            groups["base_cpu"] = _decorate({"images": cpu})
+            groups["base_cpu"] = _decorate({"images": cpu}, gpu_group=False)
         if gpu:
-            groups["base_gpu"] = _decorate({
-                "images": gpu,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
+            groups["base_gpu"] = _decorate({"images": gpu}, gpu_group=True)
         return groups
 
     if profile == "gpu":
@@ -168,12 +230,7 @@ def build_groups(
         # is picked from the IMAGE REF by runpod_smoke.checks, so the group
         # name 'base_gpu' is purely conventional here.
         return {
-            "base_gpu": _decorate({
-                "images": refs,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
+            "base_gpu": _decorate({"images": refs}, gpu_group=True)
         }
 
     raise ValueError(f"unknown profile: {profile!r}")
@@ -197,8 +254,12 @@ def main() -> int:
     ap.add_argument(
         "--budget",
         type=float,
-        default=1.0,
-        help="Max USD/hr for GPU instance selection (default: 1.0)",
+        default=None,
+        help=(
+            "Max USD/hr for GPU instance selection (default: 1.0). Ignored "
+            "under --check-all-gpu unless passed explicitly, since a matrix "
+            "run is meant to cover every GPU."
+        ),
     )
     ap.add_argument(
         "--min-vram-gb",
@@ -221,6 +282,17 @@ def main() -> int:
             "Off by default — enable per CI step."
         ),
     )
+    ap.add_argument(
+        "--test-port",
+        action="append",
+        default=[],
+        type=int,
+        metavar="PORT",
+        help="HTTP port to expose and probe. Repeat for multiple ports.",
+    )
+    ap.add_argument("--test-comfyui", action="store_true")
+    ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
         action="append",
@@ -245,6 +317,33 @@ def main() -> int:
             "Empty (default) = no floor."
         ),
     )
+    ap.add_argument(
+        "--cuda-version",
+        action="append",
+        default=[],
+        dest="cuda_versions",
+        metavar="X.Y|all",
+        help=(
+            "Turn on the GPU x CUDA axis: test each candidate GPU once per "
+            "CUDA version instead of once overall. Repeat for several "
+            "versions, or pass 'all' to use every version each GPU reports "
+            "capacity for. Versions are pinned exactly via "
+            "gpu.allowedCudaVersions, so this supersedes --min-cuda-version."
+        ),
+    )
+    ap.add_argument(
+        "--instance",
+        action="append",
+        default=[],
+        dest="instances",
+        metavar="DISPLAY_NAME",
+        help=(
+            "Test exactly this GPU display name (repeat for several). "
+            "Emitted as `instances:`, which wins over catalog selection — so "
+            "it cannot be combined with --check-all-gpu, and the budget / "
+            "vRAM / vendor filters no longer apply."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -258,15 +357,30 @@ def main() -> int:
         print("--refs must be a non-empty JSON array", file=sys.stderr)
         return 1
 
+    if args.instances and args.check_all_gpu:
+        print(
+            "--instance and --check-all-gpu are mutually exclusive: an "
+            "explicit instance list wins over catalog selection",
+            file=sys.stderr,
+        )
+        return 1
+
     groups = build_groups(
         args.profile,
         refs,
-        budget=args.budget,
+        budget=1.0 if args.budget is None else args.budget,
+        explicit_budget=args.budget is not None,
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
+        test_ports=args.test_port,
+        test_comfyui=args.test_comfyui,
+        test_comfyui_functional=args.test_comfyui_functional,
+        check_all_gpu=args.check_all_gpu,
+        instances=args.instances,
         exclude_instances=args.exclude_instance,
         min_cuda_version=(args.min_cuda_version or None),
+        cuda_versions=args.cuda_versions,
     )
 
     if not groups:

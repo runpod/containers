@@ -8,15 +8,18 @@ runpod_smoke/ package next to this file.
 Usage:
     ./test_images.py [path/to/images.yaml] [group_filter]
 
-Requirements: runpodctl (logged in), python3 >= 3.9
+Requirements: a RunPod API key (RUNPOD_API_KEY or ~/.runpod/config.toml),
+python3 >= 3.9
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -26,12 +29,15 @@ from typing import Optional
 # our package imports work regardless of how the script was launched.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from runpod_smoke import config
+from runpod_smoke import api, config
 from runpod_smoke.instances import (
+    cuda_axis_for,
+    cuda_versions_offered,
     discover_gpu_catalog,
     discover_gpu_id_map,
     is_known_gpu,
     resolve_instances,
+    uncovered_reason,
 )
 from runpod_smoke.log import ensure_worker_tag, log
 from runpod_smoke.manifest import (
@@ -40,18 +46,22 @@ from runpod_smoke.manifest import (
     parse_manifest,
 )
 from runpod_smoke.pod import discover_registry_auth
-from runpod_smoke.runpodctl import runpodctl
 from runpod_smoke.runner import test_image
 
 
-# Each entry: (image, group, instances-to-try). One pod is created per
-# entry; the runner iterates instances internally until something settles.
-Job = tuple[str, str, list[str]]
+# Each entry: (image, group, instances-to-try, cuda_pin, cloud). One pod is
+# created per entry; the runner iterates instances internally until something
+# settles. `cuda_pin` is "" unless the group has a CUDA axis. `cloud` is the
+# tier the job was planned against — it must travel with the job, since the
+# catalog is re-fetched per tier and jobs from both run in one pool.
+Job = tuple[str, str, list[str], str, str]
 
-# Per-image outcome: (summary_status, note, instance_used). status is one
-# of "PASS" / "FAIL" / "SKIP". instance_used is "" when the test never
-# landed on any host (all UNAVAILABLE / STUCK).
-Result = tuple[str, str, str]
+# Per-attempt outcome:
+#   (image, status, note, instance_used, host_cuda, requested_cuda, cloud)
+# `requested_cuda` is the pinned version, kept separately so a SKIPped
+# attempt still says WHICH cell of the matrix it belongs to. A list avoids
+# overwriting rows when one GPU produces several jobs.
+Result = tuple[str, str, str, str, str, str, str]
 
 
 # ---------------------------------------------------------------------------
@@ -70,15 +80,15 @@ def _parse_args() -> tuple[Path, Optional[str]]:
 def _check_prereqs(manifest_path: Path) -> Optional[int]:
     """Return None on success, or an exit-code int on failure. Verifies:
       1. the manifest file actually exists
-      2. `runpodctl user` succeeds (the CLI has a valid API key)
+      2. the REST API v2 accepts our key
     Anything else (GPU catalog, registry auth) is best-effort — the script
     degrades gracefully if those are missing."""
     if not manifest_path.is_file():
         log(f"Images manifest not found: {manifest_path}")
         return 1
-    auth = runpodctl("user", timeout=15)
-    if auth.returncode != 0:
-        log("runpodctl is not authenticated. Run 'runpodctl doctor'.")
+    ok, detail = api.api_available()
+    if not ok:
+        log(detail)
         return 1
     return None
 
@@ -89,18 +99,21 @@ def _check_prereqs(manifest_path: Path) -> Optional[int]:
 
 
 def _init_gpu_catalog() -> None:
+    # One request now serves both the id map and the price/vRAM filters.
+    # Availability and CUDA versions are scoped to config.CLOUD_TYPE, so this
+    # is re-run per tier; GPU ids are tier-independent and just get refreshed.
+    config.GPU_CATALOG[:] = discover_gpu_catalog()
     config.GPU_ID_MAP.update(discover_gpu_id_map())
-    log(f"discovered {len(config.GPU_ID_MAP)} GPU types from runpodctl")
-
-    config.GPU_CATALOG.extend(discover_gpu_catalog())
     if config.GPU_CATALOG:
+        with_cuda = sum(1 for g in config.GPU_CATALOG if g.get("cudaVersions"))
         log(
-            f"loaded GPU pricing for {len(config.GPU_CATALOG)} types "
-            "(GraphQL: gpuTypes)"
+            f"loaded {len(config.GPU_CATALOG)} GPU types from "
+            f"GET /v2/catalog/gpus for cloud={config.CLOUD_TYPE} "
+            f"({with_cuda} reporting CUDA availability)"
         )
     else:
         log(
-            "warn: no GPU pricing data — budget-based instance selection "
+            "warn: no GPU catalog — budget-based instance selection "
             "(max_price_per_hour) will be disabled. Set RUNPOD_API_KEY or "
             "ensure ~/.runpod/config.toml has 'apikey'."
         )
@@ -125,11 +138,85 @@ def _init_registry_auth() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _coerce_ports(raw_ports: object, group: str) -> list[int]:
+    """Coerce optional `test_ports` list entries to valid TCP port numbers."""
+    if not isinstance(raw_ports, list):
+        return []
+    ports: list[int] = []
+    for entry in raw_ports:
+        try:
+            port = int(str(entry).strip())
+        except (TypeError, ValueError):
+            log(
+                f"warn: group '{group}': test_ports entry {entry!r} "
+                "is not a valid TCP port — skipping"
+            )
+            continue
+        if 1 <= port <= 65535:
+            ports.append(port)
+        else:
+            log(
+                f"warn: group '{group}': test_ports entry {entry!r} "
+                "is outside 1–65535 — skipping"
+            )
+    return ports
+
+
+def _apply_cuda_axis(group: str, raw: object) -> None:
+    """Read the `cuda_versions:` manifest field for one group.
+
+    Accepts the literal `all` (every version the GPU reports capacity for)
+    or a list of exact X.Y versions. Enabling it turns each candidate GPU
+    into one job per version and pins the host with
+    `gpu.allowedCudaVersions`, which the API matches exactly — so a
+    `min_cuda_version` floor on the same group would be both redundant and
+    rejected, and is dropped here.
+    """
+    if raw is None or raw == "":
+        return
+    entries = raw if isinstance(raw, list) else [raw]
+    wants_all = any(str(e).strip().strip('"\'').lower() == "all" for e in entries)
+    versions: list[str] = []
+    if not wants_all:
+        for entry in entries:
+            normalized = _normalize_cuda_version(entry)
+            if normalized:
+                versions.append(normalized)
+            else:
+                log(
+                    f"warn: group '{group}': cuda_versions entry {entry!r} "
+                    "is not an X.Y version — skipping"
+                )
+    if not (wants_all or versions):
+        return
+    if wants_all:
+        config.GROUP_CUDA_ALL[group] = True
+        log(
+            f"group '{group}': cuda_versions=all (one job per GPU x every "
+            "CUDA version that GPU reports capacity for)"
+        )
+    else:
+        config.GROUP_CUDA_VERSIONS[group] = versions
+        log(
+            f"group '{group}': cuda_versions={versions} "
+            "(pinned via gpu.allowedCudaVersions, exact match)"
+        )
+    if config.GROUP_MIN_CUDA.pop(group, None):
+        log(
+            f"group '{group}': dropped min_cuda_version — a CUDA axis pins "
+            "exact versions and the API rejects both fields together",
+            indent=1,
+        )
+
+
 def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     """Populate the per-group dicts on `config` that `pod.create_pod` and
     `runner.test_pair` consult at run-time: `GROUP_MIN_CUDA` (fallback
     CUDA version for tag-less images like NGC `nvidia-pytorch:25.11`)
-    and `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes)."""
+    `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes), and
+    `GROUP_TEST_PORTS` (generic public HTTP service probes),
+    `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), and the
+    ComfyUI reachability / functional-generation opt-ins."""
     for grp, contents in manifest.items():
         normalized = _normalize_cuda_version(contents.get("min_cuda_version"))
         if normalized:
@@ -148,6 +235,37 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
             log(
                 f"group '{grp}': test_jupyter=true "
                 "(JUPYTER_PASSWORD=<redacted>, expose 8888/http)"
+            )
+    for grp, contents in manifest.items():
+        ports = _coerce_ports(contents.get("test_ports"), grp)
+        if ports:
+            config.GROUP_TEST_PORTS[grp] = ports
+            log(
+                f"group '{grp}': test_ports={ports} "
+                "(expose as <port>/http, probe public proxy first)"
+            )
+    for grp, contents in manifest.items():
+        _apply_cuda_axis(grp, contents.get("cuda_versions"))
+    for grp, contents in manifest.items():
+        if _normalize_bool(contents.get("check_all_gpu")):
+            config.GROUP_CHECK_ALL_GPU[grp] = True
+            log(
+                f"group '{grp}': check_all_gpu=true "
+                "(one independent smoke job per resolved GPU)"
+            )
+        reach = _normalize_bool(contents.get("test_comfyui"))
+        functional = _normalize_bool(contents.get("test_comfyui_functional"))
+        if functional:
+            config.GROUP_TEST_COMFYUI_FUNCTIONAL[grp] = True
+            log(
+                f"group '{grp}': test_comfyui_functional=true "
+                "(provision model, run workflow, validate PNG)"
+            )
+        if reach or functional:
+            config.GROUP_TEST_COMFYUI[grp] = True
+            log(
+                f"group '{grp}': test_comfyui=true "
+                f"(proxy-first reachability on :{config.COMFYUI_PORT})"
             )
 
 
@@ -208,29 +326,160 @@ def _build_jobs(
     manifest: dict[str, dict],
     resolved: dict[str, list[str]],
     group_filter: Optional[str],
-    results: dict[str, Result],
+    results: list[Result],
+    cloud: str,
 ) -> list[Job]:
     """Flatten the manifest into a list of `(image, group, instances)`
     jobs that can run independently. Groups with no resolvable instances
     are recorded directly into `results` as SKIPs (caller handles the
-    summary print)."""
+    summary print).
+
+    Called once per cloud tier; `cloud` is stamped on every job produced.
+    CPU groups are planned only in the first pass — their candidate labels
+    already carry a tier each (see `config.CPU_CANDIDATES`)."""
     jobs: list[Job] = []
+    first_pass = cloud == config.CLOUD_TYPES[0]
     for group, contents in manifest.items():
         if group_filter and group != group_filter:
             continue
+        if group in config.CPU_GROUP_NAMES and not first_pass:
+            continue
         instances = resolved.get(group, [])
         if not instances:
+            if not first_pass:
+                continue
             log(
                 f"skipping group '{group}': no instances resolved "
-                "(neither 'instances:' nor 'max_price_per_hour:' produced "
-                "any candidates)"
+                "(none of 'instances:', 'max_price_per_hour:' or "
+                "'check_all_gpu:' produced candidates)"
             )
             for img in contents.get("images", []):
-                results[img] = ("SKIP", "no instances configured", "")
+                results.append(
+                    (img, "SKIP", "no instances configured", "", "", "", cloud)
+                )
             continue
+        check_all = config.GROUP_CHECK_ALL_GPU.get(group, False)
+        cuda_axis = bool(
+            config.GROUP_CUDA_ALL.get(group)
+            or config.GROUP_CUDA_VERSIONS.get(group)
+        )
         for img in contents.get("images", []):
-            jobs.append((img, group, instances))
+            if cuda_axis and check_all:
+                jobs.extend(
+                    _cuda_matrix_jobs(img, group, instances, results, cloud)
+                )
+            elif cuda_axis:
+                jobs.extend(_cuda_per_version_jobs(img, group, instances, cloud))
+            elif check_all:
+                jobs.extend((img, group, [inst], "", cloud) for inst in instances)
+            else:
+                jobs.append((img, group, instances, "", cloud))
     return jobs
+
+
+def _cuda_matrix_jobs(
+    image: str, group: str, instances: list[str], results: list[Result],
+    cloud: str,
+) -> list[Job]:
+    """One job per (GPU, CUDA version) — the full matrix, for check_all_gpu.
+
+    Versions with no free capacity are dropped rather than attempted: the
+    API matches `allowedCudaVersions` exactly and answers a full pool with a
+    capacity error, so trying them would just buy SKIP rows. A GPU that
+    reports nothing usable is recorded as a SKIP so it still shows up in the
+    matrix instead of vanishing.
+    """
+    jobs: list[Job] = []
+    for inst in instances:
+        versions = cuda_axis_for(group, inst)
+        if not versions:
+            # No version reached a pod-create, so requested_cuda stays empty
+            # and the pivot shows this GPU as an all-dots row. The note has
+            # to carry the scope, since the CUDA column has nothing to show.
+            results.append((
+                image, "SKIP",
+                f"GPU not covered: {uncovered_reason(inst)}",
+                inst, "", "", cloud,
+            ))
+            continue
+        jobs.extend((image, group, [inst], v, cloud) for v in versions)
+    return jobs
+
+
+def _cuda_per_version_jobs(
+    image: str, group: str, instances: list[str], cloud: str,
+) -> list[Job]:
+    """One job per CUDA version, each keeping the full candidate list.
+
+    Without `check_all_gpu` the contract is "try candidates until one
+    passes", and adding a CUDA axis shouldn't silently turn that into a
+    full product — that would multiply a budget-filtered pool of ~20 cards
+    into ~40 pods. So each version gets one job whose candidates are the
+    GPUs that actually offer it, and the runner short-circuits on the first
+    PASS exactly as it does without the axis.
+    """
+    per_version: dict[str, list[str]] = {}
+    for inst in instances:
+        for version in cuda_axis_for(group, inst):
+            per_version.setdefault(version, []).append(inst)
+    return [
+        (image, group, candidates, version, cloud)
+        for version, candidates in sorted(per_version.items(), reverse=True)
+    ]
+
+
+def _warn_unviable_cuda_axis(
+    manifest: dict[str, dict], resolved: dict[str, list[str]],
+) -> None:
+    """Warn when a CUDA axis could never have produced a single job.
+
+    Runs before any pod is created. Without this the run is silent: every
+    GPU turns into a SKIP row, `ON_SKIP=pass` keeps the job green, and a
+    sweep that tested nothing looks the same as one that passed.
+
+    Only misconfiguration is reported. "Versions exist and match, but none
+    has capacity right now" is transient, already visible as per-GPU SKIP
+    rows, and would fire on healthy runs — so it stays silent here.
+    """
+    for group in manifest:
+        candidates = resolved.get(group, [])
+        if not candidates:
+            continue
+        all_mode = config.GROUP_CUDA_ALL.get(group, False)
+        requested = config.GROUP_CUDA_VERSIONS.get(group) or []
+        if not (all_mode or requested):
+            continue
+        offered: set[str] = set()
+        for inst in candidates:
+            offered |= set(cuda_versions_offered(inst, only_available=False))
+        if not offered:
+            log(
+                f"::warning::group '{group}': cuda_versions is set but none "
+                f"of the {len(candidates)} candidate GPUs reports any CUDA "
+                f"version in the {config.CLOUD_TYPE.upper()} cloud, so no "
+                "pod can be created. Either the candidates live in the other "
+                "cloud tier, or they are AMD — the axis only applies to "
+                "NVIDIA, so drop cuda_versions for a ROCm sweep."
+            )
+        elif requested and not set(requested) & offered:
+            log(
+                f"::warning::group '{group}': cuda_versions="
+                f"{sorted(requested)} but the candidate GPUs only offer "
+                f"{sorted(offered)}, so nothing will be tested."
+            )
+
+
+def _cap_jobs(jobs: list[Job]) -> list[Job]:
+    """Enforce MAX_CUDA_COMBOS so a stray sweep can't run for a day."""
+    if len(jobs) <= config.MAX_CUDA_COMBOS:
+        return jobs
+    log(
+        f"warn: {len(jobs)} jobs exceeds MAX_CUDA_COMBOS="
+        f"{config.MAX_CUDA_COMBOS} — dropping the last "
+        f"{len(jobs) - config.MAX_CUDA_COMBOS}. Narrow the sweep with "
+        "min-vram-gb / exclude-instances, or raise the cap deliberately."
+    )
+    return jobs[:config.MAX_CUDA_COMBOS]
 
 
 # ---------------------------------------------------------------------------
@@ -238,41 +487,56 @@ def _build_jobs(
 # ---------------------------------------------------------------------------
 
 
-def _run_jobs_serial(jobs: list[Job], results: dict[str, Result]) -> None:
+def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
     """Single-threaded run — no worker tags, simpler logs, group-header
     banner each time the group changes."""
     current_group: Optional[str] = None
-    for img, group, instances in jobs:
+    for img, group, instances, cuda_pin, cloud in jobs:
         if group != current_group:
             print()
             log(f"---------- group: {group} ----------")
             current_group = group
-        results[img] = test_image(img, instances, group)
+        status, note, instance, host_cuda = test_image(
+            img, instances, group, cuda_pin, cloud
+        )
+        results.append((img, status, note, instance, host_cuda, cuda_pin, cloud))
 
 
-def _run_one_tagged_job(job: Job) -> tuple[str, Result]:
+def _job_note(cuda_pin: str, cloud: str) -> str:
+    """Trailing detail for the start/done lines — only what varies."""
+    parts = []
+    if cuda_pin:
+        parts.append(f"cuda={cuda_pin}")
+    if len(config.CLOUD_TYPES) > 1:
+        parts.append(f"cloud={cloud}")
+    return (" " + " ".join(parts)) if parts else ""
+
+
+def _run_one_tagged_job(job: Job) -> Result:
     """ThreadPool worker. The W<N> tag is assigned to the THREAD (not the
     job), so e.g. with 5 jobs and 3 workers you still see only W1/W2/W3,
     each handling 1-2 jobs sequentially."""
-    img, grp, insts = job
+    img, grp, insts, cuda_pin, cloud = job
     ensure_worker_tag()
-    log(f"start [group={grp}] image={img}")
-    res = test_image(img, insts, grp)
-    log(f"done  [group={grp}] image={img} -> {res[0]}")
-    return img, res
+    pin_note = _job_note(cuda_pin, cloud)
+    log(f"start [group={grp}] image={img}{pin_note}")
+    status, note, instance, host_cuda = test_image(
+        img, insts, grp, cuda_pin, cloud
+    )
+    log(f"done  [group={grp}] image={img}{pin_note} -> {status}")
+    return img, status, note, instance, host_cuda, cuda_pin, cloud
 
 
-def _run_jobs_parallel(jobs: list[Job], results: dict[str, Result]) -> None:
+def _run_jobs_parallel(jobs: list[Job], results: list[Result]) -> None:
     """ThreadPool fan-out capped at MAX_PARALLEL. Each worker holds at
     most one pod at a time."""
     with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL) as pool:
         futures = [pool.submit(_run_one_tagged_job, job) for job in jobs]
         for fut in as_completed(futures):
-            img, res = fut.result()
-            results[img] = res
+            results.append(fut.result())
 
 
-def _run_jobs(jobs: list[Job], results: dict[str, Result]) -> None:
+def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
     if not jobs:
         log("no jobs to run after filtering")
         return
@@ -293,18 +557,182 @@ def _run_jobs(jobs: list[Job], results: dict[str, Result]) -> None:
 
 
 def _format_result_line(want: str, img: str, status: str, note: str,
-                        instance: str) -> Optional[str]:
+                        instance: str, host_cuda: str = "",
+                        cloud: str = "") -> Optional[str]:
     """Format one row of the summary, or None when this result doesn't
     belong in the `want` bucket. CPU labels ('cpu-secure', 'cpu-community',
-    …) are already human-readable, so they go to the summary verbatim."""
+    …) are already human-readable, so they go to the summary verbatim.
+
+    `host_cuda` is the CUDA version the pod actually ran on — reported because
+    the image tag only sets a floor, so the tag alone doesn't tell you what
+    the run proved."""
     if status != want:
         return None
-    inst_str = f" [{instance}]" if instance else ""
+    label = f"{instance} - CUDA {host_cuda}" if instance and host_cuda else instance
+    # Only when the run swept more than one tier — otherwise it's noise on
+    # every single line.
+    if cloud and len(config.CLOUD_TYPES) > 1:
+        label = f"{label} - {cloud}" if label else cloud
+    inst_str = f" [{label}]" if label else ""
     note_str = f" -- {note}" if note else ""
     return f"  {want:6s} {img}{inst_str}{note_str}"
 
 
-def _print_summary(results: dict[str, Result]) -> int:
+_STATUS_ICON = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⚠️ SKIP"}
+
+
+def _md_cell(value: str) -> str:
+    """Escape a value for a markdown table cell."""
+    return (value or "").replace("|", "\\|").replace("\n", " ") or "—"
+
+
+_CELL_ICON = {"PASS": "✅", "FAIL": "❌", "SKIP": "⚠️"}
+
+
+def _emit_cuda_pivot(results: list[Result]) -> list[str]:
+    """One GPU-by-CUDA pivot per cloud tier that produced results.
+
+    A tier gets its own table rather than a column: the same (GPU, CUDA)
+    pairing can be tested in both tiers, and merging them into one grid
+    would silently drop one of the two outcomes.
+    """
+    tiers = [c for c in config.CLOUD_TYPES if any(r[6] == c for r in results)]
+    if len(tiers) <= 1:
+        return _pivot_table(results, "")
+    out: list[str] = []
+    for tier in tiers:
+        out += _pivot_table([r for r in results if r[6] == tier], tier)
+    return out
+
+
+def _pivot_table(results: list[Result], tier: str) -> list[str]:
+    """GPU-by-CUDA pivot table, or [] when no CUDA axis was requested.
+
+    A flat list is unreadable at 30+ rows, and the whole point of the axis
+    is comparing one GPU across versions — so rows are GPUs, columns are
+    CUDA versions.
+
+    Every resolved GPU gets a row, including ones where no version had
+    capacity and no pod was ever created. Those come out as a full row of
+    `·`, which is the honest answer: "not covered". Leaving them out would
+    make an untested GPU indistinguishable from one that doesn't exist.
+    """
+    attempted = [r for r in results if r[5]]
+    if not attempted:
+        return []
+    versions = sorted(
+        {r[5] for r in attempted},
+        key=lambda v: tuple(int(p) for p in v.split(".")) if "." in v else (0,),
+    )
+    # A comma in the label means a multi-candidate SKIP, which can't be a
+    # single row — the axis produces one instance per job, so this only
+    # guards against a non-axis group sneaking into the same run.
+    gpus = sorted({r[3] for r in results if r[3] and ", " not in r[3]})
+    cell: dict[tuple[str, str], str] = {}
+    for _img, status, _note, inst, _host, req, _cloud in attempted:
+        cell[(inst, req)] = _CELL_ICON.get(status, status)
+    heading = f"### GPU x CUDA — {tier}" if tier else "### GPU x CUDA"
+    out = ["", heading, ""]
+    out.append("| GPU | " + " | ".join(f"CUDA {v}" for v in versions) + " |")
+    out.append("|" + "|".join(["---"] * (len(versions) + 1)) + "|")
+    for gpu in gpus:
+        cells = [cell.get((gpu, v), "·") for v in versions]
+        out.append(f"| {_md_cell(gpu)} | " + " | ".join(cells) + " |")
+    out += [
+        "",
+        "✅ pass · ❌ fail · ⚠️ skip (pod attempted, no capacity) · "
+        "· not attempted (no capacity at planning time)",
+        "",
+    ]
+    return out
+
+
+def _emit_step_summary(results: list[Result], counts: dict[str, int]) -> None:
+    """Append the matrix to $GITHUB_STEP_SUMMARY as a markdown table.
+
+    The stdout matrix is only reachable by downloading the job log, which
+    needs repo admin. The step summary renders on the run page for anyone.
+    No-op outside Actions; never fatal.
+    """
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    images = {r[0] for r in results}
+    single = next(iter(images)) if len(images) == 1 else ""
+    multi_cloud = len(config.CLOUD_TYPES) > 1
+    head = ["Status", "Instance", "CUDA", "Note"]
+    if multi_cloud:
+        head.insert(2, "Cloud")
+    if not single:
+        head.insert(1, "Image")
+    lines = [
+        "## Smoke-test matrix",
+        "",
+        f"**{counts['PASS']} PASS · {counts['FAIL']} FAIL · {counts['SKIP']} SKIP**",
+        "",
+    ]
+    if single:
+        lines += [f"Image: `{single}`", ""]
+    lines += _emit_cuda_pivot(results)
+    lines.append("| " + " | ".join(head) + " |")
+    lines.append("|" + "|".join(["---"] * len(head)) + "|")
+    for want in ("FAIL", "SKIP", "PASS"):
+        for img, status, note, instance, host_cuda, req_cuda, cloud in results:
+            if status != want:
+                continue
+            row = [
+                _STATUS_ICON.get(status, status),
+                _md_cell(instance),
+                _md_cell(host_cuda or req_cuda),
+                _md_cell(note),
+            ]
+            if multi_cloud:
+                row.insert(2, _md_cell(cloud))
+            if not single:
+                row.insert(1, f"`{img}`")
+            lines.append("| " + " | ".join(row) + " |")
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        log(f"warn: could not write step summary: {exc}")
+
+
+def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
+    """Write the matrix to $SMOKE_RESULTS_JSON so CI can keep it as an
+    artifact and diff runs against each other. No-op when unset."""
+    path = os.environ.get("SMOKE_RESULTS_JSON")
+    if not path:
+        return
+    payload = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "totals": {k: counts[k] for k in ("PASS", "FAIL", "SKIP")},
+        "results": [
+            {
+                "image": img,
+                "status": status,
+                "instance": instance,
+                "cloud": cloud,
+                "cuda": host_cuda,
+                "requested_cuda": req_cuda,
+                "note": note,
+            }
+            for img, status, note, instance, host_cuda, req_cuda, cloud
+            in results
+        ],
+    }
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        log(f"wrote results JSON -> {path}")
+    except OSError as exc:
+        log(f"warn: could not write results JSON: {exc}")
+
+
+def _print_summary(results: list[Result]) -> int:
     """Print the SUMMARY block and return the exit code.
 
     FAIL is ALWAYS fatal (exit 1) — a broken container is never something
@@ -328,7 +756,7 @@ def _print_summary(results: dict[str, Result]) -> int:
     print(" SUMMARY ".center(84, "="))
     print("=" * 84)
     counts: dict[str, int] = defaultdict(int)
-    for status, _, _ in results.values():
+    for _img, status, _note, _instance, _host_cuda, _req, _cloud in results:
         counts[status] += 1
     print(
         f"totals: {counts['PASS']} PASS, "
@@ -336,10 +764,15 @@ def _print_summary(results: dict[str, Result]) -> int:
         f"{counts['SKIP']} SKIP\n"
     )
     for want in ("FAIL", "SKIP", "PASS"):
-        for img, (status, note, instance) in results.items():
-            line = _format_result_line(want, img, status, note, instance)
+        for img, status, note, instance, host_cuda, req_cuda, cloud in results:
+            line = _format_result_line(
+                want, img, status, note, instance, host_cuda or req_cuda, cloud
+            )
             if line is not None:
                 print(line)
+
+    _emit_step_summary(results, counts)
+    _write_results_json(results, counts)
 
     if counts["FAIL"] > 0:
         return 1
@@ -378,21 +811,49 @@ def main() -> int:
     if rc is not None:
         return rc
 
-    _init_gpu_catalog()
     _init_registry_auth()
 
     manifest = parse_manifest(manifest_path)
-    _apply_manifest_overrides(manifest)
+    try:
+        _apply_manifest_overrides(manifest)
+    except ValueError as exc:
+        log(f"error: {exc}")
+        return 1
 
-    resolved = _resolve_all_instances(manifest)
-    _warn_unknown_instances(resolved)
-    _log_budget_picks(manifest, resolved)
-
-    results: dict[str, Result] = {}
-    jobs = _build_jobs(manifest, resolved, group_filter, results)
+    results: list[Result] = []
+    jobs = _plan_all_clouds(manifest, group_filter, results)
     _run_jobs(jobs, results)
 
     return _print_summary(results)
+
+
+def _plan_all_clouds(
+    manifest: dict[str, dict],
+    group_filter: Optional[str],
+    results: list[Result],
+) -> list[Job]:
+    """Plan every requested cloud tier, then cap the combined job list.
+
+    Planning is per tier because the catalog's CUDA versions, availability
+    and prices are all scoped to one; execution is shared so both tiers use
+    the same worker pool. MAX_CUDA_COMBOS applies to the total, so a
+    two-tier sweep can't quietly double the pod count.
+    """
+    if len(config.CLOUD_TYPES) > 1:
+        log(f"cloud tiers to sweep, in order: {', '.join(config.CLOUD_TYPES)}")
+    jobs: list[Job] = []
+    for cloud in config.CLOUD_TYPES:
+        config.CLOUD_TYPE = cloud
+        if len(config.CLOUD_TYPES) > 1:
+            print()
+            log(f"---------- planning cloud: {cloud} ----------")
+        _init_gpu_catalog()
+        resolved = _resolve_all_instances(manifest)
+        _warn_unknown_instances(resolved)
+        _warn_unviable_cuda_axis(manifest, resolved)
+        _log_budget_picks(manifest, resolved)
+        jobs += _build_jobs(manifest, resolved, group_filter, results, cloud)
+    return _cap_jobs(jobs)
 
 
 if __name__ == "__main__":

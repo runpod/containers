@@ -451,8 +451,14 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          # Patterns match catalog DISPLAY names, which never contain the
+          # word "Blackwell" — only the ids do. Enumerate the cards.
           exclude-instances: |
-            *Blackwell*
+            B200
+            B300
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *
             RTX 2000 Ada
           max-parallel: "4"
 
@@ -619,4 +625,3 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
-          min-cuda-version: "12.8"
