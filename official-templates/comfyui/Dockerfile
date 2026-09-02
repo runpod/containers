@@ -30,7 +30,7 @@ RUN apt-get update && \
     python3.12-venv \
     python3.12-dev \
     build-essential \
-    && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+    && curl -fSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -o cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends cuda-minimal-build-${CUDA_VERSION_DASH} libcusparse-dev-${CUDA_VERSION_DASH} \
@@ -66,21 +66,27 @@ RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA
 
 # Init git repos with upstream remotes so ComfyUI-Manager can detect versions
 # and users can update via Manager at their own risk
-RUN cd /tmp/build/ComfyUI && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && git tag "${COMFYUI_VERSION}" && \
+WORKDIR /tmp/build/ComfyUI
+RUN git init && git add -A && \
+    git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
+    git tag "${COMFYUI_VERSION}" && \
     git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/ComfyUI-Manager && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-Manager ${MANAGER_SHA}" && \
-    git remote add origin https://github.com/ltdrdata/ComfyUI-Manager.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/ComfyUI-KJNodes && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-KJNodes ${KJNODES_SHA}" && \
-    git remote add origin https://github.com/kijai/ComfyUI-KJNodes.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/Civicomfy && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "Civicomfy ${CIVICOMFY_SHA}" && \
-    git remote add origin https://github.com/MoonGoblinDev/Civicomfy.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/ComfyUI-RunpodDirect && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
-    git remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
+    git -C custom_nodes/ComfyUI-Manager init && \
+    git -C custom_nodes/ComfyUI-Manager add -A && \
+    git -C custom_nodes/ComfyUI-Manager -c user.name=- -c user.email=- commit -q -m "ComfyUI-Manager ${MANAGER_SHA}" && \
+    git -C custom_nodes/ComfyUI-Manager remote add origin https://github.com/ltdrdata/ComfyUI-Manager.git && \
+    git -C custom_nodes/ComfyUI-KJNodes init && \
+    git -C custom_nodes/ComfyUI-KJNodes add -A && \
+    git -C custom_nodes/ComfyUI-KJNodes -c user.name=- -c user.email=- commit -q -m "ComfyUI-KJNodes ${KJNODES_SHA}" && \
+    git -C custom_nodes/ComfyUI-KJNodes remote add origin https://github.com/kijai/ComfyUI-KJNodes.git && \
+    git -C custom_nodes/Civicomfy init && \
+    git -C custom_nodes/Civicomfy add -A && \
+    git -C custom_nodes/Civicomfy -c user.name=- -c user.email=- commit -q -m "Civicomfy ${CIVICOMFY_SHA}" && \
+    git -C custom_nodes/Civicomfy remote add origin https://github.com/MoonGoblinDev/Civicomfy.git && \
+    git -C custom_nodes/ComfyUI-RunpodDirect init && \
+    git -C custom_nodes/ComfyUI-RunpodDirect add -A && \
+    git -C custom_nodes/ComfyUI-RunpodDirect -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
+    git -C custom_nodes/ComfyUI-RunpodDirect remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build
@@ -177,7 +183,7 @@ RUN apt-get update && \
     openssl \
     ffmpeg \
     rsync \
-    && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+    && curl -fSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -o cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends cuda-minimal-build-${CUDA_VERSION_DASH} \
@@ -205,9 +211,10 @@ RUN pip uninstall -y uv 2>/dev/null || true && \
 
 # Install FileBrowser (pinned version with checksum)
 RUN curl -fSL "https://github.com/filebrowser/filebrowser/releases/download/${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" -o /tmp/fb.tar.gz && \
-    echo "${FILEBROWSER_SHA256}  /tmp/fb.tar.gz" | sha256sum -c - && \
+    printf '%s  /tmp/fb.tar.gz\n' "${FILEBROWSER_SHA256}" > /tmp/fb.sha256 && \
+    sha256sum -c /tmp/fb.sha256 && \
     tar xzf /tmp/fb.tar.gz -C /usr/local/bin filebrowser && \
-    rm /tmp/fb.tar.gz
+    rm /tmp/fb.tar.gz /tmp/fb.sha256
 
 # Set CUDA environment variables
 ENV PATH=/usr/local/cuda/bin:${PATH}
