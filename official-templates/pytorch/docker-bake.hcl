@@ -2,9 +2,14 @@
 
 variable "TORCH_META" {
   default = {
-    "2.9.1" = {}
+    # torchcodec backs torchaudio.load/save from 2.9 on; 0.9.x is the build for
+    # torch 2.9. It replaces torchaudio.io, removed in 2.9, as the NVDEC path.
+    "2.9.1" = {
+      torchcodec = "0.9.1"
+    }
     "2.9.0" = {
       torchvision = "0.24.0"
+      torchcodec  = "0.9.1"
     }
     "2.8.0" = {
       torchvision = "0.23.0"
@@ -19,17 +24,23 @@ variable "TORCH_META" {
     # release process starting with 2.12 (decode/encode moved to TorchCodec).
     # Upstream states 2.11.0 is compatible with future torch versions, and its
     # wheel declares no dependencies, so it will not downgrade torch.
+    # torchaudio.load/save are torchcodec wrappers from 2.9 on and raise
+    # ImportError without it. torchcodec 0.13+ declares torch >= 2.11, so one
+    # pin covers all three.
     "2.12.0" = {
       torchvision = "0.27.0"
       torchaudio  = "2.11.0"
+      torchcodec  = "0.16.0"
     }
     "2.12.1" = {
       torchvision = "0.27.1"
       torchaudio  = "2.11.0"
+      torchcodec  = "0.16.0"
     }
     "2.13.0" = {
       torchvision = "0.28.0"
       torchaudio  = "2.11.0"
+      torchcodec  = "0.16.0"
     }
   }
 }
@@ -59,8 +70,11 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.9.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "12.9.0", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.8.0", whl_src = "129" },
-    { cuda_version = "12.9.0", torch = "2.9.0", whl_src = "129" },
-    { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "129" },
+    # codec_src: the cu129 index has no torchcodec for torch 2.9 at all (it goes
+    # 0.7.0 -> 0.10.0), so take the cu128 build. Same CUDA major, so the runtime
+    # sonames match. Defaults to whl_src everywhere else.
+    { cuda_version = "12.9.0", torch = "2.9.0", whl_src = "129", codec_src = "128" },
+    { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "129", codec_src = "128" },
     { cuda_version = "12.9.0", torch = "2.12.1", whl_src = "129" },
     { cuda_version = "12.9.0", torch = "2.13.0", whl_src = "129" },
 
@@ -89,6 +103,8 @@ variable "COMPATIBLE_BUILDS" {
           torch_code     = replace(combo.torch, ".", "")
           torch_vision   = lookup(TORCH_META[combo.torch], "torchvision", "")
           torch_audio    = lookup(TORCH_META[combo.torch], "torchaudio", combo.torch)
+          torch_codec    = lookup(TORCH_META[combo.torch], "torchcodec", "")
+          codec_src      = lookup(combo, "codec_src", combo.whl_src)
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
       ]
     ]
@@ -155,6 +171,8 @@ target "pytorch-matrix" {
     BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
     TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}${build.torch_audio != "" ? " torchaudio==${build.torch_audio}" : ""}"
+    TORCHCODEC = build.torch_codec != "" ? "torchcodec==${build.torch_codec}" : ""
+    CODEC_SRC = build.codec_src
   }
   
   tags = [

@@ -19,6 +19,17 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
 
+# torchcodec backs torchaudio.load/save from torch 2.9 on. Its own step because
+# its CUDA builds don't track torch's index cadence (see codec_src in
+# docker-bake.hcl); --no-deps so it can never pull a different torch.
+ARG TORCHCODEC
+ARG CODEC_SRC
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ -n "${TORCHCODEC}" ]; then \
+        python -m pip install --no-deps "${TORCHCODEC}" \
+            --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
+    fi
+
 # Patched pins for packages that Grype reports as HIGH in the layers above.
 COPY --from=requirements requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \

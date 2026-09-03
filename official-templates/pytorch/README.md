@@ -14,6 +14,7 @@ Built on our base images, these containers provide pre-configured PyTorch and CU
 - **PyTorch**: 2.6.0, 2.7.1, 2.8.0, 2.9.0, 2.9.1, 2.12.0, 2.12.1, and 2.13.0
 - **CUDA**: 12.8.1, 12.9.0, and 13.0.0 (not available on Runpod)
 - **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble); CUDA 13.0.0 is 24.04 only
+- **Audio**: torchaudio is matched to each PyTorch version (2.11.0, its last release, on 2.12 and 2.13). `torchaudio.load` and `save` are torchcodec wrappers from 2.9 on, so torchcodec ships in every 2.9 and later image. It is the CUDA build, so GPU video decoding through NVDEC works too — the replacement for `torchaudio.io`, which was removed in 2.9.
 
 Focus on your models, not your environment setup.
 
