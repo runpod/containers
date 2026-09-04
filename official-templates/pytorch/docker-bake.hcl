@@ -5,7 +5,8 @@ variable "TORCH_META" {
     # torchcodec backs torchaudio.load/save from 2.9 on; 0.9.x is the build for
     # torch 2.9. It replaces torchaudio.io, removed in 2.9, as the NVDEC path.
     "2.9.1" = {
-      torchcodec = "0.9.1"
+      torchvision = "0.24.1"
+      torchcodec  = "0.9.1"
     }
     "2.9.0" = {
       torchvision = "0.24.0"
