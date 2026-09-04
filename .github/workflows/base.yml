@@ -452,7 +452,7 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           exclude-instances: |
-            *Blackwell*
+            RTX PRO 4000
             RTX 2000 Ada
           max-parallel: "4"
 
@@ -500,7 +500,7 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}
+          cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}-v2
 
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
