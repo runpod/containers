@@ -3,12 +3,12 @@
 Two functions, both called from `test_images.py:main`:
 
   * test_pair(image, instance, group) — one create-attempt against one GPU
-    type. Owns retry-on-transient and the FAIL/UNAVAILABLE/STUCK/CREATE_FAIL
-    classification of a single pod's lifecycle.
+    type. Owns retry-on-transient and the FAIL / UNAVAILABLE / STUCK /
+    UNVERIFIED / CREATE_FAIL classification of a single pod's lifecycle.
 
   * test_image(image, instances, group) — iterate test_pair across all
     candidate instance types until something settles. Returns the final
-    PASS / FAIL / SKIP outcome plus the instance it landed on.
+    PASS / FAIL / UNVERIFIED / SKIP outcome plus the instance it landed on.
 """
 
 from __future__ import annotations

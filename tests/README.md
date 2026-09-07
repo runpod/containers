@@ -150,11 +150,12 @@ job per (GPU, CUDA version) — see [CUDA axis](#cuda-axis).
 | needs | RunPod to allocate a public port for `22/tcp` | only a machine assignment |
 | supports | everything | interactive shell and remote commands only — no SCP, SFTP or port forwarding |
 
-**RunPod does not always allocate the direct port.** Such a pod shows only
-"SSH" in the console, with no "SSH over exposed TCP" block, and
-`ssh.direct` stays null however long you wait. Before the fallback existed
-those pods burned the whole `CREATE_TIMEOUT` and were reported as stuck
-initializing, which was wrong — they were ready in a minute.
+**RunPod does not always allocate the direct port**, and when it does it
+can be late — one measured pod was proxy-only at t+601s and got its port at
+t+700s. A pod that never gets one shows only "SSH" in the console, with no
+"SSH over exposed TCP" block, and `ssh.direct` stays null. Both cases are
+why the poll accepts either endpoint and always waits out `CREATE_TIMEOUT`
+rather than deciding early that a proxy-only pod is hopeless.
 
 Direct is tried first (one fewer hop), the proxy on the same poll if direct
 is absent or refuses. Whichever answers is reused by every later check, so a
@@ -169,22 +170,6 @@ connection with `Your SSH client doesn't support PTY` when no terminal is
 allocated, and a single `-t` declines to allocate one because the harness's
 stdin is not a terminal. Output is stripped of the `\r` a PTY introduces so
 it parses the same as a direct connection.
-
-**Proxy-only pods give up early.** When only `ssh.proxy` exists and it has
-already refused, nothing will change by waiting, so the poll stops at
-`DIRECT_PORT_TIMEOUT` (default 300s) instead of billing the pod until
-`CREATE_TIMEOUT`. The outcome is `UNVERIFIED` — an endpoint existed, so
-this is not a plain capacity gap — and the next instance type is tried; a
-different host usually does get a port.
-
-**"Proxy-only by now" does not mean "never", so this is off by default.**
-One measured ROCm pod was proxy-only at t+601s, received its public port at
-t+700s and then passed every check — a `DIRECT_PORT_TIMEOUT` of 600s would
-have discarded a working pod. `DIRECT_PORT_TIMEOUT` therefore defaults to
-`0` and `CREATE_TIMEOUT` governs; no workflow sets it. Set it only as a
-deliberate cost cap, and note it still only fires once the container's log
-says sshd is up, which is the one case where the container is provably
-finished and the missing piece is RunPod's network path.
 
 **Who is blamed for a timeout comes from the two log streams, not from
 which endpoints existed.** `status` is useless for this — it reads `RUNNING`
@@ -598,7 +583,6 @@ pytorch:
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `GET /v2/registries` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
-| `DIRECT_PORT_TIMEOUT` | `0` (off) | Optional cost cap for a pod showing only `ssh.proxy`. Off because a measured pod was proxy-only at t+601s and got its port at t+700s, so any non-zero value can discard a pod that was about to work. When set it only fires once the container's log says sshd is up, and must stay below `CREATE_TIMEOUT`. See [SSH endpoints](#ssh-endpoints). |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
@@ -692,9 +676,9 @@ wraps everything in this script needs for a clean CI run:
    fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with
    `MAX_PARALLEL=<max-parallel>`, `CLOUD_TYPE=<cloud-type>`,
-   `ON_SKIP=<on-skip>`, `CREATE_TIMEOUT=<create-timeout>` and
-   `DIRECT_PORT_TIMEOUT=<direct-port-timeout>`. A failed image makes the
-   smoke-test action fail, which prevents a release from being created.
+   `ON_SKIP=<on-skip>` and `CREATE_TIMEOUT=<create-timeout>`. A failed
+   image makes the smoke-test action fail, which prevents a release from
+   being created.
 
 Typical caller (from a per-image-family build workflow):
 

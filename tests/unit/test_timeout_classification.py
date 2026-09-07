@@ -1,15 +1,15 @@
-"""A readiness timeout must not be blamed on the host by default.
+"""Who a readiness timeout belongs to: the image, or RunPod.
 
-Two deterministic image faults look exactly like a slow host from the
-outside — no SSH, no RUNNING, no terminal status:
+Nothing visible from outside separates them. `status` reads `RUNNING` from
+scheduling time onward, so a pod still downloading a 50GB image, a pod whose
+entrypoint cannot execute, and a pod RunPod never routed to all look
+identical: no SSH, status RUNNING, no terminal state.
 
-  * the NVIDIA prestart hook refusing the container, and
-  * a container that cannot start at all.
-
-Both used to be reported as STUCK, which retries elsewhere and ends the
-image as SKIP. With `on-skip: warn` on the release gates that keeps CI
-green, so a broken image could ship. What remains genuinely ambiguous is
-reported as UNVERIFIED rather than guessed either way.
+The verdict therefore comes from evidence, and getting it wrong is expensive
+in both directions — blaming RunPod hides a broken image behind
+`on-skip: warn`, and blaming the image fails a release over a platform
+hiccup. What stays genuinely ambiguous is reported as UNVERIFIED rather than
+guessed either way.
 """
 
 import unittest
@@ -282,13 +282,6 @@ class WhoIsToBlameForATimeout(unittest.TestCase):
             )
         self.assertEqual(status, "STUCK")
 
-
-class EarlyGiveUpIsOffByDefault(unittest.TestCase):
-    """A pod proxy-only at t+601s received its port at t+700s and passed, so
-    giving up early discards pods that were about to work."""
-
-    def test_default_is_disabled(self):
-        self.assertEqual(config.DIRECT_PORT_TIMEOUT, 0)
 
 
 class UnverifiedIsNotACapacityGap(unittest.TestCase):

@@ -433,7 +433,6 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
     ssh_attempts = 0
     endpoint_seen = False  # an endpoint was offered at least once
     stall_hinted = False  # one-time hint when pod has no ssh endpoint for a while
-    pull_wait_logged = False  # one-time note that the early give-up was skipped
 
     while time.time() < deadline:
         st = pod_state(pod_id)
@@ -466,52 +465,6 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
 
         endpoints = _ssh_endpoints(st)
         endpoint_seen = endpoint_seen or bool(endpoints)
-        kinds = {kind for kind, _ep in endpoints}
-        # Optional cost cap, off by default. RunPod can allocate the direct
-        # port very late — one observed ROCm pod got it at t+700s and then
-        # passed everything — so giving up on a proxy-only pod is throwing
-        # away a pod that may still come up. Only worth it when the container
-        # has already announced sshd: then the container is done and the
-        # missing piece is RunPod's network path, which is a host verdict.
-        if (
-            config.DIRECT_PORT_TIMEOUT
-            and kinds == {"proxy"}
-            and ssh_attempts
-            and elapsed >= config.DIRECT_PORT_TIMEOUT
-        ):
-            stage = pod_stage(pod_id)
-            progress = container_progress(pod_id)
-            if stage is not None and not stage.container_started:
-                if not pull_wait_logged:
-                    log(
-                        f"t+{elapsed}s proxy-only past DIRECT_PORT_TIMEOUT="
-                        f"{config.DIRECT_PORT_TIMEOUT}s, but the system log "
-                        f"says '{stage.label}' — not giving up early; "
-                        f"waiting out CREATE_TIMEOUT={config.CREATE_TIMEOUT}s",
-                        indent=2,
-                    )
-                    pull_wait_logged = True
-            elif progress and progress.sshd_up:
-                _log_system_errors(pod_id, f"proxy-only after {elapsed}s")
-                return "TIMEOUT_INFRA", (
-                    f"the container brought sshd up but RunPod never "
-                    f"allocated a public port for 22/tcp in {elapsed}s and "
-                    f"the SSH proxy refused {ssh_attempts} probe(s) — the "
-                    "image did its part, the platform did not. Giving up "
-                    f"early (DIRECT_PORT_TIMEOUT="
-                    f"{config.DIRECT_PORT_TIMEOUT}s) instead of waiting out "
-                    f"CREATE_TIMEOUT={config.CREATE_TIMEOUT}s"
-                ), None
-            if not pull_wait_logged:
-                log(
-                    f"t+{elapsed}s proxy-only past "
-                    f"DIRECT_PORT_TIMEOUT={config.DIRECT_PORT_TIMEOUT}s, but "
-                    "the container has not announced sshd yet — not giving "
-                    "up early; waiting out CREATE_TIMEOUT="
-                    f"{config.CREATE_TIMEOUT}s",
-                    indent=2,
-                )
-                pull_wait_logged = True
         if endpoints:
             for kind, endpoint in endpoints:
                 ssh_attempts += 1
