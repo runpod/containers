@@ -85,19 +85,31 @@ jobs:
               - 'official-templates/pytorch-cluster/**'
               - 'official-templates/shared/**'
               - 'container-template/**'
+              - 'tests/**'
+              - '.github/actions/smoke-test/**'
+              - '.github/scripts/generate_test_manifest.py'
             nvidia:
               - 'official-templates/nvidia-pytorch/**'
               - 'official-templates/base/**'
               - 'official-templates/shared/**'
               - 'container-template/**'
+              - 'tests/**'
+              - '.github/actions/smoke-test/**'
+              - '.github/scripts/generate_test_manifest.py'
             rocm:
               - 'official-templates/rocm/**'
               - 'official-templates/base/**'
               - 'official-templates/shared/**'
               - 'container-template/**'
+              - 'tests/**'
+              - '.github/actions/smoke-test/**'
+              - '.github/scripts/generate_test_manifest.py'
             comfyui:
               - 'official-templates/comfyui/**'
               - 'official-templates/shared/**'
+              - 'tests/**'
+              - '.github/actions/smoke-test/**'
+              - '.github/scripts/generate_test_manifest.py'
 
   base:
     needs: [version, changes]

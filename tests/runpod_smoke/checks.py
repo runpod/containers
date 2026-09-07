@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 from . import api, config
 from .log import log
@@ -60,52 +60,57 @@ def _resolve_ssh_identity() -> Optional[str]:
     return None
 
 
-# How to address each endpoint. Direct SSH lands in the container as root;
-# the RunPod proxy needs an opaque routing token and a pseudo-terminal, and
-# the API hands us the exact invocation in `ssh.proxy.command`, so we build
-# on that instead of guessing. `pod.wait_for_running` registers what it
-# found; everything else keeps identifying endpoints by (host, port).
-_SSH_ENDPOINTS: dict[tuple[str, int], tuple[str, str, bool]] = {}
+class SshEndpoint(NamedTuple):
+    """Everything needed to reach one pod over SSH.
+
+    Passed by value rather than looked up in a registry: every pod's proxy
+    lives at the same `ssh.runpod.io:22` and is told apart only by `user`,
+    so anything keyed on (host, port) is a single global slot that parallel
+    pods overwrite — and a check would then run against the wrong pod and
+    still succeed, because the address it reached is a live pod.
+
+    Direct SSH lands in the container as root. The proxy needs an opaque
+    routing token and a pseudo-terminal, and the API hands us the exact
+    invocation in `ssh.proxy.command`, so `command` carries that instead of
+    us guessing the target.
+    """
+
+    host: str
+    port: int
+    user: str = "root"
+    command: str = ""
+    pty: bool = False
+
+    @property
+    def label(self) -> str:
+        return f"{self.user}@{self.host}:{self.port}"
+
+    def __bool__(self) -> bool:
+        return bool(self.host and self.port)
 
 
-def set_ssh_endpoint(
-    host: str, port: int, user: str, command: str = "", *, pty: bool = False,
-) -> None:
-    if host and port and user:
-        _SSH_ENDPOINTS[(host, int(port))] = (user, command or "", pty)
-
-
-def ssh_user_for(host: str, port: int) -> str:
-    entry = _SSH_ENDPOINTS.get((host, int(port)))
-    return entry[0] if entry else "root"
-
-
-def _ssh_command_prefix(host: str, port: int) -> list[str]:
+def _ssh_command_prefix(endpoint: SshEndpoint) -> list[str]:
     """Build the `ssh ... <user>@<host>` prefix common to all SSH calls.
 
-    For a registered endpoint the API's own invocation is the base, with the
-    flags its description tells us to add (`-i`, `-o StrictHostKeyChecking`)
-    plus `-tt` when the endpoint insists on a terminal. Everything else gets
-    the plain `root@host -p port` form.
+    When the API gave us its own invocation, its target wins, with the flags
+    its description tells us to add (`-i`, `-o StrictHostKeyChecking`) plus
+    `-tt` for an endpoint that insists on a terminal.
     """
-    user, api_command, pty = _SSH_ENDPOINTS.get(
-        (host, int(port)), ("root", "", False)
-    )
     identity = _resolve_ssh_identity()
-    target = f"{user}@{host}"
-    if api_command:
+    target = f"{endpoint.user}@{endpoint.host}"
+    if endpoint.command:
         # Keep only the target from the API string: the flags we add below
         # are the ones it documents as missing, and re-using its argv
         # verbatim would fight with SSH_OPTS.
-        parts = shlex.split(api_command)
+        parts = shlex.split(endpoint.command)
         target = next((p for p in parts[1:] if "@" in p), target)
     cmd = ["ssh", *config.SSH_OPTS]
-    if pty:
+    if endpoint.pty:
         # -tt, not -t: the local stdin is not a terminal under subprocess,
         # and single -t silently declines to allocate one in that case.
         cmd.append("-tt")
-    if int(port) != 22:
-        cmd.extend(["-p", str(port)])
+    if int(endpoint.port) != 22:
+        cmd.extend(["-p", str(endpoint.port)])
     if identity:
         cmd.extend(["-i", identity])
     cmd.append(target)
@@ -118,10 +123,10 @@ def _strip_cr(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def ssh_probe(host: str, port: int, timeout: int = 8) -> tuple[bool, str]:
+def ssh_probe(endpoint: SshEndpoint, timeout: int = 8) -> tuple[bool, str]:
     """One-shot SSH connection attempt. Returns (success, stderr_excerpt).
     Used as the real container-readiness signal."""
-    cmd = [*_ssh_command_prefix(host, port), "echo", "ready"]
+    cmd = [*_ssh_command_prefix(endpoint), "echo", "ready"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -296,7 +301,7 @@ def cuda_check_command(image: str) -> str:
     return ""
 
 
-def run_cuda_check(host: str, port: int, image: str) -> tuple[bool, str]:
+def run_cuda_check(endpoint: SshEndpoint, image: str) -> tuple[bool, str]:
     """Run the GPU/CUDA functional check inside the pod over SSH.
     Returns (ok, output). ok=True when:
       * the image has no GPU check defined (treated as pass), OR
@@ -305,7 +310,7 @@ def run_cuda_check(host: str, port: int, image: str) -> tuple[bool, str]:
     cmd = cuda_check_command(image)
     if not cmd:
         return True, "(no GPU check for this image)"
-    ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
+    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
         r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
@@ -367,7 +372,7 @@ def jupyter_check_command(timeout: int) -> str:
     )
 
 
-def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
+def run_jupyter_check(endpoint: SshEndpoint) -> tuple[bool, str]:
     """SSH into the pod and run the jupyter probe against 127.0.0.1:8888.
 
     This validates the IN-POD side: start.sh launched Jupyter with the
@@ -377,7 +382,7 @@ def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
     when jupyter probe exited non-zero (server not running / wrong token
     / API not healthy)."""
     cmd = jupyter_check_command(config.JUPYTER_WAIT_TIMEOUT)
-    ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
+    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     # SSH command has its own grace loop (JUPYTER_WAIT_TIMEOUT) plus a 10s
     # curl; pad the outer timeout to leave room for SSH handshake.
     outer_timeout = config.JUPYTER_WAIT_TIMEOUT + 30
@@ -431,14 +436,13 @@ def port_check_command(test_port: int, wait_timeout: int) -> str:
 
 
 def run_port_check(
-    host: str,
-    port: int,
+    endpoint: SshEndpoint,
     test_port: int,
     on_line: Optional[Callable[[str], None]] = None,
 ) -> tuple[bool, str]:
     """Run the in-pod fallback probe with live progress and a hard timeout."""
     ssh_cmd = [
-        *_ssh_command_prefix(host, port),
+        *_ssh_command_prefix(endpoint),
         port_check_command(test_port, config.PORT_WAIT_TIMEOUT),
     ]
     outer_timeout = config.PORT_WAIT_TIMEOUT + 60
@@ -671,6 +675,39 @@ _CUDA_CONDITION_RE = re.compile(
     r"unsatisfied condition:\s*(cuda\s*[<>=!]+\s*[\d.]+)", re.IGNORECASE
 )
 
+# The container could not be started, or its entrypoint died on the spot.
+# Every one of these is deterministic: the same image fails the same way on
+# any host, so a pod that times out with one of these in its log is a broken
+# image and must not be reported as a retryable capacity problem.
+_STARTUP_FAILURE_RE = re.compile(
+    # runc/containerd refusing the container outright
+    r"oci runtime (?:create|exec) failed"
+    r"|standard_init_linux\.go:\d+: exec user process caused"
+    # a wrong-architecture or non-executable entrypoint
+    r"|exec format error"
+    r"|exec:? .*(?:not found|no such file or directory)"
+    r"|permission denied.*(?:start\.sh|entrypoint)"
+    # the entrypoint itself giving up
+    r"|/start\.sh: line \d+:[^\n]*(?:command not found|cannot execute)"
+    # the kernel killing it before sshd could come up
+    r"|out of memory: killed process|oom-kill",
+    re.IGNORECASE,
+)
+
+
+def container_startup_failure(log_lines: Optional[list[str]]) -> str:
+    """Summarize a deterministic container-start failure, or '' if none.
+
+    Read before a readiness timeout is blamed on the host: an image whose
+    entrypoint cannot execute looks exactly like a slow host from the
+    outside — no SSH, no RUNNING, no terminal status — but no other GPU will
+    fix it.
+    """
+    for line in log_lines or []:
+        if _STARTUP_FAILURE_RE.search(line):
+            return line.strip()[:200]
+    return ""
+
 
 def host_incompatibility(sys_errors: Optional[list[str]]) -> str:
     """Summarize a container-init rejection, or '' if there wasn't one.
@@ -764,7 +801,7 @@ def _gpu_smi_block(image: str) -> str:
 
 
 def fetch_logs_via_ssh(
-    host: str, port: int, image: str,
+    endpoint: SshEndpoint, image: str,
 ) -> Optional[str]:
     """Fetch the GPU SMI snapshot, the remaining SSH-only diagnostic."""
     if not config.SSH_LOG_FETCH:
@@ -773,7 +810,7 @@ def fetch_logs_via_ssh(
     if not smi_block:
         return None
     remote_cmd = "set +e; " + smi_block
-    cmd = [*_ssh_command_prefix(host, port), remote_cmd]
+    cmd = [*_ssh_command_prefix(endpoint), remote_cmd]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
     except subprocess.TimeoutExpired:
@@ -785,28 +822,39 @@ def fetch_logs_via_ssh(
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
-def dump_pod_logs(pod_id: str, image: str) -> list[str]:
-    """Print metadata, API container logs, system errors, and GPU SMI.
+class PodDiagnostics(NamedTuple):
+    """What the log dump found, for a caller that has to classify a failure.
 
-    Returns the system-log error markers so a caller classifying the failure
-    can read them without fetching the stream a second time.
+    Both streams are returned so the verdict is reached without fetching
+    either a second time: `sys_errors` carries the platform's own markers
+    (the NVIDIA prestart hook lives here) and `container_lines` the image's
+    stdout (an entrypoint that cannot execute lives here).
     """
+
+    sys_errors: list[str]
+    container_lines: list[str]
+
+
+def dump_pod_logs(pod_id: str, image: str) -> PodDiagnostics:
+    """Print metadata, API container logs, system errors, and GPU SMI."""
     sys_errors: list[str] = []
+    api_lines: list[str] = []
     status, data = api.request("GET", f"/pods/{pod_id}", timeout=30)
     if not (200 <= status < 300) or not isinstance(data, dict):
         api.log_error("(could not fetch pod state)", status, data, indent=2)
-        return sys_errors
+        return PodDiagnostics(sys_errors, api_lines)
     ssh = data.get("ssh") or {}
     direct = ssh.get("direct") or {}
     proxy = ssh.get("proxy") or {}
-    host, port = direct.get("host"), direct.get("port")
+    endpoint = SshEndpoint("", 0)
+    if direct.get("host") and direct.get("port"):
+        endpoint = SshEndpoint(str(direct["host"]), int(direct["port"]))
     # Fall back to the proxy so the SMI snapshot still gets fetched on pods
     # that never received a direct TCP port.
-    if not (host and port) and proxy.get("host") and proxy.get("username"):
-        host, port = proxy.get("host"), proxy.get("port")
-        set_ssh_endpoint(
-            host, int(port or 0), str(proxy["username"]),
-            str(proxy.get("command") or ""), pty=True,
+    elif proxy.get("host") and proxy.get("username"):
+        endpoint = SshEndpoint(
+            str(proxy["host"]), int(proxy.get("port") or 22),
+            str(proxy["username"]), str(proxy.get("command") or ""), pty=True,
         )
 
     log(f"--- pod metadata for {pod_id} ---", indent=2)
@@ -815,14 +863,16 @@ def dump_pod_logs(pod_id: str, image: str) -> list[str]:
         ("cudaVersion",      data.get("cudaVersion")),
         ("dataCenterId",     data.get("dataCenterId")),
         ("cost",             data.get("cost")),
-        ("ssh.direct",       f"{host}:{port}" if host and port else None),
+        ("ssh.direct",       f"{direct['host']}:{direct['port']}"
+                             if direct.get("host") and direct.get("port")
+                             else None),
         ("ssh.proxy",        proxy.get("host") or None),
         ("image",            data.get("image")),
         ("startedAt",        data.get("startedAt")),
     ]:
         log(f"  {key:20s} = {val!r}", indent=2)
 
-    api_lines = fetch_pod_logs_api(pod_id)
+    api_lines = fetch_pod_logs_api(pod_id) or []
     if api_lines:
         log(f"--- container logs via API ({len(api_lines)} lines) ---", indent=2)
         for line in api_lines:
@@ -837,24 +887,21 @@ def dump_pod_logs(pod_id: str, image: str) -> list[str]:
         for line in sys_errors:
             log(f"  {line}", indent=2)
 
-    if not (host and port):
+    if not endpoint:
         log("  (no SSH endpoint yet — skipping GPU SMI fetch)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return sys_errors
+        return PodDiagnostics(sys_errors, api_lines)
 
-    logs = fetch_logs_via_ssh(host, int(port), image)
+    logs = fetch_logs_via_ssh(endpoint, image)
     if logs is None:
-        return sys_errors
-    log(
-        f"--- GPU SMI via SSH ({ssh_user_for(host, int(port))}@{host}:{port}) ---",
-        indent=2,
-    )
+        return PodDiagnostics(sys_errors, api_lines)
+    log(f"--- GPU SMI via SSH ({endpoint.label}) ---", indent=2)
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:
             log(f"    {line}", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return sys_errors
+        return PodDiagnostics(sys_errors, api_lines)
     for line in logs.splitlines():
         log(f"  {line}", indent=2)
-    return sys_errors
+    return PodDiagnostics(sys_errors, api_lines)
