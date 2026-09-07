@@ -213,13 +213,16 @@ def _classify_non_running(
     Only once both are ruled out does the timeout get split by how far the
     pod actually got:
 
-      * no endpoint ever offered -> STUCK. The scheduler never made the pod
-        addressable, which is an infrastructure verdict; retry elsewhere.
-      * an endpoint that never answered -> UNVERIFIED. A wedged host and an
-        image whose sshd never starts are indistinguishable from here, so
-        this is reported as "could not tell" rather than guessed either way.
-        Collapsing it into STUCK is what let a broken image read as a
-        capacity gap and keep CI green.
+      * the pod never got far enough to be judged -> STUCK. Either no SSH
+        endpoint was ever offered, or the container had not emitted a single
+        log line, meaning the image was still being pulled. `status` is no
+        help in telling that apart: RunPod reports RUNNING from scheduling
+        time onward, long before the pull finishes.
+      * the container was demonstrably running and still nothing answered
+        -> UNVERIFIED. A wedged host and an image whose sshd never starts
+        are indistinguishable from here, so this is reported as "could not
+        tell" rather than guessed either way. Collapsing it into STUCK is
+        what let a broken image read as a capacity gap and keep CI green.
 
     Anything else (EXITED, TERMINATED, FAILED, RUNNING-then-died) is a
     container problem — the image is broken and another GPU won't help."""
@@ -241,7 +244,7 @@ def _classify_non_running(
             indent=2,
         )
         return "FAIL", f"container failed to start: {startup}"
-    if state == "TIMEOUT_NO_ENDPOINT":
+    if state == "TIMEOUT_INFRA":
         log(
             f"{state.lower()} -- {detail} -- STUCK (trying next instance type)",
             indent=2,

@@ -201,6 +201,22 @@ inputs:
       ceiling for ROCm; keeps us from holding STUCK pods indefinitely.
     required: false
     default: "600"
+  direct-port-timeout:
+    description: |
+      Seconds to wait before giving up on a pod that only ever showed
+      `ssh.proxy` and whose proxy has already refused a probe. RunPod does
+      not always allocate a public port for `22/tcp`, and such a pod never
+      becomes reachable, so this stops billing it instead of waiting out
+      create-timeout.
+
+      Harness default 300s. Raise it wherever create-timeout is raised: a
+      30-50GB ROCm pull can still be in progress at 300s, and the pod looks
+      identical to an unreachable one — proxy present, sshd not up yet. The
+      outcome of giving up is UNVERIFIED, which is fatal under on-skip
+      warn/fail, so too low a value turns a slow pull into a red build.
+      Keep it below create-timeout or it never fires. `0` disables it.
+    required: false
+    default: "300"
   on-skip:
     description: |
       What to do when at least one image ends up SKIPped (the smoke
@@ -422,6 +438,8 @@ runs:
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
+        # Same reasoning, for the earlier proxy-only give-up.
+        DIRECT_PORT_TIMEOUT: ${{ inputs.direct-port-timeout }}
         SAVE_COMFYUI_IMAGES: ${{ inputs.save-comfyui-images }}
         # test_images.py appends the matrix to $GITHUB_STEP_SUMMARY (always)
         # and writes this JSON, so results are readable without log access.

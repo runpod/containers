@@ -146,3 +146,7 @@ jobs:
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
           create-timeout: "1200"
+          # rocm/pytorch:* bases are 30-50GB, so at the 300s default a pod
+          # still pulling looks the same as an unreachable one — proxy
+          # present, sshd not up yet — and gets abandoned as UNVERIFIED.
+          direct-port-timeout: "600"

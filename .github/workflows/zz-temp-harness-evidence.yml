@@ -1,0 +1,135 @@
+name: "TEMP: harness evidence on new pytorch"
+
+# ============================================================================
+# TEMPORARY — DELETE BEFORE MERGING THIS BRANCH.
+#
+# Evidence that the reworked harness works on a real image, asked for in
+# review: the shared harness changed, but this PR's CI only ever exercised
+# ComfyUI. Runs the newest pytorch builds (torch 2.9.1, published
+# 2026-09-04, never smoke-tested by us) on the SECURE tier.
+#
+# Trigger: pushing a change to THIS file. Nothing else runs it, so ordinary
+# commits on the branch don't spend money. Re-run from the Actions tab.
+#
+# Two jobs, and the cheap one carries the sharper proof:
+#
+#   live      — real pods. Covers the endpoint rework end to end: readiness
+#               probe, CUDA/torch check, Jupyter probe, dwell re-probe, log
+#               scan, teardown. 2 pods on L4, about $0.17.
+#   negative  — NO pods, so free. Asks for a CUDA version nothing offers,
+#               which makes planning produce zero jobs. That used to print
+#               "0 PASS, 0 FAIL, 0 SKIP" and exit 0 whatever ON_SKIP said —
+#               a sweep that tested nothing was indistinguishable from one
+#               that passed. Now it must record a SKIP and exit 1.
+#
+# on-skip is `fail` for the live job on purpose: if RunPod has no capacity
+# the run proves nothing, and that should be visible as red rather than
+# quietly green.
+# ============================================================================
+
+on:
+  push:
+    paths:
+      - .github/workflows/zz-temp-harness-evidence.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zz-temp-harness-evidence
+  cancel-in-progress: false
+
+env:
+  # torch 2.9.1, built 2026-09-04. cu1281 lands almost anywhere on SECURE;
+  # cu1300 needs a 13.0 host, which L4 reports.
+  IMAGE_REFS: >-
+    ["runpod/pytorch:1.2.0-rc.162-cu1281-torch291-ubuntu2404",
+    "runpod/pytorch:1.2.0-rc.162-cu1300-torch291-ubuntu2404"]
+
+jobs:
+  live:
+    name: live pods on SECURE
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ env.IMAGE_REFS }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+
+          # A fallback chain, not a matrix: one pod per image, on the first
+          # card with capacity. L4 is first because it is the only one of
+          # the three currently reporting free capacity per CUDA version.
+          instances: |
+            L4
+            RTX A4500
+            RTX A4000
+          cloud-type: SECURE
+          min-vram-gb: "0"
+
+          # pytorch uses container-template/start.sh, so the Jupyter probes
+          # apply and are worth having in the evidence.
+          test-jupyter: "true"
+
+          on-skip: fail
+          create-timeout: "1200"
+          direct-port-timeout: "600"
+          max-parallel: "2"
+
+          upload-results-json: "true"
+          results-artifact-name: zz-temp-harness-evidence-${{ github.run_id }}
+
+  negative:
+    name: planning gap must not read as success
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Impossible CUDA pin records a SKIP and fails
+        shell: bash
+        env:
+          # Only the GPU catalog is fetched — no pod is created, so no SSH
+          # key is needed here.
+          RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          CLOUD_TYPE: SECURE
+          ON_SKIP: fail
+        run: |
+          set -euo pipefail
+
+          # 11.8 is not in the catalog at all (SECURE offers 12.4 through
+          # 13.2), so no (GPU, CUDA) pairing survives planning.
+          python3 .github/scripts/generate_test_manifest.py \
+            --profile gpu \
+            --refs '["runpod/pytorch:1.2.0-rc.162-cu1281-torch291-ubuntu2404"]' \
+            --instance "RTX A4000" --instance "RTX A4500" \
+            --cuda-version 11.8 --min-vram-gb 0 \
+            --output "${RUNNER_TEMP}/impossible.yaml"
+
+          rc=0
+          python3 tests/test_images.py "${RUNNER_TEMP}/impossible.yaml" \
+            base_gpu 2>&1 | tee "${RUNNER_TEMP}/out.log" || rc=$?
+
+          if [[ "${rc}" -eq 0 ]]; then
+            echo "::error::planning produced no jobs yet the run exited 0 — a sweep that tested nothing must never report success"
+            exit 1
+          fi
+          grep -q 'SKIP' "${RUNNER_TEMP}/out.log" \
+            || { echo "::error::no SKIP row was recorded for the missing coverage"; exit 1; }
+          grep -q 'no testable CUDA version' "${RUNNER_TEMP}/out.log" \
+            || { echo "::error::SKIP row does not name the reason"; exit 1; }
+          echo "OK: exited ${rc}, recorded the gap as SKIP"
+
+      - name: Harness unit tests
+        shell: bash
+        working-directory: tests
+        run: python3 -m unittest discover -s unit -t . -v

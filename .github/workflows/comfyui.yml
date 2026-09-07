@@ -150,6 +150,9 @@ jobs:
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
           create-timeout: "1200"
+          # The ComfyUI image is large too, and at the 300s default a pod
+          # still pulling is indistinguishable from an unreachable one.
+          direct-port-timeout: "600"
           test-jupyter: "true"
           test-comfyui: "true"
           test-comfyui-functional: ${{ inputs.run-functional-tests }}

@@ -655,6 +655,28 @@ def fetch_pod_logs_api(
     return lines
 
 
+def container_has_started(pod_id: str, deadline_sec: int = 8) -> Optional[bool]:
+    """True once the container has emitted at least one log line.
+
+    This is the only cheap way to tell "still pulling the image" from
+    "running but unreachable". `status` cannot do it: RunPod reports
+    `RUNNING` as soon as the pod is scheduled, while the image may still be
+    downloading for another ten minutes — a 50GB ROCm base routinely is. The
+    container does not exist during the pull, so its log stream is empty;
+    every image we test runs `container-template/start.sh` and logs within
+    seconds of actually starting.
+
+    Returns None when the log API could not be reached, so callers can tell
+    "no output" from "could not look".
+    """
+    lines = fetch_pod_logs_api(
+        pod_id, source="container", deadline_sec=deadline_sec
+    )
+    if lines is None:
+        return None
+    return bool(lines)
+
+
 def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
     """Return error-marker lines from the host-side REST system-log stream."""
     lines = fetch_pod_logs_api(pod_id, source="system")

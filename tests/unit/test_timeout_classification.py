@@ -15,7 +15,7 @@ reported as UNVERIFIED rather than guessed either way.
 import unittest
 from unittest import mock
 
-from runpod_smoke import config, runner
+from runpod_smoke import checks, config, pod, runner
 from runpod_smoke.checks import PodDiagnostics, container_startup_failure
 
 
@@ -75,7 +75,7 @@ class Classification(unittest.TestCase):
             return runner._classify_non_running(state, "detail", "pod1", IMAGE)
 
     def test_no_endpoint_is_infrastructure(self):
-        status, _ = self._classify("TIMEOUT_NO_ENDPOINT")
+        status, _ = self._classify("TIMEOUT_INFRA")
         self.assertEqual(status, "STUCK")
 
     def test_assigned_but_silent_is_unverified_not_stuck(self):
@@ -85,7 +85,7 @@ class Classification(unittest.TestCase):
 
     def test_startup_failure_wins_over_the_timeout_kind(self):
         """Deterministic, so it must not be retried as a host problem."""
-        for state in ("TIMEOUT_NO_ENDPOINT", "TIMEOUT_UNREACHABLE"):
+        for state in ("TIMEOUT_INFRA", "TIMEOUT_UNREACHABLE"):
             status, note = self._classify(
                 state, container_lines=["exec format error"]
             )
@@ -94,7 +94,7 @@ class Classification(unittest.TestCase):
 
     def test_init_rejection_still_wins(self):
         status, note = self._classify(
-            "TIMEOUT_NO_ENDPOINT",
+            "TIMEOUT_INFRA",
             sys_errors=[
                 "nvidia-container-cli: requirement error: unsatisfied "
                 "condition: cuda>=13.0",
@@ -106,6 +106,66 @@ class Classification(unittest.TestCase):
     def test_terminal_state_is_still_a_fail(self):
         status, _ = self._classify("TERMINAL")
         self.assertEqual(status, "FAIL")
+
+
+class StillPullingIsNotUnverified(unittest.TestCase):
+    """The 50GB ROCm case: `status` is RUNNING, the endpoint exists, the
+    image is still downloading. Only the container's own log stream can
+    tell that apart from a pod that is running but unreachable."""
+
+    def test_empty_container_log_means_not_started(self):
+        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=[]):
+            self.assertIs(checks.container_has_started("pod1"), False)
+
+    def test_any_line_means_started(self):
+        with mock.patch.object(
+            checks, "fetch_pod_logs_api", return_value=["start.sh: booting"]
+        ):
+            self.assertIs(checks.container_has_started("pod1"), True)
+
+    def test_unreachable_log_api_is_neither(self):
+        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=None):
+            self.assertIsNone(checks.container_has_started("pod1"))
+
+    def _wait_timeout(self, started):
+        """Drive wait_for_running to its deadline with an assigned endpoint."""
+        state = {
+            "status": "RUNNING",           # set at scheduling time, not readiness
+            "ssh_ip": "1.2.3.4", "ssh_port": 40022,
+            "proxy_host": "", "proxy_port": 0, "proxy_user": "",
+            "proxy_command": "",
+        }
+        # A short deadline with no sleep: the loop runs, sees the endpoint,
+        # gets a refused probe, and falls through to the timeout verdict.
+        with mock.patch.object(config, "CREATE_TIMEOUT", 0.05), \
+                mock.patch.object(config, "POLL_INTERVAL", 0), \
+                mock.patch.object(pod, "pod_state", return_value=state), \
+                mock.patch.object(pod, "ssh_probe", return_value=(False, "refused")), \
+                mock.patch.object(pod, "container_has_started", return_value=started), \
+                mock.patch.object(pod, "_log_system_errors"), \
+                mock.patch.object(pod, "log"):
+            return pod.wait_for_running("pod1")
+
+    def test_mid_pull_timeout_is_infra_not_unreachable(self):
+        outcome, detail, endpoint = self._wait_timeout(False)
+        self.assertEqual(outcome, "TIMEOUT_INFRA")
+        self.assertIn("still being pulled", detail)
+        self.assertIsNone(endpoint)
+
+    def test_running_container_timeout_stays_unreachable(self):
+        outcome, detail, _ = self._wait_timeout(True)
+        self.assertEqual(outcome, "TIMEOUT_UNREACHABLE")
+        self.assertIn("was logging", detail)
+
+    def test_mid_pull_classifies_as_stuck_end_to_end(self):
+        """So a slow pull retries on another host instead of going red."""
+        diagnostics = PodDiagnostics([], [])
+        with mock.patch.object(runner, "dump_pod_logs", return_value=diagnostics), \
+                mock.patch.object(runner, "log"):
+            status, _ = runner._classify_non_running(
+                "TIMEOUT_INFRA", "still being pulled", "pod1", IMAGE
+            )
+        self.assertEqual(status, "STUCK")
 
 
 class UnverifiedIsNotACapacityGap(unittest.TestCase):
