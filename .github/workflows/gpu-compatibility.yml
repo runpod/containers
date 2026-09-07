@@ -274,7 +274,4 @@ jobs:
 
           # Worst case across images: rocm/* bases are 30-50 GB.
           create-timeout: "1200"
-          # Matched to create-timeout: the sweep spans image families,
-          # so the worst-case pull sets the pace here as well.
-          direct-port-timeout: "600"
           max-parallel: ${{ env.MAX_PARALLEL }}

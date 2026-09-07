@@ -20,7 +20,8 @@ from typing import Optional
 from . import api, config
 from .checks import (
     SshEndpoint,
-    container_has_started,
+    container_progress,
+    pod_stage,
     ssh_probe,
     system_log_errors,
 )
@@ -313,12 +314,15 @@ def _log_system_errors(pod_id: str, context: str) -> None:
 def _print_stall_hint(pod_id: str, elapsed: int) -> None:
     """One-time hint for pods that sit with no SSH endpoint for too long.
 
-    RunPod doesn't surface pull progress via the API, so this points the
-    user at the UI plus the single most common root cause — Docker Hub
-    rate-limiting an anonymous pull.
+    Leads with the stage from the system log, since `status` says `RUNNING`
+    the whole time and tells the reader nothing. Falls back to pointing at
+    the UI plus the most common root cause — Docker Hub rate-limiting an
+    anonymous pull.
     """
+    stage = pod_stage(pod_id)
+    where = f" RunPod's system log says: {stage.label}." if stage else ""
     log(
-        f"pod still has no SSH endpoint after {elapsed}s. "
+        f"pod still has no SSH endpoint after {elapsed}s.{where} "
         "Most common cause is a slow or throttled image pull. "
         "Check the UI for pull progress: "
         f"https://www.runpod.io/console/pods/{pod_id}",
@@ -399,15 +403,16 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
                     healthy. Every later check reuses this endpoint.
         'TERMINAL'  status reached EXITED / ERROR / TERMINATED.
         'TIMEOUT_INFRA'
-                    CREATE_TIMEOUT passed and the pod demonstrably never got
-                    far enough to be judged: either no SSH endpoint was ever
-                    offered, or the container had not started yet. A
-                    scheduler/host verdict, not an image one.
+                    CREATE_TIMEOUT passed and the evidence points away from
+                    the image: no SSH endpoint was ever offered, or the
+                    container had not started yet, or the container's own log
+                    says sshd came up and nothing reached it anyway. A
+                    scheduler/host/network verdict, not an image one.
         'TIMEOUT_UNREACHABLE'
-                    The container was running and producing output, but no
-                    endpoint ever answered. Genuinely ambiguous — a wedged
-                    host and an image whose sshd never starts look identical
-                    from out here — so the caller must not call it either.
+                    The container was running, never announced sshd, and no
+                    endpoint answered. Genuinely ambiguous — a wedged host
+                    and an image whose sshd never starts look identical from
+                    out here — so the caller must not call it either.
 
     SSH probing is the real health-check. We poll `GET /v2/pods/{id}` for
     either endpoint, then try `ssh <user>@host 'echo ready'` against each
@@ -462,35 +467,48 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
         endpoints = _ssh_endpoints(st)
         endpoint_seen = endpoint_seen or bool(endpoints)
         kinds = {kind for kind, _ep in endpoints}
-        # Proxy-only for this long means RunPod never allocated the direct
-        # port and the proxy has already refused us, so nothing will change
-        # by waiting — stop billing the pod. Unless the container has not
-        # started yet, in which case there is nothing to be unreachable and
-        # the pod is simply mid-pull: give it the full CREATE_TIMEOUT.
+        # Optional cost cap, off by default. RunPod can allocate the direct
+        # port very late — one observed ROCm pod got it at t+700s and then
+        # passed everything — so giving up on a proxy-only pod is throwing
+        # away a pod that may still come up. Only worth it when the container
+        # has already announced sshd: then the container is done and the
+        # missing piece is RunPod's network path, which is a host verdict.
         if (
             config.DIRECT_PORT_TIMEOUT
             and kinds == {"proxy"}
             and ssh_attempts
             and elapsed >= config.DIRECT_PORT_TIMEOUT
         ):
-            if container_has_started(pod_id):
+            stage = pod_stage(pod_id)
+            progress = container_progress(pod_id)
+            if stage is not None and not stage.container_started:
+                if not pull_wait_logged:
+                    log(
+                        f"t+{elapsed}s proxy-only past DIRECT_PORT_TIMEOUT="
+                        f"{config.DIRECT_PORT_TIMEOUT}s, but the system log "
+                        f"says '{stage.label}' — not giving up early; "
+                        f"waiting out CREATE_TIMEOUT={config.CREATE_TIMEOUT}s",
+                        indent=2,
+                    )
+                    pull_wait_logged = True
+            elif progress and progress.sshd_up:
                 _log_system_errors(pod_id, f"proxy-only after {elapsed}s")
-                return "TIMEOUT_UNREACHABLE", (
-                    f"RunPod never allocated a public port for 22/tcp in "
-                    f"{elapsed}s and the SSH proxy refused {ssh_attempts} "
-                    "probe(s) while the container was already logging — "
-                    "running but unreachable. Giving up early "
-                    f"(DIRECT_PORT_TIMEOUT={config.DIRECT_PORT_TIMEOUT}s) "
-                    f"instead of waiting out CREATE_TIMEOUT="
-                    f"{config.CREATE_TIMEOUT}s"
+                return "TIMEOUT_INFRA", (
+                    f"the container brought sshd up but RunPod never "
+                    f"allocated a public port for 22/tcp in {elapsed}s and "
+                    f"the SSH proxy refused {ssh_attempts} probe(s) — the "
+                    "image did its part, the platform did not. Giving up "
+                    f"early (DIRECT_PORT_TIMEOUT="
+                    f"{config.DIRECT_PORT_TIMEOUT}s) instead of waiting out "
+                    f"CREATE_TIMEOUT={config.CREATE_TIMEOUT}s"
                 ), None
             if not pull_wait_logged:
                 log(
                     f"t+{elapsed}s proxy-only past "
                     f"DIRECT_PORT_TIMEOUT={config.DIRECT_PORT_TIMEOUT}s, but "
-                    "the container has logged nothing yet — the image is "
-                    "still being pulled, so not giving up early; waiting out "
-                    f"CREATE_TIMEOUT={config.CREATE_TIMEOUT}s",
+                    "the container has not announced sshd yet — not giving "
+                    "up early; waiting out CREATE_TIMEOUT="
+                    f"{config.CREATE_TIMEOUT}s",
                     indent=2,
                 )
                 pull_wait_logged = True
@@ -523,35 +541,68 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
         time.sleep(config.POLL_INTERVAL)
 
     _log_system_errors(pod_id, f"timeout after {config.CREATE_TIMEOUT}s")
+    return _classify_timeout(pod_id, endpoint_seen, ssh_attempts)
+
+
+def _classify_timeout(
+    pod_id: str, endpoint_seen: bool, ssh_attempts: int,
+) -> tuple[str, str, Optional[SshEndpoint]]:
+    """Decide who a readiness timeout belongs to, worst-evidence-first.
+
+    Two independent sources, because either can be unavailable and because
+    they answer different questions. RunPod's system log says whether the
+    image even finished downloading; the container's own log says whether the
+    entrypoint got as far as starting sshd. `status` answers neither — it
+    reads `RUNNING` from scheduling time onward.
+
+    Anything that is provably not the image's doing becomes TIMEOUT_INFRA, so
+    it retries elsewhere instead of failing a release.
+    """
     if not endpoint_seen:
         return "TIMEOUT_INFRA", (
             f"RunPod never offered an SSH endpoint in "
             f"{config.CREATE_TIMEOUT}s — the pod never became addressable. "
-            "Likely causes: (1) slow/throttled image pull (check UI for pull "
-            "progress), (2) Docker Hub rate limit if many parallel pulls of "
-            "the same image, (3) host scheduling delay on a saturated DC — "
-            "see system-log error markers above (if any)"
+            "Likely causes: (1) slow/throttled image pull, (2) Docker Hub "
+            "rate limit if many parallel pulls of the same image, (3) host "
+            "scheduling delay on a saturated DC — see system-log error "
+            "markers above (if any)"
         ), None
-    started = container_has_started(pod_id)
-    if started is False:
+
+    stage = pod_stage(pod_id)
+    if stage is not None and not stage.container_started:
+        return "TIMEOUT_INFRA", (
+            f"after {config.CREATE_TIMEOUT}s RunPod's system log still says "
+            f"'{stage.label}', so the container was never handed the image. "
+            "Not a verdict on the image: raise CREATE_TIMEOUT (a 30-50GB "
+            "base can need 15 minutes) or add registry auth to avoid Docker "
+            "Hub throttling"
+        ), None
+
+    progress = container_progress(pod_id)
+    if progress is not None and progress.sshd_up:
+        return "TIMEOUT_INFRA", (
+            f"the container's own log says it brought sshd up, yet no "
+            f"endpoint answered in {config.CREATE_TIMEOUT}s ({ssh_attempts} "
+            "probes, direct and proxy) — the image did its part and RunPod "
+            "never provided a working path to it (no public port for 22/tcp, "
+            "or a proxy route that stayed broken). A host verdict"
+        ), None
+    if progress is not None and not progress.started:
         return "TIMEOUT_INFRA", (
             f"an SSH endpoint was assigned but the container had still not "
             f"logged a single line after {config.CREATE_TIMEOUT}s, so it had "
-            "not started — the image was almost certainly still being "
-            "pulled. Not a verdict on the image: raise CREATE_TIMEOUT (a "
-            "30-50GB base can need 15 minutes) or add registry auth to avoid "
-            "Docker Hub throttling"
+            "not started — almost certainly still being pulled"
         ), None
-    if started is None:
+    if progress is None and stage is None:
         return "TIMEOUT_UNREACHABLE", (
             f"an SSH endpoint was assigned but never answered in "
-            f"{config.CREATE_TIMEOUT}s ({ssh_attempts} probes), and the log "
-            "API could not be reached to tell whether the container had even "
-            "started — nothing about this image was verified"
+            f"{config.CREATE_TIMEOUT}s ({ssh_attempts} probes), and neither "
+            "log stream could be reached to tell how far the pod got — "
+            "nothing about this image was verified"
         ), None
     return "TIMEOUT_UNREACHABLE", (
-        f"an SSH endpoint was assigned and the container was logging, but no "
-        f"endpoint answered in {config.CREATE_TIMEOUT}s ({ssh_attempts} "
-        "probes, direct and proxy) — either the host is wedged or the "
-        "container never started sshd"
+        f"the container started but never announced sshd, and no endpoint "
+        f"answered in {config.CREATE_TIMEOUT}s ({ssh_attempts} probes, "
+        "direct and proxy) — either the host is wedged or the entrypoint "
+        "never got as far as starting SSH"
     ), None

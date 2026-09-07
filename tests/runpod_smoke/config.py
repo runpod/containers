@@ -94,12 +94,16 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # — just an informational note in the logs.
 STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 
-# RunPod sometimes never allocates the public port for 22/tcp — such a pod
-# shows only `ssh.proxy` in the console and `ssh.direct` stays null forever.
-# Once the proxy has also refused, waiting out CREATE_TIMEOUT just bills a
-# pod that will never be reachable, so give up at this mark instead. Set to
-# 0 to wait the full CREATE_TIMEOUT.
-DIRECT_PORT_TIMEOUT = int(os.environ.get("DIRECT_PORT_TIMEOUT", "300"))
+# Optional cost cap for a pod showing only `ssh.proxy`: give up at this mark
+# rather than waiting out CREATE_TIMEOUT.
+#
+# Off by default, because "proxy-only by now" does not mean "never": an
+# observed ROCm pod was proxy-only at t+601s, received its public port at
+# t+700s and then passed every check. Any non-zero value here risks throwing
+# away a pod that was about to work, and it only fires once the container has
+# announced sshd — the one case where the container is provably finished and
+# the missing piece is RunPod's network path.
+DIRECT_PORT_TIMEOUT = int(os.environ.get("DIRECT_PORT_TIMEOUT", "0") or 0)
 
 # Docker Hub authenticated pulls — without this, RunPod datacenters share
 # an anonymous IP pool that hits Docker Hub's `toomanyrequests` rate limit

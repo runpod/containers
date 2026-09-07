@@ -108,26 +108,96 @@ class Classification(unittest.TestCase):
         self.assertEqual(status, "FAIL")
 
 
-class StillPullingIsNotUnverified(unittest.TestCase):
-    """The 50GB ROCm case: `status` is RUNNING, the endpoint exists, the
-    image is still downloading. Only the container's own log stream can
-    tell that apart from a pod that is running but unreachable."""
+# Verbatim from the container log of a real MI300X pod that RunPod never
+# gave a public port for 22/tcp. sshd is up; only the path to it is missing.
+ROCM_LOG_SSHD_UP = [
+    "Starting Nginx service...",
+    " * Starting nginx nginx",
+    "Pod Started",
+    "Setting up SSH...",
+    "RSA key fingerprint:",
+    " * Starting OpenBSD Secure Shell server sshd",
+    "   ...done.",
+    "Exporting environment variables...",
+    "Start script(s) finished, Pod is ready to use.",
+]
 
-    def test_empty_container_log_means_not_started(self):
-        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=[]):
-            self.assertIs(checks.container_has_started("pod1"), False)
 
-    def test_any_line_means_started(self):
-        with mock.patch.object(
-            checks, "fetch_pod_logs_api", return_value=["start.sh: booting"]
-        ):
-            self.assertIs(checks.container_has_started("pod1"), True)
+class ContainerProgressFromItsOwnLog(unittest.TestCase):
+    """`status` is RUNNING from scheduling time onward, so the container's
+    log stream is the only thing that says how far it actually got."""
 
-    def test_unreachable_log_api_is_neither(self):
-        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=None):
-            self.assertIsNone(checks.container_has_started("pod1"))
+    def _progress(self, lines):
+        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=lines):
+            return checks.container_progress("pod1")
 
-    def _wait_timeout(self, started):
+    def test_empty_log_means_still_pulling(self):
+        self.assertEqual(self._progress([]), (False, False))
+
+    def test_output_without_sshd_means_started_only(self):
+        self.assertEqual(
+            self._progress(["Starting Nginx service...", "Pod Started"]),
+            (True, False),
+        )
+
+    def test_real_rocm_log_shows_sshd_up(self):
+        self.assertEqual(self._progress(ROCM_LOG_SSHD_UP), (True, True))
+
+    def test_foreground_sshd_is_recognised(self):
+        self.assertTrue(
+            self._progress(["Server listening on 0.0.0.0 port 22."]).sshd_up
+        )
+
+    def test_unreachable_log_api_is_none(self):
+        self.assertIsNone(self._progress(None))
+
+
+# Verbatim from a RunPod system log, mid-pull and then at hand-off. This is
+# the authoritative answer to "has the image even finished downloading",
+# which the container's own log can only hint at and `status` cannot answer.
+SYSLOG_PULLING = [
+    "ab6fdd207dfd Extracting [=========>]  205B/205B",
+    "ab6fdd207dfd Pull complete",
+    "be7707169180 Extracting [>       ]  163.8kB/13.31MB",
+]
+SYSLOG_HANDED_OFF = SYSLOG_PULLING + [
+    "Digest: sha256:ce5e842ca0c7233a983ff76a83739b445172259c77a43a117453ef7e6a64d0b7",
+    "Status: Downloaded newer image for runpod/comfyui:1.4.6-cuda12.8",
+    "create container runpod/comfyui:1.4.6-cuda12.8",
+    "1.4.6-cuda12.8 Pulling from runpod/comfyui",
+    "Status: Image is up to date for runpod/comfyui:1.4.6-cuda12.8",
+    "start container for runpod/comfyui:1.4.6-cuda12.8: begin",
+]
+
+
+class PodStageFromTheSystemLog(unittest.TestCase):
+    def _stage(self, lines):
+        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=lines):
+            return checks.pod_stage("pod1")
+
+    def test_mid_pull(self):
+        stage = self._stage(SYSLOG_PULLING)
+        self.assertTrue(stage.pulling)
+        self.assertFalse(stage.pull_done)
+        self.assertFalse(stage.container_started)
+        self.assertEqual(stage.label, "still pulling the image")
+
+    def test_handed_off_to_the_container(self):
+        stage = self._stage(SYSLOG_HANDED_OFF)
+        self.assertTrue(stage.pull_done)
+        self.assertTrue(stage.container_started)
+        self.assertEqual(stage.label, "container started")
+
+    def test_nothing_logged_yet(self):
+        stage = self._stage([])
+        self.assertEqual(stage.label, "no pull or start activity logged yet")
+
+    def test_unreachable_log_api_is_none(self):
+        self.assertIsNone(self._stage(None))
+
+
+class WhoIsToBlameForATimeout(unittest.TestCase):
+    def _wait_timeout(self, progress, stage=None):
         """Drive wait_for_running to its deadline with an assigned endpoint."""
         state = {
             "status": "RUNNING",           # set at scheduling time, not readiness
@@ -141,31 +211,84 @@ class StillPullingIsNotUnverified(unittest.TestCase):
                 mock.patch.object(config, "POLL_INTERVAL", 0), \
                 mock.patch.object(pod, "pod_state", return_value=state), \
                 mock.patch.object(pod, "ssh_probe", return_value=(False, "refused")), \
-                mock.patch.object(pod, "container_has_started", return_value=started), \
+                mock.patch.object(pod, "container_progress", return_value=progress), \
+                mock.patch.object(pod, "pod_stage", return_value=stage), \
                 mock.patch.object(pod, "_log_system_errors"), \
                 mock.patch.object(pod, "log"):
             return pod.wait_for_running("pod1")
 
-    def test_mid_pull_timeout_is_infra_not_unreachable(self):
-        outcome, detail, endpoint = self._wait_timeout(False)
+    def test_mid_pull_is_infra(self):
+        outcome, detail, endpoint = self._wait_timeout(
+            checks.ContainerProgress(started=False, sshd_up=False)
+        )
         self.assertEqual(outcome, "TIMEOUT_INFRA")
         self.assertIn("still being pulled", detail)
         self.assertIsNone(endpoint)
 
-    def test_running_container_timeout_stays_unreachable(self):
-        outcome, detail, _ = self._wait_timeout(True)
-        self.assertEqual(outcome, "TIMEOUT_UNREACHABLE")
-        self.assertIn("was logging", detail)
+    def test_sshd_up_but_unreachable_is_infra_not_unverified(self):
+        """The MI300X case: the image did its part, RunPod never built a
+        path to it. Blaming the image for that is a false red build."""
+        outcome, detail, _ = self._wait_timeout(
+            checks.ContainerProgress(started=True, sshd_up=True)
+        )
+        self.assertEqual(outcome, "TIMEOUT_INFRA")
+        self.assertIn("brought sshd up", detail)
 
-    def test_mid_pull_classifies_as_stuck_end_to_end(self):
-        """So a slow pull retries on another host instead of going red."""
+    def test_running_without_sshd_stays_unverified(self):
+        outcome, detail, _ = self._wait_timeout(
+            checks.ContainerProgress(started=True, sshd_up=False)
+        )
+        self.assertEqual(outcome, "TIMEOUT_UNREACHABLE")
+        self.assertIn("never announced sshd", detail)
+
+    def test_unreadable_log_stays_unverified(self):
+        outcome, _, _ = self._wait_timeout(None)
+        self.assertEqual(outcome, "TIMEOUT_UNREACHABLE")
+
+    def test_system_log_mid_pull_wins_over_the_container_log(self):
+        """The system log is authoritative on "has it even downloaded".
+        Even a container log that looks started must not override it."""
+        outcome, detail, _ = self._wait_timeout(
+            checks.ContainerProgress(started=True, sshd_up=True),
+            stage=checks.PodStage(
+                pulling=True, pull_done=False, container_started=False
+            ),
+        )
+        self.assertEqual(outcome, "TIMEOUT_INFRA")
+        self.assertIn("still pulling the image", detail)
+
+    def test_handed_off_falls_through_to_the_container_log(self):
+        outcome, detail, _ = self._wait_timeout(
+            checks.ContainerProgress(started=True, sshd_up=False),
+            stage=checks.PodStage(
+                pulling=True, pull_done=True, container_started=True
+            ),
+        )
+        self.assertEqual(outcome, "TIMEOUT_UNREACHABLE")
+        self.assertIn("never announced sshd", detail)
+
+    def test_both_logs_unreadable_is_unverified(self):
+        outcome, detail, _ = self._wait_timeout(None, stage=None)
+        self.assertEqual(outcome, "TIMEOUT_UNREACHABLE")
+        self.assertIn("neither log stream", detail)
+
+    def test_infra_classifies_as_stuck_end_to_end(self):
+        """So it retries on another host instead of going red."""
         diagnostics = PodDiagnostics([], [])
         with mock.patch.object(runner, "dump_pod_logs", return_value=diagnostics), \
                 mock.patch.object(runner, "log"):
             status, _ = runner._classify_non_running(
-                "TIMEOUT_INFRA", "still being pulled", "pod1", IMAGE
+                "TIMEOUT_INFRA", "brought sshd up", "pod1", IMAGE
             )
         self.assertEqual(status, "STUCK")
+
+
+class EarlyGiveUpIsOffByDefault(unittest.TestCase):
+    """A pod proxy-only at t+601s received its port at t+700s and passed, so
+    giving up early discards pods that were about to work."""
+
+    def test_default_is_disabled(self):
+        self.assertEqual(config.DIRECT_PORT_TIMEOUT, 0)
 
 
 class UnverifiedIsNotACapacityGap(unittest.TestCase):

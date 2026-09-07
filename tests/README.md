@@ -177,17 +177,44 @@ already refused, nothing will change by waiting, so the poll stops at
 this is not a plain capacity gap — and the next instance type is tried; a
 different host usually does get a port.
 
-Because that outcome is fatal under `on-skip` `warn`/`fail`, the give-up is
-gated on the container actually running: **it only fires once the container
-has written at least one log line.** A pod still pulling its image presents
-exactly like an unreachable one — proxy up, sshd not yet listening — so
-without that gate a 50GB ROCm pull was abandoned at `DIRECT_PORT_TIMEOUT`
-and reported as `UNVERIFIED`, i.e. a red build for a pod that simply needed
-more time. Mid-pull, the poll now waits out the full `CREATE_TIMEOUT`.
+**"Proxy-only by now" does not mean "never", so this is off by default.**
+One measured ROCm pod was proxy-only at t+601s, received its public port at
+t+700s and then passed every check — a `DIRECT_PORT_TIMEOUT` of 600s would
+have discarded a working pod. `DIRECT_PORT_TIMEOUT` therefore defaults to
+`0` and `CREATE_TIMEOUT` governs; no workflow sets it. Set it only as a
+deliberate cost cap, and note it still only fires once the container's log
+says sshd is up, which is the one case where the container is provably
+finished and the missing piece is RunPod's network path.
 
-`rocm.yml`, `comfyui.yml` and `gpu-compatibility.yml` still raise
-`create-timeout` to 1200s and `direct-port-timeout` to 600s with it; the
-gate is what makes those values safe rather than load-bearing.
+**Who is blamed for a timeout comes from the two log streams, not from
+which endpoints existed.** `status` is useless for this — it reads `RUNNING`
+from scheduling time onward — so the verdict is read from evidence, worst
+first:
+
+| evidence | verdict |
+|---|---|
+| system log has no `create/start container` yet | still pulling → `STUCK` |
+| container log announced sshd | RunPod's path is broken → `STUCK` |
+| container log empty | not started → `STUCK` |
+| container started, no sshd line | ambiguous → `UNVERIFIED` |
+| neither stream readable | could not look → `UNVERIFIED` |
+
+The system log is checked first because it is authoritative on the one
+question the container's log cannot answer — whether RunPod has finished
+downloading the image at all. It narrates the hand-off in plain text:
+
+```
+<layer> Extracting [====>]  1.2MB/13.3MB
+<layer> Pull complete
+Status: Downloaded newer image for runpod/comfyui:1.4.6-cuda12.8
+create container runpod/comfyui:1.4.6-cuda12.8
+start container for runpod/comfyui:1.4.6-cuda12.8: begin
+```
+
+The second row is the one that matters most in practice: a pod whose log
+ends in `Start script(s) finished, Pod is ready to use.` did everything
+asked of it, and reporting that as a problem with the image turns a
+platform hiccup into a failed release.
 
 **Endpoints are passed by value, never looked up by address.** Every pod's
 proxy answers at the same `ssh.runpod.io:22` and is distinguished only by
@@ -210,9 +237,9 @@ The granular per-pod outcomes below collapse into them:
 | `FAIL` | `CREATE_FAIL` | Pod-create returned a non-capacity, non-transient orchestrator error (bad image tag, registry auth, malformed request, missing CUDA version). | fix the manifest / image ref / auth |
 | `FAIL` | `FAIL` (container init) | `nvidia-container-cli` rejected the container in the prestart hook — typically the image's `NVIDIA_REQUIRE_CUDA` floor is above the host driver, e.g. a `cu1290` image pinned to CUDA 12.4. Deterministic, so no other instance type is tried. | pin a CUDA version the image supports, or fix the image's requirement |
 | `FAIL` | `FAIL` (container start) | The container never started: unexecutable or missing entrypoint, wrong architecture, an OCI runtime refusal, or an OOM kill before sshd. Read from the container log **before** a readiness timeout is attributed to the host, because from the outside it is indistinguishable from a slow one. | fix the image |
-| `UNVERIFIED` | any `UNVERIFIED` | An SSH endpoint was assigned, **the container was already writing to its log**, and still nothing answered within `CREATE_TIMEOUT` — with no init rejection or start failure in the logs. A wedged host and an image that never starts sshd cannot be told apart from here, so neither is claimed. | re-run; if it repeats on every host, suspect the image's `start.sh` |
+| `UNVERIFIED` | any `UNVERIFIED` | The container was writing to its log but **never announced sshd**, and nothing answered within `CREATE_TIMEOUT` — with no init rejection or start failure. A wedged host and an entrypoint that never got as far as starting SSH cannot be told apart from here, so neither is claimed. Also used when the log API itself was unreachable, i.e. we could not look. | re-run; if it repeats on every host, suspect the image's `start.sh` |
 | `SKIP` | all `UNAVAILABLE` | RunPod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
-| `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but the pod never got far enough to be judged: no SSH endpoint was ever offered, or the container had not emitted a single log line, meaning the image was still being pulled. | retry later — usually transient; if a large image times out every run, raise `create-timeout` |
+| `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but the evidence pointed away from the image: no SSH endpoint was ever offered, the container had not emitted a single log line (still pulling), or **the container's own log said sshd was up and nothing reached it anyway** — RunPod never provided a working path. | retry later — usually transient; if a large image times out every run, raise `create-timeout` |
 
 `FAIL` always exits `1`. `UNVERIFIED` also exits `1`, except under
 `ON_SKIP=pass` — only the catalog sweep sets that, and it knowingly accepts
@@ -571,7 +598,7 @@ pytorch:
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `GET /v2/registries` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
-| `DIRECT_PORT_TIMEOUT` | `300` | Give up this early when only `ssh.proxy` exists and it has already refused — RunPod never allocated a port for `22/tcp` and waiting out `CREATE_TIMEOUT` only bills an unreachable pod. **Raise it alongside `CREATE_TIMEOUT`:** a multi-GB pull still in progress looks identical to an unreachable pod, and giving up early on one costs a red build. Every caller that sets `create-timeout: 1200` also sets `direct-port-timeout: 600`. Must stay below `CREATE_TIMEOUT` or it never fires; `0` waits the full `CREATE_TIMEOUT`. See [SSH endpoints](#ssh-endpoints). |
+| `DIRECT_PORT_TIMEOUT` | `0` (off) | Optional cost cap for a pod showing only `ssh.proxy`. Off because a measured pod was proxy-only at t+601s and got its port at t+700s, so any non-zero value can discard a pod that was about to work. When set it only fires once the container's log says sshd is up, and must stay below `CREATE_TIMEOUT`. See [SSH endpoints](#ssh-endpoints). |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |

@@ -605,6 +605,11 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
 # Container logs via REST API (v2) + error scan
 # ---------------------------------------------------------------------------
 
+# Last log-API error per pod, so a repeatedly-slow stream logs once instead
+# of once per poll. Keyed by pod, so a different pod still gets its own line.
+_last_log_api_error: dict[str, str] = {}
+
+
 def fetch_pod_logs_api(
     pod_id: str,
     tail: int = 0,
@@ -650,31 +655,130 @@ def fetch_pod_logs_api(
                 if line is not None:
                     lines.append(line.rstrip())
     except (urllib.error.HTTPError, OSError) as exc:
-        log(f"  (log API fetch failed: {exc})", indent=2)
+        # Deduped per pod: the readiness poll asks once per interval, and a
+        # pod whose log stream is slow produced ~20 identical lines per pod
+        # in one ROCm run, burying everything else.
+        message = f"log API fetch failed: {exc}"
+        if _last_log_api_error.get(pod_id) != message:
+            _last_log_api_error[pod_id] = message
+            log(f"  ({message})", indent=2)
         return None
+    _last_log_api_error.pop(pod_id, None)
     return lines
 
 
-def container_has_started(pod_id: str, deadline_sec: int = 8) -> Optional[bool]:
-    """True once the container has emitted at least one log line.
+# The container announced that its SSH server is up. `sshd` is started by
+# the entrypoint, so this is the container saying the thing we are waiting
+# for already happened — anything still unreachable after it is RunPod's
+# network path, not the image.
+_SSHD_UP_RE = re.compile(
+    # Debian/Ubuntu service script, used by container-template/start.sh
+    r"Starting OpenBSD Secure Shell server sshd"
+    # sshd -D in the foreground
+    r"|Server listening on .* port 22\b"
+    # container-template/start.sh's own last line: SSH setup is part of it
+    r"|Start script\(s\) finished, Pod is ready to use",
+    re.IGNORECASE,
+)
 
-    This is the only cheap way to tell "still pulling the image" from
-    "running but unreachable". `status` cannot do it: RunPod reports
-    `RUNNING` as soon as the pod is scheduled, while the image may still be
-    downloading for another ten minutes — a 50GB ROCm base routinely is. The
-    container does not exist during the pull, so its log stream is empty;
-    every image we test runs `container-template/start.sh` and logs within
-    seconds of actually starting.
 
-    Returns None when the log API could not be reached, so callers can tell
-    "no output" from "could not look".
+class ContainerProgress(NamedTuple):
+    """How far the container got, read from its own log stream.
+
+    `status` cannot answer either question: RunPod reports `RUNNING` from the
+    moment the pod is scheduled, while the image may still be downloading for
+    another ten minutes — a 50GB ROCm base routinely is.
+
+    `started` is False while the image is still being pulled, because the
+    container does not exist yet and its log stream is empty. `sshd_up` means
+    the entrypoint got as far as bringing SSH up, which is what separates
+    "the image never opened a door" from "RunPod never built a road to it".
+    """
+
+    started: bool
+    sshd_up: bool
+
+
+def container_progress(
+    pod_id: str, deadline_sec: int = 8
+) -> Optional[ContainerProgress]:
+    """Read the container's progress, or None if the log API was unreachable.
+
+    None is distinct from `ContainerProgress(False, False)`: the first means
+    "could not look", the second "looked, nothing there yet".
     """
     lines = fetch_pod_logs_api(
         pod_id, source="container", deadline_sec=deadline_sec
     )
     if lines is None:
         return None
-    return bool(lines)
+    return ContainerProgress(
+        started=bool(lines),
+        sshd_up=any(_SSHD_UP_RE.search(line) for line in lines),
+    )
+
+
+# The host-side system log narrates the pull and hand-off in plain text, so
+# the stage a pod reached can be read directly instead of inferred:
+#
+#   <layer> Extracting [====>]  1.2MB/13.3MB
+#   <layer> Pull complete
+#   Status: Downloaded newer image for runpod/comfyui:1.4.6-cuda12.8
+#   create container runpod/comfyui:1.4.6-cuda12.8
+#   start container for runpod/comfyui:1.4.6-cuda12.8: begin
+#
+# RunPod re-checks the image after creating the container, so these markers
+# are not strictly ordered — the furthest stage seen is what counts.
+_SYS_PULLING_RE = re.compile(
+    r"\bExtracting\b|\bDownloading\b|\bPull complete\b|\bPulling from\b",
+    re.IGNORECASE,
+)
+_SYS_PULL_DONE_RE = re.compile(
+    r"\bStatus:\s*(?:Downloaded newer image|Image is up to date)\s+for\b",
+    re.IGNORECASE,
+)
+_SYS_CONTAINER_START_RE = re.compile(
+    r"\b(?:create|start) container\b", re.IGNORECASE
+)
+
+
+class PodStage(NamedTuple):
+    """How far RunPod got with the pod, per its own system log."""
+
+    pulling: bool
+    pull_done: bool
+    container_started: bool
+
+    @property
+    def label(self) -> str:
+        if self.container_started:
+            return "container started"
+        if self.pull_done:
+            return "image pulled, container not started yet"
+        if self.pulling:
+            return "still pulling the image"
+        return "no pull or start activity logged yet"
+
+
+def pod_stage(pod_id: str, deadline_sec: int = 8) -> Optional[PodStage]:
+    """Read the pod's stage from the system log, or None if unreachable.
+
+    Preferred over guessing from the container's log, which only says
+    "something ran"; this says whether RunPod has even finished downloading.
+    `status` says `RUNNING` throughout and cannot distinguish any of it.
+    """
+    lines = fetch_pod_logs_api(
+        pod_id, source="system", deadline_sec=deadline_sec
+    )
+    if lines is None:
+        return None
+    return PodStage(
+        pulling=any(_SYS_PULLING_RE.search(line) for line in lines),
+        pull_done=any(_SYS_PULL_DONE_RE.search(line) for line in lines),
+        container_started=any(
+            _SYS_CONTAINER_START_RE.search(line) for line in lines
+        ),
+    )
 
 
 def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:

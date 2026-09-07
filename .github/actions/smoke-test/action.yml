@@ -203,20 +203,19 @@ inputs:
     default: "600"
   direct-port-timeout:
     description: |
-      Seconds to wait before giving up on a pod that only ever showed
-      `ssh.proxy` and whose proxy has already refused a probe. RunPod does
-      not always allocate a public port for `22/tcp`, and such a pod never
-      becomes reachable, so this stops billing it instead of waiting out
-      create-timeout.
+      Optional cost cap: seconds before giving up on a pod that only ever
+      showed `ssh.proxy`, instead of waiting out create-timeout.
 
-      Harness default 300s. Raise it wherever create-timeout is raised: a
-      30-50GB ROCm pull can still be in progress at 300s, and the pod looks
-      identical to an unreachable one — proxy present, sshd not up yet. The
-      outcome of giving up is UNVERIFIED, which is fatal under on-skip
-      warn/fail, so too low a value turns a slow pull into a red build.
-      Keep it below create-timeout or it never fires. `0` disables it.
+      `0` (default) disables it, and that is the recommended setting.
+      "Proxy-only by now" does not mean "never": an observed ROCm pod was
+      proxy-only at t+601s, got its public port at t+700s and then passed
+      every check, so any non-zero value risks discarding a pod that was
+      about to work. It also only fires once the container's log says sshd
+      is up — the one case where the container is provably done and the
+      missing piece is RunPod's network path. Keep it below create-timeout
+      or it never fires.
     required: false
-    default: "300"
+    default: "0"
   on-skip:
     description: |
       What to do when at least one image ends up SKIPped (the smoke
