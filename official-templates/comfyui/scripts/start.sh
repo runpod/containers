@@ -63,7 +63,7 @@ export_env_vars() {
     # PIP_EXTRA_INDEX_URL travels with PIP_CONSTRAINT: the constraint pins a
     # +cuXXX build that only the PyTorch index serves, so one without the other
     # makes every install in an SSH session unresolvable.
-    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=|^PYTHONPYCACHEPREFIX=' | while read -r line; do
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=' | while read -r line; do
         # Get variable name and value
         name=$(echo "$line" | cut -d= -f1)
         value=$(echo "$line" | cut -d= -f2-)
@@ -380,9 +380,8 @@ fi
 
 create_pip_shim
 
-# Warm up pip before Manager probes it: this compiles pip into
-# PYTHONPYCACHEPREFIX on container-local disk, so Manager's probe reads warm
-# bytecode. Log wall time — the Dockerfile raises Manager's timeout to 60s.
+# Warm up pip before Manager probes it. Log wall time — the Dockerfile raises
+# Manager's timeout to 60s.
 echo "Warming up pip (Manager timeout is 60s)..."
 time python -m pip --version
 

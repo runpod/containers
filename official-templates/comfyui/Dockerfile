@@ -147,9 +147,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 ENV FILEBROWSER_CONFIG=/workspace/runpod-slim/.filebrowser.json
-# Keep bytecode off the /workspace volume: when the volume is full, writing
-# .pyc fails silently and every start recompiles pip from scratch.
-ENV PYTHONPYCACHEPREFIX=/var/cache/comfyui-pyc
 
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
