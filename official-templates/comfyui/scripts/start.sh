@@ -170,6 +170,21 @@ upgrade_comfyui_if_needed() {
     echo "ComfyUI workspace upgraded successfully"
 }
 
+# The venv has no pip of its own, so a bare `pip` would resolve to
+# /usr/local/bin/pip and install against the base interpreter. Custom-node
+# install scripts do call it that way. Existing venvs keep their real pip.
+create_pip_shim() {
+    if [ -e "$VENV_DIR/bin/pip" ]; then
+        return
+    fi
+    if printf '#!/bin/sh\nexec "%s/bin/python" -m pip "$@"\n' "$VENV_DIR" \
+        > "$VENV_DIR/bin/pip" 2>/dev/null; then
+        chmod +x "$VENV_DIR/bin/pip"
+    else
+        echo "WARNING: could not write $VENV_DIR/bin/pip — is the volume full?"
+    fi
+}
+
 log_cuda_venv_diagnostics() {
     local expected_build local_packages status
     expected_build=$(sed -n 's/^torch==.*+\(cu[0-9][0-9]*\).*$/\1/p' \
@@ -303,11 +318,10 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     echo "============================================="
     mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
     cd "$COMFYUI_DIR"
-    python3.12 -m venv --system-site-packages "$VENV_DIR"
+    python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
     # The venv is created at runtime, so there is nothing for shellcheck to follow.
     # shellcheck source=/dev/null
     source "$VENV_DIR/bin/activate"
-    python -m ensurepip
     # Skip nodes baked into the image — their deps are in system site-packages
     CURRENT=0
     INSTALLED=0
@@ -319,12 +333,12 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
             esac
             CURRENT=$((CURRENT + 1))
             echo "[$CURRENT] $NODE_NAME"
-            pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+            python -m pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
             INSTALLED=$((INSTALLED + 1))
         fi
     done
     echo "Ensuring ComfyUI requirements are present..."
-    pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+    python -m pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
     echo "Migration complete — $INSTALLED user nodes processed (${NODE_COUNT} total, baked nodes skipped)"
     echo "Old venv backed up at ${OLD_VENV_DIR}.bak — delete it to free space:"
     echo "  rm -rf ${OLD_VENV_DIR}.bak"
@@ -343,12 +357,13 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     # Create venv with access to system packages (torch, numpy, etc. pre-installed in image)
     if [ ! -d "$VENV_DIR" ]; then
         cd "$COMFYUI_DIR"
-        python3.12 -m venv --system-site-packages "$VENV_DIR"
+        # --without-pip: pip stays in the image (local disk, bytecode compiled
+        # at build) instead of on the network volume, where importing it can
+        # exceed ComfyUI-Manager's probe timeout. --system-site-packages keeps
+        # it importable, and installs still land in this venv via sys.prefix.
+        python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
         # shellcheck source=/dev/null
         source "$VENV_DIR/bin/activate"
-
-        # Ensure pip is available in the venv (needed for ComfyUI-Manager)
-        python -m ensurepip
 
         echo "Base packages (torch, numpy, etc.) available from system site-packages"
         echo "ComfyUI ready — all dependencies pre-installed in image"
@@ -360,9 +375,12 @@ else
     echo "Using existing ComfyUI installation"
 fi
 
-# Warm up pip so ComfyUI-Manager's 5s timeout check doesn't fail on cold start.
-# Log wall time — Manager fails if `python -m pip --version` takes >5s.
-echo "Warming up pip (Manager timeout is 5s)..."
+create_pip_shim
+
+# Warm up pip before Manager probes it: this compiles pip into
+# PYTHONPYCACHEPREFIX on container-local disk, so Manager's probe reads warm
+# bytecode. Log wall time — the Dockerfile raises Manager's timeout to 60s.
+echo "Warming up pip (Manager timeout is 60s)..."
 time python -m pip --version
 
 log_cuda_venv_diagnostics

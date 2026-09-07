@@ -64,6 +64,13 @@ RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA
     curl -fSL "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
     mkdir -p ComfyUI-RunpodDirect && tar xzf runpoddirect.tar.gz --strip-components=1 -C ComfyUI-RunpodDirect && rm runpoddirect.tar.gz
 
+# Manager's get_pip_cmd() probes `python -m pip --version` with a 5s timeout and
+# treats a timeout as "pip is missing" — on a slow network volume a working pip
+# reads as absent. Patched before the git commit below so the tree stays clean.
+# The count assertion fails the build if the upstream pattern moves.
+RUN test "$(grep -c 'timeout=5)' ComfyUI-Manager/glob/manager_util.py)" = 2 && \
+    sed -i 's/timeout=5)/timeout=60)/g' ComfyUI-Manager/glob/manager_util.py
+
 # Init git repos with upstream remotes so ComfyUI-Manager can detect versions
 # and users can update via Manager at their own risk
 WORKDIR /tmp/build/ComfyUI
@@ -140,9 +147,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 ENV FILEBROWSER_CONFIG=/workspace/runpod-slim/.filebrowser.json
+# Keep bytecode off the /workspace volume: when the volume is full, writing
+# .pyc fails silently and every start recompiles pip from scratch.
+ENV PYTHONPYCACHEPREFIX=/var/cache/comfyui-pyc
 
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
+ARG TORCH_INDEX_SUFFIX=cu128
 ARG TORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
@@ -152,6 +163,9 @@ ARG FILEBROWSER_VERSION
 ARG FILEBROWSER_SHA256
 
 # Keep runtime pip installs aligned with the baked CUDA-specific PyTorch stack.
+# The pins carry a local version (+cu128), which PyPI does not serve — without
+# this index every runtime install that touches torch fails to resolve.
+ENV PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}"
 RUN printf "torch==%s\ntorchvision==%s\ntorchaudio==%s\n" \
     "$TORCH_VERSION" "$TORCHVISION_VERSION" "$TORCHAUDIO_VERSION" \
     > /opt/comfyui-runtime-constraints.txt
