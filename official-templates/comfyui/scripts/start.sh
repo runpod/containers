@@ -60,7 +60,10 @@ export_env_vars() {
     : > "$SSH_ENV_DIR"
     
     # Export to multiple locations for maximum compatibility
-    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=' | while read -r line; do
+    # PIP_EXTRA_INDEX_URL travels with PIP_CONSTRAINT: the constraint pins a
+    # +cuXXX build that only the PyTorch index serves, so one without the other
+    # makes every install in an SSH session unresolvable.
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=|^PYTHONPYCACHEPREFIX=' | while read -r line; do
         # Get variable name and value
         name=$(echo "$line" | cut -d= -f1)
         value=$(echo "$line" | cut -d= -f2-)
