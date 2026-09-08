@@ -56,6 +56,7 @@ export_env_vars() {
     # Clear files
     : > "$ENV_FILE"
     : > "$PAM_ENV_FILE"
+    : > /etc/rp_environment
     mkdir -p /root/.ssh
     : > "$SSH_ENV_DIR"
     
@@ -319,7 +320,16 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     echo "  Reinstalling deps for $NODE_COUNT custom nodes"
     echo "  This may take several minutes"
     echo "============================================="
-    mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
+    # Timestamped, and failure must not abort the boot: with a plain `.bak`
+    # target left over from an earlier migration, `mv` moves the venv *inside*
+    # it, fails under `set -e`, and the pod restarts in a loop.
+    VENV_BACKUP="${OLD_VENV_DIR}.bak.$(date +%Y%m%d%H%M%S)"
+    if mv "$OLD_VENV_DIR" "$VENV_BACKUP"; then
+        BACKED_UP=1
+    else
+        BACKED_UP=0
+        echo "WARNING: could not move $OLD_VENV_DIR aside; continuing with a fresh venv"
+    fi
     cd "$COMFYUI_DIR"
     python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
     # The venv is created at runtime, so there is nothing for shellcheck to follow.
@@ -343,8 +353,10 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     echo "Ensuring ComfyUI requirements are present..."
     python -m pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
     echo "Migration complete — $INSTALLED user nodes processed (${NODE_COUNT} total, baked nodes skipped)"
-    echo "Old venv backed up at ${OLD_VENV_DIR}.bak — delete it to free space:"
-    echo "  rm -rf ${OLD_VENV_DIR}.bak"
+    if [ "$BACKED_UP" = "1" ]; then
+        echo "Old venv backed up at $VENV_BACKUP — delete it to free space:"
+        echo "  rm -rf $VENV_BACKUP"
+    fi
 fi
 
 # Setup ComfyUI if needed
@@ -380,9 +392,15 @@ fi
 
 create_pip_shim
 
+# Interactive sessions are started by sshd, not by this script, and the PATH
+# copied into the login files above was captured before the venv existed —
+# `python` was then missing entirely and `pip` resolved to the base interpreter.
+printf 'if [ -f "%s/bin/activate" ]; then . "%s/bin/activate"; fi\n' \
+    "$VENV_DIR" "$VENV_DIR" >> /etc/rp_environment
+
 # Warm up pip before Manager probes it. Log wall time — the Dockerfile raises
-# Manager's timeout to 60s.
-echo "Warming up pip (Manager timeout is 60s)..."
+# Manager's timeout to 30s.
+echo "Warming up pip (Manager timeout is 30s)..."
 time python -m pip --version
 
 log_cuda_venv_diagnostics
