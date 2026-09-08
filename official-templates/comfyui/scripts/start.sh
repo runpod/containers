@@ -94,6 +94,12 @@ export_env_vars() {
 # Start Jupyter Lab server for remote access
 start_jupyter() {
     mkdir -p /workspace
+
+    if [ -z "${JUPYTER_PASSWORD:-}" ]; then
+        JUPYTER_PASSWORD=$(openssl rand -hex 16)
+        echo "JUPYTER_PASSWORD was not set; generated one for this pod: ${JUPYTER_PASSWORD}"
+    fi
+
     echo "Starting Jupyter Lab on port 8888..."
     nohup jupyter lab \
         --allow-root \
@@ -104,7 +110,7 @@ start_jupyter() {
         --FileContentsManager.preferred_dir=/workspace \
         --ServerApp.root_dir=/workspace \
         --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
-        --IdentityProvider.token="${JUPYTER_PASSWORD:-}" \
+        --IdentityProvider.token="${JUPYTER_PASSWORD}" \
         --ServerApp.allow_origin=* &> /jupyter.log &
     echo "Jupyter Lab started"
 }
