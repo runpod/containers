@@ -12,7 +12,7 @@ variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
 }
 variable "RUNPODDIRECT_SHA" {
-  default = "809065c9d2f3"
+  default = "9e32b1a09577"
 }
 variable "FILEBROWSER_VERSION" {
   default = "v2.59.0"
