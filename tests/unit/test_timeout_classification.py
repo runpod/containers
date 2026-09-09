@@ -68,8 +68,12 @@ class StartupFailureDetection(unittest.TestCase):
 
 
 class Classification(unittest.TestCase):
-    def _classify(self, state, sys_errors=(), container_lines=()):
-        diagnostics = PodDiagnostics(list(sys_errors), list(container_lines))
+    def _classify(self, state, sys_errors=(), container_lines=(), sys_lines=None):
+        diagnostics = PodDiagnostics(
+            list(sys_errors),
+            list(container_lines),
+            list(sys_errors) if sys_lines is None else list(sys_lines),
+        )
         with mock.patch.object(runner, "dump_pod_logs", return_value=diagnostics), \
                 mock.patch.object(runner, "log"):
             return runner._classify_non_running(state, "detail", "pod1", IMAGE)
@@ -106,6 +110,57 @@ class Classification(unittest.TestCase):
     def test_terminal_state_is_still_a_fail(self):
         status, _ = self._classify("TERMINAL")
         self.assertEqual(status, "FAIL")
+
+
+class StartupFailureVisibleOnlyInTheSystemLog(unittest.TestCase):
+    """A container that could not be created never wrote a line of its own.
+
+    Its only trace is RunPod's system log, so scanning the container stream
+    alone reported these as STUCK — which retries, ends as SKIP, and passes
+    under `on-skip: warn`. A broken entrypoint could ship.
+    """
+
+    def _classify(self, sys_lines, container_lines=()):
+        diagnostics = PodDiagnostics(
+            checks.filter_sys_errors(list(sys_lines)),
+            list(container_lines),
+            list(sys_lines),
+        )
+        with mock.patch.object(runner, "dump_pod_logs", return_value=diagnostics), \
+                mock.patch.object(runner, "log"):
+            return runner._classify_non_running(
+                "TIMEOUT_INFRA", "detail", "pod1", IMAGE
+            )
+
+    def test_oci_error_with_no_container_output(self):
+        status, note = self._classify(
+            ["OCI runtime create failed: container_linux.go:380"]
+        )
+        self.assertEqual(status, "FAIL")
+        self.assertIn("failed to start", note)
+
+    def test_markers_the_display_filter_drops_are_still_caught(self):
+        """`SYS_LOG_ERROR_PATTERN` only matches error/fail/crash wording, so
+        these never reach `sys_errors` — classifying from that subset would
+        miss them even once both streams are consulted."""
+        for line in (
+            'exec: "/start.sh": no such file or directory',
+            "permission denied while trying to run /start.sh entrypoint",
+            "Out of memory: Killed process 1234 (python3)",
+        ):
+            self.assertEqual(checks.filter_sys_errors([line]), [], line)
+            status, _ = self._classify([line])
+            self.assertEqual(status, "FAIL", line)
+
+    def test_ordinary_system_log_still_retries(self):
+        """The guard must not turn every timeout into a FAIL."""
+        status, _ = self._classify([
+            "be7707169180 Extracting [>       ] 163.8kB/13.31MB",
+            "Status: Downloaded newer image for runpod/pytorch:x",
+            "create container runpod/pytorch:x",
+            "start container for runpod/pytorch:x: begin",
+        ])
+        self.assertEqual(status, "STUCK")
 
 
 # Verbatim from the container log of a real MI300X pod that RunPod never

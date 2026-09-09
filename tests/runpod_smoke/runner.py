@@ -236,7 +236,11 @@ def _classify_non_running(
             indent=2,
         )
         return "FAIL", f"container init rejected the image: {blocker}"
-    startup = container_startup_failure(diagnostics.container_lines)
+    # Both streams: a container that could not be created never wrote a
+    # line of its own, so its only trace is in RunPod's system log.
+    startup = container_startup_failure(
+        diagnostics.sys_lines + diagnostics.container_lines
+    )
     if startup:
         log(
             f"{state.lower()} -- container failed to start ({startup}) "

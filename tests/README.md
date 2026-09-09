@@ -184,6 +184,13 @@ first:
 | container started, no sshd line | ambiguous → `UNVERIFIED` |
 | neither stream readable | could not look → `UNVERIFIED` |
 
+Both streams are scanned for a container-start failure before any of this,
+and the **unfiltered** system log is what gets scanned. `SYS_LOG_ERROR_PATTERN`
+narrows that stream for display only — it matches error/fail/crash wording, so
+markers like `exec: "/start.sh": no such file or directory` never reach
+`sys_errors`. Classifying from the filtered subset silently downgraded a
+broken entrypoint to a capacity gap.
+
 The system log is checked first because it is authoritative on the one
 question the container's log cannot answer — whether RunPod has finished
 downloading the image at all. It narrates the hand-off in plain text:
@@ -221,7 +228,7 @@ The granular per-pod outcomes below collapse into them:
 | `FAIL` | `FAIL` | Pod was created and the container itself proved broken (CUDA check failed, JupyterLab didn't start, crashed during dwell, etc.). Moving to another GPU won't help — the image is the problem. | fix the image |
 | `FAIL` | `CREATE_FAIL` | Pod-create returned a non-capacity, non-transient orchestrator error (bad image tag, registry auth, malformed request, missing CUDA version). | fix the manifest / image ref / auth |
 | `FAIL` | `FAIL` (container init) | `nvidia-container-cli` rejected the container in the prestart hook — typically the image's `NVIDIA_REQUIRE_CUDA` floor is above the host driver, e.g. a `cu1290` image pinned to CUDA 12.4. Deterministic, so no other instance type is tried. | pin a CUDA version the image supports, or fix the image's requirement |
-| `FAIL` | `FAIL` (container start) | The container never started: unexecutable or missing entrypoint, wrong architecture, an OCI runtime refusal, or an OOM kill before sshd. Read from the container log **before** a readiness timeout is attributed to the host, because from the outside it is indistinguishable from a slow one. | fix the image |
+| `FAIL` | `FAIL` (container start) | The container never started: unexecutable or missing entrypoint, wrong architecture, an OCI runtime refusal, or an OOM kill before sshd. Read from **both** log streams before a readiness timeout is attributed to the host — a container that was never created has no stdout of its own, so an OCI refusal appears only in RunPod's system log. From the outside it is indistinguishable from a slow host. | fix the image |
 | `UNVERIFIED` | any `UNVERIFIED` | The container was writing to its log but **never announced sshd**, and nothing answered within `CREATE_TIMEOUT` — with no init rejection or start failure. A wedged host and an entrypoint that never got as far as starting SSH cannot be told apart from here, so neither is claimed. Also used when the log API itself was unreachable, i.e. we could not look. | re-run; if it repeats on every host, suspect the image's `start.sh` |
 | `SKIP` | all `UNAVAILABLE` | RunPod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
 | `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but the evidence pointed away from the image: no SSH endpoint was ever offered, the container had not emitted a single log line (still pulling), or **the container's own log said sshd was up and nothing reached it anyway** — RunPod never provided a working path. | retry later — usually transient; if a large image times out every run, raise `create-timeout` |

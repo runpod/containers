@@ -781,13 +781,25 @@ def pod_stage(pod_id: str, deadline_sec: int = 8) -> Optional[PodStage]:
     )
 
 
+def filter_sys_errors(lines: list[str], max_lines: int = 20) -> list[str]:
+    """Keep the lines matching `SYS_LOG_ERROR_PATTERN`, for display.
+
+    Deliberately narrow — it exists to shorten a long system log down to
+    something worth printing. It is NOT a startup-failure detector: the
+    pattern only matches error/fail/crash wording, so lines like
+    `exec: "/start.sh": no such file or directory` fall through it. Anything
+    classifying a failure must read the unfiltered stream.
+    """
+    pattern = re.compile(config.SYS_LOG_ERROR_PATTERN, re.IGNORECASE)
+    return [line for line in lines if pattern.search(line)][:max_lines]
+
+
 def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
     """Return error-marker lines from the host-side REST system-log stream."""
     lines = fetch_pod_logs_api(pod_id, source="system")
     if lines is None:
         return None
-    pattern = re.compile(config.SYS_LOG_ERROR_PATTERN, re.IGNORECASE)
-    return [line for line in lines if pattern.search(line)][:max_lines]
+    return filter_sys_errors(lines, max_lines)
 
 
 # `nvidia-container-cli` aborts the prestart hook when the image's
@@ -951,24 +963,34 @@ def fetch_logs_via_ssh(
 class PodDiagnostics(NamedTuple):
     """What the log dump found, for a caller that has to classify a failure.
 
-    Both streams are returned so the verdict is reached without fetching
-    either a second time: `sys_errors` carries the platform's own markers
-    (the NVIDIA prestart hook lives here) and `container_lines` the image's
-    stdout (an entrypoint that cannot execute lives here).
+    Every stream is returned so the verdict is reached without fetching any
+    of them a second time.
+
+    `sys_lines` is the platform's own log, unfiltered — a container that
+    could not be started is reported here and nowhere else, since a
+    container that never ran has no stdout of its own. `sys_errors` is the
+    same stream narrowed for display; do not classify from it, because its
+    pattern only matches error/fail/crash wording and misses markers like
+    `exec: "/start.sh": no such file or directory`.
+
+    `container_lines` is the image's own stdout, where an entrypoint that
+    started and then died reports itself.
     """
 
     sys_errors: list[str]
     container_lines: list[str]
+    sys_lines: list[str] = []
 
 
 def dump_pod_logs(pod_id: str, image: str) -> PodDiagnostics:
     """Print metadata, API container logs, system errors, and GPU SMI."""
     sys_errors: list[str] = []
     api_lines: list[str] = []
+    sys_lines: list[str] = []
     status, data = api.request("GET", f"/pods/{pod_id}", timeout=30)
     if not (200 <= status < 300) or not isinstance(data, dict):
         api.log_error("(could not fetch pod state)", status, data, indent=2)
-        return PodDiagnostics(sys_errors, api_lines)
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
     ssh = data.get("ssh") or {}
     direct = ssh.get("direct") or {}
     proxy = ssh.get("proxy") or {}
@@ -1004,7 +1026,10 @@ def dump_pod_logs(pod_id: str, image: str) -> PodDiagnostics:
         for line in api_lines:
             log(f"  {line}", indent=2)
 
-    sys_errors = system_log_errors(pod_id) or []
+    # Fetched once and kept in both shapes: the unfiltered stream is what
+    # the failure classifier needs, the filtered one is what is worth printing.
+    sys_lines = fetch_pod_logs_api(pod_id, source="system") or []
+    sys_errors = filter_sys_errors(sys_lines)
     if sys_errors:
         log(
             f"--- system-log error markers via API ({len(sys_errors)}) ---",
@@ -1016,18 +1041,18 @@ def dump_pod_logs(pod_id: str, image: str) -> PodDiagnostics:
     if not endpoint:
         log("  (no SSH endpoint yet — skipping GPU SMI fetch)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return PodDiagnostics(sys_errors, api_lines)
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
 
     logs = fetch_logs_via_ssh(endpoint, image)
     if logs is None:
-        return PodDiagnostics(sys_errors, api_lines)
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
     log(f"--- GPU SMI via SSH ({endpoint.label}) ---", indent=2)
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:
             log(f"    {line}", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return PodDiagnostics(sys_errors, api_lines)
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
     for line in logs.splitlines():
         log(f"  {line}", indent=2)
-    return PodDiagnostics(sys_errors, api_lines)
+    return PodDiagnostics(sys_errors, api_lines, sys_lines)
