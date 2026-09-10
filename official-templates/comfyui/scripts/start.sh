@@ -56,11 +56,15 @@ export_env_vars() {
     # Clear files
     : > "$ENV_FILE"
     : > "$PAM_ENV_FILE"
+    : > /etc/rp_environment
     mkdir -p /root/.ssh
     : > "$SSH_ENV_DIR"
     
     # Export to multiple locations for maximum compatibility
-    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=' | while read -r line; do
+    # PIP_EXTRA_INDEX_URL travels with PIP_CONSTRAINT: the constraint pins a
+    # +cuXXX build that only the PyTorch index serves, so one without the other
+    # makes every install in an SSH session unresolvable.
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=' | while read -r line; do
         # Get variable name and value
         name=$(echo "$line" | cut -d= -f1)
         value=$(echo "$line" | cut -d= -f2-)
@@ -90,6 +94,12 @@ export_env_vars() {
 # Start Jupyter Lab server for remote access
 start_jupyter() {
     mkdir -p /workspace
+
+    if [ -z "${JUPYTER_PASSWORD:-}" ]; then
+        JUPYTER_PASSWORD=$(openssl rand -hex 16)
+        echo "JUPYTER_PASSWORD was not set; generated one for this pod: ${JUPYTER_PASSWORD}"
+    fi
+
     echo "Starting Jupyter Lab on port 8888..."
     nohup jupyter lab \
         --allow-root \
@@ -100,7 +110,7 @@ start_jupyter() {
         --FileContentsManager.preferred_dir=/workspace \
         --ServerApp.root_dir=/workspace \
         --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
-        --IdentityProvider.token="${JUPYTER_PASSWORD:-}" \
+        --IdentityProvider.token="${JUPYTER_PASSWORD}" \
         --ServerApp.allow_origin=* &> /jupyter.log &
     echo "Jupyter Lab started"
 }
@@ -168,6 +178,21 @@ upgrade_comfyui_if_needed() {
     cp "$baked_manifest" "${installed_manifest}.tmp"
     mv "${installed_manifest}.tmp" "$installed_manifest"
     echo "ComfyUI workspace upgraded successfully"
+}
+
+# The venv has no pip of its own, so a bare `pip` would resolve to
+# /usr/local/bin/pip and install against the base interpreter. Custom-node
+# install scripts do call it that way. Existing venvs keep their real pip.
+create_pip_shim() {
+    if [ -e "$VENV_DIR/bin/pip" ]; then
+        return
+    fi
+    if printf '#!/bin/sh\nexec "%s/bin/python" -m pip "$@"\n' "$VENV_DIR" \
+        > "$VENV_DIR/bin/pip" 2>/dev/null; then
+        chmod +x "$VENV_DIR/bin/pip"
+    else
+        echo "WARNING: could not write $VENV_DIR/bin/pip — is the volume full?"
+    fi
 }
 
 log_cuda_venv_diagnostics() {
@@ -301,13 +326,21 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     echo "  Reinstalling deps for $NODE_COUNT custom nodes"
     echo "  This may take several minutes"
     echo "============================================="
-    mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
+    # Timestamped, and failure must not abort the boot: with a plain `.bak`
+    # target left over from an earlier migration, `mv` moves the venv *inside*
+    # it, fails under `set -e`, and the pod restarts in a loop.
+    VENV_BACKUP="${OLD_VENV_DIR}.bak.$(date +%Y%m%d%H%M%S)"
+    if mv "$OLD_VENV_DIR" "$VENV_BACKUP"; then
+        BACKED_UP=1
+    else
+        BACKED_UP=0
+        echo "WARNING: could not move $OLD_VENV_DIR aside; continuing with a fresh venv"
+    fi
     cd "$COMFYUI_DIR"
-    python3.12 -m venv --system-site-packages "$VENV_DIR"
+    python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
     # The venv is created at runtime, so there is nothing for shellcheck to follow.
     # shellcheck source=/dev/null
     source "$VENV_DIR/bin/activate"
-    python -m ensurepip
     # Skip nodes baked into the image — their deps are in system site-packages
     CURRENT=0
     INSTALLED=0
@@ -319,15 +352,17 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
             esac
             CURRENT=$((CURRENT + 1))
             echo "[$CURRENT] $NODE_NAME"
-            pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+            python -m pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
             INSTALLED=$((INSTALLED + 1))
         fi
     done
     echo "Ensuring ComfyUI requirements are present..."
-    pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+    python -m pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
     echo "Migration complete — $INSTALLED user nodes processed (${NODE_COUNT} total, baked nodes skipped)"
-    echo "Old venv backed up at ${OLD_VENV_DIR}.bak — delete it to free space:"
-    echo "  rm -rf ${OLD_VENV_DIR}.bak"
+    if [ "$BACKED_UP" = "1" ]; then
+        echo "Old venv backed up at $VENV_BACKUP — delete it to free space:"
+        echo "  rm -rf $VENV_BACKUP"
+    fi
 fi
 
 # Setup ComfyUI if needed
@@ -343,12 +378,13 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     # Create venv with access to system packages (torch, numpy, etc. pre-installed in image)
     if [ ! -d "$VENV_DIR" ]; then
         cd "$COMFYUI_DIR"
-        python3.12 -m venv --system-site-packages "$VENV_DIR"
+        # --without-pip: pip stays in the image (local disk, bytecode compiled
+        # at build) instead of on the network volume, where importing it can
+        # exceed ComfyUI-Manager's probe timeout. --system-site-packages keeps
+        # it importable, and installs still land in this venv via sys.prefix.
+        python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
         # shellcheck source=/dev/null
         source "$VENV_DIR/bin/activate"
-
-        # Ensure pip is available in the venv (needed for ComfyUI-Manager)
-        python -m ensurepip
 
         echo "Base packages (torch, numpy, etc.) available from system site-packages"
         echo "ComfyUI ready — all dependencies pre-installed in image"
@@ -360,9 +396,17 @@ else
     echo "Using existing ComfyUI installation"
 fi
 
-# Warm up pip so ComfyUI-Manager's 5s timeout check doesn't fail on cold start.
-# Log wall time — Manager fails if `python -m pip --version` takes >5s.
-echo "Warming up pip (Manager timeout is 5s)..."
+create_pip_shim
+
+# Interactive sessions are started by sshd, not by this script, and the PATH
+# copied into the login files above was captured before the venv existed —
+# `python` was then missing entirely and `pip` resolved to the base interpreter.
+printf 'if [ -f "%s/bin/activate" ]; then . "%s/bin/activate"; fi\n' \
+    "$VENV_DIR" "$VENV_DIR" >> /etc/rp_environment
+
+# Warm up pip before Manager probes it. Log wall time — the Dockerfile raises
+# Manager's timeout to 30s.
+echo "Warming up pip (Manager timeout is 30s)..."
 time python -m pip --version
 
 log_cuda_venv_diagnostics
