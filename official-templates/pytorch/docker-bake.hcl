@@ -87,6 +87,15 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.0.0", torch = "2.12.0", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.12.1", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.13.0", whl_src = "130" },
+
+    { cuda_version = "13.2.0", torch = "2.6.0", whl_src = "126" },
+    { cuda_version = "13.2.0", torch = "2.7.1", whl_src = "128" },
+    { cuda_version = "13.2.0", torch = "2.8.0", whl_src = "129" },
+    { cuda_version = "13.2.0", torch = "2.9.0", whl_src = "130" },
+    { cuda_version = "13.2.0", torch = "2.9.1", whl_src = "130" },
+    { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132" },
+    { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132" },
+    { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132" },
   ]
 }
 
@@ -147,6 +156,14 @@ group "cu1300" {
     for build in COMPATIBLE_BUILDS:
       "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
       if build.cuda_code == "1300"
+  ]
+}
+
+group "cu1320" {
+  targets = [
+    for build in COMPATIBLE_BUILDS:
+      "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
+      if build.cuda_code == "1320"
   ]
 }
 

@@ -1,6 +1,6 @@
 # === Version Pins (single source of truth) ===
 variable "COMFYUI_VERSION" {
-  default = "v0.30.0"
+  default = "v0.35.0"
 }
 variable "MANAGER_SHA" {
   default = "c352b16bb186"
@@ -24,18 +24,16 @@ variable "FILEBROWSER_SHA256" {
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8", 
-      // torch_index_suffix = "cu128", 
-      // cuda_version_dash = "12-8", 
-      // torch_version = "2.10.0+cu128", 
-      // torchvision_version = "0.25.0+cu128", 
-      // torchaudio_version = "2.10.0+cu128",
       torch_version = "2.10.0", 
       torchvision_version = "0.25.0", 
       torchaudio_version = "2.10.0"  
     },
-    { cuda_version = "13.0", 
-      // torch_index_suffix = "cu130",
-      // cuda_version_dash = "13-0", 
+    { cuda_version = "13.0",
+      torch_version = "2.10.0", 
+      torchvision_version = "0.25.0", 
+      torchaudio_version = "2.10.0" 
+    },
+    { cuda_version = "13.2",
       torch_version = "2.10.0", 
       torchvision_version = "0.25.0", 
       torchaudio_version = "2.10.0" 
@@ -81,6 +79,15 @@ group "cuda13" {
     for combination in COMPATIBLE_BUILDS:
       "cuda${combination.cuda_version_code}"
       if combination.cuda_version == "13.0"
+  ]
+}
+
+group "cuda132" {
+
+  targets = [
+    for combination in COMPATIBLE_BUILDS:
+      "cuda${combination.cuda_version_code}"
+      if combination.cuda_version == "13.2"
   ]
 }
 
