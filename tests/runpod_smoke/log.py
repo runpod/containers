@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
+from typing import Optional
 
 
 _log_lock = threading.Lock()
@@ -32,9 +33,17 @@ def ensure_worker_tag() -> None:
         _thread_local.tag = f"W{_next_worker_id}"
 
 
+def set_worker_context(ctx: Optional[str]) -> None:
+    """Attach/clear the instance currently being tested by this thread."""
+    _thread_local.ctx = ctx
+
+
 def log(msg: str, indent: int = 0) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     tag = getattr(_thread_local, "tag", "")
+    ctx = getattr(_thread_local, "ctx", None)
+    if tag and ctx:
+        tag = f"{tag}-{ctx}"
     tag_part = f"[{tag}] " if tag else ""
     with _log_lock:
         print(f"[{ts}] {tag_part}{'  ' * indent}{msg}", flush=True)

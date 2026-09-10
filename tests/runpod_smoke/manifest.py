@@ -34,7 +34,7 @@ def _normalize_bool(value: object) -> Optional[bool]:
 
 def _normalize_cuda_version(value: object) -> Optional[str]:
     """Coerce a manifest `min_cuda_version` value to the 'X.Y' string format
-    that `runpodctl --min-cuda-version` expects.
+    that `gpu.minCudaVersion` expects.
 
     Accepts ints (`13` → '13.0'), floats (`12.8` → '12.8', `13.0` → '13.0'),
     and strings (with or without surrounding quotes). Returns None for

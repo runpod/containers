@@ -1,0 +1,8 @@
+[
+  {
+    "filename": "DreamShaper_8_pruned.safetensors",
+    "directory": "checkpoints",
+    "url": "https://huggingface.co/Lykon/DreamShaper/resolve/main/DreamShaper_8_pruned.safetensors",
+    "sha256": "879db523c30d3b9017143d56705015e15a2cb5628762c11d086fed9538abd7fd"
+  }
+]
