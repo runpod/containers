@@ -1,7 +1,7 @@
 # Example manifest for local ComfyUI smoke tests.
 #
-# From the repository root (with runpodctl authenticated and an SSH key
-# registered on the RunPod account):
+# From the repository root (with RUNPOD_API_KEY set and an SSH key
+# registered on the RunPod account — see ../README.md):
 #
 #   python3 tests/test_images.py tests/comfyui/images.example.yaml comfyui
 #
@@ -10,7 +10,9 @@
 # PNG returned through the public proxy. It implies `test_comfyui`.
 comfyui:
     images:
-    - runpod/comfyui:1.1.1-comfyui0.30.0-cuda13.0
+    # Swap for the tag you want to test. Shape is
+    # <version>-comfyui<comfyui_version>-cuda<12.8|13.0>, per docker-bake.hcl.
+    - runpod/comfyui:1.2.0-rc.163-comfyuiv0.30.0-cuda13.0
     instances:
     - "RTX A5000"
     - "RTX 4090"
