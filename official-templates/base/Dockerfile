@@ -12,13 +12,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set the default workspace directory
 ENV RP_WORKSPACE=/workspace
 
-# Override the default huggingface cache directory.
-ENV HF_HOME="${RP_WORKSPACE}/.cache/huggingface/"
-
-# Shared python package cache
-ENV VIRTUALENV_OVERRIDE_APP_DATA="${RP_WORKSPACE}/.cache/virtualenv/"
-ENV PIP_CACHE_DIR="${RP_WORKSPACE}/.cache/pip/"
-ENV UV_CACHE_DIR="${RP_WORKSPACE}/.cache/uv/"
+# This is respected by at least the following tools:
+# * pip (https://pip.pypa.io/en/stable/topics/caching/#where-is-the-cache-stored)
+# * uv (https://docs.astral.sh/uv/concepts/cache/#cache-directory)
+# * Torch Hub (https://docs.pytorch.org/docs/main/hub.html#where-are-my-downloaded-models-saved)
+# * huggingface_hub (https://huggingface.co/docs/huggingface_hub/main/en/package_reference/environment_variables#xdgcachehome)
+# * virtualenv (https://github.com/pypa/virtualenv/blob/c8c4285104995d63859991f115534828add66457/src/virtualenv/app_data/__init__.py#L33, via platformdirs: https://platformdirs.readthedocs.io/en/latest/explanation.html#linux-unix)
+ENV XDG_CACHE_HOME="${RP_WORKSPACE}"/.cache
 
 # Faster transfer of models from the hub to the container
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
