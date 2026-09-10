@@ -66,6 +66,7 @@ jobs:
       base: ${{ steps.f.outputs.base_any_changed }}
       nvidia: ${{ steps.f.outputs.nvidia_any_changed }}
       rocm: ${{ steps.f.outputs.rocm_any_changed }}
+      comfyui: ${{ steps.f.outputs.comfyui_any_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -94,6 +95,9 @@ jobs:
               - 'official-templates/base/**'
               - 'official-templates/shared/**'
               - 'container-template/**'
+            comfyui:
+              - 'official-templates/comfyui/**'
+              - 'official-templates/shared/**'
 
   base:
     needs: [version, changes]
@@ -132,17 +136,30 @@ jobs:
       version: ${{ needs.version.outputs.version }}
       suffix: ${{ needs.version.outputs.suffix }}
 
+  comfyui:
+    needs: [version, changes]
+    if: >-
+      !cancelled() && needs.version.outputs.should-build == 'true'
+      && (github.event_name != 'pull_request' || needs.changes.outputs.comfyui == 'true')
+    uses: ./.github/workflows/comfyui.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
+      suffix: ${{ needs.version.outputs.suffix }}
+      run-functional-tests: true
+
   # Tag + GitHub Release ONLY on a releasable push to main, and ONLY after every
   # family built and smoke-tested successfully — so we never publish a release
   # that's missing an image family or built on a broken one.
   release:
-    needs: [version, base, nvidia, rocm]
+    needs: [version, base, nvidia, rocm, comfyui]
     if: >-
       github.event_name == 'push'
       && needs.version.outputs.should-release == 'true'
       && needs.base.result == 'success'
       && needs.nvidia.result == 'success'
       && needs.rocm.result == 'success'
+      && needs.comfyui.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write

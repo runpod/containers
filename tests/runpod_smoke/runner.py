@@ -3,12 +3,12 @@
 Two functions, both called from `test_images.py:main`:
 
   * test_pair(image, instance, group) — one create-attempt against one GPU
-    type. Owns retry-on-transient and the FAIL/UNAVAILABLE/STUCK/CREATE_FAIL
-    classification of a single pod's lifecycle.
+    type. Owns retry-on-transient and the FAIL / UNAVAILABLE / STUCK /
+    UNVERIFIED / CREATE_FAIL classification of a single pod's lifecycle.
 
   * test_image(image, instances, group) — iterate test_pair across all
     candidate instance types until something settles. Returns the final
-    PASS / FAIL / SKIP outcome plus the instance it landed on.
+    PASS / FAIL / UNVERIFIED / SKIP outcome plus the instance it landed on.
 """
 
 from __future__ import annotations
@@ -19,18 +19,24 @@ from typing import Optional
 
 from . import config
 from .checks import (
+    SshEndpoint,
+    container_startup_failure,
     cuda_check_command,
     dump_pod_logs,
+    fetch_pod_cuda_version,
+    host_incompatibility,
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
+    run_port_check,
+    run_port_proxy_check,
+    scan_pod_logs_for_errors,
     ssh_probe,
 )
+from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
-from .log import log
+from .log import log, set_worker_context
 from .pod import (
-    TRANSIENT_RE,
-    UNAVAILABLE_RE,
     cleanup_pod,
     create_pod,
     pod_state,
@@ -41,12 +47,33 @@ from .pod import (
 
 _Outcome = tuple[str, str]
 
+# test_pair records the host's CUDA version here instead of returning it, so
+# the ~15 outcome returns in that function keep their 2-tuple shape.
+# test_image reads it on the same thread right after test_pair returns.
+# Stored bare ('13.0') — the 'CUDA ' prefix is added at render time so the
+# JSON report can carry the raw value.
+_thread_local = threading.local()
 
-def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, str]:
+
+def _set_host_cuda(version: str) -> None:
+    _thread_local.host_cuda = version
+
+
+def _take_host_cuda() -> str:
+    """Read and clear the version left by the last test_pair on this thread."""
+    version = getattr(_thread_local, "host_cuda", "") or ""
+    _thread_local.host_cuda = ""
+    return version
+
+
+def _log_attempt_header(
+    image: str, instance: str, group: str, cuda_pin: str = "",
+    cloud: str = "",
+) -> tuple[bool, str]:
     """Log the per-attempt header line and resolve the gpu_id.
 
     Returns (is_cpu, gpu_id). CPU attempts get an empty gpu_id since
-    runpodctl doesn't accept --gpu-id together with --compute-type CPU.
+    CPU pods carry a `cpu` block instead of a `gpu` one, so no gpu_id.
     Per-candidate (cloud_type, data_center_ids) is looked up separately
     by the caller via `config.cpu_candidate_for(instance)`."""
     if config.is_cpu_instance(instance):
@@ -63,10 +90,16 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
         )
         return True, ""
     gpu_id = resolve_gpu_id(instance)
-    cuda = detect_cuda_version(image) or config.GROUP_MIN_CUDA.get(group)
-    cuda_note = f", min-cuda={cuda}" if cuda else ""
+    if cuda_pin:
+        cuda_note = f", cuda-pinned={cuda_pin}"
+    else:
+        # Same precedence as create_pod: explicit request wins, tag is fallback.
+        cuda = config.GROUP_MIN_CUDA.get(group) or detect_cuda_version(image)
+        cuda_note = f", min-cuda={cuda}" if cuda else ""
+    cloud_note = f", cloud={cloud}" if cloud and len(config.CLOUD_TYPES) > 1 else ""
     log(
-        f"attempt: instance='{instance}' (--gpu-id '{gpu_id}'){cuda_note}",
+        f"attempt: instance='{instance}' (--gpu-id '{gpu_id}')"
+        f"{cuda_note}{cloud_note}",
         indent=1,
     )
     return False, gpu_id
@@ -74,6 +107,7 @@ def _log_attempt_header(image: str, instance: str, group: str) -> tuple[bool, st
 
 def _create_pod_with_retries(
     image: str, instance: str, gpu_id: str, is_cpu: bool, group: str,
+    cuda_pin: str = "", cloud: str = "",
 ) -> tuple[Optional[str], str, str]:
     """Drive `create_pod` through the transient-error retry budget.
 
@@ -88,13 +122,15 @@ def _create_pod_with_retries(
     We back off and retry a few times before falling through to CREATE_FAIL.
     """
     # CPU candidate (cloud_type, data_center_ids) is encoded in the
-    # instance label (see config.CPU_CANDIDATES). For GPU instances both
-    # overrides are absent → pod.create_pod falls back to the global
-    # config.CLOUD_TYPE and skips --data-center-ids.
+    # instance label (see config.CPU_CANDIDATES). GPU jobs carry the tier
+    # they were planned against, since a multi-tier sweep runs both from one
+    # pool and the global config.CLOUD_TYPE no longer identifies either.
     cpu_candidate = (
         config.cpu_candidate_for(instance) if is_cpu else None
     )
-    cloud_override = cpu_candidate.cloud_type if cpu_candidate else None
+    cloud_override = (
+        cpu_candidate.cloud_type if cpu_candidate else (cloud or None)
+    )
     dc_ids = cpu_candidate.data_center_ids if cpu_candidate else ""
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
@@ -105,20 +141,25 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
-        pod_id, raw = create_pod(
+        test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
+        if config.GROUP_TEST_COMFYUI.get(group, False):
+            test_ports.append(config.COMFYUI_PORT)
+        pod_id, kind, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
             test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
+            test_ports=test_ports,
             cloud_type=cloud_override,
             data_center_ids=dc_ids,
+            allowed_cuda_versions=[cuda_pin] if cuda_pin else None,
         )
         if pod_id:
             return pod_id, "", ""
-        if UNAVAILABLE_RE.search(raw):
+        if kind == "UNAVAILABLE":
             log(f"instance unavailable, will try next ({raw[:120]})", indent=2)
             return None, "UNAVAILABLE", ""
-        if TRANSIENT_RE.search(raw) and attempt < config.CREATE_RETRIES:
+        if kind == "TRANSIENT" and attempt < config.CREATE_RETRIES:
             backoff = config.CREATE_RETRY_BACKOFF * attempt
             log(
                 f"transient pod-create error ({raw[:120]}), "
@@ -143,42 +184,98 @@ def _create_pod_with_retries(
     )
 
 
+def _over_candidates(count: int) -> str:
+    """Suffix naming how many candidates were tried, or '' for exactly one.
+
+    With a CUDA axis or check_all_gpu every job carries a single candidate,
+    and "no capacity on any of 1 candidate instance type(s)" reads like a
+    bug. Saying nothing is right there: the row already names the GPU.
+    """
+    if count <= 1:
+        return ""
+    return f" on any of {count} candidate instance types"
+
+
 def _classify_non_running(
     state: str, detail: str, pod_id: str, image: str,
 ) -> _Outcome:
-    """Map a non-RUNNING terminal state to STUCK or FAIL.
+    """Map a non-RUNNING terminal state to FAIL, STUCK or UNVERIFIED.
 
-    TIMEOUT with no SSH endpoint ever assigned is almost always a
-    scheduler/host issue, not the image: a different GPU type lands on
-    a different host pool and usually works. Anything else (EXITED,
-    TERMINATED, FAILED, RUNNING-then-died) is a container problem — the
-    image is broken, another GPU won't help."""
-    st = pod_state(pod_id)
-    ever_had_ssh = bool(st.get("ssh_ip") and st.get("ssh_port"))
-    if state == "TIMEOUT" and not ever_had_ssh:
+    The log dump comes first, because two deterministic image faults are
+    invisible from the outside — they produce no SSH, no RUNNING and no
+    terminal status, exactly like a slow host — and neither is fixed by
+    trying another GPU:
+
+      * the container-init rejection from the NVIDIA prestart hook, and
+      * a container that could not start at all (unexecutable entrypoint,
+        wrong architecture, OOM before sshd).
+
+    Only once both are ruled out does the timeout get split by how far the
+    pod actually got:
+
+      * the pod never got far enough to be judged -> STUCK. Either no SSH
+        endpoint was ever offered, or the container had not emitted a single
+        log line, meaning the image was still being pulled. `status` is no
+        help in telling that apart: RunPod reports RUNNING from scheduling
+        time onward, long before the pull finishes.
+      * the container was demonstrably running and still nothing answered
+        -> UNVERIFIED. A wedged host and an image whose sshd never starts
+        are indistinguishable from here, so this is reported as "could not
+        tell" rather than guessed either way. Collapsing it into STUCK is
+        what let a broken image read as a capacity gap and keep CI green.
+
+    Anything else (EXITED, TERMINATED, FAILED, RUNNING-then-died) is a
+    container problem — the image is broken and another GPU won't help."""
+    diagnostics = dump_pod_logs(pod_id, image)
+    blocker = host_incompatibility(diagnostics.sys_errors)
+    if blocker:
         log(
-            f"{state.lower()} -- {detail} -- STUCK (no SSH endpoint "
-            "was ever assigned; trying next instance type)",
+            f"{state.lower()} -- container init rejected the image "
+            f"({blocker}) -- FAIL (deterministic; not retrying other "
+            "instance types)",
             indent=2,
         )
-        dump_pod_logs(pod_id, image)
+        return "FAIL", f"container init rejected the image: {blocker}"
+    # Both streams: a container that could not be created never wrote a
+    # line of its own, so its only trace is in RunPod's system log.
+    startup = container_startup_failure(
+        diagnostics.sys_lines + diagnostics.container_lines
+    )
+    if startup:
+        log(
+            f"{state.lower()} -- container failed to start ({startup}) "
+            "-- FAIL (deterministic; not retrying other instance types)",
+            indent=2,
+        )
+        return "FAIL", f"container failed to start: {startup}"
+    if state == "TIMEOUT_INFRA":
+        log(
+            f"{state.lower()} -- {detail} -- STUCK (trying next instance type)",
+            indent=2,
+        )
         return "STUCK", ""
+    if state == "TIMEOUT_UNREACHABLE":
+        log(
+            f"{state.lower()} -- {detail} -- UNVERIFIED (trying next "
+            "instance type; not counted as either pass or capacity gap)",
+            indent=2,
+        )
+        return "UNVERIFIED", detail
     log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
-    dump_pod_logs(pod_id, image)
     return "FAIL", f"pod entered {state} state: {detail}"
 
 
 def _run_cuda_step(
-    host: str, port: int, image: str, group: str, pod_id: str,
+    endpoint: SshEndpoint, image: str, group: str, pod_id: str,
 ) -> Optional[_Outcome]:
     """Per-group CUDA/GPU functional check — the real "does this image
     actually work" gate, distinct from "did it boot". Returns the FAIL
     outcome on a broken image, None if the check was skipped (no SSH /
     no check command for this image) or passed."""
-    if not (host and port and cuda_check_command(image)):
+    if not (endpoint and cuda_check_command(image)):
         return None
     log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
-    ok, output = run_cuda_check(host, port, image)
+    ok, output = run_cuda_check(endpoint, image)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
     if not ok:
@@ -190,38 +287,14 @@ def _run_cuda_step(
 
 
 def _run_jupyter_steps(
-    host: str, port: int, pod_id: str, image: str, group: str,
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Jupyter checks: only when the group opted in via `test_jupyter`.
 
-    Two stages, both must pass:
-      1. IN-POD: SSH into the pod and probe 127.0.0.1:8888. Catches
-         start.sh regressions (e.g. wrong python interpreter for
-         `-m jupyter`) that don't surface in container stdout.
-      2. PROXY: from the test machine, hit
-         https://<pod-id>-8888.proxy.runpod.net/. Catches port-type
-         mistakes (`8888/tcp` instead of `8888/http`) — proxy never
-         registers a non-http port, so end users can't reach Jupyter
-         even though the in-pod check would happily pass."""
-    if not (host and port and config.GROUP_TEST_JUPYTER.get(group, False)):
+    Checks the public proxy first — the end-user path. SSH only diagnoses
+    a proxy failure, so a healthy public endpoint avoids redundant work."""
+    if not (endpoint and config.GROUP_TEST_JUPYTER.get(group, False)):
         return None
-
-    log(
-        f"running Jupyter Lab check (in-pod) for group '{group}'...",
-        indent=2,
-    )
-    ok, output = run_jupyter_check(host, port)
-    for line in (output or "").splitlines():
-        log(f"  {line}", indent=2)
-    if not ok:
-        log(
-            "jupyter check (in-pod) FAILED -- start.sh did not "
-            "bring up JupyterLab",
-            indent=2,
-        )
-        dump_pod_logs(pod_id, image)
-        return "FAIL", "Jupyter Lab check failed (in-pod)"
-    log("jupyter check (in-pod) passed", indent=2)
 
     log(
         f"running Jupyter Lab check (public proxy) for pod {pod_id}...",
@@ -230,31 +303,146 @@ def _run_jupyter_steps(
     ok, output = run_jupyter_proxy_check(pod_id)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
-    if not ok:
+    if ok:
+        log("jupyter check (public proxy) passed — in-pod check skipped", indent=2)
+        return None
+
+    log(
+        "jupyter check (public proxy) FAILED — running in-pod check "
+        "to diagnose...",
+        indent=2,
+    )
+    ok, output = run_jupyter_check(endpoint)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
         log(
-            "jupyter check (public proxy) FAILED -- port likely "
-            "not exposed as 8888/http",
+            "in-pod check passed -> Jupyter is up but unreachable via "
+            "proxy — port likely not exposed as 8888/http",
             indent=2,
         )
         dump_pod_logs(pod_id, image)
-        return "FAIL", "Jupyter Lab check failed (public proxy)"
-    log("jupyter check (public proxy) passed", indent=2)
+        return "FAIL", "Jupyter reachable in-pod but not via proxy"
+    log("in-pod check FAILED too -> JupyterLab did not start", indent=2)
+    dump_pod_logs(pod_id, image)
+    return "FAIL", "Jupyter Lab not running (proxy + in-pod failed)"
+
+
+def _check_port_proxy_first(
+    endpoint: SshEndpoint, pod_id: str, test_port: int, label: str,
+) -> Optional[_Outcome]:
+    """Check public reachability first; use SSH only to diagnose failure."""
+    log(
+        f"running {label} check (public proxy) for pod {pod_id}...",
+        indent=2,
+    )
+    ok, output = run_port_proxy_check(pod_id, test_port)
+    for line in output.splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
+        log(f"{label} check (public proxy) passed — in-pod check skipped", indent=2)
+        return None
+
+    log(
+        f"{label} check (public proxy) FAILED — running in-pod check "
+        "to diagnose...",
+        indent=2,
+    )
+    ok, detail = run_port_check(
+        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2)
+    )
+    if ok:
+        failure = f"{label}: reachable in-pod but not via proxy"
+    else:
+        failure = f"{label}: service not responding (proxy + in-pod)"
+        if detail:
+            failure += f" — {detail}"
+    log(f"{failure} -- FAIL", indent=2)
+    return "FAIL", failure
+
+
+def _run_port_steps(
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Run each generic `test_ports` check."""
+    for test_port in config.GROUP_TEST_PORTS.get(group) or []:
+        outcome = _check_port_proxy_first(
+            endpoint, pod_id, test_port, f"port {test_port}",
+        )
+        if outcome is not None:
+            dump_pod_logs(pod_id, image)
+            return outcome
     return None
 
 
-def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
+def _run_comfyui_steps(
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Run the labelled ComfyUI proxy-first reachability smoke."""
+    if not (endpoint and config.GROUP_TEST_COMFYUI.get(group, False)):
+        return None
+    outcome = _check_port_proxy_first(
+        endpoint, pod_id, config.COMFYUI_PORT, "ComfyUI reachability",
+    )
+    if outcome is not None:
+        dump_pod_logs(pod_id, image)
+        return outcome
+    if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
+        return None
+
+    log("running ComfyUI functional check (via proxy)...", indent=2)
+    ok, detail = run_comfyui_check(
+        pod_id,
+        on_line=lambda line: log(f"  {line}", indent=2),
+        save_dir=config.COMFYUI_SAVE_DIR,
+        tag=pod_id,
+    )
+    if ok:
+        log("ComfyUI functional check passed", indent=2)
+        return None
+    log(f"ComfyUI functional check FAILED -- {detail}", indent=2)
+    dump_pod_logs(pod_id, image)
+    return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
+
+
+def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
+    """Scan the REST API container-log backfill for boot error markers."""
+    if not config.LOG_ERROR_SCAN:
+        return None
+    log("scanning container logs for error markers (via API)...", indent=2)
+    ok, report = scan_pod_logs_for_errors(pod_id)
+    for line in report.splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
+        log("log scan passed", indent=2)
+        return None
+
+    detail = (
+        "log scan unverified — log API returned no container logs"
+        if report.startswith("log scan UNVERIFIED")
+        else "error markers found in container logs"
+    )
+    log(f"log scan FAILED -- {detail}", indent=2)
+    dump_pod_logs(pod_id, image)
+    return "FAIL", detail
+
+
+def _run_dwell_step(
+    endpoint: SshEndpoint, pod_id: str, image: str,
+) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
-    Returns FAIL outcome on a post-boot crash, None on skip / pass."""
-    if config.DWELL_SEC <= 0:
+    Returns FAIL outcome on a post-boot crash, None on skip / pass.
+
+    Re-probes the endpoint that answered readiness rather than re-reading
+    `ssh.direct`: a proxy-only pod has no direct endpoint to re-read, and
+    would silently skip the dwell check.
+    """
+    if config.DWELL_SEC <= 0 or not endpoint:
         return None
     log(f"dwelling {config.DWELL_SEC}s and re-probing SSH...", indent=2)
     time.sleep(config.DWELL_SEC)
-    st = pod_state(pod_id)
-    host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
-    if not (host and port):
-        return None
-    ok, err = ssh_probe(host, int(port), timeout=8)
+    ok, err = ssh_probe(endpoint, timeout=8)
     if ok:
         return None
     log(
@@ -269,7 +457,37 @@ def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
     )
 
 
-def test_pair(image: str, instance: str, group: str) -> _Outcome:
+def _run_post_dwell_steps(
+    pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Re-probe ComfyUI and scan logs after the dwell window."""
+    if config.DWELL_SEC <= 0:
+        return None
+    if (
+        config.GROUP_TEST_COMFYUI.get(group, False)
+        or config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False)
+    ):
+        log("re-probing ComfyUI after dwell...", indent=2)
+        ok, detail = probe_comfyui_alive(pod_id)
+        if not ok:
+            log(
+                f"ComfyUI re-probe FAILED after dwell ({detail})",
+                indent=2,
+            )
+            dump_pod_logs(pod_id, image)
+            return "FAIL", (
+                f"ComfyUI stopped answering during the {config.DWELL_SEC}s "
+                f"dwell (post-dwell probe: {detail})"
+            )
+        log(f"ComfyUI re-probe passed ({detail})", indent=2)
+    log("re-scanning container logs after dwell...", indent=2)
+    return _run_log_scan_step(pod_id, image)
+
+
+def test_pair(
+    image: str, instance: str, group: str, cuda_pin: str = "",
+    cloud: str = "",
+) -> _Outcome:
     """Returns (status, detail). Statuses:
         'PASS'         — image booted, CUDA check OK, survived dwell
         'FAIL'         — pod was created and the CONTAINER itself proved
@@ -290,10 +508,13 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and
     is used to select the appropriate GPU/CUDA functional check."""
-    is_cpu, gpu_id = _log_attempt_header(image, instance, group)
+    # Clear first so a label from a previous instance can't leak into an
+    # attempt that never reaches the probe (UNAVAILABLE, STUCK).
+    _set_host_cuda("")
+    is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin, cloud)
 
     pod_id, early, early_detail = _create_pod_with_retries(
-        image, instance, gpu_id, is_cpu, group,
+        image, instance, gpu_id, is_cpu, group, cuda_pin, cloud,
     )
     if early:
         return early, early_detail
@@ -309,26 +530,49 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
     )
 
     try:
-        state, wait_detail = wait_for_running(pod_id)
+        state, wait_detail, endpoint = wait_for_running(pod_id)
         if state != "RUNNING":
             return _classify_non_running(state, wait_detail, pod_id, image)
 
         log(f"smoke check passed: {wait_detail}", indent=2)
         st = pod_state(pod_id)
-        host = st.get("ssh_ip") or ""
-        port = int(st.get("ssh_port") or 0)
+        # Every later check reuses the endpoint that answered readiness,
+        # carried by value. Re-reading ssh.direct would throw away a working
+        # proxy connection, and addressing a proxy by (host, port) alone
+        # would collide with every other pod on ssh.runpod.io.
+        assert endpoint is not None
+
+        # pod_state already carries cudaVersion, so the common path costs no
+        # extra request. It is nullable until the scheduler has assigned a
+        # machine, hence the retrying fallback.
+        host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
+        if host_cuda:
+            _set_host_cuda(host_cuda)
+            log(f"host CUDA: {host_cuda}", indent=2)
 
         # Sequence the checks. Each returns None on pass/skip, or a FAIL
         # outcome to surface to the caller. Kept as straight-line code
         # (no fancy abstraction) so the failure points stay easy to read
         # in stack traces / logs.
-        outcome = _run_cuda_step(host, port, image, group, pod_id)
+        outcome = _run_cuda_step(endpoint, image, group, pod_id)
         if outcome is not None:
             return outcome
-        outcome = _run_jupyter_steps(host, port, pod_id, image, group)
+        outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
-        outcome = _run_dwell_step(pod_id, image)
+        outcome = _run_port_steps(endpoint, pod_id, image, group)
+        if outcome is not None:
+            return outcome
+        outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+        if outcome is not None:
+            return outcome
+        outcome = _run_log_scan_step(pod_id, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_dwell_step(endpoint, pod_id, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_post_dwell_steps(pod_id, image, group)
         if outcome is not None:
             return outcome
 
@@ -340,34 +584,51 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
 
 
 def test_image(
-    image: str, instances: list[str], group: str
-) -> tuple[str, str, str]:
-    """Returns (status, note, instance_used).
+    image: str, instances: list[str], group: str, cuda_pin: str = "",
+    cloud: str = "",
+) -> tuple[str, str, str, str]:
+    """Returns (status, note, instance_used, host_cuda).
 
     `instance_used` is the GPU display name that produced the terminal
     status. For PASS / FAIL it's the actual instance the test landed on.
     For SKIP (no capacity / all stuck), it's an empty string — the test
     never settled on any one instance.
 
+    `host_cuda` is the CUDA version the pod actually landed on, or '' when no
+    pod ever booted (SKIP) or the host isn't NVIDIA.
+
     Iterates instance types until one PASSes. Stops early on FAIL (real
-    image bug — no point trying another GPU). UNAVAILABLE (capacity) and
-    STUCK (RunPod gave us a dead host) just move on to the next instance.
+    image bug — no point trying another GPU). UNAVAILABLE (capacity),
+    STUCK (RunPod gave us a dead host) and UNVERIFIED (an endpoint that
+    never answered) all just move on to the next instance.
     CREATE_FAIL also short-circuits: a non-capacity orchestrator error
     (e.g. bad image tag, registry auth) won't be fixed by another GPU.
+
+    When nothing passed, the final status is the strongest thing we can
+    honestly say: UNVERIFIED outranks SKIP, because "we could not tell
+    whether this image works" must not be filed under "no capacity".
     """
     log(f"image: {image}")
     stuck_instances: list[str] = []
+    unavailable_instances: list[str] = []
+    unverified: list[tuple[str, str]] = []
     last_create_error = ""
     last_create_inst = ""
     for inst in instances:
-        result, detail = test_pair(image, inst, group)
+        set_worker_context(inst)
+        try:
+            result, detail = test_pair(image, inst, group, cuda_pin, cloud)
+        finally:
+            set_worker_context(None)
+        host_cuda = _take_host_cuda()
         if result == "PASS":
-            return "PASS", "", inst
+            return "PASS", "", inst, host_cuda
         if result == "FAIL":
             return (
                 "FAIL",
                 detail or "container did not stay healthy",
                 inst,
+                host_cuda,
             )
         if result == "CREATE_FAIL":
             # Last create error is most informative — capacity-shortage 5xx
@@ -379,12 +640,33 @@ def test_image(
             continue
         if result == "STUCK":
             stuck_instances.append(inst)
-        # UNAVAILABLE: silently try next
+        if result == "UNVERIFIED":
+            unverified.append((inst, detail))
+        if result == "UNAVAILABLE":
+            unavailable_instances.append(inst)
     if last_create_error:
         # We never got past pod-create on any instance and the errors
         # weren't capacity-shortages. Surface the last orchestrator error
         # — this is usually an image / auth / registry problem.
-        return "FAIL", last_create_error, last_create_inst
+        return "FAIL", last_create_error, last_create_inst, ""
+    if unverified:
+        insts = [inst for inst, _d in unverified]
+        log(
+            f"{len(unverified)} instance(s) left the image unverified "
+            f"({insts}) — an SSH endpoint was assigned but never answered",
+            indent=1,
+        )
+        return (
+            "UNVERIFIED",
+            (
+                "could not determine whether the image works: an SSH "
+                "endpoint was assigned but never answered"
+                + _over_candidates(len(unverified))
+                + f" — {unverified[0][1]}"
+            ),
+            ", ".join(insts),
+            "",
+        )
     if stuck_instances:
         # We tried every instance and RunPod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at
@@ -397,15 +679,17 @@ def test_image(
         return (
             "SKIP",
             (
-                f"RunPod never assigned an SSH endpoint on "
-                f"{len(stuck_instances)} instance type(s) — likely a "
-                "scheduler issue, try again later"
+                "RunPod never assigned an SSH endpoint"
+                + _over_candidates(len(stuck_instances))
+                + " — likely a scheduler issue, try again later"
             ),
+            ", ".join(stuck_instances),
             "",
         )
     log(f"all {len(instances)} instances unavailable (no capacity)", indent=1)
     return (
         "SKIP",
-        f"no capacity on any of {len(instances)} candidate instance type(s)",
+        "no capacity" + _over_candidates(len(instances)),
+        ", ".join(unavailable_instances),
         "",
     )
