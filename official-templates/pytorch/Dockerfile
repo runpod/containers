@@ -6,9 +6,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG WHEEL_SRC
 ARG TORCH
 
-# TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0 torchvision==0.23.0
-# torchaudio==2.8.0"). `read -ra` splits it into a real bash array so pip receives one
-# argument per package instead of a single mashed-together string.
+# TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0
+# torchvision==0.23.0"). `read -ra` splits it into a real bash array so pip receives
+# one argument per package instead of a single mashed-together string.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     read -ra TORCH_PKGS <<< "${TORCH}" && \
     python -m pip install \
@@ -18,6 +18,17 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         --upgrade \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
+
+# torchaudio ended at 2.11.0, so newer CUDA indexes never got it (cu132 stops at
+# 2.2.0) and it needs its own index (see audio_src in docker-bake.hcl). --no-deps
+# because the wheel declares none and its torch pin must not move this build's.
+ARG TORCHAUDIO
+ARG AUDIO_SRC
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ -n "${TORCHAUDIO}" ]; then \
+        python -m pip install --no-deps "${TORCHAUDIO}" \
+            --index-url "https://download.pytorch.org/whl/cu${AUDIO_SRC}"; \
+    fi
 
 # torchcodec backs torchaudio.load/save from torch 2.9 on. Its own step because
 # its CUDA builds don't track torch's index cadence (see codec_src in
