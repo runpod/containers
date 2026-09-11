@@ -18,6 +18,8 @@ ARG TORCHAUDIO_VERSION
 # ---- CUDA variant (set in docker-bake.hcl per target) ----
 ARG CUDA_VERSION_DASH=12-8
 ARG TORCH_INDEX_SUFFIX=cu128
+# torchaudio has no cu132 build; see docker-bake.hcl for why 13.2 uses +cpu.
+ARG TORCHAUDIO_INDEX_SUFFIX=cu128
 
 # Install minimal dependencies needed for building
 RUN apt-get update && \
@@ -107,12 +109,14 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
     echo "pillow>=12.1.1" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
+    AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
     PIP_INDEX_URL=https://pypi.org/simple \
-    PIP_EXTRA_INDEX_URL="${TORCH_INDEX_URL}" \
+    PIP_EXTRA_INDEX_URL="${TORCH_INDEX_URL} ${AUDIO_INDEX_URL}" \
     pip-compile --generate-hashes --output-file=requirements.lock --strip-extras --allow-unsafe requirements.in && \
     python3.12 -m pip install --no-cache-dir --ignore-installed --require-hashes \
     --index-url https://pypi.org/simple \
     --extra-index-url "${TORCH_INDEX_URL}" \
+    --extra-index-url "${AUDIO_INDEX_URL}" \
     -r requirements.lock && \
     TORCH_VERSION="${TORCH_VERSION}" TORCHVISION_VERSION="${TORCHVISION_VERSION}" TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION}" \
     python3.12 -c 'import importlib.metadata as m, os, sys; expected = {"torch": os.environ["TORCH_VERSION"], "torchvision": os.environ["TORCHVISION_VERSION"], "torchaudio": os.environ["TORCHAUDIO_VERSION"]}; mismatches = [f"{pkg}: expected {version}, got {m.version(pkg)}" for pkg, version in expected.items() if m.version(pkg) != version]; sys.exit("\n".join(mismatches) if mismatches else 0)'

@@ -27,15 +27,20 @@ variable "FILEBROWSER_SHA256" {
 # torchvision 0.26 removed the video I/O, so every one of those breaks lands
 # only on a variant nobody is running yet, isolated in its own venv.
 #
-# torchaudio ended at 2.11.0 and cu132 never got it, so 13.2 takes the plain
-# PyPI wheel — identical in size to the +cu130 one, since after 2.9 moved I/O to
-# torchcodec it ships no CUDA kernels. Its version is spelled out per row rather
-# than built from the suffix: `==2.11.0` also matches `2.11.0+cu130`, and pip
-# prefers the local build, which would then fail the post-install check.
+# torchaudio ended at 2.11.0 and cu132 never got it, so 13.2 takes the +cpu
+# build. Its import calls _check_cuda_version(), which raises when its CUDA does
+# not match torch's — and every CUDA build of 2.11.0, including the one on PyPI,
+# is cu130. The +cpu wheel reports no CUDA at all, so the check is skipped;
+# nothing is lost because after 2.9 moved I/O to torchcodec the remaining
+# transforms are torch ops that still run on the GPU.
+#
+# Hence a separate index per row. The version is spelled out rather than built
+# from the suffix so the post-install check compares against what pip resolved.
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8",
       torch_index_suffix = "cu128",
+      torchaudio_index_suffix = "cu128",
       venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
@@ -43,6 +48,7 @@ variable "CUDA_TORCH_COMBINATIONS" {
     },
     { cuda_version = "13.0",
       torch_index_suffix = "cu130",
+      torchaudio_index_suffix = "cu130",
       venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
@@ -50,10 +56,11 @@ variable "CUDA_TORCH_COMBINATIONS" {
     },
     { cuda_version = "13.2",
       torch_index_suffix = "cu132",
+      torchaudio_index_suffix = "cpu",
       venv_name = ".venv-cu132",
       torch_version = "2.13.0",
       torchvision_version = "0.28.0",
-      torchaudio_version = "2.11.0"
+      torchaudio_version = "2.11.0+cpu"
     }
   ]
 }
@@ -66,6 +73,7 @@ variable "COMPATIBLE_BUILDS" {
           cuda_version_code = replace(combination.cuda_version, ".", ""),
           cuda_version_dash = replace(combination.cuda_version, ".", "-"),
           torch_index_suffix = combination.torch_index_suffix,
+          torchaudio_index_suffix = combination.torchaudio_index_suffix,
           venv_name = combination.venv_name,
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
@@ -137,6 +145,7 @@ target "comfyui-matrix" {
     TORCHAUDIO_VERSION  = build.torchaudio_version
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
+    TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
     COMFYUI_VENV_NAME   = build.venv_name
   }
 
