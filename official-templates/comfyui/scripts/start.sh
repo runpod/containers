@@ -210,11 +210,13 @@ reinstall_user_node_deps() {
     echo "Packages you installed by hand were not carried over; list them with:"
     echo "  $previous/bin/python -m pip freeze --local"
     if [ "$previous" = "$OLD_VENV_DIR" ]; then
-        echo "$previous predates every current image and can be removed:"
-        echo "  rm -rf $previous"
+        echo "$previous predates every current image, so nothing needs it."
     else
-        echo "$previous was left in place and still works on its own image."
+        echo "$previous was left in place; it is only needed if you go back to the"
+        echo "CUDA variant that created it."
     fi
+    echo "Delete it to free volume space:"
+    echo "  rm -rf $previous"
 }
 
 log_cuda_venv_diagnostics() {
