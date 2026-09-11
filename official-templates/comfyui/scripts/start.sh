@@ -4,7 +4,8 @@ set -e  # Exit the script if any statement returns a non-true return value
 COMFYUI_DIR="/workspace/runpod-slim/ComfyUI"
 BAKED_COMFYUI_DIR="/opt/comfyui-baked"
 BUNDLE_VERSION_FILE=".runpod-bundle-version"
-VENV_DIR="$COMFYUI_DIR/.venv-cu128"
+VENV_NAME="${COMFYUI_VENV_NAME:-.venv-cu128}"
+VENV_DIR="$COMFYUI_DIR/$VENV_NAME"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
@@ -170,6 +171,54 @@ upgrade_comfyui_if_needed() {
     echo "ComfyUI workspace upgraded successfully"
 }
 
+# A venv belonging to another CUDA variant means this volume carries custom
+# nodes whose deps live there, not in this image — so a missing venv of our own
+# is a move between variants, not a fresh volume.
+find_previous_venv() {
+    local candidate found=""
+    for candidate in "$COMFYUI_DIR"/.venv "$COMFYUI_DIR"/.venv-cu*; do
+        case "$candidate" in
+            "$VENV_DIR" | *.bak*) continue ;;
+        esac
+        if [ -x "$candidate/bin/python" ]; then
+            found="$candidate"
+        fi
+    done
+    echo "$found"
+}
+
+# Baked nodes are skipped: their deps are in the image's system site-packages.
+# The old venv is left in place so going back to its own image still works.
+reinstall_user_node_deps() {
+    local previous="$1" req node count=0
+    echo "============================================="
+    echo "  This volume was last used with $(basename "$previous")"
+    echo "  Reinstalling custom node deps into $VENV_NAME"
+    echo "  This may take several minutes"
+    echo "============================================="
+    for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
+        [ -f "$req" ] || continue
+        node=$(basename "$(dirname "$req")")
+        case " ${BAKED_NODES[*]} " in
+            *" $node "*) continue ;;
+        esac
+        count=$((count + 1))
+        echo "[$count] $node"
+        python -m pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+    done
+    echo "Done — $count user nodes processed."
+    echo "Packages you installed by hand were not carried over; list them with:"
+    echo "  $previous/bin/python -m pip freeze --local"
+    if [ "$previous" = "$OLD_VENV_DIR" ]; then
+        echo "$previous predates every current image, so nothing needs it."
+    else
+        echo "$previous was left in place; it is only needed if you go back to the"
+        echo "CUDA variant that created it."
+    fi
+    echo "Delete it to free volume space:"
+    echo "  rm -rf $previous"
+}
+
 log_cuda_venv_diagnostics() {
     local expected_build local_packages status
     expected_build=$(sed -n 's/^torch==.*+\(cu[0-9][0-9]*\).*$/\1/p' \
@@ -293,8 +342,9 @@ fi
 
 upgrade_comfyui_if_needed
 
-# Migrate old CUDA 12.4 venv to cu128
-if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
+# Migrate old CUDA 12.4 venv to cu128. Only the image that owns .venv-cu128
+# does this; on any other variant the plain .venv is handled as a move below.
+if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ] && [ "$VENV_NAME" = ".venv-cu128" ]; then
     NODE_COUNT=$(find "$COMFYUI_DIR/custom_nodes" -maxdepth 2 -name "requirements.txt" 2>/dev/null | wc -l)
     echo "============================================="
     echo "  CUDA 12.4 -> 12.8 migration"
@@ -332,10 +382,11 @@ fi
 
 # Setup ComfyUI if needed
 if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
-    echo "First time setup: Copying baked ComfyUI to workspace..."
+    PREVIOUS_VENV=$(find_previous_venv)
 
     # Copy baked ComfyUI from image (no git, no network)
     if [ ! -d "$COMFYUI_DIR" ]; then
+        echo "First time setup: Copying baked ComfyUI to workspace..."
         cp -r /opt/comfyui-baked "$COMFYUI_DIR"
         echo "ComfyUI copied to workspace"
     fi
@@ -352,6 +403,10 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
 
         echo "Base packages (torch, numpy, etc.) available from system site-packages"
         echo "ComfyUI ready — all dependencies pre-installed in image"
+    fi
+
+    if [ -n "$PREVIOUS_VENV" ]; then
+        reinstall_user_node_deps "$PREVIOUS_VENV"
     fi
 else
     # Just activate the existing venv
@@ -409,7 +464,7 @@ echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
 echo "  Check the logs above for the error/traceback."
 echo "  SSH and JupyterLab are still available."
 echo "  To restart after fixing:"
-echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
+echo "    cd $COMFYUI_DIR && source $VENV_NAME/bin/activate"
 echo "    python main.py ${COMFY_ARGS[*]}"
 echo "============================================="
 

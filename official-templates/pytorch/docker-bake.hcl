@@ -87,6 +87,18 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.0.0", torch = "2.12.0", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.12.1", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.13.0", whl_src = "130" },
+
+    { cuda_version = "13.2.0", torch = "2.6.0", whl_src = "126" },
+    { cuda_version = "13.2.0", torch = "2.7.1", whl_src = "128" },
+    { cuda_version = "13.2.0", torch = "2.8.0", whl_src = "129" },
+    { cuda_version = "13.2.0", torch = "2.9.0", whl_src = "130" },
+    { cuda_version = "13.2.0", torch = "2.9.1", whl_src = "130" },
+    # audio_src: torchaudio's last release is 2.11.0 and the cu132 index stops
+    # at 2.2.0, so take it from cu130. Same CUDA major, and the wheel declares
+    # no dependencies. Defaults to whl_src everywhere else.
+    { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132", audio_src = "130" },
+    { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132", audio_src = "130" },
+    { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132", audio_src = "130" },
   ]
 }
 
@@ -106,6 +118,7 @@ variable "COMPATIBLE_BUILDS" {
           torch_audio    = lookup(TORCH_META[combo.torch], "torchaudio", combo.torch)
           torch_codec    = lookup(TORCH_META[combo.torch], "torchcodec", "")
           codec_src      = lookup(combo, "codec_src", combo.whl_src)
+          audio_src      = lookup(combo, "audio_src", combo.whl_src)
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
       ]
     ]
@@ -150,6 +163,14 @@ group "cu1300" {
   ]
 }
 
+group "cu1320" {
+  targets = [
+    for build in COMPATIBLE_BUILDS:
+      "pytorch-${build.ubuntu_name}-cu${build.cuda_code}-torch${build.torch_code}"
+      if build.cuda_code == "1320"
+  ]
+}
+
 target "pytorch-base" {
   context = "official-templates/pytorch"
   dockerfile = "Dockerfile"
@@ -171,7 +192,9 @@ target "pytorch-matrix" {
   args = {
     BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
-    TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}${build.torch_audio != "" ? " torchaudio==${build.torch_audio}" : ""}"
+    TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}"
+    TORCHAUDIO = build.torch_audio != "" ? "torchaudio==${build.torch_audio}" : ""
+    AUDIO_SRC = build.audio_src
     TORCHCODEC = build.torch_codec != "" ? "torchcodec==${build.torch_codec}" : ""
     CODEC_SRC = build.codec_src
   }
