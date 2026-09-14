@@ -328,6 +328,18 @@ jobs:
               - 'official-templates/pytorch/**'
               - 'container-template/**'
 
+      # TEMPORARY: build-pytorch (cu1290) dies mid-export with "unexpected EOF"
+      # from BuildKit. Runs before docker-setup so the restored buildx cache is
+      # not what gets cleared. Remove once the cause is confirmed.
+      - name: Free disk space (temporary)
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
+        run: |
+          df -h /
+          docker system df || true
+          docker system prune -af --volumes || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache
+          df -h /
+
       - name: Setup Docker
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
