@@ -223,6 +223,18 @@ inputs:
       flips the safer default off.
     required: false
     default: "fail"
+  registry-auth-name:
+    description: |
+      Display name of the registry credential in the RunPod account
+      (the `name` shown by `GET /v2/registries`) to attach to every pod.
+
+      Empty (default) pulls anonymously — fine for our public images,
+      but the datacenter IP pool shares Docker Hub's rate limit. A name
+      that the account doesn't have is fatal: the run stops before any
+      pod is created rather than pulling with credentials nobody asked
+      for.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -423,6 +435,9 @@ runs:
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
         SAVE_COMFYUI_IMAGES: ${{ inputs.save-comfyui-images }}
+        # Empty → anonymous pulls. Non-empty and unknown to the account
+        # → test_images.py exits before creating pods.
+        REGISTRY_AUTH_NAME: ${{ inputs.registry-auth-name }}
         # test_images.py appends the matrix to $GITHUB_STEP_SUMMARY (always)
         # and writes this JSON, so results are readable without log access.
         SMOKE_RESULTS_JSON: ${{ runner.temp }}/smoke-results/results.json

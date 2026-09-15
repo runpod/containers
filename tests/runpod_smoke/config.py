@@ -95,15 +95,16 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
 
 
-# Docker Hub authenticated pulls — without this, RunPod datacenters share
-# an anonymous IP pool that hits Docker Hub's `toomanyrequests` rate limit
-# fast. Either set REGISTRY_AUTH_ID explicitly, or REGISTRY_AUTH_NAME to
-# pick by display name, or the script auto-picks the first entry from
-# `GET /v2/registries`.
+# Docker Hub authenticated pulls. Unset means anonymous pulls: fine for
+# public images, but RunPod datacenters share an IP pool that hits Docker
+# Hub's `toomanyrequests` rate limit fast. Name the credential with
+# REGISTRY_AUTH_NAME (looked up in `GET /v2/registries`) or pass its
+# REGISTRY_AUTH_ID directly. A name that doesn't resolve is fatal —
+# nothing is ever picked implicitly.
 #
-# REGISTRY_AUTH_ID is reassigned by main() after auto-discovery — access
+# REGISTRY_AUTH_ID is reassigned by main() after the name lookup — access
 # it via `config.REGISTRY_AUTH_ID` (not a bare `from config import`) to
-# pick up the post-discovery value.
+# pick up the resolved value.
 REGISTRY_AUTH_ID = os.environ.get("REGISTRY_AUTH_ID", "")
 REGISTRY_AUTH_NAME = os.environ.get("REGISTRY_AUTH_NAME", "")
 
