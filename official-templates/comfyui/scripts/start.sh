@@ -227,7 +227,8 @@ reinstall_user_node_deps() {
     fi
     echo "Delete it to free volume space:"
     echo "  rm -rf $previous"
-    
+}
+
 # The venv has no pip of its own, so a bare `pip` would resolve to
 # /usr/local/bin/pip and install against the base interpreter. Custom-node
 # install scripts do call it that way. Existing venvs keep their real pip.
