@@ -204,12 +204,24 @@ jobs:
             exit 1
           fi
 
+      # Same as release.yml: the squash commit we are tagging carries the body,
+      # and GitHub pre-pends it to its own generated notes.
+      - name: Release body from the squash commit
+        id: notes
+        run: |
+          set -euo pipefail
+          BODY="${RUNNER_TEMP}/release-body.md"
+          git log -1 --format=%b HEAD \
+            | grep -viE '^(co-authored-by|signed-off-by):' > "${BODY}" || true
+          echo "path=${BODY}" >> "$GITHUB_OUTPUT"
+
       - name: Create tag and GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.tag }}
           target_commitish: ${{ steps.source.outputs.head_sha }}
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

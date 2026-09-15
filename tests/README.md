@@ -59,13 +59,18 @@ tests/
    group/world-readable keys, and the SSH probe will fail every pod
    with no obvious reason.
 
-4. **(Recommended)** A Docker Hub registry credential on the account.
+4. **(Recommended)** A Docker Hub registry credential on the account,
+   named with `REGISTRY_AUTH_NAME` (or pinned by `REGISTRY_AUTH_ID`).
    RunPod datacenters share an anonymous Hub IP pool that hits the
    `toomanyrequests` rate limit fast — without auth, parallel runs in
    particular produce a wave of "image pull backoff" failures that look
-   like image bugs but aren't. The script auto-discovers the first entry
-   from `GET /v2/registries`; pin a specific one with `REGISTRY_AUTH_ID`
-   or `REGISTRY_AUTH_NAME`.
+   like image bugs but aren't.
+
+   Nothing is picked implicitly. Unset means anonymous pulls; a name the
+   account doesn't have stops the run before the first pod. Handing a
+   pod the wrong login is worse than handing it none — Docker Hub
+   answers `unauthorized: incorrect username or password` and never
+   falls back to an anonymous pull, so even a public image fails.
 
 
 ## Quick start
@@ -88,7 +93,8 @@ Run it:
 You should see, in order:
 
 1. `loaded N GPU types from GET /v2/catalog/gpus` — startup catalog query
-2. `using registry auth: …` — Docker Hub auth resolved (or a warning)
+2. `using registry auth: …` — the named credential resolved (or `no
+   registry auth requested` when none was asked for)
 3. `==================== running 1 job(s) with MAX_PARALLEL=1 ===`
 4. `attempt: CPU pod …` → `pod p-xxx created, waiting for RUNNING`
 5. `t+Ns endpoint=root@…:NNNN ssh_probe=OK` — pod is up
@@ -284,7 +290,7 @@ DWELL_SEC=0 ./test_images.py images.yaml base_cpu
 # Use a non-default SSH key
 RUNPOD_SSH_KEY=~/.ssh/my_runpod_key ./test_images.py images.yaml
 
-# Pin to a specific registry auth (avoid auto-pick when you have several)
+# Attach a registry credential by name (unset = anonymous pulls)
 REGISTRY_AUTH_NAME='dockerhub-prod' ./test_images.py images.yaml
 # …or by id
 REGISTRY_AUTH_ID='clxxxxxxxxxx' ./test_images.py images.yaml
@@ -586,8 +592,8 @@ pytorch:
 | `CPU_VCPU_COUNT` | `4` | vCPUs requested for CPU pods. Must be a power of two inside the chosen flavor's `vcpu.min..max`. |
 | `CPU_FLAVOR_ID` | _(empty)_ | Pin a CPU flavor (e.g. `cpu3c`) instead of auto-picking the cheapest fitting one from `GET /v2/catalog/cpus`. |
 | `SMOKE_RESULTS_JSON` | _(empty)_ | Path to write the machine-readable result report to. Empty = don't write it. The markdown step summary is written regardless. |
-| `REGISTRY_AUTH_ID` | _(empty)_ | Explicit Docker Hub registry auth id to pass as `--registry-auth-id`. Overrides auto-discovery. |
-| `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `GET /v2/registries` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
+| `REGISTRY_AUTH_ID` | _(empty)_ | Registry credential id to attach to every pod. Skips the name lookup. |
+| `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `GET /v2/registries`. Empty = anonymous pulls; a name the account doesn't have exits 1 before any pod is created. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
@@ -683,7 +689,9 @@ wraps everything in this script needs for a clean CI run:
    fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with
    `MAX_PARALLEL=<max-parallel>`, `CLOUD_TYPE=<cloud-type>`,
-   `ON_SKIP=<on-skip>` and `CREATE_TIMEOUT=<create-timeout>`. A failed
+   `ON_SKIP=<on-skip>`, `CREATE_TIMEOUT=<create-timeout>` and
+   `REGISTRY_AUTH_NAME=<registry-auth-name>` (empty by default, i.e.
+   anonymous pulls). A failed
    image makes the smoke-test action fail, which prevents a release from
    being created.
 
@@ -723,7 +731,8 @@ fields.
 | `no RunPod API key — set RUNPOD_API_KEY…` | key missing from env and `~/.runpod/config.toml` | `export RUNPOD_API_KEY=<KEY>` |
 | `RunPod API rejected the key (HTTP 401…)` | key expired or lacks pod-management permission | regenerate at <https://www.runpod.io/console/user/settings> |
 | `warn: no GPU catalog` | `GET /v2/catalog/gpus` failed — usually a bad/absent key | fix the key; budget and `check_all_gpu` selection are disabled without it |
-| `warn: no registry auth configured` | no Docker Hub credential on the account | add one in the RunPod console (paid Hub account strongly recommended for parallel runs) |
+| `registry auth '<name>' not found in this RunPod account` | `REGISTRY_AUTH_NAME` doesn't match any credential — typo, or a different account than the one that has it | the error lists the names the account does have; fix the name or add the credential in the RunPod console |
+| `unauthorized: incorrect username or password` in the pod's system log | the attached credential's Docker Hub login is stale (common after switching accounts) | replace the token on that credential in the RunPod console, or drop `REGISTRY_AUTH_NAME` to pull our public images anonymously |
 | every pod SKIPs with an SSH failure | private key not mode `600`, or its public half isn't registered | `chmod 600 <key>`; verify the fingerprint appears in `GET /v2/account/ssh-keys` |
 | `no ssh endpoint assigned yet` for the whole timeout | the pod never got a machine, so neither `ssh.direct` nor `ssh.proxy` exists | genuine provisioning failure — retry, or check the pod in the console. A missing *direct* port alone no longer causes this: the proxy is used instead |
 | `cuda_versions is set but none of the N candidate GPUs reports any CUDA version in the SECURE cloud` | CUDA axis on a ROCm/AMD sweep, or every candidate lives in the other cloud tier | drop `cuda_versions` for ROCm — the axis is NVIDIA-only; otherwise rerun with the other `CLOUD_TYPE` |
