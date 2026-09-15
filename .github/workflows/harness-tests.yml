@@ -1,0 +1,63 @@
+name: Harness Unit Tests
+
+# Unit tests for the smoke-test harness in tests/runpod_smoke. No network,
+# no RunPod credentials, no pods — pure logic, so this runs on every PR and
+# finishes in seconds. The paid end-to-end coverage is the per-family smoke
+# test in release.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'tests/**'
+      - '.github/scripts/generate_test_manifest.py'
+      - '.github/workflows/harness-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/**'
+      - '.github/scripts/generate_test_manifest.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Run unit tests
+        shell: bash
+        working-directory: tests
+        run: python3 -m unittest discover -s unit -t . -v
+
+      # The generator is what turns CI inputs into a manifest, and its
+      # mutual-exclusion rule is the only thing standing between a caller
+      # and a silently ignored GPU selection.
+      - name: Manifest generator contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          gen() { python3 .github/scripts/generate_test_manifest.py "$@"; }
+
+          gen --profile gpu --refs '["runpod/base:1.0.0"]' \
+            --instance "RTX A4000" --instance "L4" \
+            --output "${RUNNER_TEMP}/m-instances.yaml" >/dev/null
+          grep -q 'instances:' "${RUNNER_TEMP}/m-instances.yaml"
+          grep -q 'RTX A4000' "${RUNNER_TEMP}/m-instances.yaml"
+          # An explicit list wins, so the budget filters must not be emitted.
+          ! grep -q 'max_price_per_hour' "${RUNNER_TEMP}/m-instances.yaml"
+
+          gen --profile gpu --refs '["runpod/base:1.0.0"]' --check-all-gpu \
+            --output "${RUNNER_TEMP}/m-all.yaml" >/dev/null
+          grep -q 'check_all_gpu: true' "${RUNNER_TEMP}/m-all.yaml"
+
+          if gen --profile gpu --refs '["runpod/base:1.0.0"]' \
+               --instance "L4" --check-all-gpu \
+               --output "${RUNNER_TEMP}/m-both.yaml" >/dev/null 2>&1; then
+            echo "::error::generator accepted --instance with --check-all-gpu"
+            exit 1
+          fi
+          echo "OK: instances and check-all-gpu are mutually exclusive"

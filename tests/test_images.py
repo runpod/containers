@@ -369,7 +369,9 @@ def _build_jobs(
                     _cuda_matrix_jobs(img, group, instances, results, cloud)
                 )
             elif cuda_axis:
-                jobs.extend(_cuda_per_version_jobs(img, group, instances, cloud))
+                jobs.extend(
+                    _cuda_per_version_jobs(img, group, instances, results, cloud)
+                )
             elif check_all:
                 jobs.extend((img, group, [inst], "", cloud) for inst in instances)
             else:
@@ -407,7 +409,8 @@ def _cuda_matrix_jobs(
 
 
 def _cuda_per_version_jobs(
-    image: str, group: str, instances: list[str], cloud: str,
+    image: str, group: str, instances: list[str], results: list[Result],
+    cloud: str,
 ) -> list[Job]:
     """One job per CUDA version, each keeping the full candidate list.
 
@@ -417,11 +420,32 @@ def _cuda_per_version_jobs(
     into ~40 pods. So each version gets one job whose candidates are the
     GPUs that actually offer it, and the runner short-circuits on the first
     PASS exactly as it does without the axis.
+
+    When no candidate offers a usable version there is nothing to create,
+    and the missing coverage is recorded as a SKIP. Returning an empty list
+    silently would leave the run with no result rows at all, which
+    `_print_summary` reads as "nothing failed" and exits 0 — a sweep that
+    tested nothing would look identical to one that passed, whatever
+    `ON_SKIP` says.
     """
     per_version: dict[str, list[str]] = {}
     for inst in instances:
         for version in cuda_axis_for(group, inst):
             per_version.setdefault(version, []).append(inst)
+    if not per_version:
+        reasons = "; ".join(
+            f"{inst} ({uncovered_reason(inst)})" for inst in instances[:4]
+        )
+        if len(instances) > 4:
+            reasons += f"; +{len(instances) - 4} more"
+        results.append((
+            image, "SKIP",
+            f"no testable CUDA version on any of {len(instances)} "
+            f"candidate instance type(s): {reasons}",
+            instances[0] if len(instances) == 1 else "",
+            "", "", cloud,
+        ))
+        return []
     return [
         (image, group, candidates, version, cloud)
         for version, candidates in sorted(per_version.items(), reverse=True)
@@ -575,10 +599,20 @@ def _format_result_line(want: str, img: str, status: str, note: str,
         label = f"{label} - {cloud}" if label else cloud
     inst_str = f" [{label}]" if label else ""
     note_str = f" -- {note}" if note else ""
-    return f"  {want:6s} {img}{inst_str}{note_str}"
+    return f"  {want:10s} {img}{inst_str}{note_str}"
 
 
-_STATUS_ICON = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⚠️ SKIP"}
+# Ordering used everywhere a bucket is rendered: worst first, and
+# UNVERIFIED above SKIP because "could not tell" is a stronger statement
+# than "no capacity".
+_STATUS_ORDER = ("FAIL", "UNVERIFIED", "SKIP", "PASS")
+
+_STATUS_ICON = {
+    "PASS": "✅ PASS",
+    "FAIL": "❌ FAIL",
+    "UNVERIFIED": "❓ UNVERIFIED",
+    "SKIP": "⚠️ SKIP",
+}
 
 
 def _md_cell(value: str) -> str:
@@ -586,7 +620,7 @@ def _md_cell(value: str) -> str:
     return (value or "").replace("|", "\\|").replace("\n", " ") or "—"
 
 
-_CELL_ICON = {"PASS": "✅", "FAIL": "❌", "SKIP": "⚠️"}
+_CELL_ICON = {"PASS": "✅", "FAIL": "❌", "UNVERIFIED": "❓", "SKIP": "⚠️"}
 
 
 def _emit_cuda_pivot(results: list[Result]) -> list[str]:
@@ -668,7 +702,8 @@ def _emit_step_summary(results: list[Result], counts: dict[str, int]) -> None:
     lines = [
         "## Smoke-test matrix",
         "",
-        f"**{counts['PASS']} PASS · {counts['FAIL']} FAIL · {counts['SKIP']} SKIP**",
+        f"**{counts['PASS']} PASS · {counts['FAIL']} FAIL · "
+        f"{counts['UNVERIFIED']} UNVERIFIED · {counts['SKIP']} SKIP**",
         "",
     ]
     if single:
@@ -676,7 +711,7 @@ def _emit_step_summary(results: list[Result], counts: dict[str, int]) -> None:
     lines += _emit_cuda_pivot(results)
     lines.append("| " + " | ".join(head) + " |")
     lines.append("|" + "|".join(["---"] * len(head)) + "|")
-    for want in ("FAIL", "SKIP", "PASS"):
+    for want in _STATUS_ORDER:
         for img, status, note, instance, host_cuda, req_cuda, cloud in results:
             if status != want:
                 continue
@@ -706,7 +741,7 @@ def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
         return
     payload = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "totals": {k: counts[k] for k in ("PASS", "FAIL", "SKIP")},
+        "totals": {k: counts[k] for k in _STATUS_ORDER},
         "results": [
             {
                 "image": img,
@@ -738,6 +773,14 @@ def _print_summary(results: list[Result]) -> int:
     FAIL is ALWAYS fatal (exit 1) — a broken container is never something
     we want to slip past CI.
 
+    UNVERIFIED (an SSH endpoint was assigned but never answered, so we could
+    not tell a wedged host from an image that never starts sshd) is fatal
+    too, EXCEPT under `ON_SKIP=pass`. Only the catalog sweep sets that, and
+    it deliberately accepts dozens of flaky hosts per run; every release
+    gate uses 'warn' or 'fail', where an image we could not verify must not
+    ship. It is counted and printed separately from SKIP either way, so the
+    reason is never mistaken for a capacity gap.
+
     For SKIPs (test never actually ran against the image) the behaviour
     is driven by `config.ON_SKIP`:
       'fail' (default) → exit 1 + `::error::` GitHub annotation
@@ -761,9 +804,10 @@ def _print_summary(results: list[Result]) -> int:
     print(
         f"totals: {counts['PASS']} PASS, "
         f"{counts['FAIL']} FAIL, "
+        f"{counts['UNVERIFIED']} UNVERIFIED, "
         f"{counts['SKIP']} SKIP\n"
     )
-    for want in ("FAIL", "SKIP", "PASS"):
+    for want in _STATUS_ORDER:
         for img, status, note, instance, host_cuda, req_cuda, cloud in results:
             line = _format_result_line(
                 want, img, status, note, instance, host_cuda or req_cuda, cloud
@@ -775,6 +819,28 @@ def _print_summary(results: list[Result]) -> int:
     _write_results_json(results, counts)
 
     if counts["FAIL"] > 0:
+        return 1
+    # Zero rows means no image was ever attempted, so there is nothing to
+    # have passed. Planning is supposed to record a SKIP for every gap, but
+    # this is the backstop: a future gap must not read as success, and
+    # ON_SKIP has no say because not even a SKIP was produced.
+    if not results:
+        print()
+        print(
+            "::error::no image was tested — planning produced zero jobs and "
+            "zero result rows. This is a harness bug or a manifest that "
+            "matched nothing; either way nothing was validated."
+        )
+        return 1
+    if counts["UNVERIFIED"] > 0 and config.ON_SKIP != "pass":
+        print()
+        print(
+            f"::error::{counts['UNVERIFIED']} image(s) UNVERIFIED — an SSH "
+            "endpoint was assigned but never answered, so a wedged host and "
+            "an image that never starts sshd cannot be told apart. Re-run to "
+            "find out; set ON_SKIP=pass to accept unverified rows, as the "
+            "catalog sweep does."
+        )
         return 1
     if counts["SKIP"] == 0 or config.ON_SKIP == "pass":
         return 0

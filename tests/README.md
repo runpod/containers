@@ -18,6 +18,7 @@ tests/
 ├── README.md               ← you are here
 ├── test_images.py          ← entry point: main() + summary + CLI
 ├── comfyui/                ← ComfyUI functional-test models and workflow
+├── unit/                   ← unittest suite for the logic below (no network)
 └── runpod_smoke/
     ├── config.py           ← env vars, sentinels, shared mutable state
     ├── log.py              ← thread-tagged logging
@@ -94,7 +95,7 @@ You should see, in order:
 6. `dwelling 60s and re-probing SSH...`
 7. `--- pod metadata for p-xxx ---` + log dump
 8. `Cleaning up pod p-xxx...`
-9. `===== SUMMARY ===== totals: 1 PASS, 0 FAIL, 0 SKIP`
+9. `===== SUMMARY ===== totals: 1 PASS, 0 FAIL, 0 UNVERIFIED, 0 SKIP`
 
 Exit code is `0` if no `FAIL` and no `SKIP`, `1` otherwise. `SKIP` is
 treated as a failure by default because it means no real validation
@@ -118,7 +119,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `POST /v2/pods` with `gpu.id` (or an auto-picked `cpu.id` + `vcpuCount`), `disk`, `ports`, `startSsh`, registry credential, and either `gpu.minCudaVersion` or `gpu.allowedCudaVersions`. Transient failures (429, 5xx, transport) are retried up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity — try next instance) / `CREATE_FAIL` (bad image tag, auth, malformed request — any non-capacity, non-transient error after retries) |
-| 2 | Poll `GET /v2/pods/{id}` until `status` is `RUNNING` and a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the readiness signal; `status` is the real observed `PodStatus`, so terminal `EXITED`/`ERROR`/`TERMINATED` stop the poll immediately. | `FAIL` on a terminal status, or when the system log shows a container-init rejection; `STUCK` if neither endpoint answers within `CREATE_TIMEOUT` |
+| 2 | Poll `GET /v2/pods/{id}` until a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the only readiness signal. `status` is **not** one: RunPod reports `RUNNING` from the moment the pod is scheduled, while the image may still be downloading for another ten minutes, so it is read only for the terminal `EXITED`/`ERROR`/`TERMINATED` values, which stop the poll immediately. | `FAIL` on a terminal status, on a container-init rejection, or on a container-start failure in the logs; `STUCK` if no endpoint was ever offered or the container had not started yet; `UNVERIFIED` only if the container was demonstrably logging and still nothing answered |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
 | 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
@@ -131,8 +132,8 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 12 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
-result was `UNAVAILABLE` or `STUCK`, and short-circuits on `PASS`,
-`FAIL`, or `CREATE_FAIL`. With `check_all_gpu: true`, each resolved GPU is
+result was `UNAVAILABLE`, `STUCK` or `UNVERIFIED`, and short-circuits on
+`PASS`, `FAIL`, or `CREATE_FAIL`. With `check_all_gpu: true`, each resolved GPU is
 instead run as an independent job, so the summary shows compatibility across
 the full selected GPU set. Adding `cuda_versions:` splits it further — one
 job per (GPU, CUDA version) — see [CUDA axis](#cuda-axis).
@@ -149,11 +150,12 @@ job per (GPU, CUDA version) — see [CUDA axis](#cuda-axis).
 | needs | RunPod to allocate a public port for `22/tcp` | only a machine assignment |
 | supports | everything | interactive shell and remote commands only — no SCP, SFTP or port forwarding |
 
-**RunPod does not always allocate the direct port.** Such a pod shows only
-"SSH" in the console, with no "SSH over exposed TCP" block, and
-`ssh.direct` stays null however long you wait. Before the fallback existed
-those pods burned the whole `CREATE_TIMEOUT` and were reported as stuck
-initializing, which was wrong — they were ready in a minute.
+**RunPod does not always allocate the direct port**, and when it does it
+can be late — one measured pod was proxy-only at t+601s and got its port at
+t+700s. A pod that never gets one shows only "SSH" in the console, with no
+"SSH over exposed TCP" block, and `ssh.direct` stays null. Both cases are
+why the poll accepts either endpoint and always waits out `CREATE_TIMEOUT`
+rather than deciding early that a proxy-only pod is hopeless.
 
 Direct is tried first (one fewer hop), the proxy on the same poll if direct
 is absent or refuses. Whichever answers is reused by every later check, so a
@@ -169,16 +171,55 @@ allocated, and a single `-t` declines to allocate one because the harness's
 stdin is not a terminal. Output is stripped of the `\r` a PTY introduces so
 it parses the same as a direct connection.
 
-**Proxy-only pods give up early.** When only `ssh.proxy` exists and it has
-already refused, nothing will change by waiting, so the poll stops at
-`DIRECT_PORT_TIMEOUT` (default 300s) instead of billing the pod until
-`CREATE_TIMEOUT`. The outcome is `STUCK`, so the next instance type is
-tried — a different host usually does get a port.
+**Who is blamed for a timeout comes from the two log streams, not from
+which endpoints existed.** `status` is useless for this — it reads `RUNNING`
+from scheduling time onward — so the verdict is read from evidence, worst
+first:
+
+| evidence | verdict |
+|---|---|
+| system log has no `create/start container` yet | still pulling → `STUCK` |
+| container log announced sshd | RunPod's path is broken → `STUCK` |
+| container log empty | not started → `STUCK` |
+| container started, no sshd line | ambiguous → `UNVERIFIED` |
+| neither stream readable | could not look → `UNVERIFIED` |
+
+Both streams are scanned for a container-start failure before any of this,
+and the **unfiltered** system log is what gets scanned. `SYS_LOG_ERROR_PATTERN`
+narrows that stream for display only — it matches error/fail/crash wording, so
+markers like `exec: "/start.sh": no such file or directory` never reach
+`sys_errors`. Classifying from the filtered subset silently downgraded a
+broken entrypoint to a capacity gap.
+
+The system log is checked first because it is authoritative on the one
+question the container's log cannot answer — whether RunPod has finished
+downloading the image at all. It narrates the hand-off in plain text:
+
+```
+<layer> Extracting [====>]  1.2MB/13.3MB
+<layer> Pull complete
+Status: Downloaded newer image for runpod/comfyui:1.4.6-cuda12.8
+create container runpod/comfyui:1.4.6-cuda12.8
+start container for runpod/comfyui:1.4.6-cuda12.8: begin
+```
+
+The second row is the one that matters most in practice: a pod whose log
+ends in `Start script(s) finished, Pod is ready to use.` did everything
+asked of it, and reporting that as a problem with the image turns a
+platform hiccup into a failed release.
+
+**Endpoints are passed by value, never looked up by address.** Every pod's
+proxy answers at the same `ssh.runpod.io:22` and is distinguished only by
+the routing token in `username`, so anything keyed on `(host, port)` is one
+global slot that parallel pods overwrite. The endpoint that answered
+readiness is carried through every later check as a value, because a
+wrong-token connection does not fail — it lands on a different live pod and
+returns a plausible result for it.
 
 
 ## Outcomes
 
-The summary at the end of every run groups results into three buckets.
+The summary at the end of every run groups results into four buckets.
 The granular per-pod outcomes below collapse into them:
 
 | summary | per-pod outcome | what it means | what to do |
@@ -187,11 +228,18 @@ The granular per-pod outcomes below collapse into them:
 | `FAIL` | `FAIL` | Pod was created and the container itself proved broken (CUDA check failed, JupyterLab didn't start, crashed during dwell, etc.). Moving to another GPU won't help — the image is the problem. | fix the image |
 | `FAIL` | `CREATE_FAIL` | Pod-create returned a non-capacity, non-transient orchestrator error (bad image tag, registry auth, malformed request, missing CUDA version). | fix the manifest / image ref / auth |
 | `FAIL` | `FAIL` (container init) | `nvidia-container-cli` rejected the container in the prestart hook — typically the image's `NVIDIA_REQUIRE_CUDA` floor is above the host driver, e.g. a `cu1290` image pinned to CUDA 12.4. Deterministic, so no other instance type is tried. | pin a CUDA version the image supports, or fix the image's requirement |
+| `FAIL` | `FAIL` (container start) | The container never started: unexecutable or missing entrypoint, wrong architecture, an OCI runtime refusal, or an OOM kill before sshd. Read from **both** log streams before a readiness timeout is attributed to the host — a container that was never created has no stdout of its own, so an OCI refusal appears only in RunPod's system log. From the outside it is indistinguishable from a slow host. | fix the image |
+| `UNVERIFIED` | any `UNVERIFIED` | The container was writing to its log but **never announced sshd**, and nothing answered within `CREATE_TIMEOUT` — with no init rejection or start failure. A wedged host and an entrypoint that never got as far as starting SSH cannot be told apart from here, so neither is claimed. Also used when the log API itself was unreachable, i.e. we could not look. | re-run; if it repeats on every host, suspect the image's `start.sh` |
 | `SKIP` | all `UNAVAILABLE` | RunPod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
-| `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but RunPod never assigned an SSH endpoint within `CREATE_TIMEOUT` (slow pull / dead host). | retry later — usually transient |
+| `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but the evidence pointed away from the image: no SSH endpoint was ever offered, the container had not emitted a single log line (still pulling), or **the container's own log said sshd was up and nothing reached it anyway** — RunPod never provided a working path. | retry later — usually transient; if a large image times out every run, raise `create-timeout` |
 
-`FAIL` always exits `1`. `SKIP` is governed by `ON_SKIP` (env-var) /
-`on-skip` (CI input), one of:
+`FAIL` always exits `1`. `UNVERIFIED` also exits `1`, except under
+`ON_SKIP=pass` — only the catalog sweep sets that, and it knowingly accepts
+many flaky hosts per run, while every release gate uses `warn` or `fail`
+where an unverified image must not ship. `UNVERIFIED` is counted and printed
+in its own bucket regardless, so it is never mistaken for a capacity gap.
+
+`SKIP` is governed by `ON_SKIP` (env-var) / `on-skip` (CI input), one of:
 
 * `fail` (default) — exit `1` + `::error::` annotation. Job goes red.
 * `warn`           — exit `0` + `::warning::` annotation. Job stays
@@ -542,7 +590,6 @@ pytorch:
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `GET /v2/registries` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
-| `DIRECT_PORT_TIMEOUT` | `300` | Give up this early when only `ssh.proxy` exists and it has already refused — RunPod never allocated a port for `22/tcp` and waiting out `CREATE_TIMEOUT` only bills an unreachable pod. `0` waits the full `CREATE_TIMEOUT`. See [SSH endpoints](#ssh-endpoints). |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
@@ -600,6 +647,22 @@ test SSHes in and probes `/api/status` to distinguish a Jupyter startup
 problem from an HTTP exposure/proxy problem.
 
 
+## Unit tests
+
+The logic that decides what to create and how to classify a failure is
+covered by `unittest` — no network, no credentials, no pods:
+
+```sh
+cd tests && python3 -m unittest discover -s unit -t .
+```
+
+`.github/workflows/harness-tests.yml` runs it on every PR that touches
+`tests/`, plus a contract check on the manifest generator. The paid
+end-to-end coverage stays the per-family smoke test in `release.yml`, whose
+path filters include `tests/**` so a harness change rebuilds and re-tests
+every image family rather than none.
+
+
 ## Running in CI
 
 The composite action at
@@ -619,7 +682,8 @@ wraps everything in this script needs for a clean CI run:
    `instances` and `check-all-gpu` are mutually exclusive — passing both
    fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with
-   `MAX_PARALLEL=<max-parallel>` and `CLOUD_TYPE=<cloud-type>`. A failed
+   `MAX_PARALLEL=<max-parallel>`, `CLOUD_TYPE=<cloud-type>`,
+   `ON_SKIP=<on-skip>` and `CREATE_TIMEOUT=<create-timeout>`. A failed
    image makes the smoke-test action fail, which prevents a release from
    being created.
 
@@ -679,10 +743,13 @@ fields.
 
 `0` only when every image PASSed, OR when only SKIPs happened and
 `ON_SKIP ∈ {warn, pass}`. `1` if any image FAILed (broken container —
-always fatal), or if any image SKIPped under the default `ON_SKIP=fail`.
+always fatal), if any image came back UNVERIFIED under
+`ON_SKIP ∈ {fail, warn}`, or if any image SKIPped under the default
+`ON_SKIP=fail`. A run that produced **no result rows at all** also exits
+`1` whatever `ON_SKIP` says: nothing was attempted, so nothing passed.
 
 SKIPs mean the smoke test never actually ran on the image (RunPod had no
-capacity on every candidate, or every candidate landed on a stuck host)
+capacity on every candidate, or the pod never became addressable)
 — that's effectively zero validation, so the default is strict.
 Override with:
 

@@ -3,12 +3,12 @@
 Two functions, both called from `test_images.py:main`:
 
   * test_pair(image, instance, group) — one create-attempt against one GPU
-    type. Owns retry-on-transient and the FAIL/UNAVAILABLE/STUCK/CREATE_FAIL
-    classification of a single pod's lifecycle.
+    type. Owns retry-on-transient and the FAIL / UNAVAILABLE / STUCK /
+    UNVERIFIED / CREATE_FAIL classification of a single pod's lifecycle.
 
   * test_image(image, instances, group) — iterate test_pair across all
     candidate instance types until something settles. Returns the final
-    PASS / FAIL / SKIP outcome plus the instance it landed on.
+    PASS / FAIL / UNVERIFIED / SKIP outcome plus the instance it landed on.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from typing import Optional
 
 from . import config
 from .checks import (
+    SshEndpoint,
+    container_startup_failure,
     cuda_check_command,
     dump_pod_logs,
     fetch_pod_cuda_version,
@@ -197,25 +199,35 @@ def _over_candidates(count: int) -> str:
 def _classify_non_running(
     state: str, detail: str, pod_id: str, image: str,
 ) -> _Outcome:
-    """Map a non-RUNNING terminal state to STUCK or FAIL.
+    """Map a non-RUNNING terminal state to FAIL, STUCK or UNVERIFIED.
 
-    TIMEOUT is a host/infrastructure verdict, so it retries on another
-    instance type. Every timeout observed so far was one: RunPod not
-    allocating a direct TCP port, an unreachable assigned port, or
-    provisioning that never finished. It used to be split by whether an
-    endpoint had been assigned, and the assigned-but-silent half was called
-    a broken image — 7 timeouts in one catalog sweep, none of them an image
-    fault, is what retired that theory.
+    The log dump comes first, because two deterministic image faults are
+    invisible from the outside — they produce no SSH, no RUNNING and no
+    terminal status, exactly like a slow host — and neither is fixed by
+    trying another GPU:
+
+      * the container-init rejection from the NVIDIA prestart hook, and
+      * a container that could not start at all (unexecutable entrypoint,
+        wrong architecture, OOM before sshd).
+
+    Only once both are ruled out does the timeout get split by how far the
+    pod actually got:
+
+      * the pod never got far enough to be judged -> STUCK. Either no SSH
+        endpoint was ever offered, or the container had not emitted a single
+        log line, meaning the image was still being pulled. `status` is no
+        help in telling that apart: RunPod reports RUNNING from scheduling
+        time onward, long before the pull finishes.
+      * the container was demonstrably running and still nothing answered
+        -> UNVERIFIED. A wedged host and an image whose sshd never starts
+        are indistinguishable from here, so this is reported as "could not
+        tell" rather than guessed either way. Collapsing it into STUCK is
+        what let a broken image read as a capacity gap and keep CI green.
 
     Anything else (EXITED, TERMINATED, FAILED, RUNNING-then-died) is a
-    container problem — the image is broken and another GPU won't help.
-
-    A container-init rejection overrides all of it. It looks identical from
-    the outside — no SSH, no RUNNING — but it is a verdict about the image,
-    so it must not be reported as a retryable host problem."""
-    # Dumped before the verdict so the classification can use its findings.
-    sys_errors = dump_pod_logs(pod_id, image)
-    blocker = host_incompatibility(sys_errors)
+    container problem — the image is broken and another GPU won't help."""
+    diagnostics = dump_pod_logs(pod_id, image)
+    blocker = host_incompatibility(diagnostics.sys_errors)
     if blocker:
         log(
             f"{state.lower()} -- container init rejected the image "
@@ -224,27 +236,46 @@ def _classify_non_running(
             indent=2,
         )
         return "FAIL", f"container init rejected the image: {blocker}"
-    if state == "TIMEOUT":
+    # Both streams: a container that could not be created never wrote a
+    # line of its own, so its only trace is in RunPod's system log.
+    startup = container_startup_failure(
+        diagnostics.sys_lines + diagnostics.container_lines
+    )
+    if startup:
+        log(
+            f"{state.lower()} -- container failed to start ({startup}) "
+            "-- FAIL (deterministic; not retrying other instance types)",
+            indent=2,
+        )
+        return "FAIL", f"container failed to start: {startup}"
+    if state == "TIMEOUT_INFRA":
         log(
             f"{state.lower()} -- {detail} -- STUCK (trying next instance type)",
             indent=2,
         )
         return "STUCK", ""
+    if state == "TIMEOUT_UNREACHABLE":
+        log(
+            f"{state.lower()} -- {detail} -- UNVERIFIED (trying next "
+            "instance type; not counted as either pass or capacity gap)",
+            indent=2,
+        )
+        return "UNVERIFIED", detail
     log(f"{state.lower()} -- {detail} -- FAIL", indent=2)
     return "FAIL", f"pod entered {state} state: {detail}"
 
 
 def _run_cuda_step(
-    host: str, port: int, image: str, group: str, pod_id: str,
+    endpoint: SshEndpoint, image: str, group: str, pod_id: str,
 ) -> Optional[_Outcome]:
     """Per-group CUDA/GPU functional check — the real "does this image
     actually work" gate, distinct from "did it boot". Returns the FAIL
     outcome on a broken image, None if the check was skipped (no SSH /
     no check command for this image) or passed."""
-    if not (host and port and cuda_check_command(image)):
+    if not (endpoint and cuda_check_command(image)):
         return None
     log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
-    ok, output = run_cuda_check(host, port, image)
+    ok, output = run_cuda_check(endpoint, image)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
     if not ok:
@@ -256,13 +287,13 @@ def _run_cuda_step(
 
 
 def _run_jupyter_steps(
-    host: str, port: int, pod_id: str, image: str, group: str,
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Jupyter checks: only when the group opted in via `test_jupyter`.
 
     Checks the public proxy first — the end-user path. SSH only diagnoses
     a proxy failure, so a healthy public endpoint avoids redundant work."""
-    if not (host and port and config.GROUP_TEST_JUPYTER.get(group, False)):
+    if not (endpoint and config.GROUP_TEST_JUPYTER.get(group, False)):
         return None
 
     log(
@@ -281,7 +312,7 @@ def _run_jupyter_steps(
         "to diagnose...",
         indent=2,
     )
-    ok, output = run_jupyter_check(host, port)
+    ok, output = run_jupyter_check(endpoint)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -298,7 +329,7 @@ def _run_jupyter_steps(
 
 
 def _check_port_proxy_first(
-    host: str, port: int, pod_id: str, test_port: int, label: str,
+    endpoint: SshEndpoint, pod_id: str, test_port: int, label: str,
 ) -> Optional[_Outcome]:
     """Check public reachability first; use SSH only to diagnose failure."""
     log(
@@ -318,7 +349,7 @@ def _check_port_proxy_first(
         indent=2,
     )
     ok, detail = run_port_check(
-        host, port, test_port, on_line=lambda line: log(f"  {line}", indent=2)
+        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2)
     )
     if ok:
         failure = f"{label}: reachable in-pod but not via proxy"
@@ -331,12 +362,12 @@ def _check_port_proxy_first(
 
 
 def _run_port_steps(
-    host: str, port: int, pod_id: str, image: str, group: str,
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Run each generic `test_ports` check."""
     for test_port in config.GROUP_TEST_PORTS.get(group) or []:
         outcome = _check_port_proxy_first(
-            host, port, pod_id, test_port, f"port {test_port}",
+            endpoint, pod_id, test_port, f"port {test_port}",
         )
         if outcome is not None:
             dump_pod_logs(pod_id, image)
@@ -345,13 +376,13 @@ def _run_port_steps(
 
 
 def _run_comfyui_steps(
-    host: str, port: int, pod_id: str, image: str, group: str,
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Run the labelled ComfyUI proxy-first reachability smoke."""
-    if not (host and port and config.GROUP_TEST_COMFYUI.get(group, False)):
+    if not (endpoint and config.GROUP_TEST_COMFYUI.get(group, False)):
         return None
     outcome = _check_port_proxy_first(
-        host, port, pod_id, config.COMFYUI_PORT, "ComfyUI reachability",
+        endpoint, pod_id, config.COMFYUI_PORT, "ComfyUI reachability",
     )
     if outcome is not None:
         dump_pod_logs(pod_id, image)
@@ -396,19 +427,22 @@ def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
     return "FAIL", detail
 
 
-def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
+def _run_dwell_step(
+    endpoint: SshEndpoint, pod_id: str, image: str,
+) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
-    Returns FAIL outcome on a post-boot crash, None on skip / pass."""
-    if config.DWELL_SEC <= 0:
+    Returns FAIL outcome on a post-boot crash, None on skip / pass.
+
+    Re-probes the endpoint that answered readiness rather than re-reading
+    `ssh.direct`: a proxy-only pod has no direct endpoint to re-read, and
+    would silently skip the dwell check.
+    """
+    if config.DWELL_SEC <= 0 or not endpoint:
         return None
     log(f"dwelling {config.DWELL_SEC}s and re-probing SSH...", indent=2)
     time.sleep(config.DWELL_SEC)
-    st = pod_state(pod_id)
-    host, port = st.get("ssh_ip") or "", st.get("ssh_port") or 0
-    if not (host and port):
-        return None
-    ok, err = ssh_probe(host, int(port), timeout=8)
+    ok, err = ssh_probe(endpoint, timeout=8)
     if ok:
         return None
     log(
@@ -502,10 +536,11 @@ def test_pair(
 
         log(f"smoke check passed: {wait_detail}", indent=2)
         st = pod_state(pod_id)
-        # The endpoint that answered the readiness probe, which may be the
-        # proxy — RunPod does not always allocate a direct TCP port, so
-        # re-reading ssh.direct here would throw away a working connection.
-        host, port = endpoint
+        # Every later check reuses the endpoint that answered readiness,
+        # carried by value. Re-reading ssh.direct would throw away a working
+        # proxy connection, and addressing a proxy by (host, port) alone
+        # would collide with every other pod on ssh.runpod.io.
+        assert endpoint is not None
 
         # pod_state already carries cudaVersion, so the common path costs no
         # extra request. It is nullable until the scheduler has assigned a
@@ -519,22 +554,22 @@ def test_pair(
         # outcome to surface to the caller. Kept as straight-line code
         # (no fancy abstraction) so the failure points stay easy to read
         # in stack traces / logs.
-        outcome = _run_cuda_step(host, port, image, group, pod_id)
+        outcome = _run_cuda_step(endpoint, image, group, pod_id)
         if outcome is not None:
             return outcome
-        outcome = _run_jupyter_steps(host, port, pod_id, image, group)
+        outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
-        outcome = _run_port_steps(host, port, pod_id, image, group)
+        outcome = _run_port_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
-        outcome = _run_comfyui_steps(host, port, pod_id, image, group)
+        outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
         outcome = _run_log_scan_step(pod_id, image)
         if outcome is not None:
             return outcome
-        outcome = _run_dwell_step(pod_id, image)
+        outcome = _run_dwell_step(endpoint, pod_id, image)
         if outcome is not None:
             return outcome
         outcome = _run_post_dwell_steps(pod_id, image, group)
@@ -563,14 +598,20 @@ def test_image(
     pod ever booted (SKIP) or the host isn't NVIDIA.
 
     Iterates instance types until one PASSes. Stops early on FAIL (real
-    image bug — no point trying another GPU). UNAVAILABLE (capacity) and
-    STUCK (RunPod gave us a dead host) just move on to the next instance.
+    image bug — no point trying another GPU). UNAVAILABLE (capacity),
+    STUCK (RunPod gave us a dead host) and UNVERIFIED (an endpoint that
+    never answered) all just move on to the next instance.
     CREATE_FAIL also short-circuits: a non-capacity orchestrator error
     (e.g. bad image tag, registry auth) won't be fixed by another GPU.
+
+    When nothing passed, the final status is the strongest thing we can
+    honestly say: UNVERIFIED outranks SKIP, because "we could not tell
+    whether this image works" must not be filed under "no capacity".
     """
     log(f"image: {image}")
     stuck_instances: list[str] = []
     unavailable_instances: list[str] = []
+    unverified: list[tuple[str, str]] = []
     last_create_error = ""
     last_create_inst = ""
     for inst in instances:
@@ -599,6 +640,8 @@ def test_image(
             continue
         if result == "STUCK":
             stuck_instances.append(inst)
+        if result == "UNVERIFIED":
+            unverified.append((inst, detail))
         if result == "UNAVAILABLE":
             unavailable_instances.append(inst)
     if last_create_error:
@@ -606,6 +649,24 @@ def test_image(
         # weren't capacity-shortages. Surface the last orchestrator error
         # — this is usually an image / auth / registry problem.
         return "FAIL", last_create_error, last_create_inst, ""
+    if unverified:
+        insts = [inst for inst, _d in unverified]
+        log(
+            f"{len(unverified)} instance(s) left the image unverified "
+            f"({insts}) — an SSH endpoint was assigned but never answered",
+            indent=1,
+        )
+        return (
+            "UNVERIFIED",
+            (
+                "could not determine whether the image works: an SSH "
+                "endpoint was assigned but never answered"
+                + _over_candidates(len(unverified))
+                + f" — {unverified[0][1]}"
+            ),
+            ", ".join(insts),
+            "",
+        )
     if stuck_instances:
         # We tried every instance and RunPod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at
