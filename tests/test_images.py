@@ -45,7 +45,7 @@ from runpod_smoke.manifest import (
     _normalize_cuda_version,
     parse_manifest,
 )
-from runpod_smoke.pod import discover_registry_auth
+from runpod_smoke.pod import list_registries
 from runpod_smoke.runner import test_image
 
 
@@ -81,8 +81,8 @@ def _check_prereqs(manifest_path: Path) -> Optional[int]:
     """Return None on success, or an exit-code int on failure. Verifies:
       1. the manifest file actually exists
       2. the REST API v2 accepts our key
-    Anything else (GPU catalog, registry auth) is best-effort — the script
-    degrades gracefully if those are missing."""
+    The GPU catalog is best-effort — the script degrades gracefully
+    without it. Registry auth is checked separately, in main()."""
     if not manifest_path.is_file():
         log(f"Images manifest not found: {manifest_path}")
         return 1
@@ -119,18 +119,42 @@ def _init_gpu_catalog() -> None:
         )
 
 
-def _init_registry_auth() -> None:
-    if not config.REGISTRY_AUTH_ID:
-        config.REGISTRY_AUTH_ID = (
-            discover_registry_auth(config.REGISTRY_AUTH_NAME) or ""
-        )
+def _init_registry_auth() -> Optional[int]:
+    """Resolve the credential to attach to every pod. Exit code on failure.
+
+    Asking for a credential that the account doesn't have is fatal: we
+    would otherwise fall back to a pull the caller didn't ask for and
+    only find out from a rate-limit or auth error inside the pod.
+    """
     if config.REGISTRY_AUTH_ID:
-        log(f"using registry auth: {config.REGISTRY_AUTH_ID}")
-    else:
+        log(f"using registry auth: {config.REGISTRY_AUTH_ID} (REGISTRY_AUTH_ID)")
+        return None
+    if not config.REGISTRY_AUTH_NAME:
         log(
-            "warn: no registry auth configured — Docker Hub pulls will be "
-            "anonymous and likely hit the toomanyrequests rate limit"
+            "no registry auth requested — pulls will be anonymous, which "
+            "works for public images but shares Docker Hub's rate limit"
         )
+        return None
+
+    registries = list_registries()
+    if registries is None:
+        print("::error::GET /v2/registries failed — cannot resolve "
+              f"registry auth '{config.REGISTRY_AUTH_NAME}'")
+        return 1
+    for item in registries:
+        if (item.get("name") or "").lower() == config.REGISTRY_AUTH_NAME.lower():
+            config.REGISTRY_AUTH_ID = item.get("id") or ""
+            break
+    if not config.REGISTRY_AUTH_ID:
+        have = ", ".join(sorted(r.get("name") or "?" for r in registries))
+        print(f"::error::registry auth '{config.REGISTRY_AUTH_NAME}' not found "
+              f"in this RunPod account (has: {have or 'none'})")
+        return 1
+    log(
+        f"using registry auth: {config.REGISTRY_AUTH_ID} "
+        f"('{config.REGISTRY_AUTH_NAME}')"
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -877,7 +901,9 @@ def main() -> int:
     if rc is not None:
         return rc
 
-    _init_registry_auth()
+    rc = _init_registry_auth()
+    if rc is not None:
+        return rc
 
     manifest = parse_manifest(manifest_path)
     try:

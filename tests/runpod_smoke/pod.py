@@ -108,19 +108,18 @@ for _sig in (signal.SIGINT, signal.SIGTERM):
 # ---------------------------------------------------------------------------
 
 
-def discover_registry_auth(prefer_name: str = "") -> Optional[str]:
-    """Find a registry credential id from `GET /v2/registries`."""
+def list_registries() -> Optional[list[dict]]:
+    """Registry credentials on the account, or None if the call failed.
+
+    Resolution by name is the caller's job: a credential is never picked
+    implicitly, because the wrong Docker Hub login turns a public pull
+    into `unauthorized: incorrect username or password` inside the pod.
+    """
     status, data = api.request_with_retries("GET", "/registries", timeout=30)
     if not (200 <= status < 300) or not isinstance(data, dict):
         return None
     registries = data.get("registries")
-    if not isinstance(registries, list) or not registries:
-        return None
-    if prefer_name:
-        for item in registries:
-            if (item.get("name") or "").lower() == prefer_name.lower():
-                return item.get("id")
-    return registries[0].get("id")
+    return registries if isinstance(registries, list) else None
 
 
 # ---------------------------------------------------------------------------
