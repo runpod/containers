@@ -20,8 +20,21 @@ variable "CLUSTER_BUILDS" {
   default = [
     { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2204" },
     { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1281", torch_code = "2121", ubuntu_name = "ubuntu2204" },
+    { cuda_code = "1281", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1281", torch_code = "2130", ubuntu_name = "ubuntu2204" },
+    { cuda_code = "1281", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
     { cuda_code = "1290", torch_code = "280", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1290", torch_code = "2121", ubuntu_name = "ubuntu2204" },
+    { cuda_code = "1290", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1290", torch_code = "2130", ubuntu_name = "ubuntu2204" },
+    { cuda_code = "1290", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
     { cuda_code = "1300", torch_code = "291", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2120", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
   ]
 }
 
