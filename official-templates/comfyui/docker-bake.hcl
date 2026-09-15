@@ -108,14 +108,14 @@ group "cuda13" {
   ]
 }
 
-# group "cuda132" {
+group "cuda132" {
 
-#   targets = [
-#     for combination in COMPATIBLE_BUILDS:
-#       "cuda${combination.cuda_version_code}"
-#       if combination.cuda_version == "13.2"
-#   ]
-# }
+  targets = [
+    for combination in COMPATIBLE_BUILDS:
+      "cuda${combination.cuda_version_code}"
+      if combination.cuda_version == "13.2"
+  ]
+}
 
 # Common settings for all targets (defaults to regular CUDA 12.8 / cu128)
 target "common" {
