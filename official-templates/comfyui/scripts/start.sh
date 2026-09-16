@@ -195,6 +195,60 @@ create_pip_shim() {
     fi
 }
 
+# ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
+# to exact versions, and the workspace checkout can move away from the image via
+# Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
+# Deps are resolved normally because the template content lives in the
+# workflow-templates sub-packages; PIP_CONSTRAINT keeps torch where it is.
+sync_comfyui_pinned_packages() {
+    local requirements="$COMFYUI_DIR/requirements.txt"
+    local installed pins spec name have
+    local missing=()
+
+    if [ ! -f "$requirements" ]; then
+        return
+    fi
+
+    # No --local: the packages to compare against live in the image, not the venv.
+    # Names are normalised on both sides because pip and ComfyUI disagree on
+    # hyphens vs underscores (comfy-kitchen / comfy_kitchen).
+    installed=$(python -m pip freeze 2>/dev/null | tr -d '\r' | tr 'A-Z_' 'a-z-')
+    if [ -z "$installed" ]; then
+        echo "WARNING: could not list installed packages; skipping the ComfyUI package check."
+        return
+    fi
+
+    # Only exact pins; every other line in the file is a range we leave alone.
+    # torch and friends are kept aligned by /opt/comfyui-runtime-constraints.txt.
+    pins=$(tr -d '\r' < "$requirements" \
+        | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==[^[:space:];#]+$' \
+        | tr 'A-Z_' 'a-z-' \
+        | grep -vE '^(torch|torchvision|torchaudio)==' || true)
+
+    while read -r spec; do
+        if [ -z "$spec" ] || grep -qxF "$spec" <<< "$installed"; then
+            continue
+        fi
+        name=${spec%%==*}
+        have=$(grep -m1 -E "^${name}==" <<< "$installed" | cut -d= -f3)
+        echo "  $name: installed ${have:-nothing}, ComfyUI wants ${spec#*==}"
+        missing+=("$spec")
+    done <<< "$pins"
+
+    if [ "${#missing[@]}" = "0" ]; then
+        return
+    fi
+
+    echo "============================================="
+    echo "  Workspace ComfyUI disagrees with the packages in this image (see above)."
+    echo "  Installing the versions it asks for into $VENV_DIR"
+    echo "============================================="
+    if ! python -m pip install --no-cache-dir "${missing[@]}"; then
+        echo "WARNING: could not install them. If ComfyUI fails to import, redeploy"
+        echo "         on a newer image instead of updating ComfyUI in place."
+    fi
+}
+
 log_cuda_venv_diagnostics() {
     local expected_build local_packages status
     expected_build=$(sed -n 's/^torch==.*+\(cu[0-9][0-9]*\).*$/\1/p' \
@@ -408,6 +462,8 @@ printf 'if [ -f "%s/bin/activate" ]; then . "%s/bin/activate"; fi\n' \
 # Manager's timeout to 30s.
 echo "Warming up pip (Manager timeout is 30s)..."
 time python -m pip --version
+
+sync_comfyui_pinned_packages
 
 log_cuda_venv_diagnostics
 
