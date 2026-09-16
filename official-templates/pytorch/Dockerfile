@@ -5,7 +5,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG WHEEL_SRC
 ARG TORCH
-ARG PILLOW_VERSION
 
 # TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0 torchvision==0.23.0
 # torchaudio==2.8.0"). `read -ra` splits it into a real bash array so pip receives one
@@ -20,10 +19,18 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
 
-# torchvision pulls Pillow from the PyTorch wheel index, which lags PyPI and
-# ships releases with known HIGH CVEs. Re-install a patched Pillow from PyPI,
-# but only when it's already present (torch builds without torchvision have none).
+# torchcodec backs torchaudio.load/save from torch 2.9 on. Its own step because
+# its CUDA builds don't track torch's index cadence (see codec_src in
+# docker-bake.hcl); --no-deps so it can never pull a different torch.
+ARG TORCHCODEC
+ARG CODEC_SRC
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    if python -m pip show pillow > /dev/null 2>&1; then \
-        python -m pip install --upgrade "pillow==${PILLOW_VERSION}"; \
+    if [ -n "${TORCHCODEC}" ]; then \
+        python -m pip install --no-deps "${TORCHCODEC}" \
+            --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
     fi
+
+# Patched pins for packages that Grype reports as HIGH in the layers above.
+COPY --from=requirements requirements.txt /requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --upgrade -r /requirements.txt
