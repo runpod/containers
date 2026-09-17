@@ -67,6 +67,7 @@ jobs:
       nvidia: ${{ steps.f.outputs.nvidia_any_changed }}
       rocm: ${{ steps.f.outputs.rocm_any_changed }}
       comfyui: ${{ steps.f.outputs.comfyui_any_changed }}
+      sandbox: ${{ steps.f.outputs.sandbox_any_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -98,6 +99,12 @@ jobs:
             comfyui:
               - 'official-templates/comfyui/**'
               - 'official-templates/shared/**'
+            # Sandbox images build straight from upstream Ubuntu and carry
+            # none of container-template, so runpod/base is not an input.
+            sandbox:
+              - 'official-templates/sandbox-ubuntu/**'
+              - 'official-templates/sandbox-openclaw/**'
+              - 'official-templates/sandbox-harbor/**'
 
   base:
     needs: [version, changes]
@@ -148,11 +155,22 @@ jobs:
       suffix: ${{ needs.version.outputs.suffix }}
       run-functional-tests: true
 
+  sandbox:
+    needs: [version, changes]
+    if: >-
+      !cancelled() && needs.version.outputs.should-build == 'true'
+      && (github.event_name != 'pull_request' || needs.changes.outputs.sandbox == 'true')
+    uses: ./.github/workflows/sandbox.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
+      suffix: ${{ needs.version.outputs.suffix }}
+
   # Tag + GitHub Release ONLY on a releasable push to main, and ONLY after every
   # family built and smoke-tested successfully — so we never publish a release
   # that's missing an image family or built on a broken one.
   release:
-    needs: [version, base, nvidia, rocm, comfyui]
+    needs: [version, base, nvidia, rocm, comfyui, sandbox]
     if: >-
       github.event_name == 'push'
       && needs.version.outputs.should-release == 'true'
@@ -160,6 +178,7 @@ jobs:
       && needs.nvidia.result == 'success'
       && needs.rocm.result == 'success'
       && needs.comfyui.result == 'success'
+      && needs.sandbox.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
