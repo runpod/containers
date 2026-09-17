@@ -1,0 +1,43 @@
+### Runpod Sandbox — OpenClaw
+
+**[OpenClaw](https://docs.openclaw.ai/) running in a Runpod Sandbox.**
+
+A sandbox for running the OpenClaw agent on isolated, disposable compute instead of your own machine. OpenClaw executes shell commands and edits files, so giving it a sandbox rather than a laptop is the point.
+
+### What's included
+- **OpenClaw 2026.9.4** with its bundled plugins, `openclaw` on `PATH`.
+- **Node.js 24** with `npm` and `pnpm`, on Debian 12.
+- **Python 3** with `pip`, plus `git`, `curl`, `jq`, `ripgrep`, an ssh client and the usual archive tools.
+- **Unprivileged by default**: commands run as `node` with passwordless `sudo` available.
+
+### Variants
+
+| Tag | Contents |
+|---|---|
+| `<version>-sandbox-2026.9.4` | OpenClaw and its toolchain. |
+| `<version>-sandbox-2026.9.4-browser` | The same plus Chromium, for agents that need to drive a real browser. |
+
+Only the plain image is offered as a sandbox template; to get the browser variant, name its image explicitly when creating the sandbox.
+
+Chromium's own sandboxing relies on kernel features that the isolation boundary restricts, so browser automation may need OpenClaw's browser launched without it.
+
+### The gateway
+
+The gateway starts with the container and serves the Control UI on port **18789**. Request that port when creating the sandbox to get a URL for it.
+
+A sandbox never boots holding your credentials — they arrive once it is claimed — so the gateway comes up unconfigured. Run onboarding once, then restart the gateway so it picks them up:
+
+```bash
+# reads OPENAI_API_KEY and friends from the environment; --accept-risk is
+# required with --non-interactive, since an agent gets full system access
+openclaw onboard --non-interactive --accept-risk
+openclaw gateway restart
+```
+
+Drop the two flags if you have a terminal attached and want the interactive flow.
+
+State lives in `/home/node/.openclaw`, and the agent's working directory is `/home/node/.openclaw/workspace`.
+
+### Notes
+- OpenClaw's own Docker-based sandboxing is unavailable here: there is no Docker socket inside a sandbox, and the isolation boundary provides the containment instead.
+- Install extra tooling at runtime with `sudo apt-get install` or `pip install`. For a heavier setup, build your own image on top of this one and register it as a sandbox template.

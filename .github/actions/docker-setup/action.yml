@@ -4,8 +4,8 @@ inputs:
   dockerhub-username:
     description: 'Docker Hub username'
     required: true
-  dockerhub-token:
-    description: 'Docker Hub token'
+  dockerhub-oidc:
+    description: 'Docker Hub OIDC'
     required: true
   max-parallelism:
     description: 'Maximum parallelism for Docker Build'
@@ -62,11 +62,12 @@ runs:
           exit 1
         fi
 
-    - name: Login to Docker Hub
+    - name: Docker login
       uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+      env:
+        DOCKERHUB_OIDC_CONNECTIONID: ${{ inputs.dockerhub-oidc }}
       with:
         username: ${{ inputs.dockerhub-username }}
-        password: ${{ inputs.dockerhub-token }}
 
     - name: Resolve sticky-disk cache key
       id: cache
