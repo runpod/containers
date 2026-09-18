@@ -104,6 +104,10 @@ jobs:
           REFS: ${{ steps.refs.outputs.refs }}
         run: |
           set -euo pipefail
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
           IMAGE=$(jq -er '.[] | select(contains("-ubuntu2604"))' <<< "$REFS")
           echo "Verifying $IMAGE"
 
@@ -112,17 +116,29 @@ jobs:
           # accumulate zombies from exec'd commands.
           test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/bin/tini","-g","--"]'
           test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["sleep","infinity"]'
+          say boot "tini -g -- sleep infinity"
+          say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
 
           docker run --rm "$IMAGE" bash -eo pipefail -c '
+            say() { printf "  %-14s %s\n" "$1" "$2"; }
+
             test "$(id -un)" = user && test "$(id -u)" = 1000
             sudo -n true
+            say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
             python --version | grep -q "^Python 3.14"
             node --version | grep -q "^v24\."
-            npm --version && uv --version && git --version
+            say python "$(python --version | cut -d" " -f2), uv $(uv --version | cut -d" " -f2)"
+            say node "$(node --version), npm $(npm --version)"
+            say git "$(git --version | cut -d" " -f3)"
+
             # 26.04 marks the system Python externally managed; this is the
             # first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
             pip install --quiet --no-input six && python -c "import six"
+            say pip "installs despite the externally-managed marker"
+
             uv venv /tmp/v && /tmp/v/bin/python -c "print(1)"
+            say venv "uv creates a working virtualenv"
           '
 
           # Nothing fronts a sandbox, so these must stay out of the image —
@@ -130,6 +146,7 @@ jobs:
           ! docker run --rm "$IMAGE" bash -c '
             ls /usr/sbin/sshd /usr/sbin/nginx /usr/local/bin/jupyter 2>/dev/null | grep .
           '
+          say no-services "sshd, nginx and jupyter all absent"
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
@@ -203,6 +220,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
           while read -r IMAGE; do
             echo "::group::$IMAGE"
 
@@ -212,36 +233,50 @@ jobs:
             test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["node","openclaw.mjs","gateway","--bind","loopback"]'
             test "$(docker inspect -f '{{.Config.WorkingDir}}' "$IMAGE")" = /app
 
+            say boot "$(docker inspect -f '{{json .Config.Entrypoint}} {{json .Config.Cmd}} in {{.Config.WorkingDir}}' "$IMAGE")"
+            say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
+
             docker run --rm --entrypoint bash "$IMAGE" -eo pipefail -c '
+              say() { printf "  %-14s %s\n" "$1" "$2"; }
+
               test "$(id -un)" = node
               sudo -n true
-              openclaw --version
+              say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+              say openclaw "$(openclaw --version)"
+
               node --version | grep -q "^v24\."
-              npm --version && git --version && python3 --version
+              say node "$(node --version), npm $(npm --version)"
+              say python "$(python3 --version | cut -d" " -f2), git $(git --version | cut -d" " -f3)"
+
+              # Baked at build; without it the gateway refuses to serve.
+              openclaw config get gateway.mode | grep -q local
+              say gateway.mode "$(openclaw config get gateway.mode)"
+
               # Debian 12 marks the system Python externally managed; this is
               # the first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
               pip install --quiet --no-input six && python3 -c "import six"
+              say pip "installs despite the externally-managed marker"
+
               test -d /home/node/.openclaw/workspace
-              # Baked at build; without it the gateway will not serve.
-              openclaw config get gateway.mode | grep -q local
+              say state "/home/node/.openclaw + workspace present"
             '
 
             # OpenClaw can drive Docker for its own sandboxing; inside a
             # sandbox there is no socket to drive, so the CLI would mislead.
             ! docker run --rm --entrypoint bash "$IMAGE" -c 'command -v docker'
+            say docker-cli "absent, as it must be"
 
-            case "$IMAGE" in
-              *-browser)
-                docker run --rm --entrypoint bash "$IMAGE" -eo pipefail -c '
-                  ls "$PLAYWRIGHT_BROWSERS_PATH"/chromium* > /dev/null
-                '
-                ;;
-            esac
+            # A baked Chromium cannot be kept patched, so switching the base
+            # to an upstream `-browser` tag must not pass unnoticed.
+            ! docker run --rm --entrypoint bash "$IMAGE" -c \
+              'ls -d "$PLAYWRIGHT_BROWSERS_PATH"/chromium* 2>/dev/null | grep .'
+            say chromium "absent; installed at runtime when an agent needs it"
 
             # The gateway must come up unconfigured, since a fresh sandbox has
             # no provider key. Upstream's own healthcheck is the verdict.
             CID=$(docker run -d "$IMAGE")
-            ok=0 status=starting
+            ok=0 status=starting waited=0
             for _ in $(seq 1 40); do
               status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || echo gone)
               case "$status" in
@@ -249,8 +284,11 @@ jobs:
                 unhealthy|none|gone) break ;;
               esac
               sleep 3
+              waited=$((waited + 3))
             done
-            if [ "$ok" != 1 ]; then
+            if [ "$ok" = 1 ]; then
+              say gateway "healthy after ${waited}s, bound to loopback"
+            else
               echo "::error::gateway never reported healthy (status=$status)"
               docker logs "$CID" 2>&1 | tail -60
             fi
@@ -337,6 +375,10 @@ jobs:
           REFS: ${{ steps.refs.outputs.refs }}
         run: |
           set -euo pipefail
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
           IMAGE=$(jq -er '.[0]' <<< "$REFS")
           echo "Verifying $IMAGE"
 
@@ -344,21 +386,30 @@ jobs:
           # turn every Harbor sandbox into a zombie farm or a root shell.
           test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/bin/tini","-g","--"]'
           test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["sleep","infinity"]'
+          say boot "tini -g -- sleep infinity, inherited from sandbox-ubuntu"
+          say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
 
           docker run --rm "$IMAGE" bash -eo pipefail -c '
+            say() { printf "  %-14s %s\n" "$1" "$2"; }
+
             test "$(id -un)" = user
             sudo -n true
-            harbor --version
-            tmux -V
+            say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+            say harbor "$(harbor --version)"
+            say tmux "$(tmux -V | cut -d" " -f2)"
+
             # ASP speaks ssh and sftp; the binaries must exist even though no
             # daemon runs at boot.
             test -x /usr/sbin/sshd
             ls /usr/lib/openssh/sftp-server > /dev/null
+            say asp-transport "sshd and sftp-server installed, not running"
           '
 
           # Host keys must be generated per sandbox, never baked: every
           # sandbox from this image would otherwise share one identity.
           ! docker run --rm "$IMAGE" bash -c 'ls /etc/ssh/ssh_host_*_key 2>/dev/null | grep .'
+          say host-keys "none baked in"
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
