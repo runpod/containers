@@ -95,9 +95,34 @@ export_env_vars() {
 start_jupyter() {
     mkdir -p /workspace
 
-    if [ -z "${JUPYTER_PASSWORD:-}" ]; then
-        JUPYTER_PASSWORD=$(openssl rand -hex 16)
-        echo "JUPYTER_PASSWORD was not set; generated one for this pod: ${JUPYTER_PASSWORD}"
+    # Three cases, in priority order: explicitly no auth, a token from the pod
+    # env, or don't start at all.
+    #
+    # Nothing generates a token here. The platform generates JUPYTER_PASSWORD at
+    # deploy time (when "Start Jupyter notebook" is on), stores it in the pod
+    # env, and the console builds the Connect URL as
+    # `...-8888.proxy.runpod.net/lab?token=$JUPYTER_PASSWORD` by reading it back.
+    # A token minted in the container never reaches the pod env, so the console
+    # cannot use it and it changes on every boot -- the user ends up digging a
+    # new value out of the pod logs after each restart. Not starting keeps the
+    # fix from TEM-89 intact: Jupyter is never exposed on the public proxy with
+    # an empty (auth-disabled) token by accident.
+    #
+    # Turning auth off is therefore its own variable, never an empty
+    # JUPYTER_PASSWORD -- an empty value is exactly what shipped before TEM-89
+    # and left Jupyter wide open unintentionally, so it has to keep meaning
+    # "off". Compared against the literal string "true" for the same reason.
+    if [ "${JUPYTER_DISABLE_AUTH:-}" = "true" ]; then
+        echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
+        echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
+        JUPYTER_TOKEN=""
+    elif [ -n "${JUPYTER_PASSWORD:-}" ]; then
+        JUPYTER_TOKEN="$JUPYTER_PASSWORD"
+    else
+        echo "JUPYTER_PASSWORD is not set; skipping JupyterLab."
+        echo "Redeploy with \"Start Jupyter notebook\" enabled, or set JUPYTER_PASSWORD on the pod, to get a stable token."
+        echo "To run JupyterLab with no password at all, set JUPYTER_DISABLE_AUTH=true (understand the risk first)."
+        return 0
     fi
 
     echo "Starting Jupyter Lab on port 8888..."
@@ -110,7 +135,7 @@ start_jupyter() {
         --FileContentsManager.preferred_dir=/workspace \
         --ServerApp.root_dir=/workspace \
         --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
-        --IdentityProvider.token="${JUPYTER_PASSWORD}" \
+        --IdentityProvider.token="${JUPYTER_TOKEN}" \
         --ServerApp.allow_origin=* &> /jupyter.log &
     echo "Jupyter Lab started"
 }
