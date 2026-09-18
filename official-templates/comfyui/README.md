@@ -24,7 +24,7 @@ If you have an existing pod created with an older version of this template (CUDA
 
 - `8188`: ComfyUI web UI
 - `8080`: FileBrowser (admin / `FILEBROWSER_PASSWORD`, default: `adminadmin12`)
-- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`). Skipped when `JUPYTER_PASSWORD` is unset — deploy with "Start Jupyter notebook" enabled and the platform sets it for you.
+- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`). Not started when `JUPYTER_PASSWORD` is unset, matching the pytorch and base templates — deploy with "Start Jupyter notebook" enabled and the platform sets it for you, or set `JUPYTER_PASSWORD` yourself.
 - `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
 
 ## Pre-installed custom nodes
