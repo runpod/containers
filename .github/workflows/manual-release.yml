@@ -10,12 +10,16 @@ name: Manual Release (break-glass)
 #
 # The tag is created on the source run's commit, not on whatever main happens
 # to be at dispatch time. Passing only a tag would otherwise label a newer
-# main commit whose tree (and generated notes) do not match the images.
+# main commit whose tree (and release body) do not match the images.
 on:
   workflow_dispatch:
     inputs:
+      family:
+        description: "Template family to release, e.g. comfyui (see .github/families.yml)."
+        required: true
+        type: string
       tag:
-        description: "Exact tag to publish, e.g. v1.1.0. Images for this version MUST already be built and pushed."
+        description: "Exact tag to publish, e.g. comfyui-v1.1.0. Images for this version MUST already be built and pushed."
         required: true
         type: string
       source_run_id:
@@ -50,10 +54,11 @@ jobs:
       - name: Validate tag input
         env:
           TAG: ${{ inputs.tag }}
+          FAMILY: ${{ inputs.family }}
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::tag must look like vMAJOR.MINOR.PATCH (got '$TAG')"
+          if ! [[ "$TAG" =~ ^"${FAMILY}"-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must look like ${FAMILY}-vMAJOR.MINOR.PATCH (got '$TAG')"
             exit 1
           fi
 
@@ -151,6 +156,8 @@ jobs:
       - name: Confirm computed version matches the tag
         uses: ./.github/actions/compute-version
         id: version
+        with:
+          family: ${{ inputs.family }}
 
       - name: Check version matches
         env:
@@ -164,32 +171,26 @@ jobs:
             exit 1
           fi
 
-      - name: Verify published image manifests
+      - name: Verify published images
         env:
+          FAMILY: ${{ inputs.family }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          # One always-built tag per family (not the full bake matrix). If this
-          # version was actually pushed, these refs must resolve in the registry.
-          refs=(
-            "runpod/base:${VERSION}-ubuntu2204"
-            "runpod/pytorch:${VERSION}-cu1281-torch280-ubuntu2204"
-            "runpod/pytorch:${VERSION}-cu1281-torch280-ubuntu2204-cluster"
-            "runpod/nvidia-pytorch:${VERSION}-25.11"
-            "runpod/base:${VERSION}-rocm644-ubuntu2204-py310-pytorch260"
-            "runpod/autoresearch:${VERSION}-cuda1281-ubuntu2204"
-          )
-          missing=0
-          for ref in "${refs[@]}"; do
-            echo "::group::inspect ${ref}"
-            if ! docker buildx imagetools inspect "$ref"; then
-              echo "::error::missing image manifest: ${ref}"
-              missing=$((missing + 1))
-            fi
-            echo "::endgroup::"
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::${missing} expected image(s) for ${VERSION} are not in the registry — refusing to tag"
+          # Tag shapes carry upstream versions (comfyui${COMFYUI_VERSION}, …),
+          # so instead of naming refs we ask Docker Hub whether the family's
+          # repo has any tag for this version. Families that share a repo
+          # (base/rocm, pytorch/cluster) can satisfy each other's check — the
+          # counts are printed so the operator can see what matched.
+          REPO="$(python3 .github/scripts/plan_families.py --image-repo "${FAMILY}")"
+          # -rc./-dev tags don't count as published.
+          TAGS="$(curl -fsSL \
+            "https://hub.docker.com/v2/repositories/${REPO}/tags/?page_size=100&name=${VERSION}-" \
+            | jq -r '.results[].name | select((contains("-rc.") or contains("-dev")) | not)')"
+          echo "${REPO} tags for ${VERSION}:"
+          printf '%s\n' "${TAGS:-  <none>}"
+          if [ -z "${TAGS}" ]; then
+            echo "::error::no released ${REPO} tag for ${VERSION} on Docker Hub — refusing to tag"
             exit 1
           fi
 
@@ -205,14 +206,23 @@ jobs:
           fi
 
       # Same as release.yml: the squash commit we are tagging carries the body,
-      # and GitHub pre-pends it to its own generated notes.
+      # and the changelog link points at this family's previous tag.
       - name: Release body from the squash commit
         id: notes
+        env:
+          FAMILY: ${{ inputs.family }}
+          TAG: ${{ inputs.tag }}
+          PREV_VERSION: ${{ steps.version.outputs.base-version }}
         run: |
           set -euo pipefail
           BODY="${RUNNER_TEMP}/release-body.md"
           git log -1 --format=%b HEAD \
             | grep -viE '^(co-authored-by|signed-off-by):' > "${BODY}" || true
+          if [ -n "${PREV_VERSION}" ]; then
+            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+              "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" \
+              "${FAMILY}-v${PREV_VERSION}" "${TAG}" >> "${BODY}"
+          fi
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
@@ -222,7 +232,6 @@ jobs:
           name: ${{ inputs.tag }}
           target_commitish: ${{ steps.source.outputs.head_sha }}
           body_path: ${{ steps.notes.outputs.path }}
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

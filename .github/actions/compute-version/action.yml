@@ -1,15 +1,19 @@
 name: Compute Version
 description: >-
-  Derive the next semantic version from the latest git tag and the Conventional
-  Commits made since it. Produces the RELEASE_VERSION / RELEASE_SUFFIX values the
-  docker-bake files consume, plus flags telling the caller whether to build and
-  whether to publish a release.
+  Derive the next semantic version from the family's latest git tag and the
+  Conventional Commits made since it. Produces the RELEASE_VERSION /
+  RELEASE_SUFFIX values the docker-bake files consume, plus flags telling the
+  caller whether to build and whether to publish a release.
 
 inputs:
-  fallback-version:
-    description: "Version to start from when no git tag exists yet."
+  family:
+    description: >-
+      Template family whose tag series to read, e.g. `base` or `comfyui`
+      (tags `base-v1.3.1`). Empty reads the repo-wide `v1.3.1` series, so
+      every image shares one version. A family with no tag yet starts at
+      1.0.0 regardless of the bump level.
     required: false
-    default: "1.0.7"
+    default: ""
   release-branch:
     description: "Branch whose pushes produce a real release."
     required: false
@@ -24,13 +28,15 @@ outputs:
     value: ${{ steps.compute.outputs.suffix }}
   base-version:
     description: >-
-      The last RELEASED version this build sits on (no bump applied), or the
-      fallback when no tag exists yet — e.g. 1.0.7. Used to build FROM an
-      already-published image when the current version's image isn't published
-      yet (e.g. cluster on a PR that doesn't rebuild pytorch).
+      The last RELEASED version this build sits on (no bump applied) — e.g.
+      1.3.1. Used to build FROM an already-published image when the current
+      version's image isn't published yet (e.g. cluster on a PR that doesn't
+      rebuild pytorch). EMPTY when the family has never been released: there
+      is no published image to build FROM, so the caller must build the
+      dependency in the same run.
     value: ${{ steps.compute.outputs.base_version }}
   tag:
-    description: "Git tag for the release (e.g. v1.1.0)."
+    description: "Git tag for the release (e.g. v1.1.0, or comfyui-v1.1.0)."
     value: ${{ steps.compute.outputs.tag }}
   bump:
     description: "Detected bump level: major | minor | patch | none."
@@ -56,42 +62,24 @@ runs:
         # Body is JSON-encoded so a multiline PR description survives the env.
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_BODY_JSON: ${{ toJSON(github.event.pull_request.body) }}
-        FALLBACK: ${{ inputs.fallback-version }}
+        FAMILY: ${{ inputs.family }}
         RELEASE_BRANCH: ${{ inputs.release-branch }}
       run: |
         set -euo pipefail
 
         # shellcheck source=detect-bump.sh
         source "${GITHUB_ACTION_PATH}/detect-bump.sh"
+        # shellcheck source=resolve-version.sh
+        source "${GITHUB_ACTION_PATH}/resolve-version.sh"
 
         # Make sure tags are present even on shallow-ish checkouts.
         git fetch --tags --force --quiet || true
 
-        HEAD_SHA="$(git rev-parse HEAD)"
+        PREFIX=""
+        [ -n "${FAMILY}" ] && PREFIX="${FAMILY}-"
 
-        # Highest release tag that is a proper ancestor of HEAD. Two filters:
-        #   * skip tags ON HEAD — if release.yml already tagged this same push,
-        #     we must still base off the PREVIOUS release, not HEAD's own tag,
-        #     so re-running recomputes the same version instead of bumping again.
-        #   * skip tags NOT reachable from HEAD — so re-running an OLDER commit
-        #     after a newer release exists doesn't pick that newer, unrelated
-        #     tag as its base (it would compute a wrong/backwards version).
-        # Tags are visited highest-version-first, so the first match is the last
-        # release this commit actually sits on.
-        LATEST=""
-        while IFS= read -r tag; do
-          [ -z "$tag" ] && continue
-          [ "$(git rev-list -n1 "$tag")" = "$HEAD_SHA" ] && continue
-          git merge-base --is-ancestor "$tag" HEAD 2>/dev/null || continue
-          LATEST="$tag"
-          break
-        done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
-
-        if [ -n "$LATEST" ]; then
-          BASE="${LATEST#v}"
-        else
-          BASE="$FALLBACK"
-        fi
+        LATEST="$(latest_release_tag "${PREFIX}")"
+        BASE="${LATEST#"${PREFIX}"v}"
 
         if [ "$EVENT_NAME" = "pull_request" ]; then
           # Squash merge: PR title → subject, PR body → commit body (footers).
@@ -104,17 +92,6 @@ runs:
           BUMP="$(detect_bump "$MESSAGE")"
         fi
 
-        IFS='.' read -r MAJOR MINOR PATCH <<<"$BASE"
-        MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
-
-        apply_bump() {
-          case "$1" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-        }
-
         SHOULD_BUILD="false"
         SHOULD_RELEASE="false"
         SUFFIX=""
@@ -124,18 +101,15 @@ runs:
             # Preview the version the merge would produce. When there is no
             # releasable change (ci/chore/docs) we keep the base version — the
             # RC just carries an -rc suffix, no phantom version bump.
-            apply_bump "$BUMP"
             SUFFIX="-rc.${PR_NUMBER:-0}"
             SHOULD_BUILD="true"
             ;;
           workflow_dispatch)
-            apply_bump "$BUMP"
             SUFFIX="-dev"
             SHOULD_BUILD="true"
             ;;
           *)
             # push (or release) on the release branch.
-            apply_bump "$BUMP"
             if [ "$BUMP" != "none" ]; then
               SHOULD_BUILD="true"
               SHOULD_RELEASE="true"
@@ -143,8 +117,8 @@ runs:
             ;;
         esac
 
-        VERSION="${MAJOR}.${MINOR}.${PATCH}"
-        TAG="v${VERSION}"
+        VERSION="$(next_version "$BASE" "$BUMP")"
+        TAG="${PREFIX}v${VERSION}"
 
         {
           echo "version=${VERSION}"
@@ -156,7 +130,8 @@ runs:
           echo "should_release=${SHOULD_RELEASE}"
         } >> "$GITHUB_OUTPUT"
 
-        echo "Base version:     ${BASE}${LATEST:+ (from ${LATEST})}"
+        echo "Family:           ${FAMILY:-(all images share one version)}"
+        echo "Base version:     ${BASE:-none — first release}${LATEST:+ (from ${LATEST})}"
         echo "Detected bump:    ${BUMP}"
         echo "Computed version: ${VERSION}${SUFFIX}"
         echo "should_build=${SHOULD_BUILD} should_release=${SHOULD_RELEASE}"
