@@ -10,16 +10,15 @@ A sandbox for running the OpenClaw agent on isolated, disposable compute instead
 - **Python 3** with `pip`, plus `git`, `curl`, `jq`, `ripgrep`, an ssh client and the usual archive tools.
 - **Unprivileged by default**: commands run as `node` with passwordless `sudo` available.
 
-### Variants
+### Browser automation
 
-| Tag | Contents |
-|---|---|
-| `<version>-sandbox-2026.9.4` | OpenClaw and its toolchain. |
-| `<version>-sandbox-2026.9.4-browser` | The same plus Chromium, for agents that need to drive a real browser. |
+No browser is baked in. A Chromium frozen into an image cannot be kept patched, and an agent driving it across the open web is exactly the traffic those patches are for. Install one when you need it, and you get the current build:
 
-Only the plain image is offered as a sandbox template; to get the browser variant, name its image explicitly when creating the sandbox.
+```bash
+npx playwright install --with-deps chromium
+```
 
-Chromium's own sandboxing relies on kernel features that the isolation boundary restricts, so browser automation may need OpenClaw's browser launched without it.
+Note that Chromium's own sandboxing relies on kernel features the isolation boundary restricts, so it may need to be launched without it.
 
 ### The gateway
 
