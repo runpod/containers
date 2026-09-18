@@ -28,6 +28,7 @@ from .checks import (
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
+    run_jupyter_static_check,
     run_port_check,
     run_port_proxy_check,
     scan_pod_logs_for_errors,
@@ -305,7 +306,15 @@ def _run_jupyter_steps(
         log(f"  {line}", indent=2)
     if ok:
         log("jupyter check (public proxy) passed — in-pod check skipped", indent=2)
-        return None
+        ok, output = run_jupyter_static_check(pod_id)
+        for line in (output or "").splitlines():
+            log(f"  {line}", indent=2)
+        if ok:
+            log("jupyter static asset check passed", indent=2)
+            return None
+        log("jupyter static asset check FAILED", indent=2)
+        dump_pod_logs(pod_id, image)
+        return "FAIL", "Jupyter serving 500s for static assets (blank Lab UI)"
 
     log(
         "jupyter check (public proxy) FAILED — running in-pod check "
