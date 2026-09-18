@@ -33,7 +33,13 @@ USER node
 # flag dev-only and it repairs nothing.
 RUN openclaw config set gateway.mode local
 
-# ENTRYPOINT, CMD, HEALTHCHECK and WORKDIR are left exactly as upstream: the
-# gateway starts at boot, pid 1 is still their tini, and both the command
-# (`node openclaw.mjs gateway`) and the healthcheck resolve relative to /app,
-# so moving WORKDIR would break them.
+# ENTRYPOINT, HEALTHCHECK and WORKDIR are left exactly as upstream: pid 1 is
+# still their tini, and both the command below and the healthcheck resolve
+# relative to /app, so moving WORKDIR would break them.
+#
+# CMD only adds --bind: inside a container the gateway defaults to 0.0.0.0 and
+# then refuses to start unauthenticated, which a sandbox can never satisfy at
+# boot. Bound to loopback it serves the exec'd `openclaw` CLI straight away;
+# exposing the Control UI means setting a token first, which is the user's
+# call once they have one.
+CMD ["node", "openclaw.mjs", "gateway", "--bind", "loopback"]
