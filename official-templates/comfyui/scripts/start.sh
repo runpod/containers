@@ -95,9 +95,18 @@ export_env_vars() {
 start_jupyter() {
     mkdir -p /workspace
 
+    # Do not invent a token here. The platform generates JUPYTER_PASSWORD at
+    # deploy time (when "Start Jupyter notebook" is on), stores it in the pod
+    # env, and the console builds the Connect URL as
+    # `...-8888.proxy.runpod.net/lab?token=$JUPYTER_PASSWORD` from that env.
+    # A token minted in the container is invisible to the console and changes
+    # on every boot, so the user has to dig it out of the pod logs after each
+    # restart. Skipping instead keeps the fix from TEM-89 -- Jupyter is never
+    # exposed on the public proxy with an empty (auth-disabled) token.
     if [ -z "${JUPYTER_PASSWORD:-}" ]; then
-        JUPYTER_PASSWORD=$(openssl rand -hex 16)
-        echo "JUPYTER_PASSWORD was not set; generated one for this pod: ${JUPYTER_PASSWORD}"
+        echo "JUPYTER_PASSWORD is not set; skipping JupyterLab."
+        echo "Redeploy with \"Start Jupyter notebook\" enabled, or set JUPYTER_PASSWORD on the pod, to get a stable token."
+        return 0
     fi
 
     echo "Starting Jupyter Lab on port 8888..."
