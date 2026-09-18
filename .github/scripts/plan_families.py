@@ -11,6 +11,7 @@ lives in .github/families.yml.
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
     plan_families.py --image-repo comfyui  # just read one field of the graph
+    plan_families.py --image-repos         # every repo we publish to, one per line
 
 Prints a JSON array in build order on stdout and a human summary on stderr.
 """
@@ -146,17 +147,26 @@ def main() -> int:
         help="print the reusable build workflows covering the planned families",
     )
     ap.add_argument(
+        "--image-repos",
+        action="store_true",
+        help="print every Docker Hub repo the families publish to, one per line",
+    )
+    ap.add_argument(
         "--image-repo",
         metavar="FAMILY",
         help="print the Docker Hub repo this family publishes to, then exit",
     )
     args = ap.parse_args()
 
-    if not (args.all or args.changed_files or args.image_repo):
-        ap.error("pass --changed-files, --all or --image-repo")
+    if not (args.all or args.changed_files or args.image_repo or args.image_repos):
+        ap.error("pass --changed-files, --all, --image-repo or --image-repos")
 
     try:
         graph = load_graph(args.graph)
+        if args.image_repos:
+            for repo in dict.fromkeys(s["image_repo"] for s in graph.values()):
+                print(repo)
+            return 0
         if args.image_repo:
             if args.image_repo not in graph:
                 raise GraphError(f"unknown family '{args.image_repo}'")

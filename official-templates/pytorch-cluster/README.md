@@ -1,6 +1,6 @@
 # pytorch-cluster
 
-A `-cluster` variant of the Runpod PyTorch image for **multi-node GPU clusters**.
+A cluster variant of the Runpod PyTorch image for **multi-node GPU clusters**.
 It layers two things on top of `runpod/pytorch`:
 
 1. **RDMA / InfiniBand user-space stack** — `libibverbs1`, `ibverbs-providers`,
@@ -9,8 +9,9 @@ It layers two things on top of `runpod/pytorch`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
 
-Image tags follow the pytorch scheme with a `-cluster` suffix, e.g.
-`runpod/pytorch:<version>-cu1281-torch280-ubuntu2404-cluster`.
+Published to its own repository, with the pytorch tag scheme, e.g.
+`runpod/pytorch-cluster:<version>-cu1281-torch280-ubuntu2404`. Its version
+series is its own, so it need not match the `runpod/pytorch` it builds on.
 
 ## How it works at startup
 
@@ -91,7 +92,7 @@ Notes:
 
 ## Building locally
 
-`-cluster` builds `FROM` a published `runpod/pytorch:*` tag, so that base image
+The cluster image builds `FROM` a published `runpod/pytorch:*` tag, so that base image
 must exist first (build it, or point `BASE_IMAGE` at a published tag). Then:
 
 ```bash

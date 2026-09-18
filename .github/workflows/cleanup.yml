@@ -54,6 +54,9 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
       - name: Prune ephemeral Docker Hub tags
         shell: bash
         env:
@@ -69,7 +72,12 @@ jobs:
           set -euo pipefail
 
           NAMESPACE="runpod"
-          REPOS=(base pytorch nvidia-pytorch autoresearch ubuntu openclaw harbor)
+          # Every repo the families publish to, straight from the graph, so a
+          # new template can't quietly stop being swept.
+          REPOS=()
+          while IFS= read -r repo; do
+            REPOS+=("${repo#"${NAMESPACE}"/}")
+          done < <(python3 .github/scripts/plan_families.py --image-repos)
 
           RETENTION_DAYS="${INPUT_RETENTION:-14}"
           # Must be a positive integer with no leading zero. Rejecting 0 avoids
