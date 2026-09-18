@@ -27,6 +27,12 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 USER node
 
+# Without this the gateway refuses to serve and the container reports
+# unhealthy forever, since a sandbox is never claimed with credentials in
+# hand. `--allow-unconfigured` would also start it, but upstream marks that
+# flag dev-only and it repairs nothing.
+RUN openclaw config set gateway.mode local
+
 # ENTRYPOINT, CMD, HEALTHCHECK and WORKDIR are left exactly as upstream: the
 # gateway starts at boot, pid 1 is still their tini, and both the command
 # (`node openclaw.mjs gateway`) and the healthcheck resolve relative to /app,

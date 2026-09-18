@@ -117,7 +117,7 @@ jobs:
             test "$(id -un)" = user && test "$(id -u)" = 1000
             sudo -n true
             python --version | grep -q "^Python 3.14"
-            node --version | grep -q "^v22\."
+            node --version | grep -q "^v24\."
             npm --version && uv --version && git --version
             # 26.04 marks the system Python externally managed; this is the
             # first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
@@ -221,6 +221,8 @@ jobs:
               # the first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
               pip install --quiet --no-input six && python3 -c "import six"
               test -d /home/node/.openclaw/workspace
+              # Baked at build; without it the gateway will not serve.
+              openclaw config get gateway.mode | grep -q local
             '
 
             # OpenClaw can drive Docker for its own sandboxing; inside a

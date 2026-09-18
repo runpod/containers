@@ -5,7 +5,7 @@
 Harbor runs any agent, with any model, against any task, in parallel. This image is the harness side of a run: you drive evaluations from this sandbox, and each trial executes in its own environment. Harbor tasks carry their own environment images, so this template is not the image a trial runs inside.
 
 ### What's included
-- **Harbor 0.23.0** (`harbor` on `PATH`), plus everything from the Ubuntu sandbox image: Python 3.14, `uv`, Node.js 22 and the usual build tooling.
+- **Harbor 0.23.0** (`harbor` on `PATH`), plus everything from the Ubuntu sandbox image: Python 3.14, `uv`, Node.js 24 and the usual build tooling.
 - **tmux**, so a long evaluation survives a dropped connection.
 - **sshd and sftp-server** installed but not running — the transport Harbor's Agent Sandbox Protocol speaks when it drives a remote sandbox.
 - **Unprivileged by default**: commands run as `user` with passwordless `sudo` available.
