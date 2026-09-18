@@ -63,7 +63,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
 
       - name: Build comfyui images (${{ matrix.comfyui }})
         id: build
