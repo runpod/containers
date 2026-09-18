@@ -1,0 +1,106 @@
+# Which template families exist, what feeds each one, and which of them build
+# FROM another family's published image. Single source of truth for the release
+# plan (.github/scripts/plan_families.py). No versions here — those live in git
+# tags, one series per family (`base-v1.3.1`).
+#
+# Two relations, deliberately separate:
+#   paths       sources that feed this family's own build. A change here
+#               rebuilds it and bumps its version.
+#   depends_on  families whose PUBLISHED image it builds FROM. A rebuild of
+#               one pulls this family in too, and its version is what the
+#               FROM line resolves to.
+#   image_repo  where it publishes. Two families can share a repo (base and
+#               rocm both fill runpod/base), so this identifies the repo, not
+#               the family.
+#   workflow    which reusable build workflow covers it, so the orchestrator
+#               knows which ones to call at all.
+#
+# rocm and nvidia-pytorch show why the two must not be merged: both build
+# official-templates/base/Dockerfile (so base sources are in their `paths`),
+# but neither builds FROM runpod/base — they start from an upstream image.
+
+families:
+  base:
+    paths:
+      - official-templates/base/**
+      - official-templates/shared/**
+      - container-template/**
+    depends_on: []
+    image_repo: runpod/base
+    workflow: base
+
+  pytorch:
+    paths:
+      - official-templates/pytorch/**
+      - official-templates/shared/**
+    depends_on: [base]
+    image_repo: runpod/pytorch
+    workflow: base
+
+  pytorch-cluster:
+    paths:
+      - official-templates/pytorch-cluster/**
+      - official-templates/shared/**
+    depends_on: [pytorch]
+    image_repo: runpod/pytorch
+    workflow: base
+
+  autoresearch:
+    paths:
+      - official-templates/autoresearch/**
+      - official-templates/shared/**
+    depends_on: [base]
+    image_repo: runpod/autoresearch
+    workflow: base
+
+  rocm:
+    paths:
+      - official-templates/rocm/**
+      - official-templates/base/**
+      - official-templates/shared/**
+      - container-template/**
+    depends_on: []
+    image_repo: runpod/base
+    workflow: rocm
+
+  nvidia-pytorch:
+    paths:
+      - official-templates/nvidia-pytorch/**
+      - official-templates/base/**
+      - official-templates/shared/**
+      - container-template/**
+    depends_on: []
+    image_repo: runpod/nvidia-pytorch
+    workflow: nvidia
+
+  comfyui:
+    paths:
+      - official-templates/comfyui/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/comfyui
+    workflow: comfyui
+
+  sandbox-ubuntu:
+    paths:
+      - official-templates/sandbox-ubuntu/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/ubuntu
+    workflow: sandbox
+
+  sandbox-openclaw:
+    paths:
+      - official-templates/sandbox-openclaw/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/openclaw
+    workflow: sandbox
+
+  sandbox-harbor:
+    paths:
+      - official-templates/sandbox-harbor/**
+      - official-templates/shared/**
+    depends_on: [sandbox-ubuntu]
+    image_repo: runpod/harbor
+    workflow: sandbox
