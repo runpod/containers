@@ -179,9 +179,7 @@ jobs:
           set -euo pipefail
           # Tag shapes carry upstream versions (comfyui${COMFYUI_VERSION}, …),
           # so instead of naming refs we ask Docker Hub whether the family's
-          # repo has any tag for this version. Families that share a repo
-          # (base/rocm, pytorch/cluster) can satisfy each other's check — the
-          # counts are printed so the operator can see what matched.
+          # repo has any tag for this version.
           REPO="$(python3 .github/scripts/plan_families.py --image-repo "${FAMILY}")"
           # -rc./-dev tags don't count as published.
           TAGS="$(curl -fsSL \

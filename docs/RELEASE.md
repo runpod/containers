@@ -116,9 +116,8 @@ For the version `1.1.0` as an example:
 | Pull request       | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2204`         |
 | Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2204`           |
 
-Image repositories: `runpod/base`, `runpod/pytorch`, `runpod/nvidia-pytorch`,
-`runpod/autoresearch` (rocm images are published under `runpod/base` with a
-`-rocm*` tag).
+Image repositories: one per template family, listed in `.github/families.yml`
+(`python3 .github/scripts/plan_families.py --image-repos`).
 
 ---
 

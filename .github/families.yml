@@ -9,15 +9,16 @@
 #   depends_on  families whose PUBLISHED image it builds FROM. A rebuild of
 #               one pulls this family in too, and its version is what the
 #               FROM line resolves to.
-#   image_repo  where it publishes. Two families can share a repo (base and
-#               rocm both fill runpod/base), so this identifies the repo, not
-#               the family.
+#   image_repo  where it publishes. One repo per family today; the field
+#               exists because that is not guaranteed — a repo can hold tags
+#               from more than one family.
 #   workflow    which reusable build workflow covers it, so the orchestrator
 #               knows which ones to call at all.
 #
-# rocm and nvidia-pytorch show why the two must not be merged: both build
-# official-templates/base/Dockerfile (so base sources are in their `paths`),
-# but neither builds FROM runpod/base — they start from an upstream image.
+# rocm and nvidia-pytorch show why paths and depends_on must not be merged:
+# both build official-templates/base/Dockerfile (so base sources are in their
+# `paths`), but neither builds FROM runpod/base — they start from an upstream
+# image.
 
 families:
   base:
@@ -42,7 +43,7 @@ families:
       - official-templates/pytorch-cluster/**
       - official-templates/shared/**
     depends_on: [pytorch]
-    image_repo: runpod/pytorch
+    image_repo: runpod/pytorch-cluster
     workflow: base
 
   autoresearch:
@@ -60,7 +61,7 @@ families:
       - official-templates/shared/**
       - container-template/**
     depends_on: []
-    image_repo: runpod/base
+    image_repo: runpod/rocm
     workflow: rocm
 
   nvidia-pytorch:
