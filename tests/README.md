@@ -261,7 +261,7 @@ so you can tell whether a `FAIL` correlates with a specific GPU type:
 totals: 4 PASS, 1 FAIL, 1 SKIP
 
   FAIL   runpod/pytorch:…cu1300-torch260… [RTX 5090] -- CUDA/GPU functional check failed
-  SKIP   runpod/base:…rocm644-ubuntu2404… -- no capacity on any of 1 candidate instance type(s)
+  SKIP   runpod/rocm:…rocm644-ubuntu2404… -- no capacity on any of 1 candidate instance type(s)
   PASS   runpod/base:…ubuntu2404 [CPU]
   PASS   runpod/base:…cuda1281-ubuntu2204 [RTX A4000]
   PASS   runpod/base:…cuda1281-ubuntu2404 [RTX A5000]
@@ -556,8 +556,8 @@ nvidia-pytorch:
 # AMD ROCm — explicit instance list because only MI300X carries ROCm.
 rocm:
     images:
-    - runpod/base:1.0.6-dev-rocm644-ubuntu2204-py310-pytorch251
-    - runpod/base:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch271
+    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2204-py310-pytorch251
+    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch271
     instances:
     - MI300X
     test_jupyter: true

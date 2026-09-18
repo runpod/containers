@@ -100,6 +100,6 @@ target "cluster-matrix" {
   # The cluster image's OWN tag keeps RELEASE_SUFFIX so dev/PR builds don't
   # clobber the released -cluster tag.
   tags = [
-    "runpod/pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}-cluster",
+    "runpod/pytorch-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }
