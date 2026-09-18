@@ -19,11 +19,25 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
-    build-essential ca-certificates curl git jq less nodejs npm openssh-client \
+    build-essential ca-certificates curl git jq less openssh-client \
     python-is-python3 python3 python3-dev python3-pip python3-venv ripgrep \
-    sudo tini unzip wget zip && \
+    sudo tini unzip wget xz-utils zip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Node from the official tarball rather than apt: Ubuntu's `npm` pulls in a
+# vendored node-* tree (babel, handlebars, pacote) old enough to fail the
+# HIGH/CRITICAL gate. 24 is the current LTS and the first line whose bundled
+# npm carries a patched pacote.
+ARG NODE_VERSION=24.21.0
+ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+        --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md && \
+    rm /tmp/node.tar.xz && \
+    node --version && npm --version
 
 # Pinned rather than :latest — a warm pool is keyed on the image, so an
 # upstream rebuild would silently split the pool.

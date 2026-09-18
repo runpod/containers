@@ -7,7 +7,7 @@ A small, general purpose Ubuntu 26.04 image for running untrusted or agent-gener
 ### What's included
 - **Ubuntu 26.04 LTS** (Resolute), pinned by digest so every sandbox starts from an identical filesystem.
 - **Python 3.14** with `pip`, `venv` and [`uv`](https://docs.astral.sh/uv/) for fast installs.
-- **Node.js 22** with `npm`.
+- **Node.js 24 LTS** with `npm`.
 - **Build tooling**: `build-essential`, `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`.
 - **Unprivileged by default**: commands run as `user` (uid 1000) in `/home/user`, with passwordless `sudo` available.
 
