@@ -23,7 +23,13 @@ Chromium's own sandboxing relies on kernel features that the isolation boundary 
 
 ### The gateway
 
-The gateway starts with the container and serves the Control UI on port **18789**. Request that port when creating the sandbox to get a URL for it.
+The gateway starts with the container, bound to loopback, so the `openclaw` CLI works inside the sandbox from the first second.
+
+It is not reachable from outside until you give it credentials — OpenClaw refuses to listen beyond loopback unauthenticated, and a sandbox is never claimed holding a token. To expose the Control UI on port **18789**, set a token and rebind, then request that port when creating the sandbox:
+
+```bash
+openclaw gateway restart --bind auto --token "$(openssl rand -hex 32)"
+```
 
 A sandbox never boots holding your credentials — they arrive once it is claimed — so the gateway comes up unconfigured. Run onboarding once, then restart the gateway so it picks them up:
 
