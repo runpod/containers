@@ -9,6 +9,7 @@ A sandbox for running the OpenClaw agent on isolated, disposable compute instead
 - **Node.js 24** with `npm` and `pnpm`, on Debian 12.
 - **Python 3** with `pip`, plus `git`, `curl`, `jq`, `ripgrep`, an ssh client and the usual archive tools.
 - **Build tooling**: `build-essential`, for packages with native extensions.
+- **`tmux`**, so a long-running command outlives the exec call that started it.
 - **Unprivileged by default**: commands run as `node` with passwordless `sudo` available.
 
 ### Browser automation
