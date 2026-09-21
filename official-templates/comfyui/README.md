@@ -24,7 +24,7 @@ If you have an existing pod created with an older version of this template (CUDA
 
 - `8188`: ComfyUI web UI
 - `8080`: FileBrowser (admin / `FILEBROWSER_PASSWORD`, default: `adminadmin12`)
-- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`). Not started when `JUPYTER_PASSWORD` is unset, matching the pytorch and base templates — deploy with "Start Jupyter notebook" enabled and the platform sets it for you, or set `JUPYTER_PASSWORD` yourself. Set `JUPYTER_DISABLE_AUTH=true` to run it with no password at all; the `:8888` proxy URL is public, so anyone holding it then has a root shell on the pod.
+- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`). Not started when `JUPYTER_PASSWORD` is unset, matching the pytorch and base templates — deploy with "Start Jupyter notebook" enabled and the platform sets it for you, or set `JUPYTER_PASSWORD` yourself. Set `JUPYTER_DISABLE_AUTH=true` to run it with no password at all — this takes precedence over `JUPYTER_PASSWORD`, so if both are set the token is disabled; the `:8888` proxy URL is public, so anyone holding it then has a root shell on the pod.
 - `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
 
 ## Pre-installed custom nodes

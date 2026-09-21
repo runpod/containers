@@ -73,21 +73,35 @@ export_env_vars() {
 }
 
 # Start jupyter lab
+#
+# Three cases: JUPYTER_DISABLE_AUTH=true runs with no token at all, a set
+# JUPYTER_PASSWORD becomes the token, and anything else leaves Jupyter off.
+# Turning auth off is its own variable rather than an empty JUPYTER_PASSWORD,
+# so an unset password can never silently mean "no auth".
 start_jupyter() {
-    if [[ $JUPYTER_PASSWORD ]]; then
-        echo "Starting Jupyter Lab..."
-        mkdir -p /workspace &&
-            cd / &&
-            nohup python -m jupyter lab --allow-root --no-browser --port=8888 --ip=* --FileContentsManager.delete_to_trash=False --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --IdentityProvider.token="$JUPYTER_PASSWORD" --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &> /jupyter.log &
-            JUPYTER_PID=$!
-            sleep 2
-            if kill -0 "$JUPYTER_PID" 2>/dev/null; then
-                echo "Jupyter Lab started (pid=$JUPYTER_PID)"
-            else
-                echo "Jupyter Lab FAILED to start. /jupyter.log:" >&2
-                cat /jupyter.log >&2
-                return 1
-            fi
+    local JUPYTER_TOKEN
+    if [[ ${JUPYTER_DISABLE_AUTH:-} == "true" ]]; then
+        echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
+        echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
+        JUPYTER_TOKEN=""
+    elif [[ $JUPYTER_PASSWORD ]]; then
+        JUPYTER_TOKEN="$JUPYTER_PASSWORD"
+    else
+        return 0
+    fi
+
+    echo "Starting Jupyter Lab..."
+    mkdir -p /workspace
+    cd /
+    nohup python -m jupyter lab --allow-root --no-browser --port=8888 --ip=* --FileContentsManager.delete_to_trash=False --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --IdentityProvider.token="$JUPYTER_TOKEN" --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &> /jupyter.log &
+    JUPYTER_PID=$!
+    sleep 2
+    if kill -0 "$JUPYTER_PID" 2>/dev/null; then
+        echo "Jupyter Lab started (pid=$JUPYTER_PID)"
+    else
+        echo "Jupyter Lab FAILED to start. /jupyter.log:" >&2
+        cat /jupyter.log >&2
+        return 1
     fi
 }
 

@@ -95,23 +95,12 @@ export_env_vars() {
 start_jupyter() {
     mkdir -p /workspace
 
-    # Three cases, in priority order: explicitly no auth, a token from the pod
-    # env, or don't start at all.
-    #
-    # Nothing generates a token here. The platform generates JUPYTER_PASSWORD at
-    # deploy time (when "Start Jupyter notebook" is on), stores it in the pod
-    # env, and the console builds the Connect URL as
-    # `...-8888.proxy.runpod.net/lab?token=$JUPYTER_PASSWORD` by reading it back.
-    # A token minted in the container never reaches the pod env, so the console
-    # cannot use it and it changes on every boot -- the user ends up digging a
-    # new value out of the pod logs after each restart. Not starting keeps the
-    # fix from TEM-89 intact: Jupyter is never exposed on the public proxy with
-    # an empty (auth-disabled) token by accident.
-    #
-    # Turning auth off is therefore its own variable, never an empty
-    # JUPYTER_PASSWORD -- an empty value is exactly what shipped before TEM-89
-    # and left Jupyter wide open unintentionally, so it has to keep meaning
-    # "off". Compared against the literal string "true" for the same reason.
+    # Three cases: JUPYTER_DISABLE_AUTH=true runs with no token at all, a set
+    # JUPYTER_PASSWORD becomes the token, and anything else leaves Jupyter off.
+    # Nothing is generated here -- a token minted in the container never reaches
+    # the pod env, so the console cannot use it and it changes every boot.
+    # Turning auth off is its own variable, so an unset password can never
+    # silently mean "no auth" (which is what TEM-89 fixed).
     if [ "${JUPYTER_DISABLE_AUTH:-}" = "true" ]; then
         echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
         echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
