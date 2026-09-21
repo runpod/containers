@@ -261,6 +261,10 @@ jobs:
               say node "$(node --version), npm $(npm --version)"
               say python "$(python3 --version | cut -d" " -f2), git $(git --version | cut -d" " -f3)"
 
+              # Upstream ships no compiler, and agents install packages with
+              # native extensions.
+              say build "gcc $(gcc -dumpversion), make $(make --version | head -1 | cut -d" " -f3)"
+
               # Baked at build; without it the gateway refuses to serve.
               openclaw config get gateway.mode | grep -q local
               say gateway.mode "$(openclaw config get gateway.mode)"

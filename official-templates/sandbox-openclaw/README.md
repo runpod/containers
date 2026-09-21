@@ -8,6 +8,7 @@ A sandbox for running the OpenClaw agent on isolated, disposable compute instead
 - **OpenClaw 2026.9.4** with its bundled plugins, `openclaw` on `PATH`.
 - **Node.js 24** with `npm` and `pnpm`, on Debian 12.
 - **Python 3** with `pip`, plus `git`, `curl`, `jq`, `ripgrep`, an ssh client and the usual archive tools.
+- **Build tooling**: `build-essential`, for packages with native extensions.
 - **Unprivileged by default**: commands run as `node` with passwordless `sudo` available.
 
 ### Browser automation
