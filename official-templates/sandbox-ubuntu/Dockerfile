@@ -21,7 +21,7 @@ RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
     build-essential ca-certificates curl git jq less openssh-client \
     python-is-python3 python3 python3-dev python3-pip python3-venv ripgrep \
-    sudo tini unzip wget xz-utils zip && \
+    sudo tini tmux unzip wget xz-utils zip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -49,6 +49,12 @@ RUN if id ubuntu &>/dev/null; then userdel --remove ubuntu; fi && \
     useradd --create-home --shell /bin/bash --uid 1000 user && \
     echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user && \
     chmod 0440 /etc/sudoers.d/user
+
+# Workaround: the sandbox host renumbers file owners into a subuid block but
+# runs the process unmapped, so `user` does not own its home and agents cannot
+# write ~/.config. Mode bits survive the shift; ownership does not. Drop this
+# once /proc/self/uid_map is populated.
+RUN chmod -R a+rwX /home/user
 
 USER user
 WORKDIR /home/user

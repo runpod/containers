@@ -9,6 +9,7 @@ A small, general purpose Ubuntu 26.04 image for running untrusted or agent-gener
 - **Python 3.14** with `pip`, `venv` and [`uv`](https://docs.astral.sh/uv/) for fast installs.
 - **Node.js 24 LTS** with `npm`.
 - **Build tooling**: `build-essential`, `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`.
+- **`tmux`**, so a long-running command outlives the exec call that started it.
 - **Unprivileged by default**: commands run as `user` (uid 1000) in `/home/user`, with passwordless `sudo` available.
 
 ### What's deliberately absent

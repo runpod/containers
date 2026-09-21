@@ -132,11 +132,19 @@ jobs:
             test "$(stat -c %u /home/user)" = "$(id -u)"
             say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
 
+            # A sandbox strips ownership of the home, so other-write is what
+            # keeps it usable. Mode bits survive the shift.
+            test -n "$(find /home/user -maxdepth 0 -perm -o+w)"
+            say home-mode "$(stat -c %a /home/user), writable whoever ends up owning it"
+
             python --version | grep -q "^Python 3.14"
             node --version | grep -q "^v24\."
             say python "$(python --version | cut -d" " -f2), uv $(uv --version | cut -d" " -f2)"
             say node "$(node --version), npm $(npm --version)"
             say git "$(git --version | cut -d" " -f3)"
+
+            # An exec call lasts seconds; a long command has to outlive it.
+            say tmux "$(tmux -V | cut -d" " -f2)"
 
             # 26.04 marks the system Python externally managed; this is the
             # first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
@@ -255,6 +263,11 @@ jobs:
               test "$(stat -c %u /home/node)" = "$(id -u)"
               say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/node uid $(stat -c %u /home/node)"
 
+              # A sandbox strips ownership of the home, so other-write is what
+              # keeps it usable. Mode bits survive the shift.
+              test -n "$(find /home/node/.openclaw -maxdepth 0 -perm -o+w)"
+              say home-mode "$(stat -c %a /home/node), .openclaw $(stat -c %a /home/node/.openclaw)"
+
               say openclaw "$(openclaw --version)"
 
               node --version | grep -q "^v24\."
@@ -264,6 +277,9 @@ jobs:
               # Upstream ships no compiler, and agents install packages with
               # native extensions.
               say build "gcc $(gcc -dumpversion), make $(make --version | head -1 | cut -d" " -f3)"
+
+              # An exec call lasts seconds; a long command has to outlive it.
+              say tmux "$(tmux -V | cut -d" " -f2)"
 
               # Baked at build; without it the gateway refuses to serve.
               openclaw config get gateway.mode | grep -q local
@@ -418,20 +434,23 @@ jobs:
             test "$(stat -c %u /home/user)" = "$(id -u)"
             say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
 
+            # Inherited from sandbox-ubuntu; a base that loses it takes every
+            # Harbor sandbox down with it.
+            test -n "$(find /home/user -maxdepth 0 -perm -o+w)"
+            say home-mode "$(stat -c %a /home/user), writable whoever ends up owning it"
+
             say harbor "$(harbor --version)"
             say tmux "$(tmux -V | cut -d" " -f2)"
 
-            # ASP speaks ssh and sftp; the binaries must exist even though no
-            # daemon runs at boot.
-            test -x /usr/sbin/sshd
-            ls /usr/lib/openssh/sftp-server > /dev/null
-            say asp-transport "sshd and sftp-server installed, not running"
+            # Harbor dials out over ssh, so the client is the half that matters.
+            command -v ssh scp > /dev/null
+            say ssh-client "$(ssh -V 2>&1)"
           '
 
-          # Host keys must be generated per sandbox, never baked: every
-          # sandbox from this image would otherwise share one identity.
-          ! docker run --rm "$IMAGE" bash -c 'ls /etc/ssh/ssh_host_*_key 2>/dev/null | grep .'
-          say host-keys "none baked in"
+          # A sandbox has no inbound path for ssh, so a daemon here would only
+          # advertise a way in that does not exist.
+          ! docker run --rm "$IMAGE" bash -c 'command -v sshd || ls /usr/sbin/sshd'
+          say sshd "absent, as it must be"
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.

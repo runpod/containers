@@ -6,8 +6,8 @@ Harbor runs any agent, with any model, against any task, in parallel. This image
 
 ### What's included
 - **Harbor 0.23.0** (`harbor` on `PATH`), plus everything from the Ubuntu sandbox image: Python 3.14, `uv`, Node.js 24 and the usual build tooling.
-- **tmux**, so a long evaluation survives a dropped connection.
-- **sshd and sftp-server** installed but not running — the transport Harbor's Agent Sandbox Protocol speaks when it drives a remote sandbox.
+- **tmux**, so a long evaluation outlives the exec call that started it.
+- **An ssh client**, which is the half of Harbor's Agent Sandbox Protocol this side of a run needs.
 - **Unprivileged by default**: commands run as `user` with passwordless `sudo` available.
 
 ### Running an evaluation
@@ -20,13 +20,6 @@ harbor run -t hello-world/hello-world -a codex -m openai/gpt-5.6-luna -e <provid
 harbor view ./jobs
 ```
 
-### Serving as an ASP target
+### Why there is no sshd
 
-To let a Harbor harness elsewhere drive *this* sandbox over SSH, generate host keys and start the daemon yourself:
-
-```bash
-sudo ssh-keygen -A
-sudo mkdir -p /run/sshd && sudo /usr/sbin/sshd
-```
-
-You will also need to authorise a key in `~/.ssh/authorized_keys` and expose port 22 when creating the sandbox. Nothing starts sshd automatically: a sandbox has no service that needs it, and an unreachable daemon is only an attack surface.
+A sandbox cannot serve as an Agent Sandbox Protocol target: exposed ports are reverse-proxied over HTTPS, so there is no inbound path for SSH to arrive on. Harbor only dials out from here, and that needs a client. If Harbor ever drives a Runpod sandbox as a trial environment, it will do so through the sandbox exec API rather than over SSH.
