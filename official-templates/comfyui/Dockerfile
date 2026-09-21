@@ -113,6 +113,7 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torchvision==${TORCHVISION_VERSION}" >> requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
     echo "pillow>=12.1.1" >> requirements.in && \
+    echo "tornado>=6.5.10" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     PIP_INDEX_URL=https://pypi.org/simple \
     PIP_EXTRA_INDEX_URL="${TORCH_INDEX_URL}" \

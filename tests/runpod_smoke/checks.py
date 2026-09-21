@@ -601,6 +601,36 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     return False, "\n".join(lines)
 
 
+def run_jupyter_static_check(pod_id: str) -> tuple[bool, str]:
+    """Hit a static asset through the public proxy.
+
+    `/api/status` is served by a plain handler and stays 200 even when every
+    StaticFileHandler route 500s — which is what tornado 6.5.9 did to
+    jupyter_server (tornadoweb/tornado#3724) and what makes the Lab UI render
+    as a blank page. Only a static fetch covers that. Returns (ok, log).
+    """
+    url = f"https://{pod_id}-8888.proxy.runpod.net/static/favicons/favicon.ico"
+    lines = [f"GET {url}"]
+    err = ""
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            lines.append(f"HTTP {resp.status} content-type={ctype}")
+            # A redirect to the login page would also be a 200, so reject HTML.
+            if resp.status == 200 and not ctype.startswith("text/html"):
+                return True, "\n".join(lines)
+            err = f"HTTP {resp.status} content-type={ctype}"
+    except urllib.error.HTTPError as e:
+        err = f"HTTP {e.code} {e.reason}"
+    except OSError as exc:
+        err = f"{type(exc).__name__}: {exc}"
+    lines.append(f"FAIL: static asset not served ({err}) -- Lab UI renders blank")
+    return False, "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Container logs via REST API (v2) + error scan
 # ---------------------------------------------------------------------------
