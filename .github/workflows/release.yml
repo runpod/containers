@@ -160,19 +160,18 @@ jobs:
     with:
       families: ${{ needs.plan.outputs.families }}
 
-  # One tag + GitHub Release per changed family, ONLY on a releasable push to
-  # main and ONLY after every family built and smoke-tested successfully — so
-  # we never publish a release built on a broken image.
+  # One tag + GitHub Release per changed family, on a releasable push to main.
+  # Each family waits only on its own build: a scan that fails on one image
+  # must not keep the others unreleased while their images are already pushed.
   release:
     needs: [version, plan, base, nvidia, rocm, comfyui, sandbox]
-    # A build workflow the plan didn't need is `skipped`, which is fine; only
-    # a failure or cancellation must hold back the whole release.
     if: >-
-      github.event_name == 'push'
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.version.result == 'success'
+      && needs.plan.result == 'success'
       && needs.version.outputs.should-release == 'true'
       && needs.plan.outputs.families != '[]'
-      && !contains(needs.*.result, 'failure')
-      && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -188,8 +187,28 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # The job-level `if` can't see `matrix`, so the per-family gate lives
+      # here: release this family only if the workflow that builds it passed.
+      - name: Check this family's build
+        id: gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          FAMILY: ${{ matrix.family }}
+        run: |
+          set -euo pipefail
+          WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
+          RESULT="$(printf '%s' "${RESULTS}" | jq -r --arg w "${WORKFLOW}" '.[$w].result')"
+          echo "${FAMILY} is built by '${WORKFLOW}': ${RESULT}"
+          if [ "${RESULT}" = "success" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::${FAMILY} not released — its build ${RESULT}"
+          fi
+
       - name: Compute version
         id: v
+        if: steps.gate.outputs.release == 'true'
         uses: ./.github/actions/compute-version
         with:
           family: ${{ matrix.family }}
@@ -201,6 +220,7 @@ jobs:
       # previous tag ourselves.
       - name: Release body
         id: notes
+        if: steps.gate.outputs.release == 'true'
         env:
           FAMILY: ${{ matrix.family }}
           TAG: ${{ steps.v.outputs.tag }}
@@ -218,6 +238,7 @@ jobs:
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
+        if: steps.gate.outputs.release == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: ${{ steps.v.outputs.tag }}
@@ -228,6 +249,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
+        if: steps.gate.outputs.release == 'true'
         run: |
           echo "Released ${{ steps.v.outputs.tag }} (bump ${{ needs.version.outputs.bump }})"
           echo "Previous: ${{ steps.v.outputs.base-version || 'none — first release' }}"

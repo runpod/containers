@@ -12,6 +12,13 @@ on:
       - ".github/scripts/plan_families.py"
       - ".github/scripts/test_plan_families.py"
       - ".github/workflows/release-plan.yml"
+      # The graph names jobs inside these; a rename must fail here, not in a
+      # break-glass release at 2am.
+      - ".github/workflows/base.yml"
+      - ".github/workflows/nvidia.yml"
+      - ".github/workflows/rocm.yml"
+      - ".github/workflows/comfyui.yml"
+      - ".github/workflows/sandbox.yml"
       - "official-templates/**"
   workflow_dispatch:
 

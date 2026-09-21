@@ -10,6 +10,7 @@ lives in .github/families.yml.
     git diff --name-only HEAD~1..HEAD | plan_families.py --changed-files -
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
+    plan_families.py --workflow comfyui    # which workflow builds this family
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
 
@@ -147,6 +148,11 @@ def main() -> int:
         help="print the reusable build workflows covering the planned families",
     )
     ap.add_argument(
+        "--workflow",
+        metavar="FAMILY",
+        help="print the build workflow covering this family, then exit",
+    )
+    ap.add_argument(
         "--image-repos",
         action="store_true",
         help="print every Docker Hub repo the families publish to, one per line",
@@ -158,8 +164,10 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    if not (args.all or args.changed_files or args.image_repo or args.image_repos):
-        ap.error("pass --changed-files, --all, --image-repo or --image-repos")
+    if not (args.all or args.changed_files or args.image_repo or args.image_repos
+            or args.workflow):
+        ap.error("pass --changed-files, --all, --workflow, --image-repo "
+                 "or --image-repos")
 
     try:
         graph = load_graph(args.graph)
@@ -171,6 +179,11 @@ def main() -> int:
             if args.image_repo not in graph:
                 raise GraphError(f"unknown family '{args.image_repo}'")
             print(graph[args.image_repo]["image_repo"])
+            return 0
+        if args.workflow:
+            if args.workflow not in graph:
+                raise GraphError(f"unknown family '{args.workflow}'")
+            print(graph[args.workflow]["workflow"])
             return 0
         changed = [] if args.all else _read_changed(args.changed_files)
         families = plan(graph, changed, args.all)
