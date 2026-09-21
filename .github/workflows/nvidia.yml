@@ -36,7 +36,7 @@ jobs:
         with:
           family: nvidia-pytorch
 
-  build-nvidia:
+  build-nvidia-pytorch:
     needs: versions
     if: contains(fromJSON(inputs.families), 'nvidia-pytorch')
     runs-on: blacksmith-16vcpu-ubuntu-2404
@@ -107,9 +107,9 @@ jobs:
           image-digests: ${{ steps.refs.outputs.digests }}
 
       # Invoked only by the release orchestrator, which has already decided this
-      # family should build (per-family path gating lives there), so build-nvidia
+      # family should build (per-family path gating lives there), so the build job
       # always runs when reached — no changed-files gate needed (unlike pytorch in
-      # base.yml). Always persist this shard's refs for the matching test-nvidia.
+      # base.yml). Always persist this shard's refs for the matching test job.
       - name: Save refs artifact
         shell: bash
         env:
@@ -126,10 +126,10 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  test-nvidia:
+  test-nvidia-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-nvidia
-    if: needs.build-nvidia.result == 'success'
+    needs: build-nvidia-pytorch
+    if: needs.build-nvidia-pytorch.result == 'success'
     strategy:
       fail-fast: false
       matrix:

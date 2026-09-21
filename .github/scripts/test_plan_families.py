@@ -100,6 +100,16 @@ class GraphFile(unittest.TestCase):
         self.assertLess(order.index("pytorch"), order.index("pytorch-cluster"))
         self.assertLess(order.index("sandbox-ubuntu"), order.index("sandbox-harbor"))
 
+    def test_each_family_has_a_build_job_named_after_it(self):
+        """manual-release looks up '<workflow> / build-<family>' by name."""
+        import yaml
+
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        for name, spec in graph.items():
+            path = P.REPO_ROOT / f".github/workflows/{spec['workflow']}.yml"
+            jobs = yaml.safe_load(path.read_text())["jobs"]
+            self.assertIn(f"build-{name}", jobs)
+
     def test_every_family_is_covered_by_a_build_workflow(self):
         """release.yml calls a workflow only if the plan names it."""
         graph = P.load_graph(P.DEFAULT_GRAPH)

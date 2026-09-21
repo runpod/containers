@@ -13,7 +13,8 @@
 #               exists because that is not guaranteed — a repo can hold tags
 #               from more than one family.
 #   workflow    which reusable build workflow covers it, so the orchestrator
-#               knows which ones to call at all.
+#               knows which ones to call at all. Inside it the family's jobs
+#               are `build-<family>` and, where there is one, `test-<family>`.
 #
 # rocm and nvidia-pytorch show why paths and depends_on must not be merged:
 # both build official-templates/base/Dockerfile (so base sources are in their

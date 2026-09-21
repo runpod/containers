@@ -465,7 +465,7 @@ jobs:
   # and on a PR that changed pytorch it layers on that PR's RC pytorch — so the
   # smoke test reflects the real post-merge combination. A cluster-only PR
   # skips the pytorch rebuild and layers on the last released pytorch instead.
-  build-cluster:
+  build-pytorch-cluster:
     needs: [versions, build-pytorch]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'pytorch-cluster')
@@ -557,10 +557,10 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  test-cluster:
+  test-pytorch-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-cluster
-    if: needs.build-cluster.result == 'success'
+    needs: build-pytorch-cluster
+    if: needs.build-pytorch-cluster.result == 'success'
     strategy:
       fail-fast: false
       matrix:

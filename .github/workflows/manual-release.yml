@@ -94,38 +94,6 @@ jobs:
             exit 1
           fi
 
-          # Require every job to have succeeded, except orchestrator jobs that
-          # are skipped by design on this path (`release` is the break-glass
-          # gap; `changes` is PR-only). New image families show up as
-          # "<family> / <job>" and are covered automatically.
-          built=0
-          bad=0
-          while IFS=$'\t' read -r name conclusion; do
-            [ -z "$name" ] && continue
-            case "$name" in
-              release|changes|cleanup) continue ;;
-            esac
-            if [ "$conclusion" != "success" ]; then
-              echo "::error::source run ${SOURCE_RUN_ID} job '${name}' is '${conclusion}', expected success (${RUN_URL})"
-              bad=$((bad + 1))
-            fi
-            case "$name" in
-              *" / "*) built=$((built + 1)) ;;
-            esac
-          done < <(
-            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs" \
-              --jq '.jobs[] | [.name, .conclusion] | @tsv'
-          )
-
-          if [ "$built" -eq 0 ]; then
-            echo "::error::source run ${SOURCE_RUN_ID} has no family build jobs (${RUN_URL})"
-            exit 1
-          fi
-          if [ "$bad" -ne 0 ]; then
-            echo "::error::${bad} job(s) on source run ${SOURCE_RUN_ID} did not succeed — refusing to tag"
-            exit 1
-          fi
-
           echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
           echo "run_url=${RUN_URL}" >> "$GITHUB_OUTPUT"
           echo "Source run ${SOURCE_RUN_ID}: ${RUN_URL}"
@@ -150,6 +118,48 @@ jobs:
           fi
           if ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
             echo "::error::${HEAD_SHA} is not an ancestor of origin/main — refusing to tag a commit that is not on main"
+            exit 1
+          fi
+
+      # Only this family has to have succeeded: another family failing is the
+      # usual reason we are here, and its images have nothing to do with this
+      # tag. An unknown family fails on the graph lookup below.
+      - name: Verify this family was built in the source run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FAMILY: ${{ inputs.family }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RUN_URL: ${{ steps.source.outputs.run_url }}
+        run: |
+          set -euo pipefail
+          WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
+          BUILD="${WORKFLOW} / build-${FAMILY}"
+          TEST="${WORKFLOW} / test-${FAMILY}"
+
+          found=0
+          bad=0
+          while IFS=$'\t' read -r name conclusion; do
+            [ -z "$name" ] && continue
+            # Matrix legs are named "<job> (cu1281)".
+            case "$name" in
+              "$BUILD"|"$BUILD "\(*) ;;
+              "$TEST"|"$TEST "\(*) ;;
+              *) continue ;;
+            esac
+            found=$((found + 1))
+            echo "  ${name}: ${conclusion}"
+            [ "$conclusion" = "success" ] || bad=$((bad + 1))
+          done < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs" \
+              --jq '.jobs[] | [.name, .conclusion] | @tsv'
+          )
+
+          if [ "$found" -eq 0 ]; then
+            echo "::error::run ${SOURCE_RUN_ID} has no '${BUILD}' job — ${FAMILY} was not built there (${RUN_URL})"
+            exit 1
+          fi
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::${bad} '${FAMILY}' job(s) in run ${SOURCE_RUN_ID} did not succeed — refusing to tag"
             exit 1
           fi
 
