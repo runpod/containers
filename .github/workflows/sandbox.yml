@@ -126,6 +126,12 @@ jobs:
             sudo -n true
             say user "$(id -un) (uid $(id -u)), passwordless sudo"
 
+            # Recorded explicitly: a sandbox reporting other ids is the runtime
+            # shifting them, not this image. Real case: uid 655360 on dev.
+            test "$(stat -c %u /etc/sudo.conf)" = 0
+            test "$(stat -c %u /home/user)" = "$(id -u)"
+            say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
+
             python --version | grep -q "^Python 3.14"
             node --version | grep -q "^v24\."
             say python "$(python --version | cut -d" " -f2), uv $(uv --version | cut -d" " -f2)"
@@ -242,6 +248,12 @@ jobs:
               test "$(id -un)" = node
               sudo -n true
               say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+              # Recorded explicitly: a sandbox reporting other ids is the runtime
+              # shifting them, not this image. Real case: uid 655360 on dev.
+              test "$(stat -c %u /etc/sudo.conf)" = 0
+              test "$(stat -c %u /home/node)" = "$(id -u)"
+              say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/node uid $(stat -c %u /home/node)"
 
               say openclaw "$(openclaw --version)"
 
@@ -395,6 +407,12 @@ jobs:
             test "$(id -un)" = user
             sudo -n true
             say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+            # Recorded explicitly: a sandbox reporting other ids is the runtime
+            # shifting them, not this image. Real case: uid 655360 on dev.
+            test "$(stat -c %u /etc/sudo.conf)" = 0
+            test "$(stat -c %u /home/user)" = "$(id -u)"
+            say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
 
             say harbor "$(harbor --version)"
             say tmux "$(tmux -V | cut -d" " -f2)"
