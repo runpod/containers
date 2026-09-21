@@ -12,7 +12,7 @@ USER root
 
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
-    jq less python3-pip ripgrep unzip wget zip sudo && \
+    build-essential jq less python3-pip ripgrep unzip wget zip sudo && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
