@@ -96,12 +96,11 @@ start_jupyter() {
     local JUPYTER_TOKEN
     mkdir -p /workspace
 
-    # Three cases: JUPYTER_DISABLE_AUTH=true runs with no token at all, a set
-    # JUPYTER_PASSWORD becomes the token, and anything else leaves Jupyter off.
-    # Nothing is generated here -- a token minted in the container never reaches
-    # the pod env, so the console cannot use it and it changes every boot.
-    # Turning auth off is its own variable, so an unset password can never
-    # silently mean "no auth" (which is what TEM-89 fixed).
+    # JUPYTER_DISABLE_AUTH=true runs with no token at all, a set JUPYTER_PASSWORD
+    # becomes the token, anything else leaves Jupyter off. Nothing is generated
+    # here: a token minted in the container never reaches the pod env, so the
+    # console cannot use it and it changes every boot. Auth-off is its own variable
+    # so an unset password can never silently mean "no auth".
     if [ "${JUPYTER_DISABLE_AUTH:-}" = "true" ]; then
         echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
         echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
@@ -109,9 +108,9 @@ start_jupyter() {
     elif [ -n "${JUPYTER_PASSWORD:-}" ]; then
         JUPYTER_TOKEN="$JUPYTER_PASSWORD"
     else
-        echo "JUPYTER_PASSWORD is not set; skipping JupyterLab."
-        echo "Redeploy with \"Start Jupyter notebook\" enabled, or set JUPYTER_PASSWORD on the pod, to get a stable token."
-        echo "To run JupyterLab with no password at all, set JUPYTER_DISABLE_AUTH=true (understand the risk first)."
+        echo "JUPYTER_PASSWORD is not set; skipping JupyterLab. Redeploy with"
+        echo "\"Start Jupyter notebook\" enabled, set JUPYTER_PASSWORD yourself, or set"
+        echo "JUPYTER_DISABLE_AUTH=true to run it with no password (understand the risk)."
         return 0
     fi
 

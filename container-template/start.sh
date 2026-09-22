@@ -74,9 +74,10 @@ export_env_vars() {
 
 # Start jupyter lab
 #
-# Three cases: JUPYTER_DISABLE_AUTH=true runs with no token at all, a set
-# JUPYTER_PASSWORD becomes the token, and anything else leaves Jupyter off.
-# Turning auth off is its own variable rather than an empty JUPYTER_PASSWORD,
+# JUPYTER_DISABLE_AUTH=true runs with no token at all, a set JUPYTER_PASSWORD
+# becomes the token, anything else leaves Jupyter off. Nothing is generated
+# here: a token minted in the container never reaches the pod env, so the
+# console cannot use it and it changes every boot. Auth-off is its own variable
 # so an unset password can never silently mean "no auth".
 start_jupyter() {
     local JUPYTER_TOKEN
@@ -91,10 +92,9 @@ start_jupyter() {
     fi
 
     echo "Starting Jupyter Lab..."
-    # preferred_dir must sit under root_dir, and root_dir defaults to the
-    # process's cwd -- which is why this used to `cd /` first. Setting it
-    # explicitly says the same thing without depending on where start.sh
-    # happens to be, and keeps the pod's init shell out of it.
+    # root_dir defaults to the process's cwd and preferred_dir has to sit
+    # under it, so both are stated explicitly rather than left to wherever
+    # start.sh was invoked from.
     mkdir -p /workspace || echo "could not create /workspace; JupyterLab will open at /" >&2
     nohup python -m jupyter lab --allow-root --no-browser --port=8888 --ip=* --FileContentsManager.delete_to_trash=False --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --IdentityProvider.token="$JUPYTER_TOKEN" --ServerApp.allow_origin=* --ServerApp.root_dir=/ --ServerApp.preferred_dir=/workspace &> /jupyter.log &
     JUPYTER_PID=$!

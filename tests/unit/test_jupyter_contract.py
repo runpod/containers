@@ -1,33 +1,16 @@
 """Every template's start.sh must treat the JupyterLab token the same way.
 
-Two independent start scripts launch Jupyter: container-template/start.sh
-(copied into official-templates/base, so pytorch, rocm, autoresearch and
-pytorch-cluster all inherit it) and official-templates/comfyui's own copy.
-They have already drifted once, in both directions:
+Two independent scripts launch Jupyter: container-template/start.sh (copied
+into official-templates/base, so pytorch, rocm, autoresearch and
+pytorch-cluster inherit it) and official-templates/comfyui's own copy. They
+have already drifted once in each direction -- ComfyUI served an
+unauthenticated JupyterLab when JUPYTER_PASSWORD was unset, then replaced that
+with a token generated per boot that the console can never read.
 
-  * Before TEM-89 the ComfyUI script passed
-    `--IdentityProvider.token="${JUPYTER_PASSWORD:-}"`, so a pod without that
-    variable served an unauthenticated JupyterLab on the public proxy.
-  * TEM-89 replaced that with a token generated in the container per boot.
-    A token minted in the container never reaches the pod env, so the console
-    cannot use it and the user had to re-read the pod logs after every restart.
-
-So the rules below are asserted against every script, by running the real
-`start_jupyter` with a fake `jupyter` on PATH and inspecting the arguments it
-was called with:
-
-  1. No password set            -> Jupyter is not started, and no token is
-                                   invented.
-  2. JUPYTER_PASSWORD=<v>       -> <v> is the token, verbatim.
-  3. JUPYTER_DISABLE_AUTH=true  -> started with an empty token, deliberately.
-  4. JUPYTER_DISABLE_AUTH=<x>   -> not honored; only the exact string "true"
-                                   disables auth, so a stray "1" or "yes"
-                                   cannot open a pod by accident.
-  5. Both set                   -> JUPYTER_DISABLE_AUTH wins (documented in
-                                   the READMEs).
-
-Adding a template means adding its start.sh to SCRIPTS; the rules then apply
-to it too.
+Each test below states one rule and asserts it against every script, by
+running the real start_jupyter with a fake `jupyter` on PATH and inspecting
+the arguments it was invoked with. Adding a template means adding its
+start.sh to SCRIPTS; the rules then apply to it too.
 """
 
 import os
