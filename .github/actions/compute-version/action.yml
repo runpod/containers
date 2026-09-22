@@ -26,15 +26,13 @@ outputs:
   suffix:
     description: "Tag suffix: empty for releases, -rc.<pr> for PRs, -dev otherwise."
     value: ${{ steps.compute.outputs.suffix }}
-  base-version:
+  previous-version:
     description: >-
-      The last RELEASED version this build sits on (no bump applied) — e.g.
-      1.3.1. Used to build FROM an already-published image when the current
-      version's image isn't published yet (e.g. cluster on a PR that doesn't
-      rebuild pytorch). EMPTY when the family has never been released: there
-      is no published image to build FROM, so the caller must build the
-      dependency in the same run.
-    value: ${{ steps.compute.outputs.base_version }}
+      This family's last RELEASED version, with no bump applied — e.g. 1.3.1.
+      A dependent builds FROM it when this family is not rebuilt in the same
+      run. EMPTY when the family has never been released: there is no
+      published image to build FROM, so the caller must build it in this run.
+    value: ${{ steps.compute.outputs.previous_version }}
   tag:
     description: "Git tag for the release (e.g. v1.1.0, or comfyui-v1.1.0)."
     value: ${{ steps.compute.outputs.tag }}
@@ -123,7 +121,7 @@ runs:
         {
           echo "version=${VERSION}"
           echo "suffix=${SUFFIX}"
-          echo "base_version=${BASE}"
+          echo "previous_version=${BASE}"
           echo "tag=${TAG}"
           echo "bump=${BUMP}"
           echo "should_build=${SHOULD_BUILD}"
@@ -131,7 +129,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
         echo "Family:           ${FAMILY:-(all images share one version)}"
-        echo "Base version:     ${BASE:-none — first release}${LATEST:+ (from ${LATEST})}"
+        echo "Previous release: ${BASE:-none — first release}${LATEST:+ (${LATEST})}"
         echo "Detected bump:    ${BUMP}"
         echo "Computed version: ${VERSION}${SUFFIX}"
         echo "should_build=${SHOULD_BUILD} should_release=${SHOULD_RELEASE}"
