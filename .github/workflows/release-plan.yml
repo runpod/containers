@@ -1,0 +1,48 @@
+name: Release Plan
+
+# Guards the family graph that decides what gets built and released.
+# official-templates/** is in the trigger on purpose: a template added without
+# a line in .github/families.yml would silently never build again, and the
+# coverage test is what catches that.
+
+on:
+  pull_request:
+    paths:
+      - ".github/families.yml"
+      - ".github/scripts/plan_families.py"
+      - ".github/scripts/test_plan_families.py"
+      - ".github/workflows/release-plan.yml"
+      # The graph names jobs inside these; a rename must fail here, not in a
+      # break-glass release at 2am.
+      - ".github/workflows/base.yml"
+      - ".github/workflows/nvidia.yml"
+      - ".github/workflows/rocm.yml"
+      - ".github/workflows/comfyui.yml"
+      - ".github/workflows/sandbox.yml"
+      - "official-templates/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan-families:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Full history so the three-dot diff below has a merge base.
+          fetch-depth: 0
+
+      - name: plan-families unit tests
+        run: python3 .github/scripts/test_plan_families.py
+
+      # Informational: shows a reviewer exactly which families this PR would
+      # build and release, in order.
+      - name: Plan for this PR
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" \
+            | python3 .github/scripts/plan_families.py --changed-files -

@@ -1,26 +1,44 @@
 name: ROCm Images Build
 
 # Reusable building block invoked by the release orchestrator (release.yml),
-# which computes the version ONCE and passes it in. Not triggered on its own —
-# the orchestrator owns triggers, per-family gating, concurrency and release.
+# which passes in the families it planned. Not triggered on its own — the
+# orchestrator owns triggers, concurrency and release.
 on:
   workflow_call:
     inputs:
-      version:
-        description: "Semantic version without a leading v (e.g. 1.1.0)."
+      families:
+        description: >-
+          JSON array of families to build, from .github/scripts/plan_families.py.
+          A family absent from it keeps its published images and version.
         required: true
-        type: string
-      suffix:
-        description: "Tag suffix: empty for releases, -rc.<pr> for PRs, -dev otherwise."
-        required: false
-        default: ""
         type: string
 
 permissions:
   contents: read
 
 jobs:
+  # This family's own version series (git tags `rocm-v1.3.1`).
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      suffix: ${{ steps.v.outputs.suffix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: rocm
+        id: v
+        uses: ./.github/actions/compute-version
+        with:
+          family: rocm
+
   build-rocm:
+    needs: versions
+    if: contains(fromJSON(inputs.families), 'rocm')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     strategy:
       fail-fast: false
@@ -40,7 +58,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/rocm
 
       - name: Build rocm images (${{ matrix.rocm }})
@@ -48,8 +66,8 @@ jobs:
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+          RELEASE_VERSION: ${{ needs.versions.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
         with:
           source: .
           files: |
