@@ -91,9 +91,11 @@ start_jupyter() {
     fi
 
     echo "Starting Jupyter Lab..."
-    mkdir -p /workspace
-    cd /
-    nohup python -m jupyter lab --allow-root --no-browser --port=8888 --ip=* --FileContentsManager.delete_to_trash=False --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --IdentityProvider.token="$JUPYTER_TOKEN" --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &> /jupyter.log &
+    # Backgrounded as one group, as before: `cmd1 && cmd2 &` backgrounds the
+    # whole chain, so the `cd` stays out of the caller's shell and a failing
+    # mkdir cannot trip `set -e` and kill the pod's init script.
+    { mkdir -p /workspace && cd / &&
+        nohup python -m jupyter lab --allow-root --no-browser --port=8888 --ip=* --FileContentsManager.delete_to_trash=False --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' --IdentityProvider.token="$JUPYTER_TOKEN" --ServerApp.allow_origin=* --ServerApp.preferred_dir=/workspace &> /jupyter.log ; } &
     JUPYTER_PID=$!
     sleep 2
     if kill -0 "$JUPYTER_PID" 2>/dev/null; then
