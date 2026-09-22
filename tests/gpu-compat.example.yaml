@@ -13,7 +13,7 @@
 # check_all_gpu and would filter GPUs out of the sweep.
 pytorch:
     images:
-    - runpod/pytorch:1.1.0-cu1290-torch280-ubuntu2404-cluster
+    - runpod/pytorch-cluster:1.4.0-cu1290-torch280-ubuntu2404
     check_all_gpu: true
     cuda_versions: all
     # Narrow the sweep instead of the whole catalog:
