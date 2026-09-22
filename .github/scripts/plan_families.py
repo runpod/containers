@@ -197,13 +197,18 @@ def main() -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
 
+    def report(label: str, value: str) -> None:
+        print(f"{label + ':':<20}{value}", file=sys.stderr)
+
     if args.all:
-        print("changed sources: every family (no diff to read)", file=sys.stderr)
+        report("selection", "every family (no diff to read)")
     else:
-        direct = sorted(direct_matches(graph, changed))
-        print(f"changed files:   {len(changed)}", file=sys.stderr)
-        print(f"changed sources: {', '.join(direct) or 'none'}", file=sys.stderr)
-    print(f"build order:     {', '.join(families) or 'none'}", file=sys.stderr)
+        direct = direct_matches(graph, changed)
+        report("files changed", str(len(changed)))
+        report("matched by path", ", ".join(sorted(direct)) or "none")
+        report("pulled in as deps",
+               ", ".join(f for f in families if f not in direct) or "none")
+    report("build order", ", ".join(families) or "none")
     print(json.dumps(families))
     return 0
 
