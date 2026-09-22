@@ -93,6 +93,7 @@ export_env_vars() {
 
 # Start Jupyter Lab server for remote access
 start_jupyter() {
+    local JUPYTER_TOKEN
     mkdir -p /workspace
 
     # Three cases: JUPYTER_DISABLE_AUTH=true runs with no token at all, a set
