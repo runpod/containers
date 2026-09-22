@@ -40,6 +40,9 @@ jobs:
     outputs:
       families: ${{ steps.p.outputs.families }}
       workflows: ${{ steps.p.outputs.workflows }}
+      should-build: ${{ steps.gate.outputs.should-build }}
+      should-release: ${{ steps.gate.outputs.should-release }}
+      bump: ${{ steps.gate.outputs.bump }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -83,36 +86,19 @@ jobs:
           echo "families=${FAMILIES}" >> "$GITHUB_OUTPUT"
           echo "workflows=${WORKFLOWS}" >> "$GITHUB_OUTPUT"
 
-  # Whether this event builds and releases at all, and at which bump level.
-  # The version numbers themselves are per family and computed inside each
-  # build workflow (see .github/families.yml).
-  version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.v.outputs.version }}
-      suffix: ${{ steps.v.outputs.suffix }}
-      base-version: ${{ steps.v.outputs.base-version }}
-      should-build: ${{ steps.v.outputs.should-build }}
-      should-release: ${{ steps.v.outputs.should-release }}
-      tag: ${{ steps.v.outputs.tag }}
-      bump: ${{ steps.v.outputs.bump }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Compute version
-        id: v
+      # Whether this event builds and releases at all, and at which bump
+      # level. No family here: both answers come from the event and the
+      # squash commit's subject, never from a version.
+      - name: Compute gate
+        id: gate
         uses: ./.github/actions/compute-version
 
   # Each build workflow is called only when the plan needs a family it covers,
   # and decides internally which of them to build.
   base:
-    needs: [version, plan]
+    needs: plan
     if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
+      !cancelled() && needs.plan.outputs.should-build == 'true'
       && contains(fromJSON(needs.plan.outputs.workflows), 'base')
     uses: ./.github/workflows/base.yml
     secrets: inherit
@@ -120,9 +106,9 @@ jobs:
       families: ${{ needs.plan.outputs.families }}
 
   nvidia:
-    needs: [version, plan]
+    needs: plan
     if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
+      !cancelled() && needs.plan.outputs.should-build == 'true'
       && contains(fromJSON(needs.plan.outputs.workflows), 'nvidia')
     uses: ./.github/workflows/nvidia.yml
     secrets: inherit
@@ -130,9 +116,9 @@ jobs:
       families: ${{ needs.plan.outputs.families }}
 
   rocm:
-    needs: [version, plan]
+    needs: plan
     if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
+      !cancelled() && needs.plan.outputs.should-build == 'true'
       && contains(fromJSON(needs.plan.outputs.workflows), 'rocm')
     uses: ./.github/workflows/rocm.yml
     secrets: inherit
@@ -140,9 +126,9 @@ jobs:
       families: ${{ needs.plan.outputs.families }}
 
   comfyui:
-    needs: [version, plan]
+    needs: plan
     if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
+      !cancelled() && needs.plan.outputs.should-build == 'true'
       && contains(fromJSON(needs.plan.outputs.workflows), 'comfyui')
     uses: ./.github/workflows/comfyui.yml
     secrets: inherit
@@ -151,9 +137,9 @@ jobs:
       run-functional-tests: true
 
   sandbox:
-    needs: [version, plan]
+    needs: plan
     if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
+      !cancelled() && needs.plan.outputs.should-build == 'true'
       && contains(fromJSON(needs.plan.outputs.workflows), 'sandbox')
     uses: ./.github/workflows/sandbox.yml
     secrets: inherit
@@ -164,13 +150,12 @@ jobs:
   # Each family waits only on its own build: a scan that fails on one image
   # must not keep the others unreleased while their images are already pushed.
   release:
-    needs: [version, plan, base, nvidia, rocm, comfyui, sandbox]
+    needs: [plan, base, nvidia, rocm, comfyui, sandbox]
     if: >-
       !cancelled()
       && github.event_name == 'push'
-      && needs.version.result == 'success'
       && needs.plan.result == 'success'
-      && needs.version.outputs.should-release == 'true'
+      && needs.plan.outputs.should-release == 'true'
       && needs.plan.outputs.families != '[]'
     runs-on: ubuntu-latest
     permissions:
@@ -251,14 +236,14 @@ jobs:
       - name: Summary
         if: steps.gate.outputs.release == 'true'
         run: |
-          echo "Released ${{ steps.v.outputs.tag }} (bump ${{ needs.version.outputs.bump }})"
+          echo "Released ${{ steps.v.outputs.tag }} (bump ${{ needs.plan.outputs.bump }})"
           echo "Previous: ${{ steps.v.outputs.base-version || 'none — first release' }}"
 
   # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
   # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
   # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
   cleanup:
-    needs: [version, release]
-    if: needs.version.outputs.should-release == 'true'
+    needs: [plan, release]
+    if: needs.plan.outputs.should-release == 'true'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit
