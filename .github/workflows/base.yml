@@ -29,9 +29,9 @@ jobs:
     outputs:
       suffix: ${{ steps.base.outputs.suffix }}
       base: ${{ steps.base.outputs.version }}
-      base-published: ${{ steps.base.outputs.base-version }}
+      base-published: ${{ steps.base.outputs.previous-version }}
       pytorch: ${{ steps.pytorch.outputs.version }}
-      pytorch-published: ${{ steps.pytorch.outputs.base-version }}
+      pytorch-published: ${{ steps.pytorch.outputs.previous-version }}
       cluster: ${{ steps.cluster.outputs.version }}
       autoresearch: ${{ steps.autoresearch.outputs.version }}
     steps:
@@ -148,7 +148,7 @@ jobs:
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-base
-    if: needs.build-base.result == 'success'
+    if: "!cancelled() && needs.build-base.result == 'success'"
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -274,7 +274,7 @@ jobs:
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-autoresearch
-    if: needs.build-autoresearch.result == 'success'
+    if: "!cancelled() && needs.build-autoresearch.result == 'success'"
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -412,7 +412,7 @@ jobs:
   test-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch
-    if: needs.build-pytorch.result == 'success'
+    if: "!cancelled() && needs.build-pytorch.result == 'success'"
     strategy:
       fail-fast: false
       matrix:
@@ -560,7 +560,7 @@ jobs:
   test-pytorch-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch-cluster
-    if: needs.build-pytorch-cluster.result == 'success'
+    if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
     strategy:
       fail-fast: false
       matrix:

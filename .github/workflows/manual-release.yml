@@ -220,7 +220,7 @@ jobs:
         env:
           FAMILY: ${{ inputs.family }}
           TAG: ${{ inputs.tag }}
-          PREV_VERSION: ${{ steps.version.outputs.base-version }}
+          PREV_VERSION: ${{ steps.version.outputs.previous-version }}
         run: |
           set -euo pipefail
           BODY="${RUNNER_TEMP}/release-body.md"

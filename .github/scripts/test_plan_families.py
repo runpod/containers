@@ -96,9 +96,9 @@ class GraphFile(unittest.TestCase):
     def test_real_graph_loads_and_orders(self):
         graph = P.load_graph(P.DEFAULT_GRAPH)
         order = P.build_order(graph, set(graph))
-        self.assertLess(order.index("base"), order.index("pytorch"))
-        self.assertLess(order.index("pytorch"), order.index("pytorch-cluster"))
-        self.assertLess(order.index("sandbox-ubuntu"), order.index("sandbox-harbor"))
+        for name, spec in graph.items():
+            for dep in spec["depends_on"]:
+                self.assertLess(order.index(dep), order.index(name), name)
 
     def test_each_family_has_a_build_job_named_after_it(self):
         """manual-release looks up '<workflow> / build-<family>' by name."""

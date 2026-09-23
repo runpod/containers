@@ -28,7 +28,7 @@ jobs:
     outputs:
       suffix: ${{ steps.ubuntu.outputs.suffix }}
       ubuntu: ${{ steps.ubuntu.outputs.version }}
-      ubuntu-published: ${{ steps.ubuntu.outputs.base-version }}
+      ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
       openclaw: ${{ steps.openclaw.outputs.version }}
       harbor: ${{ steps.harbor.outputs.version }}
     steps:

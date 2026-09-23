@@ -209,7 +209,7 @@ jobs:
         env:
           FAMILY: ${{ matrix.family }}
           TAG: ${{ steps.v.outputs.tag }}
-          PREV_VERSION: ${{ steps.v.outputs.base-version }}
+          PREV_VERSION: ${{ steps.v.outputs.previous-version }}
         run: |
           set -euo pipefail
           BODY="${RUNNER_TEMP}/release-body-${FAMILY}.md"
@@ -237,7 +237,7 @@ jobs:
         if: steps.gate.outputs.release == 'true'
         run: |
           echo "Released ${{ steps.v.outputs.tag }} (bump ${{ needs.plan.outputs.bump }})"
-          echo "Previous: ${{ steps.v.outputs.base-version || 'none — first release' }}"
+          echo "Previous: ${{ steps.v.outputs.previous-version || 'none — first release' }}"
 
   # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
   # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
