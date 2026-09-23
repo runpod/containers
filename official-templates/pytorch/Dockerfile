@@ -3,6 +3,7 @@ FROM "${BASE_IMAGE}"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 ARG WHEEL_SRC
 ARG TORCH
 
