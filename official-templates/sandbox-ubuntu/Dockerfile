@@ -25,6 +25,18 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# 26.04 builds tar against openat2 with no fallback, and gVisor does not
+# implement that call (google/gvisor#14451), so `tar -x` fails in a sandbox.
+# The 24.04 build is the same 1.35 and works. Drop once the runtime catches up.
+ARG TAR_DEB=tar_1.35+dfsg-3ubuntu0.4_amd64.deb
+ARG TAR_DEB_SHA256=fdf41a87936824e50c8ac11b0b22d1395aeb0754feef2dae5575b5d5a93793ec
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${TAR_DEB}" \
+        "https://archive.ubuntu.com/ubuntu/pool/main/t/tar/${TAR_DEB}" && \
+    echo "${TAR_DEB_SHA256}  /tmp/${TAR_DEB}" | sha256sum -c - && \
+    dpkg -i "/tmp/${TAR_DEB}" && \
+    apt-mark hold tar && \
+    rm "/tmp/${TAR_DEB}"
+
 # Node from the official tarball rather than apt: Ubuntu's `npm` pulls in a
 # vendored node-* tree (babel, handlebars, pacote) old enough to fail the
 # HIGH/CRITICAL gate. 24 is the current LTS and the first line whose bundled

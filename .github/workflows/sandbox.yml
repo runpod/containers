@@ -144,6 +144,13 @@ jobs:
             # Without root a .deb is unpacked by hand, and they are zstd now.
             say zstd "$(zstd --version | grep -o 'v[0-9.]*' | head -1)"
 
+            # CI runs under runc, where either tar works, so the version is
+            # the only thing that shows the openat2 pin is still in place.
+            test "$(dpkg-query -W -f=\${Version} tar)" = "1.35+dfsg-3ubuntu0.4"
+            mkdir -p /tmp/t/a && echo hi > /tmp/t/a/f && tar -cf /tmp/t.tar -C /tmp t
+            mkdir -p /tmp/out && tar -xf /tmp/t.tar -C /tmp/out && test "$(cat /tmp/out/t/a/f)" = hi
+            say tar "$(dpkg-query -W -f=\${Version} tar) (24.04 build, pinned for openat2)"
+
             # 26.04 marks the system Python externally managed; this is the
             # first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
             pip install --quiet --no-input six && python -c "import six"
