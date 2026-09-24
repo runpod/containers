@@ -93,12 +93,13 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.2.0", torch = "2.8.0", whl_src = "129" },
     { cuda_version = "13.2.0", torch = "2.9.0", whl_src = "130" },
     { cuda_version = "13.2.0", torch = "2.9.1", whl_src = "130" },
-    # audio_src: torchaudio's last release is 2.11.0 and the cu132 index stops
-    # at 2.2.0, so take it from cu130. Same CUDA major, and the wheel declares
-    # no dependencies. Defaults to whl_src everywhere else.
-    { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132", audio_src = "130" },
-    { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132", audio_src = "130" },
-    { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132", audio_src = "130" },
+    # audio_index: torchaudio has no cu132 build, and its import-time check
+    # compares the CUDA minor version, so a cu130 wheel refuses to load beside
+    # cu132 torch. The +cpu wheel skips the check, at the cost of torchaudio's
+    # own CUDA kernels (README). Defaults to the torch index everywhere else.
+    { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132", audio_index = "cpu" },
   ]
 }
 
@@ -118,7 +119,7 @@ variable "COMPATIBLE_BUILDS" {
           torch_audio    = lookup(TORCH_META[combo.torch], "torchaudio", combo.torch)
           torch_codec    = lookup(TORCH_META[combo.torch], "torchcodec", "")
           codec_src      = lookup(combo, "codec_src", combo.whl_src)
-          audio_src      = lookup(combo, "audio_src", combo.whl_src)
+          audio_index    = lookup(combo, "audio_index", "cu${combo.whl_src}")
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
       ]
     ]
@@ -194,7 +195,7 @@ target "pytorch-matrix" {
     WHEEL_SRC = build.wheel_src
     TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}"
     TORCHAUDIO = build.torch_audio != "" ? "torchaudio==${build.torch_audio}" : ""
-    AUDIO_SRC = build.audio_src
+    AUDIO_INDEX = build.audio_index
     TORCHCODEC = build.torch_codec != "" ? "torchcodec==${build.torch_codec}" : ""
     CODEC_SRC = build.codec_src
   }

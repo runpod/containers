@@ -20,14 +20,15 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
 
 # torchaudio ended at 2.11.0, so newer CUDA indexes never got it (cu132 stops at
-# 2.2.0) and it needs its own index (see audio_src in docker-bake.hcl). --no-deps
-# because the wheel declares none and its torch pin must not move this build's.
+# 2.2.0) and it needs its own index (see audio_index in docker-bake.hcl).
+# --no-deps because the wheel declares none and its torch pin must not move this
+# build's.
 ARG TORCHAUDIO
-ARG AUDIO_SRC
+ARG AUDIO_INDEX
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     if [ -n "${TORCHAUDIO}" ]; then \
         python -m pip install --no-deps "${TORCHAUDIO}" \
-            --index-url "https://download.pytorch.org/whl/cu${AUDIO_SRC}"; \
+            --index-url "https://download.pytorch.org/whl/${AUDIO_INDEX}"; \
     fi
 
 # torchcodec backs torchaudio.load/save from torch 2.9 on. Its own step because

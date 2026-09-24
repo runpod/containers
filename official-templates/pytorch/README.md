@@ -12,9 +12,25 @@ Built on our base images, these containers provide pre-configured PyTorch and CU
 
 ### Available configurations
 - **PyTorch**: 2.6.0, 2.7.1, 2.8.0, 2.9.0, 2.9.1, 2.12.0, 2.12.1, and 2.13.0
-- **CUDA**: 12.8.1, 12.9.0, and 13.0.0 (not available on Runpod)
-- **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble); CUDA 13.0.0 is 24.04 only
-- **Audio**: torchaudio is matched to each PyTorch version (2.11.0, its last release, on 2.12 and 2.13). `torchaudio.load` and `save` are torchcodec wrappers from 2.9 on, so torchcodec ships in every 2.9 and later image. It is the CUDA build, so GPU video decoding through NVDEC works too — the replacement for `torchaudio.io`, which was removed in 2.9.
+- **CUDA**: 12.8.1, 12.9.0, 13.0.0, and 13.2.0
+- **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble); CUDA 13.0.0 and 13.2.0 are 24.04 only
+- **Audio**: torchaudio is matched to each PyTorch version (2.11.0, its last release, on 2.12 and 2.13). `torchaudio.load` and `save` are torchcodec wrappers from 2.9 on, so torchcodec ships in every 2.9 and later image. It is the CUDA build, so GPU video decoding through NVDEC works too — the replacement for `torchaudio.io`, which was removed in 2.9. On CUDA 13.2 torchaudio is the CPU build — see below.
+
+### torchaudio on CUDA 13.2
+
+On the CUDA 13.2 images with PyTorch 2.12 and 2.13, torchaudio is `2.11.0+cpu` rather than a CUDA build.
+
+torchaudio's last release is 2.11.0, and no cu132 wheel exists or ever will — the project stopped shipping alongside PyTorch after 2.11. The cu130 wheel is not a substitute: torchaudio compares the CUDA minor version at import and raises `RuntimeError` next to cu132 PyTorch. The `+cpu` wheel reports no CUDA, so the check passes.
+
+Everything built out of PyTorch ops still runs on the GPU: `resample`, spectrograms, mel scale, filters, and the rest of `torchaudio.transforms`. Audio I/O is unaffected — from 2.9 on `torchaudio.load` and `save` go through torchcodec, which is the CUDA build in these images.
+
+What is lost is the three features backed by torchaudio's own CUDA kernels:
+
+- `torchaudio.functional.rnnt_loss` on CUDA tensors raises `NotImplementedError` (the CPU kernel is still registered).
+- `torchaudio.functional.forced_align` on CUDA tensors, likewise.
+- `CUCTCDecoder` / `cuda_ctc_decoder` imports, then fails when the decoder is constructed.
+
+If you need any of these, use a CUDA 13.0 image: there PyTorch and torchaudio are both cu130 and the CUDA kernels are present.
 
 Focus on your models, not your environment setup.
 
@@ -87,6 +103,24 @@ Please also see [../base/README.md](../base/README.md)
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1300-torch2121-ubuntu2404`
 - Torch 2.13.0:
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1300-torch2130-ubuntu2404`
+
+### CUDA 13.2.0:
+- Torch 2.6.0:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch260-ubuntu2404`
+- Torch 2.7.1:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch271-ubuntu2404`
+- Torch 2.8.0:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch280-ubuntu2404`
+- Torch 2.9.0:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch290-ubuntu2404`
+- Torch 2.9.1:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch291-ubuntu2404`
+- Torch 2.12.0:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch2120-ubuntu2404`
+- Torch 2.12.1:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch2121-ubuntu2404`
+- Torch 2.13.0:
+  - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1320-torch2130-ubuntu2404`
 
 <details>
   <summary> CUDA 12.4.1 (Legacy): </summary>
