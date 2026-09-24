@@ -96,11 +96,9 @@ start_jupyter() {
     local JUPYTER_TOKEN
     mkdir -p /workspace
 
-    # JUPYTER_DISABLE_AUTH=true runs with no token at all, a set JUPYTER_PASSWORD
-    # becomes the token, anything else leaves Jupyter off. Nothing is generated
-    # here: a token minted in the container never reaches the pod env, so the
-    # console cannot use it and it changes every boot. Auth-off is its own variable
-    # so an unset password can never silently mean "no auth".
+    # JUPYTER_DISABLE_AUTH=true runs with no token, a set JUPYTER_PASSWORD becomes
+    # the token, and anything else leaves Jupyter off. No token is generated here
+    # because the console never sees one minted in the container.
     if [ "${JUPYTER_DISABLE_AUTH:-}" = "true" ]; then
         echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
         echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
