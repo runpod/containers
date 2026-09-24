@@ -21,7 +21,7 @@ RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
     build-essential ca-certificates curl git jq less openssh-client \
     python-is-python3 python3 python3-dev python3-pip python3-venv ripgrep \
-    sudo tini tmux unzip wget xz-utils zip && \
+    sudo tini tmux unzip wget xz-utils zip zstd && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

@@ -141,6 +141,9 @@ jobs:
             # An exec call lasts seconds; a long command has to outlive it.
             say tmux "$(tmux -V | cut -d" " -f2)"
 
+            # Without root a .deb is unpacked by hand, and they are zstd now.
+            say zstd "$(zstd --version | grep -o 'v[0-9.]*' | head -1)"
+
             # 26.04 marks the system Python externally managed; this is the
             # first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
             pip install --quiet --no-input six && python -c "import six"
