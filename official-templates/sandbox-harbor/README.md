@@ -8,7 +8,7 @@ Harbor runs any agent, with any model, against any task, in parallel. This image
 - **Harbor 0.23.0** (`harbor` on `PATH`), plus everything from the Ubuntu sandbox image: Python 3.14, `uv`, Node.js 24 and the usual build tooling.
 - **tmux**, so a long evaluation outlives the exec call that started it.
 - **An ssh client**, which is the half of Harbor's Agent Sandbox Protocol this side of a run needs.
-- **Unprivileged by default**: commands run as `user` with passwordless `sudo` available.
+- **Unprivileged by default**: commands run as `user`.
 
 ### Running an evaluation
 

@@ -10,7 +10,7 @@ A small, general purpose Ubuntu 26.04 image for running untrusted or agent-gener
 - **Node.js 24 LTS** with `npm`.
 - **Build tooling**: `build-essential`, `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`.
 - **`tmux`**, so a long-running command outlives the exec call that started it.
-- **Unprivileged by default**: commands run as `user` (uid 1000) in `/home/user`, with passwordless `sudo` available.
+- **Unprivileged by default**: commands run as `user` (uid 1000) in `/home/user`.
 
 ### What's deliberately absent
 No SSH server, no nginx and no Jupyter. Sandboxes execute commands through the Runpod API rather than through a service inside the container, and the isolation boundary rejects images that need privileged mode or host devices. If you want those, run a Pod instead.
@@ -28,4 +28,4 @@ To pin the image explicitly, pass `runpod/ubuntu:<version>-sandbox-ubuntu2604`.
 
 ### Extending it
 
-Install what you need at runtime — `uv pip install`, `npm install`, or `sudo apt-get install`. For a heavier or repeatedly used environment, build your own image on top of this one and register it as a sandbox template.
+Install what you need at runtime into your home directory: `uv pip install`, `pip install --user`, `npm install -g --prefix ~/.local`, or download a release archive and unpack it. For a heavier or repeatedly used environment, build your own image on top of this one and register it as a sandbox template.
