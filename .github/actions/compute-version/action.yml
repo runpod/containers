@@ -92,7 +92,7 @@ runs:
             PATHS+=("${spec}")
           done < <(python3 "${GITHUB_ACTION_PATH}/../../scripts/plan_families.py" \
                      --paths "${FAMILY}")
-          BUMP="$(bump_for_range "${LATEST:-${EMPTY_TREE}}" "${PATHS[@]}")"
+          BUMP="$(bump_for_range "${LATEST}" "${PATHS[@]}")"
         else
           # Full squash-commit message so a BREAKING CHANGE footer is honoured.
           # detect_bump still ignores body feat:/fix: lines.

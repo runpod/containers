@@ -45,34 +45,36 @@ next_version() {
   printf '%s.%s.%s\n' "$major" "$minor" "$patch"
 }
 
-# git's empty tree, so a never-released family still gets a full range.
-EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+bump_rank() {
+  case "$1" in
+    major) printf '3\n' ;;
+    minor) printf '2\n' ;;
+    patch) printf '1\n' ;;
+    *)     printf '0\n' ;;
+  esac
+}
 
 # Highest bump among the commits a family still has unreleased. A release can
 # carry work from an earlier commit — a run that failed, or one GitHub dropped
 # from the queue — and taking only HEAD's type would then ship a feature under
 # a patch version.
-BUMP_RANK_major=3
-BUMP_RANK_minor=2
-BUMP_RANK_patch=1
-BUMP_RANK_none=0
-
 max_bump() {
-  local best="none" candidate rank_best rank_new
+  local best="none" best_rank=0 candidate rank
   for candidate in "$@"; do
-    rank_best="BUMP_RANK_${best}"
-    rank_new="BUMP_RANK_${candidate}"
-    if [ "${!rank_new:-0}" -gt "${!rank_best:-0}" ]; then
+    rank="$(bump_rank "$candidate")"
+    if [ "$rank" -gt "$best_rank" ]; then
       best="$candidate"
+      best_rank="$rank"
     fi
   done
   printf '%s\n' "$best"
 }
 
 # Walks `<since>..HEAD`, keeping only commits that touched one of the given
-# pathspecs, and reduces their Conventional Commit types to one bump.
+# pathspecs, and reduces their Conventional Commit types to one bump. An empty
+# `since` means the family has never been released, so everything counts.
 bump_for_range() {
-  local since="$1"; shift
+  local since="${1:-4b825dc642cb6eb9a060e54bf8d69288fbee4904}"; shift
   local sha bumps=() message
   while IFS= read -r sha; do
     [ -z "$sha" ] && continue
