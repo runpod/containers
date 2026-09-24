@@ -16,6 +16,19 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Chromium's shared libraries, but not Chromium: a baked browser goes stale and
+# cannot be patched, while `playwright install chromium` downloads a current one
+# and then fails to start without these. They are what `--with-deps` would fetch
+# through apt, which a sandbox has no root for.
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+    fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
+    libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 \
+    libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 \
+    libxext6 libxfixes3 libxkbcommon0 libxrandr2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # Upstream runs as `node` with no route to root, so nothing can be installed
 # from inside a sandbox.
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node && \

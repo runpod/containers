@@ -14,37 +14,34 @@ A sandbox for running the OpenClaw agent on isolated, disposable compute instead
 
 ### Browser automation
 
-No browser is baked in. A Chromium frozen into an image cannot be kept patched, and an agent driving it across the open web is exactly the traffic those patches are for. Install one when you need it, and you get the current build:
+No browser is baked in. A Chromium frozen into an image cannot be kept patched, and an agent driving it across the open web is exactly the traffic those patches are for. Its shared libraries are, so installing one gets you the current build and it starts:
 
 ```bash
-npx playwright install --with-deps chromium
+npx playwright install chromium
 ```
 
-Note that Chromium's own sandboxing relies on kernel features the isolation boundary restricts, so it may need to be launched without it.
+Leave `--with-deps` off. It shells out to `apt-get`, which needs a root a sandbox does not have, and the libraries it would install are already here.
+
+Chromium's own sandboxing relies on kernel features the isolation boundary restricts, so launch it with `--no-sandbox`.
 
 ### The gateway
 
-The gateway starts with the container, bound to loopback, so the `openclaw` CLI works inside the sandbox from the first second.
+The gateway starts with the container, bound to loopback on port 18789, so the `openclaw` CLI works inside the sandbox from the first second.
 
-It is not reachable from outside until you give it credentials — OpenClaw refuses to listen beyond loopback unauthenticated, and a sandbox is never claimed holding a token. To expose the Control UI on port **18789**, set a token and rebind, then request that port when creating the sandbox:
+The Control UI is not reachable from outside. A sandbox exposes no ports today, and the bind address is an argument to the gateway process, which is the container's own entry point rather than something you can change from a shell inside it. Drive the agent through `openclaw` over exec instead.
 
-```bash
-openclaw gateway restart --bind auto --token "$(openssl rand -hex 32)"
-```
-
-A sandbox never boots holding your credentials — they arrive once it is claimed — so the gateway comes up unconfigured. Run onboarding once, then restart the gateway so it picks them up:
+A sandbox never boots holding your credentials — they arrive once it is claimed — so the gateway comes up unconfigured. Run onboarding once:
 
 ```bash
 # reads OPENAI_API_KEY and friends from the environment; --accept-risk is
 # required with --non-interactive, since an agent gets full system access
 openclaw onboard --non-interactive --accept-risk
-openclaw gateway restart
 ```
 
-Drop the two flags if you have a terminal attached and want the interactive flow.
+Drop the two flags if you have a terminal attached and want the interactive flow. Note that `openclaw gateway restart` does not restart the gateway here: it manages a service definition, while in a sandbox the gateway is the container's entry point. If it has to come up with different credentials, create a new sandbox.
 
 State lives in `/home/node/.openclaw`, and the agent's working directory is `/home/node/.openclaw/workspace`.
 
 ### Notes
 - OpenClaw's own Docker-based sandboxing is unavailable here: there is no Docker socket inside a sandbox, and the isolation boundary provides the containment instead.
-- Install extra tooling at runtime with `sudo apt-get install` or `pip install`. For a heavier setup, build your own image on top of this one and register it as a sandbox template.
+- Install extra tooling at runtime into your home directory: `pip install --user`, `npm install -g --prefix ~/.local`, or download a release archive and unpack it. System packages need a root a sandbox does not currently grant. For a heavier setup, build your own image on top of this one and register it as a sandbox template.
