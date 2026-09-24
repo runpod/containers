@@ -15,17 +15,6 @@ A small, general purpose Ubuntu 26.04 image for running untrusted or agent-gener
 ### What's deliberately absent
 No SSH server, no nginx and no Jupyter. Sandboxes execute commands through the Runpod API rather than through a service inside the container, and the isolation boundary rejects images that need privileged mode or host devices. If you want those, run a Pod instead.
 
-### Usage
-
-```python
-from runpod import Sandbox
-
-sandbox = Sandbox.create()          # uses this image
-sandbox.exec("python --version")
-```
-
-To pin the image explicitly, pass `runpod/ubuntu:<version>-sandbox-ubuntu2604`.
-
 ### Extending it
 
 Install what you need at runtime into your home directory: `uv pip install`, `pip install --user`, `npm install -g --prefix ~/.local`, or download a release archive and unpack it. For a heavier or repeatedly used environment, build your own image on top of this one and register it as a sandbox template.
