@@ -30,10 +30,14 @@ jobs:
       suffix: ${{ steps.base.outputs.suffix }}
       base: ${{ steps.base.outputs.version }}
       base-published: ${{ steps.base.outputs.previous-version }}
+      base-build: ${{ steps.base.outputs.should-build }}
       pytorch: ${{ steps.pytorch.outputs.version }}
       pytorch-published: ${{ steps.pytorch.outputs.previous-version }}
+      pytorch-build: ${{ steps.pytorch.outputs.should-build }}
       cluster: ${{ steps.cluster.outputs.version }}
+      cluster-build: ${{ steps.cluster.outputs.should-build }}
       autoresearch: ${{ steps.autoresearch.outputs.version }}
+      autoresearch-build: ${{ steps.autoresearch.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -67,7 +71,9 @@ jobs:
 
   build-base:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'base')
+    if: >-
+      contains(fromJSON(inputs.families), 'base')
+      && needs.versions.outputs.base-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -190,6 +196,7 @@ jobs:
     # one; failed base means we must not build on it at all.
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'autoresearch')
+      && needs.versions.outputs.autoresearch-build == 'true'
       && (needs.build-base.result == 'success'
           || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -312,6 +319,7 @@ jobs:
     needs: [versions, build-base]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'pytorch')
+      && needs.versions.outputs.pytorch-build == 'true'
       && (needs.build-base.result == 'success'
           || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
@@ -469,6 +477,7 @@ jobs:
     needs: [versions, build-pytorch]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'pytorch-cluster')
+      && needs.versions.outputs.cluster-build == 'true'
       && (needs.build-pytorch.result == 'success'
           || needs.build-pytorch.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404

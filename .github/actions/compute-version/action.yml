@@ -83,6 +83,16 @@ runs:
           # Squash merge: PR title → subject, PR body → commit body (footers).
           PR_BODY="$(printf '%s' "${PR_BODY_JSON:-null}" | jq -r 'if . == null then "" else . end')"
           BUMP="$(detect_bump "${PR_TITLE}"$'\n\n'"${PR_BODY}")"
+        elif [ -n "${FAMILY}" ]; then
+          # Everything this family still has unreleased, not just HEAD: a
+          # release can carry work from a run that failed or was dropped from
+          # the queue, and HEAD's type alone would understate the bump.
+          PATHS=()
+          while IFS= read -r spec; do
+            PATHS+=("${spec}")
+          done < <(python3 "${GITHUB_ACTION_PATH}/../../scripts/plan_families.py" \
+                     --paths "${FAMILY}")
+          BUMP="$(bump_for_range "${LATEST:-${EMPTY_TREE}}" "${PATHS[@]}")"
         else
           # Full squash-commit message so a BREAKING CHANGE footer is honoured.
           # detect_bump still ignores body feat:/fix: lines.

@@ -7,10 +7,12 @@ pytorch image, and a new pytorch image means a new pytorch-cluster. The graph
 lives in .github/families.yml.
 
     plan_families.py --changed-files changed.txt
-    git diff --name-only HEAD~1..HEAD | plan_families.py --changed-files -
+    git diff --name-only origin/main...HEAD | plan_families.py --changed-files -
+    plan_families.py --since-release       # on main: diff each family from its tag
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
     plan_families.py --workflow comfyui    # which workflow builds this family
+    plan_families.py --paths comfyui       # git pathspecs feeding this family
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
 
@@ -22,6 +24,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -125,6 +128,53 @@ def plan(graph: dict[str, dict], changed: list[str], all_families: bool) -> list
     return build_order(graph, selected)
 
 
+def plan_since_release(graph: dict[str, dict], changed_for) -> list[str]:
+    """Plan from each family's last release instead of from one diff.
+
+    A push diff only covers the commit that triggered the run, so anything
+    that arrived while an earlier release was running — or while a queued run
+    was superseded, or in a run that failed — would never be built again.
+    Its own tag is the only record of what a family has actually published.
+    """
+    selected = {
+        name
+        for name, spec in graph.items()
+        if any(_matches(p, c) for p in spec["paths"] for c in changed_for(name))
+    }
+    return build_order(graph, with_dependents(graph, selected))
+
+
+def git_pathspecs(paths: list[str]) -> list[str]:
+    """Graph patterns as git pathspecs, for `git log -- …`. A trailing /**
+    becomes a plain directory, which git already reads as "and below"."""
+    return [p[:-2] if p.endswith("/**") else p for p in paths]
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ("git",) + args, check=True, capture_output=True, text=True
+    ).stdout
+
+
+# git's empty tree: diffing against it lists every tracked file, which is what
+# "never released" should mean.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def changed_since_release(name: str) -> list[str]:
+    """Paths touched since this family's last release tag."""
+    tag = subprocess.run(
+        ("git", "describe", "--tags", "--match", f"{name}-v*", "--abbrev=0", "HEAD"),
+        capture_output=True, text=True,
+    ).stdout.strip()
+    since = tag or EMPTY_TREE
+    return [
+        line
+        for line in _git("diff", "--name-only", f"{since}..HEAD").splitlines()
+        if line
+    ]
+
+
 def _read_changed(source: str) -> list[str]:
     text = sys.stdin.read() if source == "-" else Path(source).read_text()
     return [line.strip() for line in text.splitlines() if line.strip()]
@@ -138,6 +188,11 @@ def main() -> int:
         help="file with one changed path per line, or '-' for stdin",
     )
     ap.add_argument(
+        "--since-release",
+        action="store_true",
+        help="diff each family from its own last release tag (use on main)",
+    )
+    ap.add_argument(
         "--all",
         action="store_true",
         help="select every family (no diff available)",
@@ -146,6 +201,11 @@ def main() -> int:
         "--workflows",
         action="store_true",
         help="print the reusable build workflows covering the planned families",
+    )
+    ap.add_argument(
+        "--paths",
+        metavar="FAMILY",
+        help="print this family's paths as git pathspecs, one per line",
     )
     ap.add_argument(
         "--workflow",
@@ -164,10 +224,10 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    if not (args.all or args.changed_files or args.image_repo or args.image_repos
-            or args.workflow):
-        ap.error("pass --changed-files, --all, --workflow, --image-repo "
-                 "or --image-repos")
+    if not (args.all or args.changed_files or args.since_release
+            or args.image_repo or args.image_repos or args.workflow or args.paths):
+        ap.error("pass --changed-files, --since-release, --all, --workflow, "
+                 "--image-repo or --image-repos")
 
     try:
         graph = load_graph(args.graph)
@@ -185,8 +245,17 @@ def main() -> int:
                 raise GraphError(f"unknown family '{args.workflow}'")
             print(graph[args.workflow]["workflow"])
             return 0
-        changed = [] if args.all else _read_changed(args.changed_files)
-        families = plan(graph, changed, args.all)
+        if args.paths:
+            if args.paths not in graph:
+                raise GraphError(f"unknown family '{args.paths}'")
+            for spec in git_pathspecs(graph[args.paths]["paths"]):
+                print(spec)
+            return 0
+        if args.since_release:
+            families = plan_since_release(graph, changed_since_release)
+        else:
+            changed = [] if args.all else _read_changed(args.changed_files)
+            families = plan(graph, changed, args.all)
         if args.workflows:
             # Deduplicated, first-needed first: base covers four families.
             workflows = list(dict.fromkeys(graph[f]["workflow"] for f in families))
@@ -202,6 +271,8 @@ def main() -> int:
 
     if args.all:
         report("selection", "every family (no diff to read)")
+    elif args.since_release:
+        report("selection", "families changed since their own last release")
     else:
         direct = direct_matches(graph, changed)
         report("files changed", str(len(changed)))

@@ -23,6 +23,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
+      should-build: ${{ steps.v.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -38,7 +39,9 @@ jobs:
 
   build-nvidia-pytorch:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'nvidia-pytorch')
+    if: >-
+      contains(fromJSON(inputs.families), 'nvidia-pytorch')
+      && needs.versions.outputs.should-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read

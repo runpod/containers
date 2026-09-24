@@ -2,15 +2,19 @@
 
 This repository releases its container images automatically using **semantic
 versioning derived from [Conventional Commits](https://www.conventionalcommits.org/)**.
-There is no manual version file to bump and no manual tagging: the version is
-computed from git history, images are built and pushed by CI, and a GitHub
-Release + git tag are created when a releasable change lands on `main`.
+There is no manual version file to bump and no manual tagging: versions are
+computed from git tags, images are built and pushed by CI, and a GitHub Release
++ git tag are created when a releasable change lands on `main`.
 
-A single **orchestrator** workflow (`release.yml`, "Build and Release") computes
-the version **once**, fans out to the per-family build workflows (reused via
-`workflow_call`), waits for all of them, and only then tags + releases — so the
-builds and the release can never disagree on the version, and a release is never
-cut while a family is still building or has failed.
+**Every template family has its own version.** `runpod/comfyui` and
+`runpod/base` move independently, each with its own tag series
+(`comfyui-v1.4.0`, `base-v1.3.2`), and a merge builds and releases only the
+families it actually changed, plus the families that build FROM them.
+
+A single **orchestrator** workflow (`release.yml`, "Build and Release") plans
+which families a change affects, calls only the build workflows that cover
+them (reused via `workflow_call`), and tags + releases each family once its
+own build has succeeded.
 
 - [TL;DR](#tldr)
 - [Versioning rules](#versioning-rules)
@@ -30,18 +34,22 @@ cut while a family is still building or has failed.
    breaking change use `feat!: …` in the title and preferably a `BREAKING CHANGE:`
    footer in the description.
 2. CI builds **release-candidate** images for your PR, tagged `X.Y.Z-rc.<PR#>`.
-3. Merge the PR. CI:
-   - computes the next version from the commit type,
-   - builds and pushes the final images `X.Y.Z`,
-   - creates the git tag `vX.Y.Z` and a GitHub Release with generated notes.
-4. `ci:` / `chore:` / `docs:` changes do **not** create a release.
+3. Merge the PR. For each family your change touched, CI:
+   - computes its next version from its own last tag and the commit type,
+   - builds and pushes its images `X.Y.Z`,
+   - creates the tag `<family>-vX.Y.Z` and a GitHub Release whose notes list
+     the commits that touched that family, each with its own description.
+4. Untouched families are not rebuilt and keep their published version.
+5. `ci:` / `chore:` / `docs:` changes release nothing of their own. They can
+   still carry out work that an earlier run left unreleased — see below.
 
 ---
 
 ## Versioning rules
 
-The next version is `latest git tag` + a bump decided by the Conventional
-Commit type:
+A family's next version is **its own** latest tag plus a bump. The bump is the
+highest Conventional Commit type among the commits that touched that family
+and are not yet released:
 
 | Commit type (PR title)                    | Example                          | Bump   | `1.0.7` becomes |
 | ----------------------------------------- | -------------------------------- | ------ | --------------- |
@@ -52,12 +60,15 @@ Commit type:
 
 Notes:
 
-- **Source of truth is the git tag** `vX.Y.Z`, not any file. `RELEASE_VERSION` in
-  `official-templates/shared/versions.hcl` is only a fallback default for local
-  `docker buildx bake` runs; CI always overrides it.
-- One global version covers **all** image families (base, pytorch,
-  nvidia-pytorch, rocm, autoresearch). A release tags every family with the same
-  version.
+- **Source of truth is the family's git tag** `<family>-vX.Y.Z`, not any file.
+  `RELEASE_VERSION` in `official-templates/shared/versions.hcl` is only a
+  fallback default for local `docker buildx bake` runs; CI always overrides it.
+- Each family has its own series, so versions drift apart: `base-v1.7.0` and
+  `comfyui-v1.3.4` can be current at the same time. The bump level comes from
+  the one squash commit, so families released together move by the same step.
+- A family with **no tag yet** starts at exactly `1.0.0` on its first
+  releasable change — the bump level is ignored, so a first `feat:` does not
+  skip to `1.1.0`.
 - **Breaking changes:** mark the PR title with `!` (`feat!: …`) and preferably
   add a `BREAKING CHANGE:` footer in the description. If the title has no `!`
   but the description has a proper `BREAKING CHANGE:` / `BREAKING-CHANGE:`
@@ -69,38 +80,62 @@ Notes:
 
 ```mermaid
 flowchart TD
-    A[Open PR<br/>title = Conventional Commit] --> B[Orchestrator computes version once<br/>builds RC images X.Y.Z-rc.PR#]
-    B --> C{Merge to main<br/>squash}
-    C -->|feat/fix/breaking| D[Build & push all families<br/>X.Y.Z]
-    D --> G{All families<br/>built + tested?}
-    G -->|yes| E[release job creates<br/>tag vX.Y.Z + GitHub Release]
-    G -->|no| H[No release<br/>fix and re-run]
+    A[Open PR<br/>title = Conventional Commit] --> B[plan: families this PR touches<br/>+ everything building FROM them]
+    B --> B2[RC images X.Y.Z-rc.PR# per family]
+    B2 --> C{Merge to main<br/>squash}
+    C -->|feat/fix/breaking| D[plan: families changed since<br/>their own last release tag]
+    D --> E[Build & push each planned family<br/>at its own X.Y.Z]
+    E --> G{This family built<br/>and tested?}
+    G -->|yes| H[tag family-vX.Y.Z<br/>+ GitHub Release]
+    G -->|no| I[That family stays unreleased<br/>the others still go out]
     C -->|ci/chore/docs| F[No build, no release]
 ```
 
+### Planning
+
+`.github/families.yml` describes every family: the paths that feed it, the
+families whose published image it builds FROM, the Docker Hub repo it
+publishes to, and the workflow that builds it.
+`.github/scripts/plan_families.py` turns that into the list of families to
+build, in dependency order — a family is selected when one of its paths
+changed, and everything that builds FROM a selected family comes along after
+it.
+
 ### On a pull request
 
-- Builds **release-candidate** images for the families affected by the PR
-  (path filters + `changed-files`), tagged `X.Y.Z-rc.<PR#>`.
+- Plans against the branch the PR targets, builds **release-candidate** images
+  for the planned families, tagged `X.Y.Z-rc.<PR#>` — each family at its own
+  `X.Y.Z`.
 - `X.Y.Z` is the version the merge *would* produce. If the PR is not releasable
-  (`ci:`/`chore:`), the base version is kept (e.g. `1.0.7-rc.42`) — no phantom bump.
+  (`ci:`/`chore:`), the family's current version is kept (e.g. `1.3.2-rc.42`) —
+  no phantom bump.
 - No git tag or GitHub Release is created.
 - The RC tag is reused on every push to the same PR (always the latest build).
 
 ### On merge to `main` (release)
 
 - Only happens when the squashed commit is `feat`/`fix`/`perf`/breaking.
-- Builds and pushes **all** image families with the final `X.Y.Z` tags.
-- The orchestrator's `release` job creates the git tag `vX.Y.Z` and a GitHub
-  Release with auto-generated notes — **only after every family built and
-  smoke-tested successfully**. If any family fails, no release is cut.
+- Planning here does **not** use the push diff. Each family is compared
+  against **its own last release tag**, so anything still unreleased is picked
+  up — including changes from a run that failed, or from a queued run that
+  GitHub dropped when a third push arrived.
+- Each planned family is built, pushed at its own `X.Y.Z`, then tagged
+  `<family>-vX.Y.Z` with a GitHub Release. A family is released only if the
+  workflow that builds it succeeded; a broken family does not hold back the
+  others, and it is planned again on the next push.
+- The release body is built from the commits that touched **this family**
+  since its previous tag: one `###` section per commit with its subject and
+  the squash description that came with it, then a compare link against that
+  family's previous tag. A release can carry several changes, so the newest
+  squash description alone would describe the wrong one. GitHub's own note
+  generation is not used either: it compares against the newest release in
+  the repo, which for a per-family tag belongs to some other family.
 - Pushes to `main` are **serialized** (workflow `concurrency`), so two merges
-  landing close together can't compute the same version or race — the second
-  waits for the first to finish and tag.
+  landing close together can't race.
 
 ### Manual run (`workflow_dispatch`)
 
-- Builds all families with a `-dev` suffix (e.g. `1.1.0-dev`).
+- Builds every family with a `-dev` suffix (e.g. `1.1.0-dev`).
 - Never creates a tag or release. Useful for testing pipeline changes, since
   pipeline-only edits do not trigger builds automatically (see below).
 
@@ -125,35 +160,50 @@ Image repositories: one per template family, listed in `.github/families.yml`
 
 | File                                             | Role                                                                 |
 | ------------------------------------------------ | -------------------------------------------------------------------- |
-| `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, computes the version once (`version` job), gates which families build on a PR (`changes` job), calls the reusable build workflows, and creates the tag `vX.Y.Z` + GitHub Release once every family succeeds. |
-| `.github/actions/compute-version/action.yml`     | Computes version, suffix, `base-version`, and the `should-build` / `should-release` flags from the latest tag + commits/PR title. |
-| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Builds base → pytorch → {autoresearch, pytorch-cluster}. |
-| `.github/workflows/nvidia.yml`                   | **Reusable** (`workflow_call`). Builds nvidia-pytorch. |
-| `.github/workflows/rocm.yml`                     | **Reusable** (`workflow_call`). Builds rocm. |
+| `.github/families.yml`                           | The family graph: paths, `depends_on`, `image_repo`, `workflow`. Single source of truth for what exists and what feeds it. |
+| `.github/scripts/plan_families.py`               | Turns a diff (or each family's last tag) into the families to build, in dependency order. Also answers which workflows to call and which repos we publish to. |
+| `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, plans the families (`plan` job), calls only the build workflows it needs, and creates one `<family>-vX.Y.Z` tag + Release per family. |
+| `.github/actions/compute-version/action.yml`     | For one family: its next version, suffix, `previous-version`, and the `should-build` / `should-release` flags, from its own tag series + the commit type. |
+| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, autoresearch; builds the ones in the plan. |
+| `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml` | **Reusable** (`workflow_call`). One family each. |
+| `.github/scripts/release_notes.py`               | Builds a family's release body from the commits that touched it since its previous tag. |
+| `.github/workflows/manual-release.yml`           | Break-glass: tags one family from an earlier run's commit when its release never happened. |
+| `.github/workflows/release-plan.yml`             | Guards the graph: unit tests, plus a check that every template directory appears in it. |
 | `official-templates/shared/versions.hcl`         | Declares the `RELEASE_VERSION` / `RELEASE_SUFFIX` bake variables (CI overrides them). |
 
 Key behaviours:
 
-- **Version is computed once.** The orchestrator's `version` job runs
-  `compute-version` a single time and passes `version`/`suffix`/`base-version`
-  into every reusable build workflow via `workflow_call` inputs — the builds and
-  the release can't disagree.
-- **`compute-version`** finds the latest `vX.Y.Z` tag that is **reachable from
-  HEAD** (skipping any tag on the current commit, to stay stable during the
-  release step, and any tag not in HEAD's history, so re-running an older commit
-  doesn't pick up a newer unrelated tag). It reads the Conventional Commit type
-  and applies the bump. `feat`/`fix`/`perf`/`none` come from the **PR title**
-  (squash-commit subject). A major bump is `type!:` in that title **or** a
-  git-trailer `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer in the description.
-  Body lines like `* feat: …` from a squash are ignored.
-- **Release waits for the builds.** The `release` job `needs` every family and
-  only tags/releases when all of them succeeded on a `push` to `main` — never a
-  partial release. Pushes to `main` are serialized via `concurrency` to avoid a
-  version race between near-simultaneous merges.
-- **Release = build everything.** On a release (or manual dispatch) all families
-  are built so every image carries the release version. On a PR, only the
-  families affected by the changed files are built (the `changes` job gates which
-  reusable workflows are called).
+- **One version per family.** Each build workflow runs `compute-version` for
+  the families it covers, tags its images from that, and builds a family only
+  when that family has something releasable. The orchestrator decides only
+  *which* families are in play.
+- **`compute-version`** finds the latest `<family>-vX.Y.Z` tag that is
+  **reachable from HEAD** (skipping any tag on the current commit, to stay
+  stable during the release step, and any tag not in HEAD's history, so
+  re-running an older commit doesn't pick up a newer unrelated tag).
+- **The bump covers everything unreleased.** On `main` it is the highest type
+  among the commits between that tag and HEAD that touched the family's paths
+  — so a feature that arrived in a run which failed, or was dropped from the
+  queue, still ships as a minor. On a PR the bump comes from the **PR title**,
+  which is the subject the squash will produce. A major bump is `type!:` in
+  the subject **or** a git-trailer `BREAKING CHANGE:` / `BREAKING-CHANGE:`
+  footer in the body. Body lines like `* feat: …` from a squash are ignored.
+- **A family with nothing releasable is skipped.** If its unreleased commits
+  are all `chore:`/`ci:`/`docs:`, its bump is `none`, and it is neither built
+  nor released — its published images keep their version instead of being
+  overwritten.
+- **Each family waits only on itself.** The `release` job is a matrix over the
+  planned families; a leg publishes only if the workflow that builds its family
+  succeeded. One failing scan no longer keeps the other families unreleased
+  while their images are already pushed.
+- **A dependent uses the published base when its base is not rebuilt.**
+  pytorch layers onto the last released `runpod/base` unless base is in the
+  same plan (`BASE_VERSION` / `PYTORCH_BASE_VERSION` in the bake files), so
+  changing pytorch alone does not rebuild base.
+- **Nothing is lost between runs.** On `main` the plan comes from each
+  family's last release tag, not from the push diff, so a family whose build
+  failed — or whose run was dropped from the queue — is planned again on the
+  next push.
 - **Pipeline-only changes don't build.** The orchestrator triggers only on
   `official-templates/**` and `container-template/**`, so a PR that only edits
   workflow/action files (a `ci:` change) does not trigger image builds — the
@@ -167,10 +217,14 @@ Key behaviours:
 ### Cut a normal release
 
 1. Ensure your PR **title** follows Conventional Commits (`feat:` / `fix:` / …).
-2. Get the PR reviewed and green (RC images build + smoke test).
+2. Get the PR reviewed and green (RC images build + smoke test). The squash
+   **description** becomes the release notes for the families this PR touches
+   — GitHub pre-fills it with the branch's commit list, so replace that with
+   something a reader would want.
 3. **Squash merge** into `main`. The release is fully automatic from here.
-4. Verify: a new `vX.Y.Z` tag and GitHub Release appear, and the build workflows
-   publish `X.Y.Z` images.
+4. Verify: a `<family>-vX.Y.Z` tag and Release appear for each family your
+   change touched, and those families publish `X.Y.Z` images. Families you did
+   not touch stay where they were.
 
 ### Ship a hotfix / patch
 
@@ -213,32 +267,44 @@ either.
 
 ### Re-run / recover a failed release build
 
-- Re-run the failed *Build and Release* run from the Actions tab. The whole
-  pipeline (version → builds → release) reruns in order. `compute-version` is
-  idempotent: it ignores the tag on the current commit, so it recomputes the
-  same version and re-publishes the images, and the release step only fires once
-  every family succeeds. The GitHub Release step is a no-op if the tag already
-  exists.
+- **Usually: do nothing.** A family that failed keeps no tag, so the next push
+  to `main` plans it again and releases it then.
+- To get it out sooner, re-run the failed run from the Actions tab.
+  `compute-version` is idempotent — it ignores a tag on the current commit, so
+  it recomputes the same version — and only the families still missing a tag
+  are affected.
+- If the images were already pushed but the tag never appeared (e.g. the run
+  was cancelled after the push), use *Manual Release (break-glass)* with the
+  family, the tag and the original run ID. It checks that this family's jobs
+  succeeded in that run and that its images are on Docker Hub, then creates
+  the tag and Release without rebuilding.
 
-### First release after adding this system (bootstrap)
+### Add a new template
 
-- A `v1.0.7` tag was created to seed the starting version. If you ever need to
-  re-seed (e.g. new repo), create a tag on `main`:
+1. Add its directory under `official-templates/`, its build job in the right
+   reusable workflow, and its entry in `.github/families.yml`. The *Release
+   Plan* check fails if the graph and the directories disagree.
+2. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
+
+### Seed a family that already has published images
+
+- Only needed when a family existed before it had its own tag series. Point
+  the tag at the commit of its last release:
   ```bash
-  git tag vX.Y.Z <commit-on-main>
-  git push origin vX.Y.Z
+  git tag <family>-vX.Y.Z <commit-on-main>
+  git push origin <family>-vX.Y.Z
   ```
-  When no `vX.Y.Z` tag exists, `compute-version` falls back to the
-  `RELEASE_VERSION` default in `versions.hcl`.
+  Without it the family would be treated as never released and go out as
+  `1.0.0`.
 
 ### Force a specific version
 
-- Create and push the desired tag manually, e.g. to jump to `2.0.0`:
+- Create and push the desired tag for that family, e.g. to jump to `2.0.0`:
   ```bash
-  git tag v2.0.0 <commit-on-main>
-  git push origin v2.0.0
+  git tag comfyui-v2.0.0 <commit-on-main>
+  git push origin comfyui-v2.0.0
   ```
-  Subsequent releases are computed from this tag.
+  Its subsequent releases are computed from this tag.
 
 ---
 
@@ -251,10 +317,12 @@ either.
   to create tags and Releases. Ensure GitHub Actions is allowed to create
   releases and there is no tag protection rule blocking the `GITHUB_TOKEN` from
   pushing `v*` tags.
-- **Required status checks:** builds run under the orchestrator, so checks appear
-  as `Build and Release / <family> / <job>` (e.g.
-  `Build and Release / base / build-base`). Update branch-protection required
-  checks to these names — the old standalone workflow names no longer report.
+- **Required status checks:** builds run under the orchestrator, so checks
+  appear as `Build and Release / <workflow> / <job>` (e.g.
+  `Build and Release / base / build-base`). A family not in the plan reports
+  as skipped, and the `release` job is a matrix (`release (comfyui)`), so keep
+  branch-protection required checks to ones that always run — `plan`, and the
+  lint/test workflows.
 - **Merge strategy:** the repo uses **squash merge**. The PR title is what drives
   the version, so keep it Conventional-Commit compliant.
 - **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
@@ -270,8 +338,9 @@ either.
 | -------------------------------------------------- | --------------------------------------------------------------------------- |
 | Merged a PR but no release was created             | The PR title was not `feat`/`fix`/`perf`/breaking (bump = none). Rename future PRs accordingly, or push a tag manually. |
 | RC image shows an unexpected version               | The version previews the *merge* result based on the PR title. Check the title's Conventional Commit type. |
-| A family is missing the new version tag            | On a release all families build. If one is missing, open the *Build and Release* run and check that family's job for a build/push failure. |
-| Version didn't increment as expected               | Check the latest `vX.Y.Z` tag — the bump is relative to it, not to the image tags in Docker Hub. |
+| A family did not get a new version                 | Either nothing under its `paths` changed since its last tag (expected), or its build failed — open the *Build and Release* run and check that family's job. It will be planned again on the next push. |
+| Version didn't increment as expected               | Check that family's latest `<family>-vX.Y.Z` tag — the bump is relative to it, not to the image tags in Docker Hub, and not to another family's version. |
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |
-| No release despite a `feat`/`fix` merge to `main`  | The `release` job only fires after **every** family succeeds. If a build/test failed, no tag/Release is created — fix the failure and re-run the *Build and Release* run. |
+| No release despite a `feat`/`fix` merge to `main`  | The change may not touch any family's `paths` (check the `plan` job's log), or that family's build failed — its Release is skipped with a warning while the others go out. |
+| A family released at a higher bump than the merge  | Expected: the bump covers everything the family still had unreleased, so an older `feat:` outranks today's `fix:`. |
 | PR checks are stuck "Expected"/pending             | Branch-protection required checks likely still reference the old workflow names. Update them to the `Build and Release / …` check names. |

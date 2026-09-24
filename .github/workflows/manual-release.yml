@@ -213,9 +213,9 @@ jobs:
             exit 1
           fi
 
-      # Same as release.yml: the squash commit we are tagging carries the body,
-      # and the changelog link points at this family's previous tag.
-      - name: Release body from the squash commit
+      # Same notes as a normal release: sections for the commits that touched
+      # this family since its previous tag.
+      - name: Release body
         id: notes
         env:
           FAMILY: ${{ inputs.family }}
@@ -224,13 +224,13 @@ jobs:
         run: |
           set -euo pipefail
           BODY="${RUNNER_TEMP}/release-body.md"
-          git log -1 --format=%b HEAD \
-            | grep -viE '^(co-authored-by|signed-off-by):' > "${BODY}" || true
-          if [ -n "${PREV_VERSION}" ]; then
-            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
-              "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" \
-              "${FAMILY}-v${PREV_VERSION}" "${TAG}" >> "${BODY}"
-          fi
+          PATHS=()
+          while IFS= read -r spec; do
+            PATHS+=("${spec}")
+          done < <(python3 .github/scripts/plan_families.py --paths "${FAMILY}")
+          python3 .github/scripts/release_notes.py \
+            "${FAMILY}" "${PREV_VERSION}" "${TAG}" "${PATHS[@]}" > "${BODY}"
+          cat "${BODY}"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
