@@ -31,13 +31,7 @@ USER node
 # unhealthy forever, since a sandbox is never claimed with credentials in
 # hand. `--allow-unconfigured` would also start it, but upstream marks that
 # flag dev-only and it repairs nothing.
-#
-# The chmod is a workaround: the sandbox host renumbers file owners into a
-# subuid block but runs the process unmapped, so `node` does not own its home.
-# Mode bits survive the shift; ownership does not. Drop it once
-# /proc/self/uid_map is populated.
-RUN openclaw config set gateway.mode local && \
-    chmod -R a+rwX /home/node
+RUN openclaw config set gateway.mode local
 
 # ENTRYPOINT, HEALTHCHECK and WORKDIR are left exactly as upstream: pid 1 is
 # still their tini, and both the command below and the healthcheck resolve

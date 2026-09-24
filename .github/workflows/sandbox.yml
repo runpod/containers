@@ -132,11 +132,6 @@ jobs:
             test "$(stat -c %u /home/user)" = "$(id -u)"
             say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
 
-            # A sandbox strips ownership of the home, so other-write is what
-            # keeps it usable. Mode bits survive the shift.
-            test -n "$(find /home/user -maxdepth 0 -perm -o+w)"
-            say home-mode "$(stat -c %a /home/user), writable whoever ends up owning it"
-
             python --version | grep -q "^Python 3.14"
             node --version | grep -q "^v24\."
             say python "$(python --version | cut -d" " -f2), uv $(uv --version | cut -d" " -f2)"
@@ -262,11 +257,6 @@ jobs:
               test "$(stat -c %u /etc/sudo.conf)" = 0
               test "$(stat -c %u /home/node)" = "$(id -u)"
               say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/node uid $(stat -c %u /home/node)"
-
-              # A sandbox strips ownership of the home, so other-write is what
-              # keeps it usable. Mode bits survive the shift.
-              test -n "$(find /home/node/.openclaw -maxdepth 0 -perm -o+w)"
-              say home-mode "$(stat -c %a /home/node), .openclaw $(stat -c %a /home/node/.openclaw)"
 
               say openclaw "$(openclaw --version)"
 
@@ -433,11 +423,6 @@ jobs:
             test "$(stat -c %u /etc/sudo.conf)" = 0
             test "$(stat -c %u /home/user)" = "$(id -u)"
             say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
-
-            # Inherited from sandbox-ubuntu; a base that loses it takes every
-            # Harbor sandbox down with it.
-            test -n "$(find /home/user -maxdepth 0 -perm -o+w)"
-            say home-mode "$(stat -c %a /home/user), writable whoever ends up owning it"
 
             say harbor "$(harbor --version)"
             say tmux "$(tmux -V | cut -d" " -f2)"

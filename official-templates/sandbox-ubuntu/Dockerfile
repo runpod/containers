@@ -50,12 +50,6 @@ RUN if id ubuntu &>/dev/null; then userdel --remove ubuntu; fi && \
     echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user && \
     chmod 0440 /etc/sudoers.d/user
 
-# Workaround: the sandbox host renumbers file owners into a subuid block but
-# runs the process unmapped, so `user` does not own its home and agents cannot
-# write ~/.config. Mode bits survive the shift; ownership does not. Drop this
-# once /proc/self/uid_map is populated.
-RUN chmod -R a+rwX /home/user
-
 USER user
 WORKDIR /home/user
 
