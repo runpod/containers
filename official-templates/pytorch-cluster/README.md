@@ -88,6 +88,10 @@ Notes:
 - **No admin/admin login.** The username/password login form and HTTP basic auth
   are disabled, and the built-in admin account gets a random password at startup
   — the auth proxy is the only way in.
+- **`JUPYTER_DISABLE_AUTH` does not apply here.** It turns off JupyterLab's own
+  token only; the Grafana proxy still compares `?token=` against
+  `JUPYTER_PASSWORD` (or `GRAFANA_PASSWORD`). With the password unset the proxy
+  fails closed and Grafana shows its login form.
 
 ## Building locally
 
