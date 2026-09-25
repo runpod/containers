@@ -1,5 +1,12 @@
 # https://pytorch.org/get-started/locally/
 
+# Which published runpod/base to build FROM. Set by CI to the in-run base tag
+# when base was rebuilt, else the last released base (see base.yml). May carry
+# a suffix (e.g. 1.1.0-rc.5). Defaults to RELEASE_VERSION's default for local runs.
+variable "BASE_VERSION" {
+  default = "1.0.7"
+}
+
 variable "TORCH_META" {
   default = {
     # torchcodec backs torchaudio.load/save from 2.9 on; 0.9.x is the build for
@@ -169,7 +176,7 @@ target "pytorch-matrix" {
   inherits = ["pytorch-base"]
   
   args = {
-    BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
+    BASE_IMAGE = "runpod/base:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
     TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}${build.torch_audio != "" ? " torchaudio==${build.torch_audio}" : ""}"
     TORCHCODEC = build.torch_codec != "" ? "torchcodec==${build.torch_codec}" : ""

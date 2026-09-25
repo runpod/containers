@@ -33,17 +33,112 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Single source of truth for the version — computed once, passed to every build.
-  version:
+  # Which families this event touches, plus everything that builds FROM them.
+  # One mechanism for PRs, pushes and manual runs: the family graph.
+  plan:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.v.outputs.version }}
-      suffix: ${{ steps.v.outputs.suffix }}
-      base-version: ${{ steps.v.outputs.base-version }}
-      should-build: ${{ steps.v.outputs.should-build }}
-      should-release: ${{ steps.v.outputs.should-release }}
-      tag: ${{ steps.v.outputs.tag }}
-      bump: ${{ steps.v.outputs.bump }}
+      families: ${{ steps.p.outputs.families }}
+      workflows: ${{ steps.p.outputs.workflows }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Full history and tags: the plan diffs from each family's last
+          # release tag.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Plan families
+        id: p
+        run: |
+          set -euo pipefail
+          plan() { python3 .github/scripts/plan_families.py "$@"; }
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request)
+              # What this PR would change, against the branch it targets.
+              git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" \
+                > "${RUNNER_TEMP}/changed.txt"
+              MODE=(--changed-files "${RUNNER_TEMP}/changed.txt")
+              ;;
+            push)
+              # Not the push diff: a queued run is dropped when a third push
+              # arrives, and its changes would then never be built. Each
+              # family is compared against its own last release tag instead,
+              # so anything unreleased is picked up by the next push.
+              MODE=(--since-release)
+              ;;
+            *)
+              # workflow_dispatch has no diff to read.
+              MODE=(--all)
+              ;;
+          esac
+          FAMILIES="$(plan "${MODE[@]}")"
+          WORKFLOWS="$(plan "${MODE[@]}" --workflows)"
+          echo "families=${FAMILIES}" >> "$GITHUB_OUTPUT"
+          echo "workflows=${WORKFLOWS}" >> "$GITHUB_OUTPUT"
+
+  # Each build workflow is called only when the plan needs a family it covers,
+  # and decides internally which of them to build.
+  base:
+    needs: plan
+    if: >-
+      !cancelled()
+      && contains(fromJSON(needs.plan.outputs.workflows), 'base')
+    uses: ./.github/workflows/base.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
+  nvidia:
+    needs: plan
+    if: >-
+      !cancelled()
+      && contains(fromJSON(needs.plan.outputs.workflows), 'nvidia')
+    uses: ./.github/workflows/nvidia.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
+  rocm:
+    needs: plan
+    if: >-
+      !cancelled()
+      && contains(fromJSON(needs.plan.outputs.workflows), 'rocm')
+    uses: ./.github/workflows/rocm.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
+  comfyui:
+    needs: plan
+    if: >-
+      !cancelled()
+      && contains(fromJSON(needs.plan.outputs.workflows), 'comfyui')
+    uses: ./.github/workflows/comfyui.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+      run-functional-tests: true
+
+  # One tag + GitHub Release per changed family, on a releasable push to main.
+  # Each family waits only on its own build: a scan that fails on one image
+  # must not keep the others unreleased while their images are already pushed.
+  release:
+    needs: [plan, base, nvidia, rocm, comfyui]
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.plan.result == 'success'
+      && needs.plan.outputs.families != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      # Independent tags, so one family failing must not hide the others.
+      fail-fast: false
+      matrix:
+        family: ${{ fromJSON(needs.plan.outputs.families) }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -54,153 +149,79 @@ jobs:
       - name: Compute version
         id: v
         uses: ./.github/actions/compute-version
-
-  # Per-family "does this PR touch anything that affects the family?" gate.
-  # Only needed on PRs (push/dispatch build every family). The `base` group is
-  # broad because base.yml builds the whole base -> pytorch -> {autoresearch,
-  # cluster} chain and its foundation image must exist for the RC.
-  changes:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    outputs:
-      base: ${{ steps.f.outputs.base_any_changed }}
-      nvidia: ${{ steps.f.outputs.nvidia_any_changed }}
-      rocm: ${{ steps.f.outputs.rocm_any_changed }}
-      comfyui: ${{ steps.f.outputs.comfyui_any_changed }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          fetch-depth: 0
-
-      - name: Detect changed families
-        id: f
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
-        with:
-          files_yaml: |
-            base:
-              - 'official-templates/base/**'
-              - 'official-templates/pytorch/**'
-              - 'official-templates/autoresearch/**'
-              - 'official-templates/pytorch-cluster/**'
-              - 'official-templates/shared/**'
-              - 'container-template/**'
-            nvidia:
-              - 'official-templates/nvidia-pytorch/**'
-              - 'official-templates/base/**'
-              - 'official-templates/shared/**'
-              - 'container-template/**'
-            rocm:
-              - 'official-templates/rocm/**'
-              - 'official-templates/base/**'
-              - 'official-templates/shared/**'
-              - 'container-template/**'
-            comfyui:
-              - 'official-templates/comfyui/**'
-              - 'official-templates/shared/**'
-
-  base:
-    needs: [version, changes]
-    # !cancelled(): still run when `changes` was skipped (push/dispatch). Then
-    # build only if there's something to build (should-build) and, on a PR, only
-    # when a base-family input changed.
-    if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
-      && (github.event_name != 'pull_request' || needs.changes.outputs.base == 'true')
-    uses: ./.github/workflows/base.yml
-    secrets: inherit
-    with:
-      version: ${{ needs.version.outputs.version }}
-      suffix: ${{ needs.version.outputs.suffix }}
-      base_version: ${{ needs.version.outputs.base-version }}
-
-  nvidia:
-    needs: [version, changes]
-    if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
-      && (github.event_name != 'pull_request' || needs.changes.outputs.nvidia == 'true')
-    uses: ./.github/workflows/nvidia.yml
-    secrets: inherit
-    with:
-      version: ${{ needs.version.outputs.version }}
-      suffix: ${{ needs.version.outputs.suffix }}
-
-  rocm:
-    needs: [version, changes]
-    if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
-      && (github.event_name != 'pull_request' || needs.changes.outputs.rocm == 'true')
-    uses: ./.github/workflows/rocm.yml
-    secrets: inherit
-    with:
-      version: ${{ needs.version.outputs.version }}
-      suffix: ${{ needs.version.outputs.suffix }}
-
-  comfyui:
-    needs: [version, changes]
-    if: >-
-      !cancelled() && needs.version.outputs.should-build == 'true'
-      && (github.event_name != 'pull_request' || needs.changes.outputs.comfyui == 'true')
-    uses: ./.github/workflows/comfyui.yml
-    secrets: inherit
-    with:
-      version: ${{ needs.version.outputs.version }}
-      suffix: ${{ needs.version.outputs.suffix }}
-      run-functional-tests: true
-
-  # Tag + GitHub Release ONLY on a releasable push to main, and ONLY after every
-  # family built and smoke-tested successfully — so we never publish a release
-  # that's missing an image family or built on a broken one.
-  release:
-    needs: [version, base, nvidia, rocm, comfyui]
-    if: >-
-      github.event_name == 'push'
-      && needs.version.outputs.should-release == 'true'
-      && needs.base.result == 'success'
-      && needs.nvidia.result == 'success'
-      && needs.rocm.result == 'success'
-      && needs.comfyui.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      # A releasable push to main is one squash commit, so its extended
-      # description is the release body. GitHub pre-pends it to the notes it
-      # generates, keeping the PR line and the Full Changelog link.
-      - name: Release body from the squash commit
-        id: notes
+          family: ${{ matrix.family }}
+      # The job-level `if` can't see `matrix`, so the per-family gate lives
+      # here: release this family only if the workflow that builds it passed.
+      - name: Check this family's build
+        id: gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          FAMILY: ${{ matrix.family }}
+          RELEASABLE: ${{ steps.v.outputs.should-release }}
         run: |
           set -euo pipefail
-          BODY="${RUNNER_TEMP}/release-body.md"
-          git log -1 --format=%b HEAD \
-            | grep -viE '^(co-authored-by|signed-off-by):' > "${BODY}" || true
+          WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
+          RESULT="$(printf '%s' "${RESULTS}" | jq -r --arg w "${WORKFLOW}" '.[$w].result')"
+          echo "${FAMILY} is built by '${WORKFLOW}': ${RESULT}"
+          if [ "${RELEASABLE}" != "true" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "${FAMILY} has nothing releasable outstanding"
+          elif [ "${RESULT}" = "success" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::${FAMILY} not released — its build ${RESULT}"
+          fi
+
+      # Notes are scoped to the family: a release can carry a change from an
+      # earlier commit (a run that failed, or one dropped from the queue), so
+      # the latest squash description alone would describe the wrong thing.
+      # GitHub's own generation is not used either — it compares against the
+      # newest release in the repo, which belongs to some other family.
+      - name: Release body
+        id: notes
+        if: steps.gate.outputs.release == 'true'
+        env:
+          FAMILY: ${{ matrix.family }}
+          TAG: ${{ steps.v.outputs.tag }}
+          PREV_VERSION: ${{ steps.v.outputs.previous-version }}
+        run: |
+          set -euo pipefail
+          BODY="${RUNNER_TEMP}/release-body-${FAMILY}.md"
+          PATHS=()
+          while IFS= read -r spec; do
+            PATHS+=("${spec}")
+          done < <(python3 .github/scripts/plan_families.py --paths "${FAMILY}")
+          python3 .github/scripts/release_notes.py \
+            "${FAMILY}" "${PREV_VERSION}" "${TAG}" "${PATHS[@]}" > "${BODY}"
+          echo "::group::release body for ${FAMILY}"
+          cat "${BODY}"
+          echo "::endgroup::"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
+        if: steps.gate.outputs.release == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
-          tag_name: ${{ needs.version.outputs.tag }}
-          name: ${{ needs.version.outputs.tag }}
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: ${{ steps.v.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body_path: ${{ steps.notes.outputs.path }}
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
-        run: echo "Released ${{ needs.version.outputs.tag }} (bump ${{ needs.version.outputs.bump }})"
+        if: steps.gate.outputs.release == 'true'
+        run: |
+          echo "Released ${{ steps.v.outputs.tag }} (bump ${{ steps.v.outputs.bump }})"
+          echo "Previous: ${{ steps.v.outputs.previous-version || 'none — first release' }}"
 
   # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
   # shared cleanup workflow (not dry-run: workflow_call defaults dry_run=false),
   # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
   cleanup:
-    needs: [version, release]
-    if: needs.version.outputs.should-release == 'true'
+    needs: [plan, release]
+    if: github.event_name == 'push' && needs.plan.outputs.families != '[]'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit
