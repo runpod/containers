@@ -390,6 +390,10 @@ MAX_CUDA_COMBOS = int(os.environ.get("MAX_CUDA_COMBOS", "120"))
 # the Jupyter probes after the CUDA functional check.
 GROUP_TEST_JUPYTER: dict[str, bool] = {}
 
+# Per-group opt-in for the torchvision/torchaudio/torchcodec part of the
+# CUDA check, from the `test_torch_packages:` manifest field.
+GROUP_TEST_TORCH_PACKAGES: dict[str, bool] = {}
+
 # Per-group HTTP ports populated from the optional `test_ports:` manifest
 # list. They are exposed as `<port>/http` and checked through the public
 # proxy first; SSH only diagnoses a proxy failure.

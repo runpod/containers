@@ -237,7 +237,9 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     """Populate the per-group dicts on `config` that `pod.create_pod` and
     `runner.test_pair` consult at run-time: `GROUP_MIN_CUDA` (fallback
     CUDA version for tag-less images like NGC `nvidia-pytorch:25.11`)
-    `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes), and
+    `GROUP_TEST_JUPYTER` (opt-in for the Jupyter probes),
+    `GROUP_TEST_TORCH_PACKAGES` (opt-in for the torchvision/torchaudio part
+    of the CUDA check), and
     `GROUP_TEST_PORTS` (generic public HTTP service probes),
     `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), and the
     ComfyUI reachability / functional-generation opt-ins."""
@@ -259,6 +261,13 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
             log(
                 f"group '{grp}': test_jupyter=true "
                 "(JUPYTER_PASSWORD=<redacted>, expose 8888/http)"
+            )
+    for grp, contents in manifest.items():
+        if _normalize_bool(contents.get("test_torch_packages")):
+            config.GROUP_TEST_TORCH_PACKAGES[grp] = True
+            log(
+                f"group '{grp}': test_torch_packages=true "
+                "(torchvision, torchaudio and torchcodec ops required)"
             )
     for grp, contents in manifest.items():
         ports = _coerce_ports(contents.get("test_ports"), grp)

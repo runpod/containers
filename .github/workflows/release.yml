@@ -153,8 +153,12 @@ jobs:
   # that's missing an image family or built on a broken one.
   release:
     needs: [version, base, nvidia, rocm, comfyui]
+    # !cancelled(): `changes` is skipped on a push, and without a status
+    # function that skip propagates down through the family jobs to here.
+    # The result checks below still gate on every family actually passing.
     if: >-
-      github.event_name == 'push'
+      !cancelled()
+      && github.event_name == 'push'
       && needs.version.outputs.should-release == 'true'
       && needs.base.result == 'success'
       && needs.nvidia.result == 'success'
@@ -201,6 +205,10 @@ jobs:
   # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
   cleanup:
     needs: [version, release]
-    if: needs.version.outputs.should-release == 'true'
+    # Keyed on the release actually succeeding, not just on should-release —
+    # with !cancelled() a failed release would otherwise still sweep tags.
+    if: >-
+      !cancelled()
+      && needs.release.result == 'success'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit
