@@ -272,10 +272,11 @@ def _run_cuda_step(
     actually work" gate, distinct from "did it boot". Returns the FAIL
     outcome on a broken image, None if the check was skipped (no SSH /
     no check command for this image) or passed."""
-    if not (endpoint and cuda_check_command(image)):
+    torch_packages = config.GROUP_TEST_TORCH_PACKAGES.get(group, False)
+    if not (endpoint and cuda_check_command(image, torch_packages)):
         return None
     log(f"running GPU/CUDA functional check for group '{group}'...", indent=2)
-    ok, output = run_cuda_check(endpoint, image)
+    ok, output = run_cuda_check(endpoint, image, torch_packages)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
     if not ok:

@@ -2,24 +2,24 @@
 
 variable "TORCH_META" {
   default = {
-    # torchcodec backs torchaudio.load/save from 2.9 on; 0.9.x is the build for
-    # torch 2.9. It replaces torchaudio.io, removed in 2.9, as the NVDEC path.
-    "2.9.1" = {
-      torchvision = "0.24.1"
-      torchcodec  = "0.9.1"
-    }
-    "2.9.0" = {
-      torchvision = "0.24.0"
-      torchcodec  = "0.9.1"
-    }
-    "2.8.0" = {
-      torchvision = "0.23.0"
+    "2.6.0" = {
+      torchvision = "0.21.0"
     }
     "2.7.1" = {
       torchvision = "0.22.1"
     }
-    "2.6.0" = {
-      torchvision = "0.21.0"
+    "2.8.0" = {
+      torchvision = "0.23.0"
+    }
+    # torchcodec backs torchaudio.load/save from 2.9 on; 0.9.x is the build for
+    # torch 2.9. It replaces torchaudio.io, removed in 2.9, as the NVDEC path.
+    "2.9.0" = {
+      torchvision = "0.24.0"
+      torchcodec  = "0.9.1"
+    }
+    "2.9.1" = {
+      torchvision = "0.24.1"
+      torchcodec  = "0.9.1"
     }
     # torchaudio's last release is 2.11.0 — it was dropped from the PyTorch
     # release process starting with 2.12 (decode/encode moved to TorchCodec).

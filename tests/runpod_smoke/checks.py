@@ -178,6 +178,39 @@ _TORCH_TAG_RE = re.compile(
 # with a misleading "ModuleNotFoundError".
 _ROCM_TAG_RE = re.compile(r"\brocm", re.IGNORECASE)
 
+# Appended to the torch check for groups that opted in with
+# `test_torch_packages`. These three come from their own wheel indexes and
+# carry compiled extensions pinned to one torch and CUDA version, so a
+# mismatch only surfaces on import or first use.
+_TORCH_PACKAGES_PROGRAM = (
+    "import torchvision\n"
+    "boxes = torch.tensor([[0., 0., 10., 10.], [1., 1., 11., 11.]], device='cuda')\n"
+    "keep = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device='cuda'), 0.5)\n"
+    "assert keep.tolist() == [0], f'nms kept {keep.tolist()}, expected [0]'\n"
+    "print(f'torchvision={torchvision.__version__} nms ok')\n"
+    "import torchaudio\n"
+    "wav = torch.sin(torch.arange(16000, device='cuda', dtype=torch.float32) / 20)\n"
+    "out = torchaudio.functional.resample(wav.unsqueeze(0), 16000, 8000)\n"
+    "assert out.shape == (1, 8000), f'resample gave {tuple(out.shape)}'\n"
+    "assert out.is_cuda, f'resample returned a {out.device} tensor'\n"
+    "print(f'torchaudio={torchaudio.__version__} resample ok')\n"
+    # The images ship torchcodec from torch 2.9 on, so gate on that rule
+    # rather than on whether the import happens to work. The round trip also
+    # covers the system FFmpeg torchcodec loads against.
+    "major, minor = (int(p) for p in torch.__version__.split('+')[0].split('.')[:2])\n"
+    "if (major, minor) < (2, 9):\n"
+    "    print(f'torchcodec: not shipped for torch {torch.__version__}')\n"
+    "else:\n"
+    "    import torchcodec\n"
+    "    from torchcodec.decoders import AudioDecoder\n"
+    "    from torchcodec.encoders import AudioEncoder\n"
+    "    encoded = AudioEncoder(wav.unsqueeze(0).cpu(), sample_rate=16000).to_tensor('wav')\n"
+    "    samples = AudioDecoder(encoded).get_all_samples()\n"
+    "    assert samples.sample_rate == 16000, f'decoded at {samples.sample_rate} Hz'\n"
+    "    assert samples.data.shape == (1, 16000), f'decoded {tuple(samples.data.shape)}'\n"
+    "    print(f'torchcodec={torchcodec.__version__} wav round trip ok')\n"
+)
+
 
 def _image_expects_gpu(image: str) -> bool:
     """True if the image ref implies a GPU runtime (CUDA or ROCm) inside."""
@@ -215,9 +248,12 @@ def fetch_pod_cuda_version(pod_id: str, attempts: int = 3) -> str:
     return ""
 
 
-def cuda_check_command(image: str) -> str:
+def cuda_check_command(image: str, torch_packages: bool = False) -> str:
     """Return a shell command that functionally validates the GPU/CUDA stack
     for a given image, or '' to skip the check (CPU images).
+
+    `torch_packages` (the group's `test_torch_packages` field) adds
+    torchvision, torchaudio and torchcodec ops, and requires them.
 
     Selection is driven by the IMAGE REF (not the manifest group name) so
     new manifest groups added in the future won't silently skip the check.
@@ -229,7 +265,9 @@ def cuda_check_command(image: str) -> str:
           the system `python`, so the torch.cuda path would falsely fail
           with ModuleNotFoundError)
         - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
-          (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack)
+          (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack),
+          plus torchvision, torchaudio and torchcodec when
+          `torch_packages` is set
         - has 'cuda' / 'cu\\d' only                  -> run nvidia-smi check
           (runpod/base GPU tags and autoresearch — torch in venv not
           visible to system python)
@@ -261,8 +299,7 @@ def cuda_check_command(image: str) -> str:
         # installs torch via `python -m pip`, so torch only exists in
         # python3.12's site-packages. On 24.04 they happen to coincide.
         # Using `python` is portable.
-        return (
-            "python - <<'PY'\n"
+        program = (
             "import sys, torch\n"
             "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
             "n = torch.cuda.device_count()\n"
@@ -277,8 +314,10 @@ def cuda_check_command(image: str) -> str:
             "y = (x @ x).sum().item()\n"
             "assert y == 64*64*64, f'matmul gave {y}, expected {64*64*64}'\n"
             "print('matmul ok')\n"
-            "PY"
         )
+        if torch_packages:
+            program += _TORCH_PACKAGES_PROGRAM
+        return f"python - <<'PY'\n{program}PY"
 
     if _image_expects_gpu(image):
         # GPU image without system-Python torch (raw base, autoresearch's
@@ -301,20 +340,22 @@ def cuda_check_command(image: str) -> str:
     return ""
 
 
-def run_cuda_check(endpoint: SshEndpoint, image: str) -> tuple[bool, str]:
+def run_cuda_check(
+    endpoint: SshEndpoint, image: str, torch_packages: bool = False,
+) -> tuple[bool, str]:
     """Run the GPU/CUDA functional check inside the pod over SSH.
     Returns (ok, output). ok=True when:
       * the image has no GPU check defined (treated as pass), OR
       * the remote command exits 0.
     output contains stdout+stderr for inclusion in the run log."""
-    cmd = cuda_check_command(image)
+    cmd = cuda_check_command(image, torch_packages)
     if not cmd:
         return True, "(no GPU check for this image)"
     ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=90)
     except subprocess.TimeoutExpired:
-        return False, "cuda check timed out after 60s"
+        return False, "cuda check timed out after 90s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
     combined = _strip_cr(r.stdout + r.stderr).strip()

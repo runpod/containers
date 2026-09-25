@@ -126,7 +126,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 |---|------|---|
 | 1 | `POST /v2/pods` with `gpu.id` (or an auto-picked `cpu.id` + `vcpuCount`), `disk`, `ports`, `startSsh`, registry credential, and either `gpu.minCudaVersion` or `gpu.allowedCudaVersions`. Transient failures (429, 5xx, transport) are retried up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity — try next instance) / `CREATE_FAIL` (bad image tag, auth, malformed request — any non-capacity, non-transient error after retries) |
 | 2 | Poll `GET /v2/pods/{id}` until a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the only readiness signal. `status` is **not** one: RunPod reports `RUNNING` from the moment the pod is scheduled, while the image may still be downloading for another ten minutes, so it is read only for the terminal `EXITED`/`ERROR`/`TERMINATED` values, which stop the poll immediately. | `FAIL` on a terminal status, on a container-init rejection, or on a container-start failure in the logs; `STUCK` if no endpoint was ever offered or the container had not started yet; `UNVERIFIED` only if the container was demonstrably logging and still nothing answered |
-| 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
+| 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul + torchvision/torchaudio GPU ops; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
 | 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
 | 6 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
@@ -357,6 +357,7 @@ Field reference:
 | `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening. Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
+| `test_torch_packages` | `true` / `false` — extends the CUDA check with a torchvision `nms` and a torchaudio `resample` on the GPU, plus a torchcodec WAV round trip on torch 2.9+ (the version from which the images ship it). All three become **required** where they are expected: an image in the group that doesn't have one fails. Use for `runpod/pytorch` and its `-cluster` layer; skip for images that ship torch alone (NGC `nvidia-pytorch`, `runpod/base` `-pytorch251` tags). Default: `false`. |
 | `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
@@ -574,6 +575,7 @@ pytorch:
     min_vram_gb: 16
     manufacturer: Nvidia
     test_jupyter: true
+    test_torch_packages: true
     exclude_instances:
     - "*Blackwell*"
 ```
@@ -636,7 +638,14 @@ groups don't silently skip the check:
 - image has `pytorch` / `torch\d` in ref
   → `torch.cuda.is_available` + matmul on device (catches broken drivers,
   missing libs, mismatched toolkit/driver versions). NVIDIA only at this
-  point — ROCm was already handled above.
+  point — ROCm was already handled above. With `test_torch_packages: true`
+  the check continues into a torchvision `nms` and a torchaudio `resample`
+  on the GPU, and a torchcodec WAV round trip on torch 2.9+: all three are
+  installed from their own wheel indexes and carry compiled extensions
+  pinned to a torch and CUDA version, so a mismatch only shows up on import
+  or first use. Opt-in because not every image matching this rule ships
+  them. torchcodec is gated on the torch version because that is the rule
+  the images follow, not because the check probes for it.
 - image has `cuda` / `cu\d` (but no torch markers)
   → `nvidia-smi -L` + driver/memory query + `nvcc --version`. Covers base
   GPU images and `autoresearch` (whose torch is in a venv not reachable
