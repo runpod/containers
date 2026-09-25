@@ -107,6 +107,17 @@ echo x > mine/f && git add mine/f && commit "fix: my template"
 assert_eq "other paths are ignored" patch "$(bump_for_range base-v1.0.0 mine/)"
 assert_eq "no matching commits is none" none "$(bump_for_range base-v1.0.0 nothing/)"
 
+# A base-only fix has to reach pytorch: the caller passes the dependency's
+# paths along with the family's own, so the commit counts for both.
+new_repo
+git tag pytorch-v1.0.0
+mkdir -p base pytorch
+echo x > base/Dockerfile && git add base/Dockerfile && commit "fix: something in base"
+assert_eq "a dependency's commit bumps the dependent" patch \
+  "$(bump_for_range pytorch-v1.0.0 pytorch/ base/)"
+assert_eq "without it the dependent would stall" none \
+  "$(bump_for_range pytorch-v1.0.0 pytorch/)"
+
 if [ "$FAILS" -ne 0 ]; then
   echo
   echo "${FAILS} test(s) failed"

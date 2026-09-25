@@ -87,6 +87,16 @@ class ReleaseNotes(unittest.TestCase):
         self.assertIn("first cut", body)
         self.assertNotIn("Full Changelog", body)
 
+    def test_an_upstream_change_explains_the_rebuild(self):
+        """pytorch is rebuilt because base changed, so say so in its notes."""
+        git("tag", "pytorch-v1.3.2")
+        commit("fix: something in base (#106)\n\nbase got a fix\n",
+               path="official-templates/base/Dockerfile")
+        body = R.notes("pytorch", "1.3.2", "pytorch-v1.3.3",
+                       ["official-templates/pytorch/", "official-templates/base/"])
+        self.assertIn("### fix: something in base (#106)", body)
+        self.assertIn("base got a fix", body)
+
     def test_nothing_to_say_is_empty(self):
         git("tag", "comfyui-v1.3.2")
         commit("doc: readme (#102)\n", path="README.md")

@@ -124,8 +124,8 @@ it.
   workflow that builds it succeeded; a broken family does not hold back the
   others, and it is planned again on the next push.
 - The release body is built from the commits that touched **this family**
-  since its previous tag: one `###` section per commit with its subject and
-  the squash description that came with it, then a compare link against that
+  (or what it builds FROM) since its previous tag: one `###` section per
+  commit with its subject and the squash description that came with it, then a compare link against that
   family's previous tag. A release can carry several changes, so the newest
   squash description alone would describe the wrong one. GitHub's own note
   generation is not used either: it compares against the newest release in
@@ -183,8 +183,9 @@ Key behaviours:
   re-running an older commit doesn't pick up a newer unrelated tag).
 - **The bump covers everything unreleased.** On `main` it is the highest type
   among the commits between that tag and HEAD that touched the family's paths
-  — so a feature that arrived in a run which failed, or was dropped from the
-  queue, still ships as a minor. On a PR the bump comes from the **PR title**,
+  **or the paths of a family it builds FROM** — so a feature that arrived in a
+  run which failed still ships as a minor, and a fix in base bumps and
+  rebuilds pytorch, autoresearch and pytorch-cluster with it. On a PR the bump comes from the **PR title**,
   which is the subject the squash will produce. A major bump is `type!:` in
   the subject **or** a git-trailer `BREAKING CHANGE:` / `BREAKING-CHANGE:`
   footer in the body. Body lines like `* feat: …` from a squash are ignored.

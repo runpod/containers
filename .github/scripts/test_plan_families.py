@@ -101,7 +101,22 @@ class BuildOrder(unittest.TestCase):
 
 
 class Pathspecs(unittest.TestCase):
-    """`git log -- <spec>` is how the release notes find a family's commits."""
+    """`git log -- <spec>` is how the bump and the notes find a family's
+    commits — a dependency's commits have to be among them."""
+
+    def test_a_dependency_counts_as_the_dependents_own(self):
+        """A base-only fix has to bump and rebuild pytorch and cluster."""
+        self.assertEqual(
+            P.paths_with_deps(GRAPH, "cluster"),
+            ["t/cluster/**", "t/pytorch/**", "t/base/**"],
+        )
+
+    def test_a_family_without_dependencies_keeps_its_own(self):
+        self.assertEqual(P.paths_with_deps(GRAPH, "comfyui"), ["t/comfyui/**"])
+
+    def test_the_real_graph_gives_pytorch_the_base_paths(self):
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        self.assertIn("official-templates/base/**", P.paths_with_deps(graph, "pytorch"))
 
     def test_a_directory_glob_becomes_a_directory(self):
         self.assertEqual(

@@ -12,7 +12,7 @@ lives in .github/families.yml.
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
     plan_families.py --workflow comfyui    # which workflow builds this family
-    plan_families.py --paths comfyui       # git pathspecs feeding this family
+    plan_families.py --paths comfyui       # pathspecs feeding it, deps included
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
 
@@ -144,6 +144,23 @@ def plan_since_release(graph: dict[str, dict], changed_for) -> list[str]:
     return build_order(graph, with_dependents(graph, selected))
 
 
+def paths_with_deps(graph: dict[str, dict], name: str) -> list[str]:
+    """A family's paths plus those of everything it builds FROM.
+
+    A change in base gives pytorch a new image, so base's commits have to
+    count as pytorch's too — for its version bump and for its release notes.
+    """
+    seen: list[str] = []
+    pending = [name]
+    while pending:
+        current = pending.pop(0)
+        for path in graph[current]["paths"]:
+            if path not in seen:
+                seen.append(path)
+        pending.extend(graph[current]["depends_on"])
+    return seen
+
+
 def git_pathspecs(paths: list[str]) -> list[str]:
     """Graph patterns as git pathspecs, for `git log -- …`. A trailing /**
     becomes a plain directory, which git already reads as "and below"."""
@@ -248,7 +265,7 @@ def main() -> int:
         if args.paths:
             if args.paths not in graph:
                 raise GraphError(f"unknown family '{args.paths}'")
-            for spec in git_pathspecs(graph[args.paths]["paths"]):
+            for spec in git_pathspecs(paths_with_deps(graph, args.paths)):
                 print(spec)
             return 0
         if args.since_release:
