@@ -82,3 +82,27 @@ families:
     depends_on: []
     image_repo: runpod/comfyui
     workflow: comfyui
+
+  sandbox-ubuntu:
+    paths:
+      - official-templates/sandbox-ubuntu/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/ubuntu
+    workflow: sandbox
+
+  sandbox-openclaw:
+    paths:
+      - official-templates/sandbox-openclaw/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/openclaw
+    workflow: sandbox
+
+  sandbox-harbor:
+    paths:
+      - official-templates/sandbox-harbor/**
+      - official-templates/shared/**
+    depends_on: [sandbox-ubuntu]
+    image_repo: runpod/harbor
+    workflow: sandbox

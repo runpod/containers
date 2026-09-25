@@ -121,11 +121,21 @@ jobs:
       families: ${{ needs.plan.outputs.families }}
       run-functional-tests: true
 
+  sandbox:
+    needs: plan
+    if: >-
+      !cancelled() && needs.plan.outputs.should-build == 'true'
+      && contains(fromJSON(needs.plan.outputs.workflows), 'sandbox')
+    uses: ./.github/workflows/sandbox.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
   # One tag + GitHub Release per changed family, on a releasable push to main.
   # Each family waits only on its own build: a scan that fails on one image
   # must not keep the others unreleased while their images are already pushed.
   release:
-    needs: [plan, base, nvidia, rocm, comfyui]
+    needs: [plan, base, nvidia, rocm, comfyui, sandbox]
     if: >-
       !cancelled()
       && github.event_name == 'push'
