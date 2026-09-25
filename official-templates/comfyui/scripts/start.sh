@@ -195,6 +195,23 @@ create_pip_shim() {
     fi
 }
 
+# Run a long step in the background and print a heartbeat every 10s, so minutes
+# of silence on a network volume do not read as a hung pod. Returns its status.
+run_with_heartbeat() {
+    local label="$1" started=$SECONDS tick=0 pid
+    shift
+    "$@" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 5
+        tick=$((tick + 1))
+        if [ $((tick % 2)) -eq 0 ]; then
+            echo "  $label... $((SECONDS - started))s elapsed"
+        fi
+    done
+    wait "$pid"
+}
+
 # ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
 # to exact versions, and the workspace checkout can move away from the image via
 # Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
@@ -239,11 +256,16 @@ sync_comfyui_pinned_packages() {
         return
     fi
 
+    local started=$SECONDS
     echo "============================================="
     echo "  Workspace ComfyUI disagrees with the packages in this image (see above)."
     echo "  Installing the versions it asks for into $VENV_DIR"
+    echo "  On a network volume this takes a few minutes; ComfyUI starts after it."
     echo "============================================="
-    if ! python -m pip install --no-cache-dir "${missing[@]}"; then
+    if run_with_heartbeat "still installing" \
+        python -m pip install --no-cache-dir "${missing[@]}"; then
+        echo "Packages installed in $((SECONDS - started))s"
+    else
         echo "WARNING: could not install them. If ComfyUI fails to import, redeploy"
         echo "         on a newer image instead of updating ComfyUI in place."
     fi
@@ -419,24 +441,60 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     fi
 fi
 
-# Setup ComfyUI if needed
-if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
-    echo "First time setup: Copying baked ComfyUI to workspace..."
+# A stage directory left by an interrupted copy is resumed into below, but it
+# is dead weight on the volume once the real directory exists.
+if [ -d "$COMFYUI_DIR" ] && [ -d "${COMFYUI_DIR}.incomplete" ]; then
+    echo "Removing leftover ${COMFYUI_DIR}.incomplete"
+    rm -rf "${COMFYUI_DIR}.incomplete"
+fi
 
-    # Copy baked ComfyUI from image (no git, no network)
+# `python3.12 -m venv` has been seen leaving the directory behind without
+# bin/activate, and a directory test then passes for a venv nothing can source.
+venv_is_usable() { [ -f "$VENV_DIR/bin/activate" ]; }
+
+# Setup ComfyUI if needed
+if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
+    # Copy baked ComfyUI from image (no git, no network). Staged under a
+    # temporary name so an interrupted copy is never taken for a finished one.
     if [ ! -d "$COMFYUI_DIR" ]; then
-        cp -r /opt/comfyui-baked "$COMFYUI_DIR"
-        echo "ComfyUI copied to workspace"
+        echo "============================================="
+        echo "  First-time setup: copying ComfyUI to $COMFYUI_DIR"
+        echo "  On a network volume this takes several minutes, and the"
+        echo "  ComfyUI port stays closed until it finishes. This is normal."
+        echo "  Stopping the pod now leaves the copy to be resumed on the"
+        echo "  next start — nothing is lost, but the wait starts over."
+        echo "============================================="
+        COPY_STARTED=$SECONDS
+        mkdir -p "${COMFYUI_DIR}.incomplete"
+        run_with_heartbeat "still copying" \
+            rsync -a "$BAKED_COMFYUI_DIR/" "${COMFYUI_DIR}.incomplete/"
+        mv "${COMFYUI_DIR}.incomplete" "$COMFYUI_DIR"
+        echo "ComfyUI copied to workspace in $((SECONDS - COPY_STARTED))s"
     fi
 
     # Create venv with access to system packages (torch, numpy, etc. pre-installed in image)
-    if [ ! -d "$VENV_DIR" ]; then
+    if ! venv_is_usable; then
         cd "$COMFYUI_DIR"
+        if [ -d "$VENV_DIR" ]; then
+            echo "Discarding unusable $VENV_DIR (no bin/activate) and recreating it"
+            rm -rf "$VENV_DIR"
+        fi
         # --without-pip: pip stays in the image (local disk, bytecode compiled
         # at build) instead of on the network volume, where importing it can
         # exceed ComfyUI-Manager's probe timeout. --system-site-packages keeps
         # it importable, and installs still land in this venv via sys.prefix.
-        python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
+        python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR" || true
+        # Keep SSH/Jupyter/FileBrowser reachable instead of crash-looping on a
+        # bare `source: No such file or directory`.
+        if ! venv_is_usable; then
+            echo "============================================="
+            echo "  Could not create the Python environment at $VENV_DIR"
+            echo "  (see the error above). ComfyUI cannot start."
+            echo "  SSH, JupyterLab and FileBrowser are still available."
+            echo "  Redeploying the pod usually clears this."
+            echo "============================================="
+            sleep infinity
+        fi
         # shellcheck source=/dev/null
         source "$VENV_DIR/bin/activate"
 
