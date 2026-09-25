@@ -460,6 +460,7 @@ jobs:
             RTX PRO *
             PRO 6000 MIG *
             RTX 2000 Ada
+            RTX PRO 4000
           max-parallel: "4"
 
   # -cluster layers monitoring + RDMA on top of a PUBLISHED runpod/pytorch.
