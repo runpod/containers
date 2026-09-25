@@ -32,6 +32,14 @@ What is lost is the three features backed by torchaudio's own CUDA kernels:
 
 If you need any of these, use a CUDA 13.0 image: there PyTorch and torchaudio are both cu130 and the CUDA kernels are present.
 
+### Blackwell (B200, B300, RTX 50-series, RTX PRO 6000)
+
+PyTorch 2.6.0 does not run on Blackwell in any image: it is built against CUDA 12.6, which predates the architecture, and the first tensor operation fails with `no kernel image is available for execution on the device`.
+
+On CUDA 12.8 and 12.9, PyTorch 2.12.1 and 2.13.0 themselves work, but torchvision's CUDA operators do not. Those versions take their wheels from the cu129 index, whose torchvision is built without Blackwell, and no other CUDA 12 index can replace it: cu128 has no 2.12 or later build at all, and cu126 predates the architecture. The cu130 and cu132 wheels do support Blackwell, but they need a CUDA 13 driver — the hosts these images exist for do not have one.
+
+On Blackwell, use a CUDA 13.0 or 13.2 image. Every PyTorch version there from 2.7.1 on is fully supported.
+
 Focus on your models, not your environment setup.
 
 Please also see [../base/README.md](../base/README.md)

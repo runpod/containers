@@ -478,10 +478,11 @@ jobs:
           test-jupyter: true
           test-torch-packages: true
           # Patterns match catalog DISPLAY names, which never contain the
-          # word "Blackwell" — only the ids do. Enumerate the cards.
+          # word "Blackwell" — only the ids do. Enumerate the cards, with a
+          # trailing * so the MIG slices ('B300 MIG 34GB') match too.
           exclude-instances: |
-            B200
-            B300
+            B200*
+            B300*
             RTX 5090
             RTX PRO *
             PRO 6000 MIG *
@@ -652,3 +653,11 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-torch-packages: true
+          # torch 2.12/2.13 here take torchvision from cu129, which upstream
+          # builds without Blackwell.
+          exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *

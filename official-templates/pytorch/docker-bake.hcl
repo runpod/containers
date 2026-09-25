@@ -71,11 +71,11 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.9.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "12.9.0", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.8.0", whl_src = "129" },
-    # codec_src: the cu129 index has no torchcodec for torch 2.9 at all (it goes
-    # 0.7.0 -> 0.10.0), so take the cu128 build. Same CUDA major, so the runtime
-    # sonames match. Defaults to whl_src everywhere else.
-    { cuda_version = "12.9.0", torch = "2.9.0", whl_src = "129", codec_src = "128" },
-    { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "129", codec_src = "128" },
+    # 2.9.x takes cu128 here: the cu129 torchvision is built without Blackwell
+    # (nms on an sm_103 B300 has no kernel image), and cu129 ships no torchcodec
+    # for 2.9 either. Same choice as 2.7.1 above.
+    { cuda_version = "12.9.0", torch = "2.9.0", whl_src = "128" },
+    { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.12.1", whl_src = "129" },
     { cuda_version = "12.9.0", torch = "2.13.0", whl_src = "129" },
 
@@ -118,6 +118,8 @@ variable "COMPATIBLE_BUILDS" {
           torch_vision   = lookup(TORCH_META[combo.torch], "torchvision", "")
           torch_audio    = lookup(TORCH_META[combo.torch], "torchaudio", combo.torch)
           torch_codec    = lookup(TORCH_META[combo.torch], "torchcodec", "")
+          # codec_src: override when torch's own index has no torchcodec for
+          # that version. Unused right now; kept because it has been needed.
           codec_src      = lookup(combo, "codec_src", combo.whl_src)
           audio_index    = lookup(combo, "audio_index", "cu${combo.whl_src}")
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
