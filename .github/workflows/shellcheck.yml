@@ -17,6 +17,6 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Shellcheck
-        uses: reviewdog/action-shellcheck@4c07458293ac342d477251099501a718ae5ef86e
+        uses: reviewdog/action-shellcheck@0722bbdb0d47f04c1b53b8734d2422ac63a45ec6
         with:
           fail_level: warning
