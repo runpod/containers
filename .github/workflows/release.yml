@@ -40,65 +40,50 @@ jobs:
     outputs:
       families: ${{ steps.p.outputs.families }}
       workflows: ${{ steps.p.outputs.workflows }}
-      should-build: ${{ steps.gate.outputs.should-build }}
-      should-release: ${{ steps.gate.outputs.should-release }}
-      bump: ${{ steps.gate.outputs.bump }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          # Deep enough to diff against the base branch / the previous main.
+          # Full history and tags: the plan diffs from each family's last
+          # release tag.
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Plan families
         id: p
-        env:
-          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           plan() { python3 .github/scripts/plan_families.py "$@"; }
           case "${GITHUB_EVENT_NAME}" in
             pull_request)
-              RANGE="origin/${GITHUB_BASE_REF}...HEAD"
+              # What this PR would change, against the branch it targets.
+              git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" \
+                > "${RUNNER_TEMP}/changed.txt"
+              MODE=(--changed-files "${RUNNER_TEMP}/changed.txt")
               ;;
             push)
-              # A squash merge is one commit, but a direct push can carry
-              # several — planning off HEAD~1 would then miss the earlier ones.
-              RANGE="HEAD~1..HEAD"
-              if [ -n "${BEFORE}" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-                RANGE="${BEFORE}..HEAD"
-              fi
+              # Not the push diff: a queued run is dropped when a third push
+              # arrives, and its changes would then never be built. Each
+              # family is compared against its own last release tag instead,
+              # so anything unreleased is picked up by the next push.
+              MODE=(--since-release)
               ;;
             *)
               # workflow_dispatch has no diff to read.
-              RANGE=""
+              MODE=(--all)
               ;;
           esac
-          if [ -z "${RANGE}" ]; then
-            FAMILIES="$(plan --all)"
-            WORKFLOWS="$(plan --all --workflows)"
-          else
-            echo "diff range: ${RANGE}"
-            git diff --name-only "${RANGE}" > "${RUNNER_TEMP}/changed.txt"
-            FAMILIES="$(plan --changed-files "${RUNNER_TEMP}/changed.txt")"
-            WORKFLOWS="$(plan --changed-files "${RUNNER_TEMP}/changed.txt" --workflows)"
-          fi
+          FAMILIES="$(plan "${MODE[@]}")"
+          WORKFLOWS="$(plan "${MODE[@]}" --workflows)"
           echo "families=${FAMILIES}" >> "$GITHUB_OUTPUT"
           echo "workflows=${WORKFLOWS}" >> "$GITHUB_OUTPUT"
-
-      # Whether this event builds and releases at all, and at which bump
-      # level. No family here: both answers come from the event and the
-      # squash commit's subject, never from a version.
-      - name: Compute gate
-        id: gate
-        uses: ./.github/actions/compute-version
 
   # Each build workflow is called only when the plan needs a family it covers,
   # and decides internally which of them to build.
   base:
     needs: plan
     if: >-
-      !cancelled() && needs.plan.outputs.should-build == 'true'
+      !cancelled()
       && contains(fromJSON(needs.plan.outputs.workflows), 'base')
     uses: ./.github/workflows/base.yml
     secrets: inherit
@@ -108,7 +93,7 @@ jobs:
   nvidia:
     needs: plan
     if: >-
-      !cancelled() && needs.plan.outputs.should-build == 'true'
+      !cancelled()
       && contains(fromJSON(needs.plan.outputs.workflows), 'nvidia')
     uses: ./.github/workflows/nvidia.yml
     secrets: inherit
@@ -118,7 +103,7 @@ jobs:
   rocm:
     needs: plan
     if: >-
-      !cancelled() && needs.plan.outputs.should-build == 'true'
+      !cancelled()
       && contains(fromJSON(needs.plan.outputs.workflows), 'rocm')
     uses: ./.github/workflows/rocm.yml
     secrets: inherit
@@ -128,7 +113,7 @@ jobs:
   comfyui:
     needs: plan
     if: >-
-      !cancelled() && needs.plan.outputs.should-build == 'true'
+      !cancelled()
       && contains(fromJSON(needs.plan.outputs.workflows), 'comfyui')
     uses: ./.github/workflows/comfyui.yml
     secrets: inherit
@@ -145,7 +130,6 @@ jobs:
       !cancelled()
       && github.event_name == 'push'
       && needs.plan.result == 'success'
-      && needs.plan.outputs.should-release == 'true'
       && needs.plan.outputs.families != '[]'
     runs-on: ubuntu-latest
     permissions:
@@ -162,6 +146,11 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Compute version
+        id: v
+        uses: ./.github/actions/compute-version
+        with:
+          family: ${{ matrix.family }}
       # The job-level `if` can't see `matrix`, so the per-family gate lives
       # here: release this family only if the workflow that builds it passed.
       - name: Check this family's build
@@ -169,30 +158,27 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           FAMILY: ${{ matrix.family }}
+          RELEASABLE: ${{ steps.v.outputs.should-release }}
         run: |
           set -euo pipefail
           WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
           RESULT="$(printf '%s' "${RESULTS}" | jq -r --arg w "${WORKFLOW}" '.[$w].result')"
           echo "${FAMILY} is built by '${WORKFLOW}': ${RESULT}"
-          if [ "${RESULT}" = "success" ]; then
+          if [ "${RELEASABLE}" != "true" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "${FAMILY} has nothing releasable outstanding"
+          elif [ "${RESULT}" = "success" ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "::warning::${FAMILY} not released — its build ${RESULT}"
           fi
 
-      - name: Compute version
-        id: v
-        if: steps.gate.outputs.release == 'true'
-        uses: ./.github/actions/compute-version
-        with:
-          family: ${{ matrix.family }}
-
-      # A releasable push to main is one squash commit, so its extended
-      # description is the release body. GitHub's own note generation is NOT
-      # used: it compares against the newest release in the repo, which for a
-      # per-family tag is some other family's — so we link this family's
-      # previous tag ourselves.
+      # Notes are scoped to the family: a release can carry a change from an
+      # earlier commit (a run that failed, or one dropped from the queue), so
+      # the latest squash description alone would describe the wrong thing.
+      # GitHub's own generation is not used either — it compares against the
+      # newest release in the repo, which belongs to some other family.
       - name: Release body
         id: notes
         if: steps.gate.outputs.release == 'true'
@@ -203,13 +189,15 @@ jobs:
         run: |
           set -euo pipefail
           BODY="${RUNNER_TEMP}/release-body-${FAMILY}.md"
-          git log -1 --format=%b HEAD \
-            | grep -viE '^(co-authored-by|signed-off-by):' > "${BODY}" || true
-          if [ -n "${PREV_VERSION}" ]; then
-            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
-              "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" \
-              "${FAMILY}-v${PREV_VERSION}" "${TAG}" >> "${BODY}"
-          fi
+          PATHS=()
+          while IFS= read -r spec; do
+            PATHS+=("${spec}")
+          done < <(python3 .github/scripts/plan_families.py --paths "${FAMILY}")
+          python3 .github/scripts/release_notes.py \
+            "${FAMILY}" "${PREV_VERSION}" "${TAG}" "${PATHS[@]}" > "${BODY}"
+          echo "::group::release body for ${FAMILY}"
+          cat "${BODY}"
+          echo "::endgroup::"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and GitHub Release
@@ -226,7 +214,7 @@ jobs:
       - name: Summary
         if: steps.gate.outputs.release == 'true'
         run: |
-          echo "Released ${{ steps.v.outputs.tag }} (bump ${{ needs.plan.outputs.bump }})"
+          echo "Released ${{ steps.v.outputs.tag }} (bump ${{ steps.v.outputs.bump }})"
           echo "Previous: ${{ steps.v.outputs.previous-version || 'none — first release' }}"
 
   # After a real release, sweep aged-out RC/dev tags off Docker Hub. Runs the
@@ -234,6 +222,6 @@ jobs:
   # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
   cleanup:
     needs: [plan, release]
-    if: needs.plan.outputs.should-release == 'true'
+    if: github.event_name == 'push' && needs.plan.outputs.families != '[]'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit
