@@ -93,11 +93,23 @@ export_env_vars() {
 
 # Start Jupyter Lab server for remote access
 start_jupyter() {
+    local JUPYTER_TOKEN
     mkdir -p /workspace
 
-    if [ -z "${JUPYTER_PASSWORD:-}" ]; then
-        JUPYTER_PASSWORD=$(openssl rand -hex 16)
-        echo "JUPYTER_PASSWORD was not set; generated one for this pod: ${JUPYTER_PASSWORD}"
+    # JUPYTER_DISABLE_AUTH=true runs with no token, a set JUPYTER_PASSWORD becomes
+    # the token, and anything else leaves Jupyter off. No token is generated here
+    # because the console never sees one minted in the container.
+    if [ "${JUPYTER_DISABLE_AUTH:-}" = "true" ]; then
+        echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
+        echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
+        JUPYTER_TOKEN=""
+    elif [ -n "${JUPYTER_PASSWORD:-}" ]; then
+        JUPYTER_TOKEN="$JUPYTER_PASSWORD"
+    else
+        echo "JUPYTER_PASSWORD is not set; skipping JupyterLab. Redeploy with"
+        echo "\"Start Jupyter notebook\" enabled, set JUPYTER_PASSWORD yourself, or set"
+        echo "JUPYTER_DISABLE_AUTH=true to run it with no password (understand the risk)."
+        return 0
     fi
 
     echo "Starting Jupyter Lab on port 8888..."
@@ -110,7 +122,7 @@ start_jupyter() {
         --FileContentsManager.preferred_dir=/workspace \
         --ServerApp.root_dir=/workspace \
         --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
-        --IdentityProvider.token="${JUPYTER_PASSWORD}" \
+        --IdentityProvider.token="${JUPYTER_TOKEN}" \
         --ServerApp.allow_origin=* &> /jupyter.log &
     echo "Jupyter Lab started"
 }
