@@ -604,6 +604,23 @@ echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
 COMFY_PID=$!
 
+# ComfyUI-Manager's "All startup tasks have been completed" trails the usable
+# UI by minutes while it pages through api.comfy.org, so announce the port
+# itself. Users read that line as the ready signal and stop pods before it.
+announce_when_ready() {
+    local started=$SECONDS
+    until curl -fs -o /dev/null --max-time 2 http://127.0.0.1:8188/; do
+        kill -0 "$COMFY_PID" 2>/dev/null || return
+        sleep 2
+    done
+    echo "============================================="
+    echo "  ComfyUI is READY on port 8188 after $((SECONDS - started))s."
+    echo "  ComfyUI-Manager may still be refreshing its node list below;"
+    echo "  that runs in the background and does not hold up the UI."
+    echo "============================================="
+}
+announce_when_ready &
+
 COMFY_EXIT=0
 wait $COMFY_PID || COMFY_EXIT=$?
 
