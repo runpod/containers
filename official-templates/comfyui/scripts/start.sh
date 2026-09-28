@@ -495,18 +495,16 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
             echo "============================================="
             sleep infinity
         fi
-        # shellcheck source=/dev/null
-        source "$VENV_DIR/bin/activate"
-
         echo "Base packages (torch, numpy, etc.) available from system site-packages"
         echo "ComfyUI ready — all dependencies pre-installed in image"
     fi
-else
-    # Just activate the existing venv
-    # shellcheck source=/dev/null
-    source "$VENV_DIR/bin/activate"
-    echo "Using existing ComfyUI installation"
 fi
+
+# Activated on every path: a resumed copy can restore a workspace that already
+# carries a usable venv, and then neither branch above would have sourced it.
+# shellcheck source=/dev/null
+source "$VENV_DIR/bin/activate"
+echo "Using ComfyUI installation at $COMFYUI_DIR"
 
 create_pip_shim
 
