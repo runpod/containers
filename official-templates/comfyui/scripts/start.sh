@@ -389,6 +389,13 @@ start_jupyter
 # the container would be restarted straight back into it, tearing down
 # SSH/Jupyter/FileBrowser each time. Hold the pod instead. Cleared once ComfyUI
 # starts.
+# Bash runs no trap while it waits on a foreground command, so a plain
+# `sleep infinity` would swallow the stop signal until Docker sends SIGKILL.
+hold_pod() {
+    sleep infinity &
+    wait $! || true
+}
+
 keep_pod_alive() {
     local rc=$?
     echo "============================================="
@@ -396,7 +403,7 @@ keep_pod_alive() {
     echo "  The error is above. SSH, JupyterLab and FileBrowser stay up so you"
     echo "  can inspect the pod; nothing is retried automatically."
     echo "============================================="
-    sleep infinity
+    hold_pod
 }
 set -E
 trap keep_pod_alive ERR
@@ -415,11 +422,14 @@ stop_services() {
 SHUTTING_DOWN=0
 on_shutdown() {
     SHUTTING_DOWN=1
-    if [ -z "${COMFY_PID:-}" ]; then
-        stop_services
-        exit 0
+    # Only when ComfyUI is still running is there something to wait for: kill it
+    # and let the `wait` below return so it can exit before the cleanup.
+    if [ -n "${COMFY_PID:-}" ] && kill -0 "$COMFY_PID" 2>/dev/null; then
+        kill "$COMFY_PID" 2>/dev/null || true
+        return
     fi
-    kill "$COMFY_PID" 2>/dev/null || true
+    stop_services
+    exit 0
 }
 trap on_shutdown SIGTERM SIGINT
 
@@ -541,7 +551,7 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
             echo "  SSH, JupyterLab and FileBrowser stay up so you can inspect"
             echo "  the pod; nothing is retried automatically."
             echo "============================================="
-            sleep infinity
+            hold_pod
         fi
         echo "Base packages (torch, numpy, etc.) available from system site-packages"
         echo "ComfyUI ready — all dependencies pre-installed in image"
@@ -613,4 +623,4 @@ echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
 echo "    python main.py ${COMFY_ARGS[*]}"
 echo "============================================="
 
-sleep infinity
+hold_pod
