@@ -53,9 +53,68 @@ concurrency:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      # TEMPORARY. The prune below talks to the Hub API, which OIDC may or may
+      # not cover — the docs don't say. Run this manually, read the codes, then
+      # delete both probe steps.
+      - name: Docker login (OIDC)
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        uses: docker/login-action@783ae9cac559640a24c9212dfa6cd9e998252f9a
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+
+      - name: Probe the Hub API with the OIDC token
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -uo pipefail
+          AUTH="$(jq -r '.auths["https://index.docker.io/v1/"].auth // empty' \
+            ~/.docker/config.json)"
+          if [ -z "${AUTH}" ]; then
+            echo "::warning::no credential in ~/.docker/config.json — OIDC login did not store one"
+            exit 0
+          fi
+          CRED="$(printf '%s' "${AUTH}" | base64 -d)"
+          USER="${CRED%%:*}"
+          TOKEN="${CRED#*:}"
+          echo "::add-mask::${TOKEN}"
+          echo "identity in docker config: ${USER} (token is ${#TOKEN} chars)"
+
+          # 1. Can it mint the JWT the prune step uses?
+          CODE=$(curl -sS -o /tmp/login.json -w '%{http_code}' \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg u "${USER}" --arg p "${TOKEN}" \
+                  '{username: $u, password: $p}')" \
+            https://hub.docker.com/v2/users/login/ || echo 000)
+          JWT="$(jq -r '.token // empty' /tmp/login.json 2>/dev/null || true)"
+          [ -n "${JWT}" ] && echo "::add-mask::${JWT}"
+          echo "POST /v2/users/login  -> ${CODE} (jwt: $([ -n "${JWT}" ] && echo yes || echo no))"
+
+          # 2. Or is it a bearer token for the API directly?
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://hub.docker.com/v2/repositories/runpod/base/tags/?page_size=1" \
+            || echo 000)
+          echo "GET tags (Bearer)    -> ${CODE}"
+
+          # 3. Is it allowed to delete? A tag that cannot exist: 404 means the
+          # call was authorised, 401/403 means it was not. Nothing is removed.
+          for scheme in "JWT ${JWT}" "Bearer ${TOKEN}"; do
+            [ "${scheme}" = "JWT " ] && continue
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: ${scheme}" \
+              "https://hub.docker.com/v2/repositories/runpod/base/tags/oidc-probe-does-not-exist/" \
+              || echo 000)
+            echo "DELETE probe (${scheme%% *})   -> ${CODE}"
+          done
 
       - name: Prune ephemeral Docker Hub tags
         shell: bash
