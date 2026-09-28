@@ -385,6 +385,22 @@ nohup filebrowser &> /filebrowser.log &
 
 start_jupyter
 
+# With `set -e` an unexpected failure during the rest of startup would exit and
+# the container would be restarted straight back into it, tearing down
+# SSH/Jupyter/FileBrowser each time. Hold the pod instead. Cleared once ComfyUI
+# starts.
+keep_pod_alive() {
+    local rc=$?
+    echo "============================================="
+    echo "  Pod setup failed before ComfyUI could be started (exit code $rc)."
+    echo "  The error is above. SSH, JupyterLab and FileBrowser stay up so you"
+    echo "  can inspect the pod; nothing is retried automatically."
+    echo "============================================="
+    sleep infinity
+}
+set -E
+trap keep_pod_alive ERR
+
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
 if [ ! -f "$ARGS_FILE" ]; then
@@ -476,8 +492,9 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
     if ! venv_is_usable; then
         cd "$COMFYUI_DIR"
         if [ -d "$VENV_DIR" ]; then
-            # bin/activate is written last, so a venv that failed mid-creation
-            # holds nothing — but never delete one that turned out to.
+            # Reached only with bin/activate missing. It is written last, so a
+            # venv that failed mid-creation holds nothing — but if one does,
+            # keep it.
             if [ -n "$(ls -A "$VENV_DIR"/lib/python*/site-packages 2>/dev/null)" ]; then
                 VENV_BROKEN="${VENV_DIR}.broken.$(date +%Y%m%d%H%M%S)"
                 echo "$VENV_DIR has no bin/activate but is not empty — moving it to $VENV_BROKEN"
@@ -498,9 +515,9 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
         if ! venv_is_usable; then
             echo "============================================="
             echo "  Could not create the Python environment at $VENV_DIR"
-            echo "  (see the error above). ComfyUI cannot start."
-            echo "  SSH, JupyterLab and FileBrowser are still available."
-            echo "  Redeploying the pod usually clears this."
+            echo "  (see the error above). ComfyUI was not started."
+            echo "  SSH, JupyterLab and FileBrowser stay up so you can inspect"
+            echo "  the pod; nothing is retried automatically."
             echo "============================================="
             sleep infinity
         fi
@@ -546,6 +563,10 @@ if [ -s "$ARGS_FILE" ]; then
         fi
     done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
 fi
+
+# Startup is over: from here the crash banner below owns failures, and a live
+# ERR trap would also fire on the shutdown path and hold the pod open.
+trap - ERR
 
 echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
