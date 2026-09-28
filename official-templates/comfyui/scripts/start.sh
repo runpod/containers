@@ -631,13 +631,26 @@ if [ "$SHUTTING_DOWN" = "1" ]; then
     exit 0
 fi
 
-echo "============================================="
-echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
-echo "  Check the logs above for the error/traceback."
-echo "  SSH and JupyterLab are still available."
-echo "  To restart after fixing:"
-echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
-echo "    python main.py ${COMFY_ARGS[*]}"
-echo "============================================="
+if [ "$COMFY_EXIT" = "137" ]; then
+    # 137 is SIGKILL, which in a container is the cgroup OOM killer. The
+    # generic banner sends people hunting for a traceback that cannot exist.
+    RAM_LIMIT=$(awk '$1 ~ /^[0-9]+$/ {printf " (limit %.0f GiB)", $1/1073741824}' \
+        /sys/fs/cgroup/memory.max 2>/dev/null)
+    echo "============================================="
+    echo "  ComfyUI was killed: the container ran out of RAM${RAM_LIMIT}."
+    echo "  There is no traceback above — it was terminated from outside."
+    echo "  Deploy with more RAM or load a smaller model."
+    echo "  SSH, JupyterLab and FileBrowser stay up."
+    echo "============================================="
+else
+    echo "============================================="
+    echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
+    echo "  Check the logs above for the error/traceback."
+    echo "  SSH and JupyterLab are still available."
+    echo "  To restart after fixing:"
+    echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
+    echo "    python main.py ${COMFY_ARGS[*]}"
+    echo "============================================="
+fi
 
 hold_pod
