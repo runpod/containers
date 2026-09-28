@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Pre-populate ComfyUI-Manager cache at Docker build time.
 
-Downloads the registry JSON files and saves them under the names
-ComfyUI-Manager looks for, so the first cold start skips the slow paginated
-fetch from api.comfy.org (~190 requests, minutes of silence).
+Downloads the registry JSON files and saves them with the CRC32-prefixed
+filenames that ComfyUI-Manager expects, so the first cold start skips
+the slow paginated fetch from api.comfy.org (~127 requests).
 
 Cache expires after 24h; after that Manager re-fetches in the background.
 """
 
 import json
 import sys
+import zlib
 from pathlib import Path
 from urllib.request import urlopen, Request
 
@@ -29,20 +30,13 @@ REGISTRY_URL = "https://api.comfy.org/nodes"
 REGISTRY_PAGE_SIZE = 30
 
 
-def simple_hash(text: str) -> int:
-    """ComfyUI-Manager's own hash (manager_util.simple_hash) — not a standard
-    one, so the cache is only found if it is reproduced exactly."""
-    value = 0
-    for char in text:
-        value = (value * 31 + ord(char)) % (2 ** 32)
-    return value
-
-
 def cache_filename(url: str) -> str:
+    """Compute CRC32-prefixed filename matching ComfyUI-Manager's convention."""
+    h = zlib.crc32(url.encode()) & 0xFFFFFFFF
     name = url.rsplit("/", 1)[-1]
     if not name.endswith(".json"):
         name += ".json"
-    return f"{simple_hash(url)}_{name}"
+    return f"{h}_{name}"
 
 
 def fetch_json(url: str) -> bytes:
@@ -90,8 +84,7 @@ def main():
     print("  Fetching ComfyRegistry (paginated)...")
     try:
         nodes = fetch_registry_all()
-        # Manager reads this back as json.load(f)["nodes"], not as a bare list.
-        registry_data = json.dumps({"nodes": nodes}, separators=(",", ":"))
+        registry_data = json.dumps(nodes, separators=(",", ":"))
         fname = cache_filename(REGISTRY_URL)
         (CACHE_DIR / fname).write_bytes(registry_data.encode())
         print(f"  Cached {len(nodes)} registry nodes")
