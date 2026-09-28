@@ -476,8 +476,17 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
     if ! venv_is_usable; then
         cd "$COMFYUI_DIR"
         if [ -d "$VENV_DIR" ]; then
-            echo "Discarding unusable $VENV_DIR (no bin/activate) and recreating it"
-            rm -rf "$VENV_DIR"
+            # bin/activate is written last, so a venv that failed mid-creation
+            # holds nothing — but never delete one that turned out to.
+            if [ -n "$(ls -A "$VENV_DIR"/lib/python*/site-packages 2>/dev/null)" ]; then
+                VENV_BROKEN="${VENV_DIR}.broken.$(date +%Y%m%d%H%M%S)"
+                echo "$VENV_DIR has no bin/activate but is not empty — moving it to $VENV_BROKEN"
+                echo "  Installed packages are kept there; delete it to free space."
+                mv "$VENV_DIR" "$VENV_BROKEN" || true
+            else
+                echo "Discarding unusable $VENV_DIR (no bin/activate) and recreating it"
+                rm -rf "$VENV_DIR"
+            fi
         fi
         # --without-pip: pip stays in the image (local disk, bytecode compiled
         # at build) instead of on the network volume, where importing it can
