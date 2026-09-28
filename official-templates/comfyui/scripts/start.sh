@@ -401,6 +401,28 @@ keep_pod_alive() {
 set -E
 trap keep_pod_alive ERR
 
+# Docker only signals PID 1; stop the nohup'd background services too so they
+# exit cleanly instead of waiting for SIGKILL.
+stop_services() {
+    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
+    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
+    pkill -TERM -x "filebrowser" 2>/dev/null || true
+}
+
+# Installed here, not at the ComfyUI launch below: a pod stopped while setup is
+# still running (or held by keep_pod_alive) would otherwise die with no trace.
+# Once ComfyUI runs, only flag it and let the `wait` return so it can exit first.
+SHUTTING_DOWN=0
+on_shutdown() {
+    SHUTTING_DOWN=1
+    if [ -z "${COMFY_PID:-}" ]; then
+        stop_services
+        exit 0
+    fi
+    kill "$COMFY_PID" 2>/dev/null || true
+}
+trap on_shutdown SIGTERM SIGINT
+
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
 if [ ! -f "$ARGS_FILE" ]; then
@@ -572,21 +594,13 @@ echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
 COMFY_PID=$!
 
-# Distinguish a real ComfyUI crash from the pod being stopped/restarted/
-# terminated (RunPod sends SIGTERM to PID 1, which we forward to ComfyUI —
-# without the flag the crash banner would print on every normal shutdown).
-SHUTTING_DOWN=0
-trap 'SHUTTING_DOWN=1; kill $COMFY_PID 2>/dev/null' SIGTERM SIGINT
-
 COMFY_EXIT=0
 wait $COMFY_PID || COMFY_EXIT=$?
 
+# The flag tells a real ComfyUI crash from the pod being stopped, so the crash
+# banner below does not print on every normal shutdown.
 if [ "$SHUTTING_DOWN" = "1" ]; then
-    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
-    # Docker only signals PID 1; stop the nohup'd background services too so
-    # they exit cleanly instead of waiting for SIGKILL.
-    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
-    pkill -TERM -x "filebrowser" 2>/dev/null || true
+    stop_services
     exit 0
 fi
 
