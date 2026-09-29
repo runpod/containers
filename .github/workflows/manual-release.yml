@@ -40,6 +40,7 @@ jobs:
     permissions:
       contents: write
       actions: read
+      pull-requests: read
     steps:
       - name: Guard — main only
         if: github.ref != 'refs/heads/main'
