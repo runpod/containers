@@ -14,10 +14,10 @@ BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDire
 #                          Function Definitions                                  #
 # ---------------------------------------------------------------------------- #
 
-# Setup SSH with optional key or random password
+# Setup SSH; login is by key only
 setup_ssh() {
     mkdir -p ~/.ssh
-    
+
     if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
         ssh-keygen -A -q
     fi
@@ -27,10 +27,9 @@ setup_ssh() {
         echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
         chmod 700 -R ~/.ssh
     else
-        # Generate random password if no public key
-        RANDOM_PASS=$(openssl rand -base64 12)
-        echo "root:${RANDOM_PASS}" | chpasswd
-        echo "Generated random SSH password for root: ${RANDOM_PASS}"
+        echo "PUBLIC_KEY is not set; sshd is running but no key is authorized,"
+        echo "so every login is refused. Add an SSH key to your Runpod account"
+        echo "or set PUBLIC_KEY yourself, then restart the pod."
     fi
 
     # Configure SSH to preserve environment variables

@@ -240,10 +240,8 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # Jupyter is included in the lock file and installed in the builder stage
 
-# Configure SSH for root login
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    mkdir -p /run/sshd && \
+# Host keys are dropped so every pod generates its own on first boot.
+RUN mkdir -p /run/sshd && \
     rm -f /etc/ssh/ssh_host_*
 
 # Create workspace directory

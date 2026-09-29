@@ -60,6 +60,10 @@ setup_ssh() {
             echo "Key: $key"
             ssh-keygen -lf "$key"
         done
+    else
+        echo "PUBLIC_KEY is not set; skipping SSH -- port 22 stays closed."
+        echo "Add an SSH key to your Runpod account or set PUBLIC_KEY yourself,"
+        echo "then restart the pod."
     fi
 }
 
