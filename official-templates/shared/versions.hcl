@@ -31,5 +31,9 @@ CUDA_VERSIONS = [
   {
     version = "13.0.0"
     ubuntu = ["24.04"]
+  },
+  {
+    version = "13.2.0"
+    ubuntu = ["24.04"]
   }
 ]

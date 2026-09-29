@@ -152,8 +152,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Each image is a CUDA-devel base plus a ~12GB uv environment, so loading
+    # the whole matrix onto one runner's disk is what killed the pytorch job.
+    # Shard by CUDA version: one runner per version, at most two images each.
     outputs:
       changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -178,9 +185,9 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          cache-key: ${{ github.repository }}/autoresearch
+          cache-key: ${{ github.repository }}/autoresearch-${{ matrix.cuda }}
 
-      - name: Build autoresearch images
+      - name: Build autoresearch images (${{ matrix.cuda }})
         id: build
         if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -193,6 +200,7 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
           load: true
           push: false
 
@@ -241,7 +249,7 @@ jobs:
         if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: autoresearch-refs
+          name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs/refs.json
           retention-days: 1
           if-no-files-found: error
@@ -259,16 +267,20 @@ jobs:
       needs.build-autoresearch.result == 'success'
       && (github.event_name != 'pull_request'
           || needs.build-autoresearch.outputs.changed == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Download refs artifact
+      - name: Download refs for ${{ matrix.cuda }}
         uses: actions/download-artifact@v8
         with:
-          name: autoresearch-refs
+          name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs
 
       - name: Read refs
@@ -282,13 +294,14 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test
+      - name: Smoke test (${{ matrix.cuda }})
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
           exclude-instances: |
             RTX 2000 Ada
 
@@ -310,7 +323,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -327,6 +340,18 @@ jobs:
               - 'official-templates/base/**'
               - 'official-templates/pytorch/**'
               - 'container-template/**'
+
+      # TEMPORARY: build-pytorch (cu1290) dies mid-export with "unexpected EOF"
+      # from BuildKit. Runs before docker-setup so the restored buildx cache is
+      # not what gets cleared. Remove once the cause is confirmed.
+      - name: Free disk space (temporary)
+        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
+        run: |
+          df -h /
+          docker system df || true
+          docker system prune -af --volumes || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache
+          df -h /
 
       - name: Setup Docker
         if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
@@ -419,7 +444,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -451,11 +476,13 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          test-torch-packages: true
           # Patterns match catalog DISPLAY names, which never contain the
-          # word "Blackwell" — only the ids do. Enumerate the cards.
+          # word "Blackwell" — only the ids do. Enumerate the cards, with a
+          # trailing * so the MIG slices ('B300 MIG 34GB') match too.
           exclude-instances: |
-            B200
-            B300
+            B200*
+            B300*
             RTX 5090
             RTX PRO *
             PRO 6000 MIG *
@@ -480,7 +507,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -594,7 +621,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -625,3 +652,12 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-torch-packages: true
+          # torch 2.12/2.13 here take torchvision from cu129, which upstream
+          # builds without Blackwell.
+          exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *

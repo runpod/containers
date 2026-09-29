@@ -27,3 +27,4 @@ pytorch:
     #
     # Drop this to test bootability only — it adds the :8888 Jupyter probes.
     test_jupyter: true
+    test_torch_packages: true

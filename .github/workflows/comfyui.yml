@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        comfyui: [cuda128, cuda130]
+        comfyui: [cuda128, cuda130, cuda132]
     permissions:
       contents: read
       id-token: write
@@ -114,7 +114,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        comfyui: [cuda128, cuda130]
+        comfyui: [cuda128, cuda130, cuda132]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
