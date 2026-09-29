@@ -26,14 +26,16 @@ setup_ssh() {
     if [[ $PUBLIC_KEY ]]; then
         echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
         chmod 700 -R ~/.ssh
+        if ! printf '%s\n' "$PUBLIC_KEY" | ssh-keygen -lf - > /dev/null 2>&1; then
+            echo "WARNING: PUBLIC_KEY is not a valid SSH public key, so sshd will"
+            echo "ignore it and direct SSH to port 22 will be refused. It must be"
+            echo "the contents of your .pub file, one line, e.g. ssh-ed25519 AAAA..."
+        fi
     else
-        echo "PUBLIC_KEY is not set; sshd is running but no key is authorized,"
-        echo "so every login is refused. Add an SSH key to your Runpod account"
-        echo "or set PUBLIC_KEY yourself, then restart the pod."
+        echo "PUBLIC_KEY is not set, so no key is authorized here and direct SSH"
+        echo "to port 22 is refused. Connecting through ssh.runpod.io is"
+        echo "unaffected. For port 22, set PUBLIC_KEY and restart the pod."
     fi
-
-    # Configure SSH to preserve environment variables
-    echo "PermitUserEnvironment yes" >> /etc/ssh/sshd_config
 
     # Start SSH service
     /usr/sbin/sshd
