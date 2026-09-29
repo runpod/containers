@@ -623,6 +623,7 @@ announce_when_ready &
 
 COMFY_EXIT=0
 wait $COMFY_PID || COMFY_EXIT=$?
+echo "DEBUG: wait вернул $COMFY_EXIT, SHUTTING_DOWN=$SHUTTING_DOWN"
 
 # The flag tells a real ComfyUI crash from the pod being stopped, so the crash
 # banner below does not print on every normal shutdown.
