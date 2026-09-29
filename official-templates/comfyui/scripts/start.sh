@@ -623,7 +623,6 @@ announce_when_ready &
 
 COMFY_EXIT=0
 wait $COMFY_PID || COMFY_EXIT=$?
-echo "DEBUG: wait вернул $COMFY_EXIT, SHUTTING_DOWN=$SHUTTING_DOWN"
 
 # The flag tells a real ComfyUI crash from the pod being stopped, so the crash
 # banner below does not print on every normal shutdown.
@@ -632,29 +631,34 @@ if [ "$SHUTTING_DOWN" = "1" ]; then
     exit 0
 fi
 
-if [ "$COMFY_EXIT" = "137" ]; then
-    # 137 is SIGKILL, which in a container is the cgroup OOM killer. The
-    # generic banner sends people hunting for a traceback that cannot exist.
-    # cgroup v2 path first, then v1; a huge value in either means "unlimited".
-    # Piped through cat so a missing file cannot abort awk — and with it, under
-    # `set -e`, the whole script before this banner is printed.
-    RAM_LIMIT=$(cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
-        | awk '$1 ~ /^[0-9]+$/ && $1 < 1e15 {printf " (limit %.0f GiB)", $1/1073741824; exit}')
-    echo "============================================="
+# 137 is SIGKILL: normally the cgroup OOM killer, but a manual kill is
+# indistinguishable, so confirm against the cgroup's own counter. Both reads go
+# through cat, because a missing file aborts awk and `set -e` would then kill
+# the script before it prints anything. An unreadable counter reads as an OOM,
+# which is what a SIGKILL in a pod almost always is.
+OOM_KILLS=$(cat /sys/fs/cgroup/memory.events 2>/dev/null \
+    | awk '$1 == "oom_kill" {print $2; exit}')
+# A huge limit in cgroup v1 means "unlimited"; v2 writes "max" instead.
+RAM_LIMIT=$(cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
+    | awk '$1 ~ /^[0-9]+$/ && $1 < 1e15 {printf " (limit %.0f GiB)", $1/1073741824; exit}')
+
+echo "============================================="
+if [ "$COMFY_EXIT" = "137" ] && [ "$OOM_KILLS" != "0" ]; then
     echo "  ComfyUI was killed: the container ran out of RAM${RAM_LIMIT}."
     echo "  There is no traceback above — it was terminated from outside."
-    echo "  Deploy with more RAM or load a smaller model."
-    echo "  SSH, JupyterLab and FileBrowser stay up."
-    echo "============================================="
+    echo "  Load a smaller model, or redeploy the pod with more RAM."
+elif [ "$COMFY_EXIT" = "137" ]; then
+    echo "  ComfyUI was killed from outside (SIGKILL). The memory limit was"
+    echo "  never reached, so this was not an out-of-memory kill."
 else
-    echo "============================================="
     echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
     echo "  Check the logs above for the error/traceback."
-    echo "  SSH and JupyterLab are still available."
-    echo "  To restart after fixing:"
-    echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
-    echo "    python main.py ${COMFY_ARGS[*]}"
-    echo "============================================="
 fi
+
+echo "  SSH, JupyterLab and FileBrowser stay up. ComfyUI is not restarted"
+echo "  automatically; to start it again in this pod:"
+echo "    cd $COMFYUI_DIR && source $(basename "$VENV_DIR")/bin/activate"
+echo "    python main.py ${COMFY_ARGS[*]}"
+echo "============================================="
 
 hold_pod
