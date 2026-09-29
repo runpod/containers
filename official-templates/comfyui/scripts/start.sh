@@ -635,8 +635,11 @@ fi
 if [ "$COMFY_EXIT" = "137" ]; then
     # 137 is SIGKILL, which in a container is the cgroup OOM killer. The
     # generic banner sends people hunting for a traceback that cannot exist.
-    RAM_LIMIT=$(awk '$1 ~ /^[0-9]+$/ {printf " (limit %.0f GiB)", $1/1073741824}' \
-        /sys/fs/cgroup/memory.max 2>/dev/null)
+    # cgroup v2 path first, then v1; a huge value in either means "unlimited".
+    # Piped through cat so a missing file cannot abort awk — and with it, under
+    # `set -e`, the whole script before this banner is printed.
+    RAM_LIMIT=$(cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
+        | awk '$1 ~ /^[0-9]+$/ && $1 < 1e15 {printf " (limit %.0f GiB)", $1/1073741824; exit}')
     echo "============================================="
     echo "  ComfyUI was killed: the container ran out of RAM${RAM_LIMIT}."
     echo "  There is no traceback above — it was terminated from outside."
