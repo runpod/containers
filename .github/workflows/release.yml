@@ -23,6 +23,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 
 # PR: cancel superseded runs (per ref). Push to main: SERIALIZE — a constant
 # group with cancel-in-progress:false makes a 2nd merge wait for the 1st to
