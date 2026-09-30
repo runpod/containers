@@ -9,6 +9,10 @@ It layers two things on top of `runpod/pytorch`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
 
+   The head node is identified by hostname, so a pod deployed from this template
+   on its own is never `node-0`: it runs the two exporters and nothing else, and
+   `:8889` serves nothing. Grafana needs a cluster deployment.
+
 Published to its own repository, with the pytorch tag scheme, e.g.
 `runpod/pytorch-cluster:<version>-cu1281-torch280-ubuntu2404`. Its version
 series is its own, so it need not match the `runpod/pytorch` it builds on.
