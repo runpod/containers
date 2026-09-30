@@ -10,7 +10,7 @@ The Runpod Base images provide a clean, developer friendly environment for every
 - **Developer friendly**: SSH server preconfigured for seamless remote development and debugging.
 - **Smart workspace**: Optimized directory structure and package caches for faster dependency installation.
 - **Performance tuned**: Environment variables and cache strategies optimized for faster builds and execution.
-- **Jupyter ready (optional)**: Notebook and JupyterLab with widgets/extensions; enable by setting `JUPYTER_PASSWORD` (omit to disable).
+- **Jupyter ready (optional)**: Notebook and JupyterLab with widgets/extensions. Set `JUPYTER_PASSWORD` and it becomes the login token; omit it and JupyterLab does not start. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD` — the `:8888` proxy URL is public, so anyone with it gets a root shell.
 
 ### Available configurations
 - **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble)
