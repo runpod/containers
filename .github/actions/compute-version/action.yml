@@ -61,7 +61,7 @@ runs:
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_BODY_JSON: ${{ toJSON(github.event.pull_request.body) }}
         GH_TOKEN: ${{ github.token }}
-        FALLBACK: ${{ inputs.fallback-version }}
+        FAMILY: ${{ inputs.family }}
         RELEASE_BRANCH: ${{ inputs.release-branch }}
       run: |
         set -euo pipefail
@@ -73,6 +73,8 @@ runs:
 
         # Make sure tags are present even on shallow-ish checkouts.
         git fetch --tags --force --quiet || true
+
+        HEAD_SHA="$(git rev-parse HEAD)"
 
         PREFIX=""
         [ -n "${FAMILY}" ] && PREFIX="${FAMILY}-"
