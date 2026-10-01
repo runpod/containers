@@ -8,6 +8,7 @@ at all, because Docker Hub rejects bad credentials instead of falling
 back to an anonymous pull.
 """
 
+import io
 import unittest
 from unittest import mock
 
@@ -23,6 +24,11 @@ REGISTRIES = [
 
 class RegistryAuthResolution(unittest.TestCase):
     def setUp(self) -> None:
+        # The code under test prints `::error::` lines; GitHub would turn
+        # those into annotations on a passing run.
+        quiet = mock.patch("sys.stdout", new_callable=io.StringIO)
+        quiet.start()
+        self.addCleanup(quiet.stop)
         self.addCleanup(
             setattr, config, "REGISTRY_AUTH_ID", config.REGISTRY_AUTH_ID
         )

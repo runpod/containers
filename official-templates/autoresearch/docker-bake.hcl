@@ -3,6 +3,12 @@
 # for it; 22.04 keeps the 12.8.1 build it already had and is not widened —
 # Ubuntu 22.04 is on its way out.
 
+# Which published runpod/base to build FROM — in-run base tag when base was
+# rebuilt in this run, else the last released base (see base.yml).
+variable "BASE_VERSION" {
+  default = "1.0.7"
+}
+
 variable "AUTORESEARCH_BUILDS" {
   default = flatten([
     for cuda in CUDA_VERSIONS : [
@@ -70,7 +76,7 @@ target "autoresearch-matrix" {
   name = "autoresearch-${build.ubuntu_name}-cuda${build.cuda_code}"
 
   args = {
-    BASE_IMAGE = "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}"
+    BASE_IMAGE = "runpod/base:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
   }
 
   tags = [
