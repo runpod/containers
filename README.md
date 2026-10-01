@@ -12,6 +12,8 @@ The following dependencies are required for all images for Runpod platform funct
 - `openssh-server`: Required for SSH access to the container.
 - `jupyterlab`: Required for JupyterLab access to the container.
 
+Sandbox images (`official-templates/sandbox-*`) are the exception: commands reach them through the Sandbox API rather than through a service in the container, so they ship none of the three on purpose.
+
 ### README
 
 Every container folder has its own README.md file, displayed on Docker Hub and in the template section on the Runpod website. When containers open ports other than 8888 through the proxy, the README guides users while services are starting up.

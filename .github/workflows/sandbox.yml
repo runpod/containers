@@ -1,0 +1,471 @@
+name: Sandbox Images Build
+
+# Reusable building block invoked by the release orchestrator (release.yml),
+# which passes in the families it planned. Not triggered on its own — the
+# orchestrator owns triggers, concurrency and release.
+#
+# Unlike the other families these images carry no sshd/nginx/Jupyter, so the
+# pod-based smoke test does not apply; they are verified in-container before
+# the push instead.
+on:
+  workflow_call:
+    inputs:
+      families:
+        description: >-
+          JSON array of families to build, from .github/scripts/plan_families.py.
+          A family absent from it keeps its published images and version.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # One version series per sandbox family; harbor layers on sandbox-ubuntu, so
+  # `ubuntu-published` is what it builds FROM when ubuntu is not rebuilt here.
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      suffix: ${{ steps.ubuntu.outputs.suffix }}
+      ubuntu: ${{ steps.ubuntu.outputs.version }}
+      ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
+      openclaw: ${{ steps.openclaw.outputs.version }}
+      harbor: ${{ steps.harbor.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: sandbox-ubuntu
+        id: ubuntu
+        uses: ./.github/actions/compute-version
+        with:
+          family: sandbox-ubuntu
+
+      - name: sandbox-openclaw
+        id: openclaw
+        uses: ./.github/actions/compute-version
+        with:
+          family: sandbox-openclaw
+
+      - name: sandbox-harbor
+        id: harbor
+        uses: ./.github/actions/compute-version
+        with:
+          family: sandbox-harbor
+
+  build-sandbox-ubuntu:
+    needs: versions
+    if: contains(fromJSON(inputs.families), 'sandbox-ubuntu')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/sandbox-ubuntu
+
+      - name: Build sandbox-ubuntu image
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.ubuntu }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/sandbox-ubuntu/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Verify sandbox-ubuntu
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          set -euo pipefail
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+          IMAGE=$(jq -er '.[] | select(contains("-ubuntu2604"))' <<< "$REFS")
+          echo "Verifying $IMAGE"
+
+          # An idle CMD under a reaping init is what makes the image usable as
+          # a sandbox: it stays up, runs no service of its own, and does not
+          # accumulate zombies from exec'd commands.
+          test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/bin/tini","-g","--"]'
+          test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["sleep","infinity"]'
+          say boot "tini -g -- sleep infinity"
+          say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
+
+          docker run --rm "$IMAGE" bash -eo pipefail -c '
+            say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+            test "$(id -un)" = user && test "$(id -u)" = 1000
+            sudo -n true
+            say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+            # Recorded explicitly: a sandbox reporting other ids is the runtime
+            # shifting them, not this image. Real case: uid 655360 on dev.
+            test "$(stat -c %u /etc/sudo.conf)" = 0
+            test "$(stat -c %u /home/user)" = "$(id -u)"
+            say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
+
+            python --version | grep -q "^Python 3.14"
+            node --version | grep -q "^v24\."
+            say python "$(python --version | cut -d" " -f2), uv $(uv --version | cut -d" " -f2)"
+            say node "$(node --version), npm $(npm --version)"
+            say git "$(git --version | cut -d" " -f3)"
+
+            # An exec call lasts seconds; a long command has to outlive it.
+            say tmux "$(tmux -V | cut -d" " -f2)"
+
+            # Without root a .deb is unpacked by hand, and they are zstd now.
+            say zstd "$(zstd --version | grep -o 'v[0-9.]*' | head -1)"
+
+            # CI runs under runc, where either tar works, so the version is
+            # the only thing that shows the openat2 pin is still in place.
+            test "$(dpkg-query -W -f=\${Version} tar)" = "1.35+dfsg-3ubuntu0.4"
+            mkdir -p /tmp/t/a && echo hi > /tmp/t/a/f && tar -cf /tmp/t.tar -C /tmp t
+            mkdir -p /tmp/out && tar -xf /tmp/t.tar -C /tmp/out && test "$(cat /tmp/out/t/a/f)" = hi
+            say tar "$(dpkg-query -W -f=\${Version} tar) (24.04 build, pinned for openat2)"
+
+            # 26.04 marks the system Python externally managed; this is the
+            # first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
+            pip install --quiet --no-input six && python -c "import six"
+            say pip "installs despite the externally-managed marker"
+
+            uv venv /tmp/v && /tmp/v/bin/python -c "print(1)"
+            say venv "uv creates a working virtualenv"
+          '
+
+          # Nothing fronts a sandbox, so these must stay out of the image —
+          # checked by path because /usr/sbin is off a non-root PATH.
+          ! docker run --rm "$IMAGE" bash -c '
+            ls /usr/sbin/sshd /usr/sbin/nginx /usr/local/bin/jupyter 2>/dev/null | grep .
+          '
+          say no-services "sshd, nginx and jupyter all absent"
+
+      # Report-only: npm's bundled dependency tree carries HIGH advisories in
+      # every release published so far, and no Node build fixes that for us.
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+  build-sandbox-openclaw:
+    needs: versions
+    if: contains(fromJSON(inputs.families), 'sandbox-openclaw')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/sandbox-openclaw
+
+      - name: Build sandbox-openclaw image
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.openclaw }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/sandbox-openclaw/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Verify sandbox-openclaw
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          set -euo pipefail
+
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+          while read -r IMAGE; do
+            echo "::group::$IMAGE"
+
+            # Our layer must not disturb how upstream boots the gateway: both
+            # the command and the healthcheck resolve relative to /app.
+            test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["tini","-s","--"]'
+            test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["node","openclaw.mjs","gateway","--bind","loopback"]'
+            test "$(docker inspect -f '{{.Config.WorkingDir}}' "$IMAGE")" = /app
+
+            say boot "$(docker inspect -f '{{json .Config.Entrypoint}} {{json .Config.Cmd}} in {{.Config.WorkingDir}}' "$IMAGE")"
+            say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
+
+            docker run --rm --entrypoint bash "$IMAGE" -eo pipefail -c '
+              say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+              test "$(id -un)" = node
+              sudo -n true
+              say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+              # Recorded explicitly: a sandbox reporting other ids is the runtime
+              # shifting them, not this image. Real case: uid 655360 on dev.
+              test "$(stat -c %u /etc/sudo.conf)" = 0
+              test "$(stat -c %u /home/node)" = "$(id -u)"
+              say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/node uid $(stat -c %u /home/node)"
+
+              say openclaw "$(openclaw --version)"
+
+              node --version | grep -q "^v24\."
+              say node "$(node --version), npm $(npm --version)"
+              say python "$(python3 --version | cut -d" " -f2), git $(git --version | cut -d" " -f3)"
+
+              # Upstream ships no compiler, and agents install packages with
+              # native extensions.
+              say build "gcc $(gcc -dumpversion), make $(make --version | head -1 | cut -d" " -f3)"
+
+              # An exec call lasts seconds; a long command has to outlive it.
+              say tmux "$(tmux -V | cut -d" " -f2)"
+
+              # Baked at build; without it the gateway refuses to serve.
+              openclaw config get gateway.mode | grep -q local
+              say gateway.mode "$(openclaw config get gateway.mode)"
+
+              # Debian 12 marks the system Python externally managed; this is
+              # the first thing a user hits if PIP_BREAK_SYSTEM_PACKAGES is lost.
+              pip install --quiet --no-input six && python3 -c "import six"
+              say pip "installs despite the externally-managed marker"
+
+              test -d /home/node/.openclaw/workspace
+              say state "/home/node/.openclaw + workspace present"
+            '
+
+            # OpenClaw can drive Docker for its own sandboxing; inside a
+            # sandbox there is no socket to drive, so the CLI would mislead.
+            ! docker run --rm --entrypoint bash "$IMAGE" -c 'command -v docker'
+            say docker-cli "absent, as it must be"
+
+            # A baked Chromium cannot be kept patched, so switching the base
+            # to an upstream `-browser` tag must not pass unnoticed.
+            ! docker run --rm --entrypoint bash "$IMAGE" -c \
+              'ls -d "$PLAYWRIGHT_BROWSERS_PATH"/chromium* 2>/dev/null | grep .'
+            say chromium "absent; installed at runtime when an agent needs it"
+
+            # The gateway must come up unconfigured, since a fresh sandbox has
+            # no provider key. Upstream's own healthcheck is the verdict.
+            CID=$(docker run -d "$IMAGE")
+            ok=0 status=starting waited=0
+            for _ in $(seq 1 40); do
+              status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || echo gone)
+              case "$status" in
+                healthy) ok=1; break ;;
+                unhealthy|none|gone) break ;;
+              esac
+              sleep 3
+              waited=$((waited + 3))
+            done
+            if [ "$ok" = 1 ]; then
+              say gateway "healthy after ${waited}s, bound to loopback"
+            else
+              echo "::error::gateway never reported healthy (status=$status)"
+              docker logs "$CID" 2>&1 | tail -60
+            fi
+            docker rm -f "$CID" > /dev/null
+            test "$ok" = 1
+
+            echo "::endgroup::"
+          done < <(jq -r '.[]' <<< "$REFS")
+
+      # Report-only: this layers on a third-party image, so upstream CVEs
+      # would otherwise block our releases.
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+  # Layers on runpod/ubuntu: the image this run pushed when sandbox-ubuntu is
+  # part of the build, else the last released one.
+  build-sandbox-harbor:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [versions, build-sandbox-ubuntu]
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'sandbox-harbor')
+      && (needs.build-sandbox-ubuntu.result == 'success'
+          || needs.build-sandbox-ubuntu.result == 'skipped')
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/sandbox-harbor
+
+      - name: Build sandbox-harbor image
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.harbor }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/sandbox-harbor/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Verify sandbox-harbor
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          set -euo pipefail
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+          IMAGE=$(jq -er '.[0]' <<< "$REFS")
+          echo "Verifying $IMAGE"
+
+          # Inherited from sandbox-ubuntu; a base bump that drops either would
+          # turn every Harbor sandbox into a zombie farm or a root shell.
+          test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/bin/tini","-g","--"]'
+          test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["sleep","infinity"]'
+          say boot "tini -g -- sleep infinity, inherited from sandbox-ubuntu"
+          say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
+
+          docker run --rm "$IMAGE" bash -eo pipefail -c '
+            say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+            test "$(id -un)" = user
+            sudo -n true
+            say user "$(id -un) (uid $(id -u)), passwordless sudo"
+
+            # Recorded explicitly: a sandbox reporting other ids is the runtime
+            # shifting them, not this image. Real case: uid 655360 on dev.
+            test "$(stat -c %u /etc/sudo.conf)" = 0
+            test "$(stat -c %u /home/user)" = "$(id -u)"
+            say ownership "sudo.conf uid $(stat -c %u /etc/sudo.conf), /home/user uid $(stat -c %u /home/user)"
+
+            say harbor "$(harbor --version)"
+            say tmux "$(tmux -V | cut -d" " -f2)"
+
+            # Harbor dials out over ssh, so the client is the half that matters.
+            command -v ssh scp > /dev/null
+            say ssh-client "$(ssh -V 2>&1)"
+          '
+
+          # A sandbox has no inbound path for ssh, so a daemon here would only
+          # advertise a way in that does not exist.
+          ! docker run --rm "$IMAGE" bash -c 'command -v sshd || ls /usr/sbin/sshd'
+          say sshd "absent, as it must be"
+
+      # Report-only: npm's bundled dependency tree carries HIGH advisories in
+      # every release published so far, and no Node build fixes that for us.
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
