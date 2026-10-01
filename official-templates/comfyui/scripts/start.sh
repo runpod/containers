@@ -256,6 +256,23 @@ create_pip_shim() {
     fi
 }
 
+# Run a long step in the background and print a heartbeat every 10s, so minutes
+# of silence on a network volume do not read as a hung pod. Returns its status.
+run_with_heartbeat() {
+    local label="$1" started=$SECONDS tick=0 pid
+    shift
+    "$@" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 5
+        tick=$((tick + 1))
+        if [ $((tick % 2)) -eq 0 ]; then
+            echo "  $label... $((SECONDS - started))s elapsed"
+        fi
+    done
+    wait "$pid"
+}
+
 # ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
 # to exact versions, and the workspace checkout can move away from the image via
 # Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
@@ -300,11 +317,16 @@ sync_comfyui_pinned_packages() {
         return
     fi
 
+    local started=$SECONDS
     echo "============================================="
     echo "  Workspace ComfyUI disagrees with the packages in this image (see above)."
     echo "  Installing the versions it asks for into $VENV_DIR"
+    echo "  On a network volume this takes a few minutes; ComfyUI starts after it."
     echo "============================================="
-    if ! python -m pip install --no-cache-dir "${missing[@]}"; then
+    if run_with_heartbeat "still installing" \
+        python -m pip install --no-cache-dir "${missing[@]}"; then
+        echo "Packages installed in $((SECONDS - started))s"
+    else
         echo "WARNING: could not install them. If ComfyUI fails to import, redeploy"
         echo "         on a newer image instead of updating ComfyUI in place."
     fi
@@ -424,6 +446,54 @@ nohup filebrowser &> /filebrowser.log &
 
 start_jupyter
 
+# With `set -e` an unexpected failure during the rest of startup would exit and
+# the container would be restarted straight back into it, tearing down
+# SSH/Jupyter/FileBrowser each time. Hold the pod instead. Cleared once ComfyUI
+# starts.
+# Bash runs no trap while it waits on a foreground command, so a plain
+# `sleep infinity` would swallow the stop signal until Docker sends SIGKILL.
+hold_pod() {
+    sleep infinity &
+    wait $! || true
+}
+
+keep_pod_alive() {
+    local rc=$?
+    echo "============================================="
+    echo "  Pod setup failed before ComfyUI could be started (exit code $rc)."
+    echo "  The error is above. SSH, JupyterLab and FileBrowser stay up so you"
+    echo "  can inspect the pod; nothing is retried automatically."
+    echo "============================================="
+    hold_pod
+}
+set -E
+trap keep_pod_alive ERR
+
+# Docker only signals PID 1; stop the nohup'd background services too so they
+# exit cleanly instead of waiting for SIGKILL.
+stop_services() {
+    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
+    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
+    pkill -TERM -x "filebrowser" 2>/dev/null || true
+}
+
+# Installed here, not at the ComfyUI launch below: a pod stopped while setup is
+# still running (or held by keep_pod_alive) would otherwise die with no trace.
+# Once ComfyUI runs, only flag it and let the `wait` return so it can exit first.
+SHUTTING_DOWN=0
+on_shutdown() {
+    SHUTTING_DOWN=1
+    # Only when ComfyUI is still running is there something to wait for: kill it
+    # and let the `wait` below return so it can exit before the cleanup.
+    if [ -n "${COMFY_PID:-}" ] && kill -0 "$COMFY_PID" 2>/dev/null; then
+        kill "$COMFY_PID" 2>/dev/null || true
+        return
+    fi
+    stop_services
+    exit 0
+}
+trap on_shutdown SIGTERM SIGINT
+
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
 if [ ! -f "$ARGS_FILE" ]; then
@@ -481,40 +551,85 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ] && [ "$VENV_NAME" = ".venv-cu1
     fi
 fi
 
-# Setup ComfyUI if needed
-if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
-    PREVIOUS_VENV=$(find_previous_venv)
+# A stage directory left by an interrupted copy is resumed into below, but it
+# is dead weight on the volume once the real directory exists.
+if [ -d "$COMFYUI_DIR" ] && [ -d "${COMFYUI_DIR}.incomplete" ]; then
+    echo "Removing leftover ${COMFYUI_DIR}.incomplete"
+    rm -rf "${COMFYUI_DIR}.incomplete"
+fi
 
-    # Copy baked ComfyUI from image (no git, no network)
+# `python3.12 -m venv` has been seen leaving the directory behind without
+# bin/activate, and a directory test then passes for a venv nothing can source.
+venv_is_usable() { [ -f "$VENV_DIR/bin/activate" ]; }
+
+# Setup ComfyUI if needed
+if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
+    PREVIOUS_VENV=$(find_previous_venv)
+    # Copy baked ComfyUI from image (no git, no network). Staged under a
+    # temporary name so an interrupted copy is never taken for a finished one.
     if [ ! -d "$COMFYUI_DIR" ]; then
-        echo "First time setup: Copying baked ComfyUI to workspace..."
-        cp -r /opt/comfyui-baked "$COMFYUI_DIR"
-        echo "ComfyUI copied to workspace"
+        echo "============================================="
+        echo "  First-time setup: copying ComfyUI to $COMFYUI_DIR"
+        echo "  On a network volume this takes several minutes, and the"
+        echo "  ComfyUI port stays closed until it finishes. This is normal."
+        echo "  Stopping the pod now leaves the copy to be resumed on the"
+        echo "  next start — nothing is lost, but the wait starts over."
+        echo "============================================="
+        COPY_STARTED=$SECONDS
+        mkdir -p "${COMFYUI_DIR}.incomplete"
+        run_with_heartbeat "still copying" \
+            rsync -a "$BAKED_COMFYUI_DIR/" "${COMFYUI_DIR}.incomplete/"
+        mv "${COMFYUI_DIR}.incomplete" "$COMFYUI_DIR"
+        echo "ComfyUI copied to workspace in $((SECONDS - COPY_STARTED))s"
     fi
 
     # Create venv with access to system packages (torch, numpy, etc. pre-installed in image)
-    if [ ! -d "$VENV_DIR" ]; then
+    if ! venv_is_usable; then
         cd "$COMFYUI_DIR"
+        if [ -d "$VENV_DIR" ]; then
+            # Reached only with bin/activate missing. It is written last, so a
+            # venv that failed mid-creation holds nothing — but if one does,
+            # keep it.
+            if [ -n "$(ls -A "$VENV_DIR"/lib/python*/site-packages 2>/dev/null)" ]; then
+                VENV_BROKEN="${VENV_DIR}.broken.$(date +%Y%m%d%H%M%S)"
+                echo "$VENV_DIR has no bin/activate but is not empty — moving it to $VENV_BROKEN"
+                echo "  Installed packages are kept there; delete it to free space."
+                mv "$VENV_DIR" "$VENV_BROKEN" || true
+            else
+                echo "Discarding unusable $VENV_DIR (no bin/activate) and recreating it"
+                rm -rf "$VENV_DIR"
+            fi
+        fi
         # --without-pip: pip stays in the image (local disk, bytecode compiled
         # at build) instead of on the network volume, where importing it can
         # exceed ComfyUI-Manager's probe timeout. --system-site-packages keeps
         # it importable, and installs still land in this venv via sys.prefix.
-        python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR"
-        # shellcheck source=/dev/null
-        source "$VENV_DIR/bin/activate"
-
+        python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR" || true
+        # Keep SSH/Jupyter/FileBrowser reachable instead of crash-looping on a
+        # bare `source: No such file or directory`.
+        if ! venv_is_usable; then
+            echo "============================================="
+            echo "  Could not create the Python environment at $VENV_DIR"
+            echo "  (see the error above). ComfyUI was not started."
+            echo "  SSH, JupyterLab and FileBrowser stay up so you can inspect"
+            echo "  the pod; nothing is retried automatically."
+            echo "============================================="
+            hold_pod
+        fi
         echo "Base packages (torch, numpy, etc.) available from system site-packages"
         echo "ComfyUI ready — all dependencies pre-installed in image"
     fi
+fi
 
-    if [ -n "$PREVIOUS_VENV" ]; then
-        reinstall_user_node_deps "$PREVIOUS_VENV"
-    fi
-else
-    # Just activate the existing venv
-    # shellcheck source=/dev/null
-    source "$VENV_DIR/bin/activate"
-    echo "Using existing ComfyUI installation"
+# Activated on every path: a resumed copy can restore a workspace that already
+# carries a usable venv, and then neither branch above would have sourced it.
+# shellcheck source=/dev/null
+source "$VENV_DIR/bin/activate"
+echo "Using ComfyUI installation at $COMFYUI_DIR"
+
+# After activation, so the reinstalled packages land in the venv we just made.
+if [ -n "${PREVIOUS_VENV:-}" ]; then
+    reinstall_user_node_deps "$PREVIOUS_VENV"
 fi
 
 create_pip_shim
@@ -549,35 +664,69 @@ if [ -s "$ARGS_FILE" ]; then
     done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
 fi
 
+# Startup is over: from here the crash banner below owns failures, and a live
+# ERR trap would also fire on the shutdown path and hold the pod open.
+trap - ERR
+
 echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
 COMFY_PID=$!
 
-# Distinguish a real ComfyUI crash from the pod being stopped/restarted/
-# terminated (RunPod sends SIGTERM to PID 1, which we forward to ComfyUI —
-# without the flag the crash banner would print on every normal shutdown).
-SHUTTING_DOWN=0
-trap 'SHUTTING_DOWN=1; kill $COMFY_PID 2>/dev/null' SIGTERM SIGINT
+# ComfyUI-Manager's "All startup tasks have been completed" trails the usable
+# UI by minutes while it pages through api.comfy.org, so announce the port
+# itself. Users read that line as the ready signal and stop pods before it.
+announce_when_ready() {
+    local started=$SECONDS
+    until curl -fs -o /dev/null --max-time 2 http://127.0.0.1:8188/; do
+        kill -0 "$COMFY_PID" 2>/dev/null || return
+        sleep 2
+    done
+    echo "============================================="
+    echo "  ComfyUI is READY on port 8188 after $((SECONDS - started))s."
+    echo "  ComfyUI-Manager may still be refreshing its node list below;"
+    echo "  that runs in the background and does not hold up the UI."
+    echo "============================================="
+}
+announce_when_ready &
 
 COMFY_EXIT=0
 wait $COMFY_PID || COMFY_EXIT=$?
 
+# The flag tells a real ComfyUI crash from the pod being stopped, so the crash
+# banner below does not print on every normal shutdown.
 if [ "$SHUTTING_DOWN" = "1" ]; then
-    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
-    # Docker only signals PID 1; stop the nohup'd background services too so
-    # they exit cleanly instead of waiting for SIGKILL.
-    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
-    pkill -TERM -x "filebrowser" 2>/dev/null || true
+    stop_services
     exit 0
 fi
 
+# 137 is SIGKILL: normally the cgroup OOM killer, but a manual kill is
+# indistinguishable, so confirm against the cgroup's own counter. Both reads go
+# through cat, because a missing file aborts awk and `set -e` would then kill
+# the script before it prints anything. An unreadable counter reads as an OOM,
+# which is what a SIGKILL in a pod almost always is.
+OOM_KILLS=$(cat /sys/fs/cgroup/memory.events 2>/dev/null \
+    | awk '$1 == "oom_kill" {print $2; exit}')
+# A huge limit in cgroup v1 means "unlimited"; v2 writes "max" instead.
+RAM_LIMIT=$(cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
+    | awk '$1 ~ /^[0-9]+$/ && $1 < 1e15 {printf " (limit %.0f GiB)", $1/1073741824; exit}')
+
 echo "============================================="
-echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
-echo "  Check the logs above for the error/traceback."
-echo "  SSH and JupyterLab are still available."
-echo "  To restart after fixing:"
+if [ "$COMFY_EXIT" = "137" ] && [ "$OOM_KILLS" != "0" ]; then
+    echo "  ComfyUI was killed: the container ran out of RAM${RAM_LIMIT}."
+    echo "  There is no traceback above — it was terminated from outside."
+    echo "  Load a smaller model, or redeploy the pod with more RAM."
+elif [ "$COMFY_EXIT" = "137" ]; then
+    echo "  ComfyUI was killed from outside (SIGKILL). The memory limit was"
+    echo "  never reached, so this was not an out-of-memory kill."
+else
+    echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
+    echo "  Check the logs above for the error/traceback."
+fi
+
+echo "  SSH, JupyterLab and FileBrowser stay up. ComfyUI is not restarted"
+echo "  automatically; to start it again in this pod:"
 echo "    cd $COMFYUI_DIR && source $VENV_NAME/bin/activate"
 echo "    python main.py ${COMFY_ARGS[*]}"
 echo "============================================="
 
-sleep infinity
+hold_pod
