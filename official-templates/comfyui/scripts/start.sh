@@ -4,7 +4,8 @@ set -e  # Exit the script if any statement returns a non-true return value
 COMFYUI_DIR="/workspace/runpod-slim/ComfyUI"
 BAKED_COMFYUI_DIR="/opt/comfyui-baked"
 BUNDLE_VERSION_FILE=".runpod-bundle-version"
-VENV_DIR="$COMFYUI_DIR/.venv-cu128"
+VENV_NAME="${COMFYUI_VENV_NAME:-.venv-cu128}"
+VENV_DIR="$COMFYUI_DIR/$VENV_NAME"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
@@ -93,11 +94,23 @@ export_env_vars() {
 
 # Start Jupyter Lab server for remote access
 start_jupyter() {
+    local JUPYTER_TOKEN
     mkdir -p /workspace
 
-    if [ -z "${JUPYTER_PASSWORD:-}" ]; then
-        JUPYTER_PASSWORD=$(openssl rand -hex 16)
-        echo "JUPYTER_PASSWORD was not set; generated one for this pod: ${JUPYTER_PASSWORD}"
+    # JUPYTER_DISABLE_AUTH=true runs with no token, a set JUPYTER_PASSWORD becomes
+    # the token, and anything else leaves Jupyter off. No token is generated here
+    # because the console never sees one minted in the container.
+    if [ "${JUPYTER_DISABLE_AUTH:-}" = "true" ]; then
+        echo "WARNING: JUPYTER_DISABLE_AUTH=true -- starting JupyterLab with NO authentication."
+        echo "WARNING: anyone with this pod's :8888 proxy URL gets a root shell and full access to /workspace."
+        JUPYTER_TOKEN=""
+    elif [ -n "${JUPYTER_PASSWORD:-}" ]; then
+        JUPYTER_TOKEN="$JUPYTER_PASSWORD"
+    else
+        echo "JUPYTER_PASSWORD is not set; skipping JupyterLab. Redeploy with"
+        echo "\"Start Jupyter notebook\" enabled, set JUPYTER_PASSWORD yourself, or set"
+        echo "JUPYTER_DISABLE_AUTH=true to run it with no password (understand the risk)."
+        return 0
     fi
 
     echo "Starting Jupyter Lab on port 8888..."
@@ -110,7 +123,7 @@ start_jupyter() {
         --FileContentsManager.preferred_dir=/workspace \
         --ServerApp.root_dir=/workspace \
         --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
-        --IdentityProvider.token="${JUPYTER_PASSWORD}" \
+        --IdentityProvider.token="${JUPYTER_TOKEN}" \
         --ServerApp.allow_origin=* &> /jupyter.log &
     echo "Jupyter Lab started"
 }
@@ -178,6 +191,54 @@ upgrade_comfyui_if_needed() {
     cp "$baked_manifest" "${installed_manifest}.tmp"
     mv "${installed_manifest}.tmp" "$installed_manifest"
     echo "ComfyUI workspace upgraded successfully"
+}
+
+# A venv belonging to another CUDA variant means this volume carries custom
+# nodes whose deps live there, not in this image — so a missing venv of our own
+# is a move between variants, not a fresh volume.
+find_previous_venv() {
+    local candidate found=""
+    for candidate in "$COMFYUI_DIR"/.venv "$COMFYUI_DIR"/.venv-cu*; do
+        case "$candidate" in
+            "$VENV_DIR" | *.bak*) continue ;;
+        esac
+        if [ -x "$candidate/bin/python" ]; then
+            found="$candidate"
+        fi
+    done
+    echo "$found"
+}
+
+# Baked nodes are skipped: their deps are in the image's system site-packages.
+# The old venv is left in place so going back to its own image still works.
+reinstall_user_node_deps() {
+    local previous="$1" req node count=0
+    echo "============================================="
+    echo "  This volume was last used with $(basename "$previous")"
+    echo "  Reinstalling custom node deps into $VENV_NAME"
+    echo "  This may take several minutes"
+    echo "============================================="
+    for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
+        [ -f "$req" ] || continue
+        node=$(basename "$(dirname "$req")")
+        case " ${BAKED_NODES[*]} " in
+            *" $node "*) continue ;;
+        esac
+        count=$((count + 1))
+        echo "[$count] $node"
+        python -m pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+    done
+    echo "Done — $count user nodes processed."
+    echo "Packages you installed by hand were not carried over; list them with:"
+    echo "  $previous/bin/python -m pip freeze --local"
+    if [ "$previous" = "$OLD_VENV_DIR" ]; then
+        echo "$previous predates every current image, so nothing needs it."
+    else
+        echo "$previous was left in place; it is only needed if you go back to the"
+        echo "CUDA variant that created it."
+    fi
+    echo "Delete it to free volume space:"
+    echo "  rm -rf $previous"
 }
 
 # The venv has no pip of its own, so a bare `pip` would resolve to
@@ -442,8 +503,9 @@ fi
 
 upgrade_comfyui_if_needed
 
-# Migrate old CUDA 12.4 venv to cu128
-if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
+# Migrate old CUDA 12.4 venv to cu128. Only the image that owns .venv-cu128
+# does this; on any other variant the plain .venv is handled as a move below.
+if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ] && [ "$VENV_NAME" = ".venv-cu128" ]; then
     NODE_COUNT=$(find "$COMFYUI_DIR/custom_nodes" -maxdepth 2 -name "requirements.txt" 2>/dev/null | wc -l)
     echo "============================================="
     echo "  CUDA 12.4 -> 12.8 migration"
@@ -502,6 +564,7 @@ venv_is_usable() { [ -f "$VENV_DIR/bin/activate" ]; }
 
 # Setup ComfyUI if needed
 if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
+    PREVIOUS_VENV=$(find_previous_venv)
     # Copy baked ComfyUI from image (no git, no network). Staged under a
     # temporary name so an interrupted copy is never taken for a finished one.
     if [ ! -d "$COMFYUI_DIR" ]; then
@@ -563,6 +626,11 @@ fi
 # shellcheck source=/dev/null
 source "$VENV_DIR/bin/activate"
 echo "Using ComfyUI installation at $COMFYUI_DIR"
+
+# After activation, so the reinstalled packages land in the venv we just made.
+if [ -n "${PREVIOUS_VENV:-}" ]; then
+    reinstall_user_node_deps "$PREVIOUS_VENV"
+fi
 
 create_pip_shim
 
@@ -657,7 +725,7 @@ fi
 
 echo "  SSH, JupyterLab and FileBrowser stay up. ComfyUI is not restarted"
 echo "  automatically; to start it again in this pod:"
-echo "    cd $COMFYUI_DIR && source $(basename "$VENV_DIR")/bin/activate"
+echo "    cd $COMFYUI_DIR && source $VENV_NAME/bin/activate"
 echo "    python main.py ${COMFY_ARGS[*]}"
 echo "============================================="
 

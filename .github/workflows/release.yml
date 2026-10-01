@@ -23,6 +23,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 
 # PR: cancel superseded runs (per ref). Push to main: SERIALIZE — a constant
 # group with cancel-in-progress:false makes a 2nd merge wait for the 1st to
@@ -222,6 +223,11 @@ jobs:
   # so it actually deletes. Age-based retention keeps open PRs' recent RC images.
   cleanup:
     needs: [plan, release]
-    if: github.event_name == 'push' && needs.plan.outputs.families != '[]'
+    # Keyed on the release actually succeeding, not just on the plan being
+    # non-empty — with !cancelled() a failed release would otherwise still
+    # sweep tags.
+    if: >-
+      !cancelled()
+      && needs.release.result == 'success'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit

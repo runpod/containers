@@ -30,10 +30,19 @@ An AI coding agent autonomously runs ML experiments: it modifies `train.py`, tra
 
 The 5-minute fixed time budget means cheaper GPUs work fine — you get a different optimal model size. Results are comparable within the same GPU type.
 
+Defaults in `train.py` assume an 80 GB card. On smaller GPUs lower `DEVICE_BATCH_SIZE` first — on a 24 GB card 32 runs at ~11.7 GB peak, while the default 128 runs out of memory.
+
 ### Available images
 
-- Ubuntu 22.04: `runpod/autoresearch:1.0.2-cuda1281-ubuntu2204`
-- Ubuntu 24.04: `runpod/autoresearch:1.0.2-cuda1281-ubuntu2404`
+- 12.8.1:
+    - Ubuntu 22.04: `runpod/autoresearch:1.3.2-cuda1281-ubuntu2204`
+    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1281-ubuntu2404`
+- 12.9.0:
+    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1290-ubuntu2404`
+- 13.0.0:
+    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1300-ubuntu2404`
+- 13.2.0:
+    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1320-ubuntu2404`
 
 ### Links
 

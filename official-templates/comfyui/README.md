@@ -4,17 +4,21 @@ Run the latest ComfyUI with all dependencies pre-installed in the image. On firs
 
 ## Choosing a tag
 
-The image is published for two CUDA versions, and the tag says which one you get:
+The image is published for three CUDA versions, and the tag says which one you get:
 
-| tag ends in | PyTorch built for | use it on |
+| tag ends in | PyTorch | use it on |
 |---|---|---|
-| `-cuda12.8` | CUDA 12.8 | any GPU on a host with a 12.8 or newer driver |
-| `-cuda13.0` | CUDA 13.0 | hosts with a 13.0 or newer driver |
+| `-cuda12.8` | 2.10.0, CUDA 12.8 | any GPU on a host with a 12.8 or newer driver |
+| `-cuda13.0` | 2.10.0, CUDA 13.0 | hosts with a 13.0 or newer driver |
+| `-cuda13.2` | 2.13.0, CUDA 13.2 | hosts with a 13.2 or newer driver; no Volta (V100) |
 
-Both carry the same ComfyUI, the same custom nodes and the same PyTorch
-version — only the CUDA build differs. Pick `-cuda12.8` unless you have a
-reason to want CUDA 13; a `-cuda13.0` pod will not start on a host whose
-driver is still on 12.x.
+All three carry the same ComfyUI and the same custom nodes. `-cuda12.8` and
+`-cuda13.0` differ only in the CUDA build; `-cuda13.2` is on a newer PyTorch,
+because PyTorch has no CUDA 13.2 build older than 2.12. Its torchaudio is the
+CPU build, since torchaudio was never published for CUDA 13.2.
+
+Pick `-cuda12.8` unless you have a reason to want CUDA 13; a CUDA 13 pod will
+not start on a host whose driver is older than the tag.
 
 ## Upgrading from a previous version
 
@@ -24,7 +28,7 @@ If you have an existing pod created with an older version of this template (CUDA
 
 - `8188`: ComfyUI web UI
 - `8080`: FileBrowser (admin / `FILEBROWSER_PASSWORD`, default: `adminadmin12`)
-- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`)
+- `8888`: JupyterLab, rooted at `/workspace`. `JUPYTER_PASSWORD` is the login token; deploying with "Start Jupyter notebook" enabled sets it for you. Unset, JupyterLab does not start — same as the pytorch and base templates. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD`; the `:8888` proxy URL is public, so anyone with it gets a root shell.
 - `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
 
 ## Pre-installed custom nodes
