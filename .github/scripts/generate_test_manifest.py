@@ -78,6 +78,7 @@ def render_yaml(groups: dict) -> str:
             "manufacturer",
             "min_cuda_version",
             "test_jupyter",
+            "test_torch_packages",
             "check_all_gpu",
             "test_comfyui",
             "test_comfyui_functional",
@@ -118,6 +119,7 @@ def build_groups(
     min_vram_gb: int,
     manufacturer: str,
     test_jupyter: bool = False,
+    test_torch_packages: bool = False,
     test_ports: list[int] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
@@ -137,6 +139,12 @@ def build_groups(
     actually use container-template/start.sh (runpod/base, runpod/pytorch,
     runpod/autoresearch). NGC nvidia-pytorch images have a different
     entrypoint and would fail the probe.
+
+    `test_torch_packages` is likewise opt-in. It extends the CUDA check
+    with torchvision, torchaudio and torchcodec operations, and makes
+    those packages mandatory — enable it only where the image is supposed
+    to carry them (runpod/pytorch and its -cluster layer), not for images
+    that ship torch alone.
 
     `exclude_instances` is a list of fnmatch-style patterns (e.g.
     '*Blackwell*') that test_images.py subtracts from each group's
@@ -191,6 +199,8 @@ def build_groups(
             body["manufacturer"] = manufacturer
         if test_jupyter:
             body["test_jupyter"] = True
+        if test_torch_packages:
+            body["test_torch_packages"] = True
         if test_ports:
             body["test_ports"] = list(test_ports)
         if test_comfyui:
@@ -280,6 +290,16 @@ def main() -> int:
             "test_images.py exposes 8888/http, sets JUPYTER_PASSWORD, and "
             "runs the in-pod + public-proxy Jupyter probes. "
             "Off by default — enable per CI step."
+        ),
+    )
+    ap.add_argument(
+        "--test-torch-packages",
+        action="store_true",
+        help=(
+            "Emit `test_torch_packages: true` for every produced group so "
+            "the CUDA check also exercises torchvision, torchaudio and "
+            "torchcodec. Only for images that ship them — a missing "
+            "package fails the check. Off by default."
         ),
     )
     ap.add_argument(
@@ -373,6 +393,7 @@ def main() -> int:
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
+        test_torch_packages=args.test_torch_packages,
         test_ports=args.test_port,
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,

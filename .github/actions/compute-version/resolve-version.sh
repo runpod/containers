@@ -44,3 +44,43 @@ next_version() {
   esac
   printf '%s.%s.%s\n' "$major" "$minor" "$patch"
 }
+
+bump_rank() {
+  case "$1" in
+    major) printf '3\n' ;;
+    minor) printf '2\n' ;;
+    patch) printf '1\n' ;;
+    *)     printf '0\n' ;;
+  esac
+}
+
+# Highest bump among the commits a family still has unreleased. A release can
+# carry work from an earlier commit — a run that failed, or one GitHub dropped
+# from the queue — and taking only HEAD's type would then ship a feature under
+# a patch version.
+max_bump() {
+  local best="none" best_rank=0 candidate rank
+  for candidate in "$@"; do
+    rank="$(bump_rank "$candidate")"
+    if [ "$rank" -gt "$best_rank" ]; then
+      best="$candidate"
+      best_rank="$rank"
+    fi
+  done
+  printf '%s\n' "$best"
+}
+
+# Walks `<since>..HEAD`, keeping only commits that touched one of the given
+# pathspecs, and reduces their Conventional Commit types to one bump. An empty
+# `since` means the family has never been released, so everything counts.
+bump_for_range() {
+  local since="${1:-4b825dc642cb6eb9a060e54bf8d69288fbee4904}"; shift
+  local sha bumps=() message
+  while IFS= read -r sha; do
+    [ -z "$sha" ] && continue
+    message="$(git log -1 --pretty=format:'%B' "$sha")"
+    bumps+=("$(detect_bump "$message")")
+  done < <(git log --format=%H "${since}..HEAD" -- "$@")
+  [ "${#bumps[@]}" -eq 0 ] && { printf 'none\n'; return 0; }
+  max_bump "${bumps[@]}"
+}

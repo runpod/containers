@@ -60,6 +60,7 @@ runs:
         # Body is JSON-encoded so a multiline PR description survives the env.
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_BODY_JSON: ${{ toJSON(github.event.pull_request.body) }}
+        GH_TOKEN: ${{ github.token }}
         FAMILY: ${{ inputs.family }}
         RELEASE_BRANCH: ${{ inputs.release-branch }}
       run: |
@@ -73,6 +74,8 @@ runs:
         # Make sure tags are present even on shallow-ish checkouts.
         git fetch --tags --force --quiet || true
 
+        HEAD_SHA="$(git rev-parse HEAD)"
+
         PREFIX=""
         [ -n "${FAMILY}" ] && PREFIX="${FAMILY}-"
 
@@ -83,10 +86,26 @@ runs:
           # Squash merge: PR title → subject, PR body → commit body (footers).
           PR_BODY="$(printf '%s' "${PR_BODY_JSON:-null}" | jq -r 'if . == null then "" else . end')"
           BUMP="$(detect_bump "${PR_TITLE}"$'\n\n'"${PR_BODY}")"
+        elif [ -n "${FAMILY}" ]; then
+          # Everything this family still has unreleased, not just HEAD: a
+          # release can carry work from a run that failed or was dropped from
+          # the queue, and HEAD's type alone would understate the bump.
+          PATHS=()
+          while IFS= read -r spec; do
+            PATHS+=("${spec}")
+          done < <(python3 "${GITHUB_ACTION_PATH}/../../scripts/plan_families.py" \
+                     --paths "${FAMILY}")
+          BUMP="$(bump_for_range "${LATEST}" "${PATHS[@]}")"
         else
-          # Full squash-commit message so a BREAKING CHANGE footer is honoured.
-          # detect_bump still ignores body feat:/fix: lines.
-          MESSAGE="$(git log -1 --pretty=format:'%B')"
+          # A merge-commit or rebase merge leaves a subject that isn't the PR
+          # title, so read the title+body of the PR this commit was merged from.
+          if ! PR_MESSAGE="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == env.RELEASE_BRANCH)][0] // empty | .title + "\n\n" + (.body // "")')"; then
+            echo "::warning::PR lookup for ${HEAD_SHA} failed; using the commit message"
+            PR_MESSAGE=""
+          fi
+          # No PR (direct push): fall back to the full commit message.
+          MESSAGE="${PR_MESSAGE:-$(git log -1 --pretty=format:'%B')}"
           BUMP="$(detect_bump "$MESSAGE")"
         fi
 

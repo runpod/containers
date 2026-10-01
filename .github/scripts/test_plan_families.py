@@ -56,6 +56,31 @@ class Selection(unittest.TestCase):
         self.assertEqual(P.plan(GRAPH, ["t/base-old/Dockerfile"], False), [])
 
 
+class PlanSinceRelease(unittest.TestCase):
+    """A push diff misses whatever arrived while an earlier release ran."""
+
+    def test_each_family_is_judged_against_its_own_release(self):
+        changed = {
+            "base": [],
+            "pytorch": ["t/pytorch/Dockerfile"],
+            "cluster": [],
+            "rocm": [],
+            "comfyui": ["t/comfyui/Dockerfile"],
+        }
+        got = P.plan_since_release(GRAPH, lambda name: changed[name])
+        self.assertEqual(sorted(got), ["cluster", "comfyui", "pytorch"])
+        self.assertLess(got.index("pytorch"), got.index("cluster"))
+
+    def test_a_family_left_behind_by_a_dropped_run_is_picked_up(self):
+        """comfyui changed two pushes ago and never got released."""
+        changed = {name: [] for name in GRAPH}
+        changed["comfyui"] = ["t/comfyui/scripts/start.sh"]
+        self.assertEqual(P.plan_since_release(GRAPH, lambda n: changed[n]), ["comfyui"])
+
+    def test_nothing_outstanding_plans_nothing(self):
+        self.assertEqual(P.plan_since_release(GRAPH, lambda n: []), [])
+
+
 class BuildOrder(unittest.TestCase):
     def test_a_family_never_precedes_what_it_builds_from(self):
         order = P.plan(GRAPH, [], True)
@@ -73,6 +98,34 @@ class BuildOrder(unittest.TestCase):
         }
         with self.assertRaises(P.GraphError):
             P.plan(cyclic, [], True)
+
+
+class Pathspecs(unittest.TestCase):
+    """`git log -- <spec>` is how the bump and the notes find a family's
+    commits — a dependency's commits have to be among them."""
+
+    def test_a_dependency_counts_as_the_dependents_own(self):
+        """A base-only fix has to bump and rebuild pytorch and cluster."""
+        self.assertEqual(
+            P.paths_with_deps(GRAPH, "cluster"),
+            ["t/cluster/**", "t/pytorch/**", "t/base/**"],
+        )
+
+    def test_a_family_without_dependencies_keeps_its_own(self):
+        self.assertEqual(P.paths_with_deps(GRAPH, "comfyui"), ["t/comfyui/**"])
+
+    def test_the_real_graph_gives_pytorch_the_base_paths(self):
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        self.assertIn("official-templates/base/**", P.paths_with_deps(graph, "pytorch"))
+
+    def test_a_directory_glob_becomes_a_directory(self):
+        self.assertEqual(
+            P.git_pathspecs(["official-templates/base/**"]),
+            ["official-templates/base/"],
+        )
+
+    def test_a_plain_path_is_left_alone(self):
+        self.assertEqual(P.git_pathspecs(["bake.sh"]), ["bake.sh"])
 
 
 class GraphFile(unittest.TestCase):

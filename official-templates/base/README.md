@@ -10,11 +10,11 @@ The Runpod Base images provide a clean, developer friendly environment for every
 - **Developer friendly**: SSH server preconfigured for seamless remote development and debugging.
 - **Smart workspace**: Optimized directory structure and package caches for faster dependency installation.
 - **Performance tuned**: Environment variables and cache strategies optimized for faster builds and execution.
-- **Jupyter ready (optional)**: Notebook and JupyterLab with widgets/extensions; enable by setting `JUPYTER_PASSWORD` (omit to disable).
+- **Jupyter ready (optional)**: Notebook and JupyterLab with widgets/extensions. Set `JUPYTER_PASSWORD` and it becomes the login token; omit it and JupyterLab does not start. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD` — the `:8888` proxy URL is public, so anyone with it gets a root shell.
 
 ### Available configurations
 - **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble)
-- **CUDA**: 12.8.0, 12.8.1, 12.9.0, and 13.0.0
+- **CUDA**: 12.8.0, 12.8.1, 12.9.0, 13.0.0, and 13.2.0
 
 Need something more specialized? Explore the templates in `official-templates` for ROCm, PyTorch, and more.
 
@@ -23,20 +23,22 @@ Need something more specialized? Explore the templates in `official-templates` f
 ## Generated Images
 
 ### Base Images (CPU-Only, No GPU Drivers):
-- Ubuntu 22.04: `runpod/base:1.0.2-ubuntu2204`
-- Ubuntu 24.04: `runpod/base:1.0.2-ubuntu2404`
+- Ubuntu 22.04: `runpod/base:<template-tag>-ubuntu2204`
+- Ubuntu 24.04: `runpod/base:<template-tag>-ubuntu2404`
 
 ### CUDA Images (GPU Required) by Version:
 - 12.8.0:
-    - Ubuntu 22.04: `runpod/base:1.0.2-cuda1280-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.2-cuda1280-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1280-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1280-ubuntu2404`
 - 12.8.1:
-    - Ubuntu 22.04: `runpod/base:1.0.2-cuda1281-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.2-cuda1281-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1281-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1281-ubuntu2404`
 - 12.9.0:
-    - Ubuntu 22.04: `runpod/base:1.0.2-cuda1290-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.2-cuda1290-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1290-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1290-ubuntu2404`
 - 13.0.0:
-    - Ubuntu 22.04: `runpod/base:1.0.2-cuda1300-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:1.0.2-cuda1300-ubuntu2404`
+    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1300-ubuntu2204`
+    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1300-ubuntu2404`
+- 13.2.0:
+    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1320-ubuntu2404`
 </div>

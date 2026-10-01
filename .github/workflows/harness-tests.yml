@@ -11,11 +11,17 @@ on:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
       - '.github/workflows/harness-tests.yml'
+      # The Jupyter token contract runs the real start_jupyter out of these,
+      # so editing one has to re-run the suite.
+      - 'container-template/start.sh'
+      - 'official-templates/comfyui/scripts/start.sh'
   push:
     branches: [main]
     paths:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
+      - 'container-template/start.sh'
+      - 'official-templates/comfyui/scripts/start.sh'
   workflow_dispatch:
 
 permissions:

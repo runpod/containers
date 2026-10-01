@@ -49,6 +49,7 @@ runs:
         FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
       run: |
         set -uo pipefail
+        ignore_file="${GITHUB_ACTION_PATH}/ignore.yaml"
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
         if [ ${#refs[@]} -eq 0 ]; then
           echo "No image refs to scan"
@@ -63,6 +64,7 @@ runs:
 
         echo "Scanning ${#refs[@]} image(s), up to ${max_parallel} in parallel:"
         printf '  - %s\n' "${refs[@]}"
+        echo "Suppressed findings are listed in ${ignore_file}"
 
         tmpdir="$(mktemp -d)"
 
@@ -72,6 +74,7 @@ runs:
               --fail-on high \
               --only-fixed \
               --scope squashed \
+              -c "${ignore_file}" \
               -o table \
               -q > "${tmpdir}/${idx}.log" 2>&1; then
             echo 0 > "${tmpdir}/${idx}.rc"
