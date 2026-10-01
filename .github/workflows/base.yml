@@ -506,6 +506,8 @@ jobs:
       && needs.versions.outputs.cluster-build == 'true'
       && (needs.build-pytorch.result == 'success'
           || needs.build-pytorch.result == 'skipped')
+      && (!contains(fromJSON(inputs.families), 'pytorch')
+          || needs.build-pytorch.result == 'success')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read

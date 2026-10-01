@@ -12,7 +12,7 @@ pillow==12.3.0
 protobuf==6.33.5
 soupsieve==2.8.4
 tornado==6.5.10
-urllib3==2.7.0
+urllib3==2.8.0
 wheel==0.46.2
 pyarrow==23.0.1
 anyio==4.14.2
