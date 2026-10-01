@@ -126,7 +126,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 |---|------|---|
 | 1 | `POST /v2/pods` with `gpu.id` (or an auto-picked `cpu.id` + `vcpuCount`), `disk`, `ports`, `startSsh`, registry credential, and either `gpu.minCudaVersion` or `gpu.allowedCudaVersions`. Transient failures (429, 5xx, transport) are retried up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity — try next instance) / `CREATE_FAIL` (bad image tag, auth, malformed request — any non-capacity, non-transient error after retries) |
 | 2 | Poll `GET /v2/pods/{id}` until a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the only readiness signal. `status` is **not** one: RunPod reports `RUNNING` from the moment the pod is scheduled, while the image may still be downloading for another ten minutes, so it is read only for the terminal `EXITED`/`ERROR`/`TERMINATED` values, which stop the poll immediately. | `FAIL` on a terminal status, on a container-init rejection, or on a container-start failure in the logs; `STUCK` if no endpoint was ever offered or the container had not started yet; `UNVERIFIED` only if the container was demonstrably logging and still nothing answered |
-| 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
+| 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul + torchvision/torchaudio GPU ops; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
 | 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
 | 6 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
@@ -352,11 +352,12 @@ Field reference:
 | `max_price_per_hour` | USD/hr budget — auto-pick any GPU at this price or below, cheapest first. Loses to explicit `instances:` if both are set. |
 | `min_vram_gb` | Extra filter for budget mode (default 0). |
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
-| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200`, `B300`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing. |
+| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group. |
 | `min_cuda_version` | `X.Y` floor sent as `gpu.minCudaVersion`. Used as a **fallback** when the image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`); tags like `cu1281` / `cuda1281` / `cuda13.0` are parsed and win. Superseded by `cuda_versions` — the API rejects both fields on one request. |
 | `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening. Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
+| `test_torch_packages` | `true` / `false` — extends the CUDA check with a torchvision `nms` and a torchaudio `resample` on the GPU, plus a torchcodec WAV round trip on torch 2.9+ (the version from which the images ship it). All three become **required** where they are expected: an image in the group that doesn't have one fails. Use for `runpod/pytorch` and its `-cluster` layer; skip for images that ship torch alone (NGC `nvidia-pytorch`, `runpod/base` `-pytorch251` tags). Default: `false`. |
 | `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
@@ -574,6 +575,7 @@ pytorch:
     min_vram_gb: 16
     manufacturer: Nvidia
     test_jupyter: true
+    test_torch_packages: true
     exclude_instances:
     - "*Blackwell*"
 ```
@@ -636,7 +638,14 @@ groups don't silently skip the check:
 - image has `pytorch` / `torch\d` in ref
   → `torch.cuda.is_available` + matmul on device (catches broken drivers,
   missing libs, mismatched toolkit/driver versions). NVIDIA only at this
-  point — ROCm was already handled above.
+  point — ROCm was already handled above. With `test_torch_packages: true`
+  the check continues into a torchvision `nms` and a torchaudio `resample`
+  on the GPU, and a torchcodec WAV round trip on torch 2.9+: all three are
+  installed from their own wheel indexes and carry compiled extensions
+  pinned to a torch and CUDA version, so a mismatch only shows up on import
+  or first use. Opt-in because not every image matching this rule ships
+  them. torchcodec is gated on the torch version because that is the rule
+  the images follow, not because the check probes for it.
 - image has `cuda` / `cu\d` (but no torch markers)
   → `nvidia-smi -L` + driver/memory query + `nvcc --version`. Covers base
   GPU images and `autoresearch` (whose torch is in a venv not reachable
@@ -741,7 +750,7 @@ fields.
 | only the `base_cpu` group says `no capacity` while GPU groups pass | the cloud(s) you target don't have CPU capacity right now | by default we already try SECURE then COMMUNITY. If both are full, add DC-pinned candidates: `CPU_CANDIDATES="cpu-secure:SECURE,cpu-community:COMMUNITY,cpu-eu:COMMUNITY:EU-RO-1+EU-NL-1,cpu-us:COMMUNITY:US-OR-1"` |
 | pod stays in `ssh endpoint not assigned yet` past `STALL_HINT_AFTER` | slow image pull or Docker Hub `toomanyrequests` | add registry auth, reduce `MAX_PARALLEL`, or wait 6 h for the Hub rate limit to reset |
 | `ssh_probe=FAIL — Permission denied (publickey)` | wrong SSH key | export `RUNPOD_SSH_KEY=/path/to/private/key` whose public half is on the RunPod account |
-| `pod entered TIMEOUT state` repeatedly on Blackwell GPUs for a `pytorch` group | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels | add `exclude_instances: ["B200", "B300", "RTX 5090", "RTX PRO *", "PRO 6000 MIG *"]` — the display names never contain the word `Blackwell` |
+| `no kernel image is available for execution on the device` on a Blackwell GPU | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels, and torchvision from the cu129 index has none either | add `exclude_instances: ["B200*", "B300*", "RTX 5090", "RTX PRO *", "PRO 6000 MIG *"]` — the display names never contain the word `Blackwell`, and a bare `B300` misses `B300 MIG 34GB` |
 | `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=X.Y` in pod logs | image needs a newer driver than the host has | set `min_cuda_version: "X.Y"` in the manifest (only needed for tags without a `cuXYZW`/`cudaXYZW` marker) |
 | `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (classic Ubuntu 22.04 `python3` → 3.10 vs `python` → 3.12) | fix `container-template/start.sh` to use `python -m jupyter lab` |
 | `jupyter check (public proxy) FAILED` but in-pod check passed | port exposed as `8888/tcp` instead of `8888/http`, OR proxy hasn't registered the pod yet | check `pod create --ports` arg; bump `JUPYTER_PROXY_TIMEOUT` if proxy is just slow |

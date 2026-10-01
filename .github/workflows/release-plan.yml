@@ -11,6 +11,8 @@ on:
       - ".github/families.yml"
       - ".github/scripts/plan_families.py"
       - ".github/scripts/test_plan_families.py"
+      - ".github/scripts/release_notes.py"
+      - ".github/scripts/test_release_notes.py"
       - ".github/workflows/release-plan.yml"
       # The graph names jobs inside these; a rename must fail here, not in a
       # break-glass release at 2am.
@@ -37,6 +39,9 @@ jobs:
 
       - name: plan-families unit tests
         run: python3 .github/scripts/test_plan_families.py
+
+      - name: release-notes unit tests
+        run: python3 .github/scripts/test_release_notes.py
 
       # Informational: shows a reviewer exactly which families this PR would
       # build and release, in order.

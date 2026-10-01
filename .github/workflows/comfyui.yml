@@ -28,6 +28,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
+      should-build: ${{ steps.v.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -43,12 +44,14 @@ jobs:
 
   build-comfyui:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'comfyui')
+    if: >-
+      contains(fromJSON(inputs.families), 'comfyui')
+      && needs.versions.outputs.should-build == 'true'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
-        comfyui: [cuda128, cuda130]
+        comfyui: [cuda128, cuda130, cuda132]
     permissions:
       contents: read
       id-token: write
@@ -132,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        comfyui: [cuda128, cuda130]
+        comfyui: [cuda128, cuda130, cuda132]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0

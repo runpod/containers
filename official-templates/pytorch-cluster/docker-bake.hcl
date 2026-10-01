@@ -35,6 +35,11 @@ variable "CLUSTER_BUILDS" {
     { cuda_code = "1300", torch_code = "2120", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1300", torch_code = "2121", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
+    { cuda_code = "1320", torch_code = "291", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2120", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2130", ubuntu_name = "ubuntu2404" },
   ]
 }
 
@@ -68,6 +73,14 @@ group "cu1300" {
     for b in CLUSTER_BUILDS :
     "cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1300"
+  ]
+}
+
+group "cu1320" {
+  targets = [
+    for b in CLUSTER_BUILDS :
+    "cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
+    if b.cuda_code == "1320"
   ]
 }
 
