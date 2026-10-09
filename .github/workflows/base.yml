@@ -2,8 +2,8 @@ name: Base Images Build
 
 # Reusable building block invoked by the release orchestrator (release.yml),
 # which computes the version ONCE and passes it in. Builds the whole
-# base -> pytorch -> {autoresearch, pytorch-cluster} dependency chain in one
-# run. Not triggered on its own (no push/pull_request/concurrency here) — the
+# base -> pytorch -> {autoresearch, pytorch-cluster -> ray-cluster} dependency
+# chain in one run. Not triggered on its own (no push/pull_request/concurrency here) — the
 # orchestrator owns triggers, gating, concurrency and the final release.
 on:
   workflow_call:
@@ -612,6 +612,189 @@ jobs:
         shell: bash
         run: |
           REFS=$(cat /tmp/cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+
+  # ray-cluster layers Ray onto a PUBLISHED runpod/pytorch `-cluster`, so it
+  # runs after build-cluster in the same run, with the same base-selection rule:
+  # the in-run cluster tag when that layer was (re)built, else the last release.
+  build-ray-cluster:
+    needs: build-cluster
+    if: needs.build-cluster.result == 'success'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changed: ${{ steps.changes.outputs.ray_cluster_any_changed }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Check if build is needed
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
+        id: changes
+        with:
+          files_yaml: |
+            ray_cluster:
+              - 'official-templates/shared/**'
+              - 'official-templates/base/**'
+              - 'official-templates/pytorch/**'
+              - 'official-templates/pytorch-cluster/**'
+              - 'official-templates/ray-cluster/**'
+              - 'container-template/**'
+
+      - name: Setup Docker
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          cache-key: ${{ github.repository }}/ray-cluster-${{ matrix.cuda }}
+
+      - name: Build ray-cluster images (${{ matrix.cuda }})
+        id: build
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUFFIX: ${{ inputs.suffix }}
+          # Which published runpod/pytorch `-cluster` to build FROM: the in-run
+          # tag if build-cluster (re)built it, else the last released one.
+          CLUSTER_BASE_VERSION: ${{ (github.event_name != 'pull_request' || needs.build-cluster.outputs.changed == 'true') && format('{0}{1}', inputs.version, inputs.suffix) || inputs.base_version }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/ray-cluster/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      # CPU-only: runs the loaded images under plain Docker with fixture
+      # topology env and checks what runpod/host depends on (ports, label,
+      # 2-node formation). Gates the push. Also captures the /nodes and
+      # /metrics payloads the host pins as test fixtures.
+      - name: Image contract test
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+          RAY_CONTRACT_FIXTURE_DIR: ${{ runner.temp }}/ray-contract-fixtures
+        run: |
+          set -euo pipefail
+          mapfile -t refs < <(jq -r '.[]' <<< "$REFS")
+          official-templates/ray-cluster/tests/contract.sh "${refs[@]}"
+
+      - name: Upload contract fixtures
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ray-contract-fixtures-${{ matrix.cuda }}
+          path: ${{ runner.temp }}/ray-contract-fixtures
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Grype scan
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/ray-cluster-refs
+          printf '%s\n' "$REFS" > /tmp/ray-cluster-refs/refs.json
+
+      - name: Upload refs artifact
+        if: github.event_name != 'pull_request' || steps.changes.outputs.ray_cluster_any_changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ray-cluster-refs-${{ matrix.cuda }}
+          path: /tmp/ray-cluster-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+  # Single-pod GPU smoke test: with no NODE_ROLE the entrypoint boots the CMD
+  # without Ray, so this covers SSH/Jupyter on the image. Multi-node formation
+  # is covered by the contract test above.
+  test-ray-cluster:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-ray-cluster
+    if: |
+      needs.build-ray-cluster.result == 'success'
+      && (github.event_name != 'pull_request'
+          || needs.build-ray-cluster.outputs.changed == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ray-cluster-refs-${{ matrix.cuda }}
+          path: /tmp/ray-cluster-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/ray-cluster-refs/refs.json)
           {
             echo "refs<<EOF"
             echo "$REFS"

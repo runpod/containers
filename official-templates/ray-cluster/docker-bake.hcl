@@ -1,4 +1,4 @@
-# The `-ray-cluster` variant layers Ray onto the published runpod/pytorch
+# The ray-cluster image layers Ray onto the published runpod/pytorch
 # `-cluster` images (which already carry RDMA + the DCGM/Prometheus/Grafana
 # monitoring stack). Each entry below MUST correspond to a `-cluster` tag
 # produced by official-templates/pytorch-cluster/docker-bake.hcl.
@@ -94,8 +94,8 @@ target "ray-cluster-matrix" {
   }
 
   # The Ray image's OWN tag keeps RELEASE_SUFFIX so dev/PR builds don't clobber
-  # the released tag. Published under runpod/ray.
+  # the released tag. Published under runpod/ray-cluster.
   tags = [
-    "runpod/ray:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
+    "runpod/ray-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }

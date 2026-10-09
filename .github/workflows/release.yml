@@ -83,6 +83,7 @@ jobs:
               - 'official-templates/pytorch/**'
               - 'official-templates/autoresearch/**'
               - 'official-templates/pytorch-cluster/**'
+              - 'official-templates/ray-cluster/**'
               - 'official-templates/shared/**'
               - 'container-template/**'
             nvidia:

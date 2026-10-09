@@ -175,6 +175,7 @@ jobs:
             "runpod/base:${VERSION}-ubuntu2204"
             "runpod/pytorch:${VERSION}-cu1281-torch280-ubuntu2204"
             "runpod/pytorch:${VERSION}-cu1281-torch280-ubuntu2204-cluster"
+            "runpod/ray-cluster:${VERSION}-cu1281-torch280-ubuntu2204"
             "runpod/nvidia-pytorch:${VERSION}-25.11"
             "runpod/base:${VERSION}-rocm644-ubuntu2204-py310-pytorch260"
             "runpod/autoresearch:${VERSION}-cuda1281-ubuntu2204"

@@ -2,41 +2,27 @@
 # ---------------------------------------------------------------------------- #
 # ray-cluster post-start hook
 #
-# Invoked by the shared /start.sh (`execute_script "/post_start.sh"`). It layers
-# Ray onto the inherited pytorch-cluster monitoring:
+# Invoked by the shared /start.sh (`execute_script "/post_start.sh"`), after the
+# image entrypoint (/opt/runpod/ray/entrypoint) has already started Ray. It
+# layers Ray onto the inherited pytorch-cluster monitoring:
 #
-#   1. Run the inherited /post_start.cluster.sh (renamed from the parent image's
-#      /post_start.sh at build time). That brings up node_exporter + dcgm-exporter
-#      on every node and Prometheus + Grafana on the head, and — because
-#      /etc/supervisor/conf.d/ray.conf ships in this image — supervisord also
-#      autostarts the `ray-node` program, i.e. Ray itself.
-#   2. On the head, add a Prometheus scrape job for each node's Ray metrics
-#      endpoint so Ray metrics land in the same Prometheus/Grafana as the GPU and
-#      system metrics.
+#   1. Run the inherited /post_start.cluster.sh (the parent image's
+#      /post_start.sh, renamed at build time): exporters on every node,
+#      Prometheus + Grafana on the head.
+#   2. On the head, scrape every Ray node through the service-discovery file Ray
+#      maintains, so new or rejoined nodes are picked up without config changes.
+#      RAY_CLUSTER_METRICS=0 instead stops the head's Prometheus + Grafana, for
+#      customers who bring their own stack.
 #
-# Never hard-fail the pod: no `set -e`, always exit 0. Ray's own lifecycle is
-# supervisord's job; this hook only wires up scraping.
+# Never hard-fails the pod: no `set -e`, always exits 0.
 # ---------------------------------------------------------------------------- #
 set +e
 
 log() { echo "[ray-cluster] $*"; }
 
 PROM_CONFIG=/etc/prometheus/prometheus.yml
-RAY_METRICS_PORT=${RAY_METRICS_PORT:-8080}
+RAY_SD_FILE=/tmp/ray/prom_metrics_service_discovery.json
 
-# Head detection: prefer the daemon-injected role, fall back to the node-0
-# hostname convention the monitoring layer uses (PRIMARY_ADDR is node-0, which is
-# also the Ray head — same node).
-is_ray_head() {
-    if [[ -n "${NODE_ROLE:-}" ]]; then
-        [[ "$NODE_ROLE" == "RAY_HEAD" ]]
-    else
-        [[ "$(hostname -s)" == "node-0" ]]
-    fi
-}
-
-# 1. Inherited monitoring bringup (exporters everywhere, Prometheus/Grafana on
-#    head) + supervisord, which autostarts ray-node.
 if [[ -x /post_start.cluster.sh ]]; then
     log "running inherited cluster monitoring bringup"
     /post_start.cluster.sh
@@ -44,41 +30,30 @@ else
     log "warn: /post_start.cluster.sh not found; monitoring stack not started"
 fi
 
-# 2. Head-only: add Ray scrape targets and reload Prometheus. Ray exports
-#    per-node Prometheus metrics on RAY_METRICS_PORT; scrape every node-* peer
-#    from /etc/hosts (same source the inherited config uses), falling back to the
-#    head itself when no peers are listed.
-add_ray_scrape_targets() {
-    if [[ ! -f "$PROM_CONFIG" ]]; then
-        log "note: $PROM_CONFIG absent; skipping Ray scrape wiring"
-        return
-    fi
-    if grep -q "job_name: ray" "$PROM_CONFIG"; then
-        log "Ray scrape job already present; leaving it"
-        return
-    fi
-    local nodes
-    nodes=$(awk '{for (i = 2; i <= NF; i++) if ($i ~ /^node-/) print $i}' /etc/hosts | sort -u)
-    [[ -z "$nodes" ]] && nodes=$(hostname -s)
-    log "Ray scrape targets: $(echo "$nodes" | tr '\n' ' ') on :$RAY_METRICS_PORT"
+if [[ "${NODE_ROLE:-}" != "RAY_HEAD" ]]; then
+    log "not the Ray head; nothing more to wire"
+    exit 0
+fi
+
+if [[ "${RAY_CLUSTER_METRICS:-1}" == "0" ]]; then
+    log "RAY_CLUSTER_METRICS=0: stopping the head Prometheus + Grafana"
+    supervisorctl stop grafana-proxy grafana prometheus > /dev/null 2>&1
+    exit 0
+fi
+
+if [[ ! -f "$PROM_CONFIG" ]]; then
+    log "note: $PROM_CONFIG absent; skipping Ray scrape wiring"
+elif grep -q "job_name: ray" "$PROM_CONFIG"; then
+    log "Ray scrape job already present"
+else
+    log "adding Ray scrape job (targets from $RAY_SD_FILE)"
     {
         echo "  - job_name: ray"
-        echo "    static_configs:"
-        echo "      - targets:"
-        for n in $nodes; do echo "          - '${n}:${RAY_METRICS_PORT}'"; done
+        echo "    file_sd_configs:"
+        echo "      - files: ['${RAY_SD_FILE}']"
     } >> "$PROM_CONFIG"
-    # The inherited config binds Prometheus without --web.enable-lifecycle, so a
-    # supervisorctl restart is the reload path.
-    if supervisorctl status prometheus > /dev/null 2>&1; then
-        log "restarting Prometheus to pick up Ray targets"
-        supervisorctl restart prometheus > /dev/null 2>&1
-    fi
-}
-
-if is_ray_head; then
-    add_ray_scrape_targets
-else
-    log "not the head node; Ray scrape wiring is head-only"
+    # Prometheus runs without --web.enable-lifecycle, so restart to reload.
+    supervisorctl restart prometheus > /dev/null 2>&1
 fi
 
 log "post-start complete"
