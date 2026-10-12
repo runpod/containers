@@ -483,8 +483,8 @@ stop_services() {
 SHUTTING_DOWN=0
 on_shutdown() {
     SHUTTING_DOWN=1
-    # Only when ComfyUI is still running is there something to wait for: kill it
-    # and let the `wait` below return so it can exit before the cleanup.
+    # Only when ComfyUI is still running is there something to wait for: ask it
+    # to stop and return, so the shutdown path below can wait it out.
     if [ -n "${COMFY_PID:-}" ] && kill -0 "$COMFY_PID" 2>/dev/null; then
         kill "$COMFY_PID" 2>/dev/null || true
         return
@@ -695,6 +695,8 @@ wait $COMFY_PID || COMFY_EXIT=$?
 # The flag tells a real ComfyUI crash from the pod being stopped, so the crash
 # banner below does not print on every normal shutdown.
 if [ "$SHUTTING_DOWN" = "1" ]; then
+    # The wait above returned on the signal, not on ComfyUI exiting.
+    wait "$COMFY_PID" 2>/dev/null || true
     stop_services
     exit 0
 fi
