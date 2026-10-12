@@ -21,8 +21,9 @@ permissions:
   contents: read
 
 jobs:
-  # One version series per sandbox family; harbor layers on sandbox-ubuntu, so
-  # `ubuntu-published` is what it builds FROM when ubuntu is not rebuilt here.
+  # One version series per sandbox family; harbor and browser layer on
+  # sandbox-ubuntu, so `ubuntu-published` is what they build FROM when ubuntu
+  # is not rebuilt here.
   versions:
     runs-on: ubuntu-latest
     outputs:
@@ -31,6 +32,7 @@ jobs:
       ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
       openclaw: ${{ steps.openclaw.outputs.version }}
       harbor: ${{ steps.harbor.outputs.version }}
+      browser: ${{ steps.browser.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -55,6 +57,12 @@ jobs:
         uses: ./.github/actions/compute-version
         with:
           family: sandbox-harbor
+
+      - name: sandbox-browser
+        id: browser
+        uses: ./.github/actions/compute-version
+        with:
+          family: sandbox-browser
 
   build-sandbox-ubuntu:
     needs: versions
@@ -469,3 +477,108 @@ jobs:
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+
+  # Layers on runpod/ubuntu like harbor does. Build and verify only for now:
+  # runpod/browser does not exist on Docker Hub yet, so there is nothing to
+  # push to or sign. Add the push and cosign steps once it does.
+  build-sandbox-browser:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [versions, build-sandbox-ubuntu]
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'sandbox-browser')
+      && (needs.build-sandbox-ubuntu.result == 'success'
+          || needs.build-sandbox-ubuntu.result == 'skipped')
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/sandbox-browser
+
+      - name: Build sandbox-browser image
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/sandbox-browser/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Verify sandbox-browser
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+          OUT: ${{ runner.temp }}/browser-check
+        run: |
+          set -euo pipefail
+          # Every check also reports what it found: a green step that prints
+          # nothing tells the next person nothing.
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+          IMAGE=$(jq -er '.[0]' <<< "$REFS")
+          echo "Verifying $IMAGE"
+
+          # Inherited from sandbox-ubuntu; a base bump that drops either would
+          # turn every browser sandbox into a zombie farm or a root shell.
+          test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/bin/tini","-g","--"]'
+          test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["sleep","infinity"]'
+          say boot "tini -g -- sleep infinity, inherited from sandbox-ubuntu"
+          say size "$(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB"
+
+          PLAYWRIGHT_VERSION=$(docker buildx bake --print \
+              -f official-templates/shared/versions.hcl \
+              -f official-templates/sandbox-browser/docker-bake.hcl 2> /dev/null |
+            jq -er '.target["sandbox-browser"].args.PLAYWRIGHT_VERSION')
+
+          # The default sandbox size, and Docker's default 64 MB /dev/shm: a
+          # single page has to fit both, because an OOM restarts the whole
+          # sandbox and wipes its state. The container runs as uid 1000, so
+          # the screenshot directory has to be writable by it.
+          mkdir -p "$OUT" && chmod 0777 "$OUT"
+          docker run --rm \
+            --memory 4g --memory-swap 4g --cpus 2 \
+            -e PLAYWRIGHT_VERSION="$PLAYWRIGHT_VERSION" \
+            -v "$GITHUB_WORKSPACE/tests/sandbox-browser:/check:ro" \
+            -v "$OUT:/out" \
+            "$IMAGE" bash /check/check.sh /out
+
+      # The CJK/emoji page in particular is worth a look by eye: the check
+      # proves which fonts rendered it, not that it looks right.
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sandbox-browser-screenshots
+          path: ${{ runner.temp }}/browser-check/*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Report-only: npm's bundled dependency tree carries HIGH advisories in
+      # every release published so far, and no Node build fixes that for us.
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
