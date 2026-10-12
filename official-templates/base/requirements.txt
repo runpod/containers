@@ -1,6 +1,6 @@
 hf_transfer==0.1.9
-jupyterlab==4.5.10
+jupyterlab==4.5.11
 ipywidgets==8.1.8
 jupyter-archive==3.4.0
-notebook==7.5.6
+notebook==7.6.3
 tornado==6.5.10
