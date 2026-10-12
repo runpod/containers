@@ -21,13 +21,9 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Clear space to remove unused folders
+    - name: Disk usage
       shell: bash
-      run: |
-        rm -rf /usr/share/dotnet
-        rm -rf /opt/ghc
-        rm -rf "/usr/local/share/boost"
-        rm -rf "$AGENT_TOOLSDIRECTORY"
+      run: df -h / /var/lib/docker /var/lib/containerd 2>/dev/null || df -h /
 
     - name: Enable containerd image store
       shell: bash
