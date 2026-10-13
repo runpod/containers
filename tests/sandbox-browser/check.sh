@@ -59,6 +59,7 @@ say node-cjs "$(python "$HERE/browser_check.py" png "$OUT/node-cjs.png")"
 # From inside a virtualenv: the launcher must keep using the system
 # interpreter Playwright is installed into, not the venv's.
 uv venv --quiet /tmp/browser-check-venv
+# shellcheck source=/dev/null
 (source /tmp/browser-check-venv/bin/activate &&
   playwright screenshot "$URL" "$OUT/cli.png" > /dev/null)
 say cli "$(python "$HERE/browser_check.py" png "$OUT/cli.png"), from inside a venv"
