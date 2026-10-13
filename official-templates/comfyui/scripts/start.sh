@@ -469,27 +469,19 @@ keep_pod_alive() {
 set -E
 trap keep_pod_alive ERR
 
-# Docker only signals PID 1; stop the nohup'd background services too so they
-# exit cleanly instead of waiting for SIGKILL.
-stop_services() {
-    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
-    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
-    pkill -TERM -x "filebrowser" 2>/dev/null || true
-}
-
 # Installed here, not at the ComfyUI launch below: a pod stopped while setup is
 # still running (or held by keep_pod_alive) would otherwise die with no trace.
-# Once ComfyUI runs, only flag it and let the `wait` return so it can exit first.
-SHUTTING_DOWN=0
+# Everything is done here and the handler exits itself — on a pod, execution
+# does not resume after it returns, so nothing may be left for the `wait` below.
+# Docker only signals PID 1, hence the pkills for the nohup'd services.
 on_shutdown() {
-    SHUTTING_DOWN=1
-    # Only when ComfyUI is still running is there something to wait for: ask it
-    # to stop and return, so the shutdown path below can wait it out.
+    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
     if [ -n "${COMFY_PID:-}" ] && kill -0 "$COMFY_PID" 2>/dev/null; then
         kill "$COMFY_PID" 2>/dev/null || true
-        return
+        wait "$COMFY_PID" 2>/dev/null || true
     fi
-    stop_services
+    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
+    pkill -TERM -x "filebrowser" 2>/dev/null || true
     exit 0
 }
 trap on_shutdown SIGTERM SIGINT
@@ -689,17 +681,10 @@ announce_when_ready() {
 }
 announce_when_ready &
 
+# Only a real ComfyUI exit gets past this: a stopped pod leaves through
+# on_shutdown, which exits before this returns.
 COMFY_EXIT=0
 wait $COMFY_PID || COMFY_EXIT=$?
-
-# The flag tells a real ComfyUI crash from the pod being stopped, so the crash
-# banner below does not print on every normal shutdown.
-if [ "$SHUTTING_DOWN" = "1" ]; then
-    # The wait above returned on the signal, not on ComfyUI exiting.
-    wait "$COMFY_PID" 2>/dev/null || true
-    stop_services
-    exit 0
-fi
 
 # 137 is SIGKILL: normally the cgroup OOM killer, but a manual kill is
 # indistinguishable, so confirm against the cgroup's own counter. Both reads go
