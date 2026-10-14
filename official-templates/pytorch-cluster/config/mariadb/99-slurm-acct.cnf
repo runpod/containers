@@ -1,0 +1,22 @@
+# MariaDB tuning for the Slurm accounting (slurmdbd) backend on node-0.
+# Loaded after the packaged 50-server.cnf (higher number wins), so the datadir
+# and InnoDB settings here override the defaults.
+#
+# The InnoDB values are SchedMD's recommendations for slurmdbd:
+#   https://slurm.schedmd.com/accounting.html#mysql-configuration
+[mysqld]
+# NOTE: the datadir is NOT set here. RunPod exposes no stable per-cluster id, so
+# /post_start.sh scopes it by node-0's pod id — /workspace/slurm-acct-db/$RUNPOD_POD_ID
+# — to stop two clusters that share the same /workspace network volume from
+# pointing two mariadbd instances at one InnoDB datadir (which corrupts it). The
+# resolved path is rendered at runtime into the companion
+# zz-slurm-acct-datadir.cnf (which sorts after this file and therefore wins).
+
+# Accounting DB is reached only by slurmdbd on node-0 itself — keep it on
+# loopback so it never leaves the head node.
+bind-address = 127.0.0.1
+
+# SchedMD-recommended InnoDB settings for slurmdbd.
+innodb_buffer_pool_size  = 1024M
+innodb_log_file_size     = 64M
+innodb_lock_wait_timeout = 900

@@ -2,10 +2,11 @@
   "uid": "cluster-fabric-interconnect",
   "title": "Fabric & Interconnect",
   "tags": [
+    "runpod",
+    "cluster",
     "nvidia",
     "infiniband",
-    "network",
-    "cluster"
+    "network"
   ],
   "timezone": "",
   "schemaVersion": 39,
@@ -21,86 +22,96 @@
   "templating": {
     "list": []
   },
+  "links": [],
   "panels": [
     {
+      "id": 1000,
       "type": "row",
       "title": "InfiniBand / RoCE",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 0
-      },
-      "panels": []
+      }
     },
     {
+      "id": 2,
       "type": "stat",
       "title": "Port State",
+      "description": "Current IB/RoCE logical port state per link.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "4": {
-                  "text": "Active",
-                  "color": "green",
-                  "index": 0
-                },
-                "1": {
-                  "text": "Down",
-                  "color": "red",
-                  "index": 1
-                },
-                "2": {
-                  "text": "Init",
-                  "color": "yellow",
-                  "index": 2
-                },
-                "3": {
-                  "text": "Armed",
-                  "color": "orange",
-                  "index": 3
-                },
-                "5": {
-                  "text": "Act-Defer",
-                  "color": "blue",
-                  "index": 4
-                }
-              }
-            }
-          ],
           "color": {
             "mode": "thresholds"
           },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "Down"
+                },
+                "2": {
+                  "color": "yellow",
+                  "index": 2,
+                  "text": "Init"
+                },
+                "3": {
+                  "color": "orange",
+                  "index": 3,
+                  "text": "Armed"
+                },
+                "4": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "Active"
+                },
+                "5": {
+                  "color": "blue",
+                  "index": 4,
+                  "text": "Act-Defer"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "blue",
-                "value": null
+                "value": 0
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "fields": "",
+          "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "showPercentChange": false,
         "textMode": "value_and_name",
-        "orientation": "auto"
+        "wideLayout": true
       },
       "targets": [
         {
@@ -113,71 +124,78 @@
           "legendFormat": "{{instance}} {{device}}:{{port}}"
         }
       ],
-      "description": "Current IB/RoCE logical port state per link.",
       "gridPos": {
-        "h": 6,
-        "w": 12,
         "x": 0,
-        "y": 1
+        "y": 1,
+        "w": 12,
+        "h": 6
       }
     },
     {
+      "id": 3,
       "type": "stat",
       "title": "Physical State",
+      "description": "Current IB/RoCE physical port state per link.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "5": {
-                  "text": "LinkUp",
-                  "color": "green",
-                  "index": 0
-                },
-                "2": {
-                  "text": "Polling",
-                  "color": "yellow",
-                  "index": 1
-                },
-                "3": {
-                  "text": "Disabled",
-                  "color": "red",
-                  "index": 2
-                }
-              }
-            }
-          ],
           "color": {
             "mode": "thresholds"
           },
+          "mappings": [
+            {
+              "options": {
+                "2": {
+                  "color": "yellow",
+                  "index": 1,
+                  "text": "Polling"
+                },
+                "3": {
+                  "color": "red",
+                  "index": 2,
+                  "text": "Disabled"
+                },
+                "5": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "LinkUp"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "blue",
-                "value": null
+                "value": 0
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "fields": "",
+          "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "showPercentChange": false,
         "textMode": "value_and_name",
-        "orientation": "auto"
+        "wideLayout": true
       },
       "targets": [
         {
@@ -190,34 +208,269 @@
           "legendFormat": "{{instance}} {{device}}:{{port}}"
         }
       ],
-      "description": "Current IB/RoCE physical port state per link.",
       "gridPos": {
-        "h": 6,
-        "w": 12,
         "x": 12,
-        "y": 1
+        "y": 1,
+        "w": 12,
+        "h": 6
       }
     },
     {
-      "type": "table",
-      "title": "InfiniBand / RoCE Adapters",
+      "id": 20,
+      "type": "state-timeline",
+      "title": "Port State Over Time",
+      "description": "Timeline of IB/RoCE logical port state per link.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisPlacement": "hidden",
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "Down"
+                },
+                "2": {
+                  "color": "yellow",
+                  "index": 2,
+                  "text": "Init"
+                },
+                "3": {
+                  "color": "orange",
+                  "index": 3,
+                  "text": "Armed"
+                },
+                "4": {
+                  "color": "#093475",
+                  "index": 0,
+                  "text": "Active"
+                },
+                "5": {
+                  "color": "blue",
+                  "index": 4,
+                  "text": "Act-Defer"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "alignValue": "left",
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "displayMode": "list",
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": false,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "min_over_time(node_infiniband_state_id[$__interval])",
+          "legendFormat": "{{instance}} {{device}}:{{port}}",
+          "range": true,
+          "interval": "",
+          "editorMode": "code"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 12,
+        "h": 13
+      }
+    },
+    {
+      "id": 21,
+      "type": "state-timeline",
+      "title": "Physical State Over Time",
+      "description": "Timeline of IB/RoCE physical port state per link.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisPlacement": "hidden",
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "options": {
+                "2": {
+                  "color": "yellow",
+                  "index": 1,
+                  "text": "Polling"
+                },
+                "3": {
+                  "color": "red",
+                  "index": 2,
+                  "text": "Disabled"
+                },
+                "5": {
+                  "color": "#093475",
+                  "index": 0,
+                  "text": "LinkUp"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "alignValue": "left",
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "displayMode": "list",
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": false,
+        "rowHeight": 0.9,
+        "showValue": "never",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "min_over_time(node_infiniband_physical_state_id[$__interval])",
+          "legendFormat": "{{instance}} {{device}}:{{port}}",
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 7,
+        "w": 12,
+        "h": 13
+      }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "InfiniBand / RoCE Adapters",
       "description": "HCA inventory from node_infiniband_info \u2014 device, model, firmware, board per link.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
             "filterable": true,
-            "align": "auto"
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": []
       },
       "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
+        "cellHeight": "sm",
+        "showHeader": true
       },
       "targets": [
         {
@@ -231,60 +484,118 @@
           "instant": true
         }
       ],
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 6
+      },
       "transformations": [
         {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "Value": true,
-              "job": true,
-              "__name__": true
-            },
-            "renameByName": {
-              "instance": "Node",
-              "device": "Device",
-              "hca_type": "HCA",
-              "firmware_version": "Firmware",
-              "board_id": "Board"
+          "group": "organize",
+          "kind": "Transformation",
+          "spec": {
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "Value": true,
+                "__name__": true,
+                "job": true
+              },
+              "renameByName": {
+                "board_id": "Board",
+                "device": "Device",
+                "firmware_version": "Firmware",
+                "hca_type": "HCA",
+                "instance": "Node"
+              }
             }
           }
         }
-      ],
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 7
-      }
+      ]
     },
     {
+      "id": 5,
       "type": "timeseries",
       "title": "Link Capacity (signal rate)",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bps",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
-            "showPoints": "never"
-          }
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bps"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "last"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -301,27 +612,30 @@
         }
       ],
       "gridPos": {
-        "h": 6,
-        "w": 24,
         "x": 0,
-        "y": 13
+        "y": 26,
+        "w": 24,
+        "h": 12
       }
     },
     {
+      "id": 1001,
       "type": "row",
       "title": "PCIe (DCGM)",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 19
-      },
-      "panels": []
+        "y": 38
+      }
     },
     {
+      "id": 7,
       "type": "table",
       "title": "PCIe Link Gen / Width per GPU",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -329,12 +643,34 @@
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "filterable": true
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": []
       },
       "options": {
+        "cellHeight": "sm",
         "showHeader": true
       },
       "targets": [
@@ -362,26 +698,56 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 20
+        "y": 39,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 8,
       "type": "timeseries",
       "title": "PCIe Replay Rate by GPU",
+      "description": "PCIe replays indicate a marginal link. Sustained >0 is a red flag.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "thresholdsStyle": {
               "mode": "dashed"
             }
@@ -391,27 +757,36 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "red",
                 "value": 1
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -427,54 +802,109 @@
           "legendFormat": "{{Hostname}}/gpu{{gpu}}"
         }
       ],
-      "description": "PCIe replays indicate a marginal link. Sustained >0 is a red flag.",
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 12,
-        "y": 20
+        "y": 39,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 1002,
       "type": "row",
       "title": "Ethernet Fabric",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 28
-      },
-      "panels": []
+        "y": 47
+      }
     },
     {
+      "id": 10,
       "type": "timeseries",
       "title": "Throughput",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bps",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
-            "showPoints": "never"
-          }
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bps"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -500,40 +930,95 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 29
+        "y": 48,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 11,
       "type": "timeseries",
       "title": "Packet Rate",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "pps",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
-            "showPoints": "never"
-          }
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "pps"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -559,26 +1044,56 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 12,
-        "y": 29
+        "y": 48,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 12,
       "type": "timeseries",
       "title": "Errors / Drops",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "thresholdsStyle": {
               "mode": "dashed"
             }
@@ -588,27 +1103,36 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "red",
                 "value": 1
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -634,26 +1158,56 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 37
+        "y": 56,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 13,
       "type": "timeseries",
       "title": "Carrier Flaps",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "thresholdsStyle": {
               "mode": "dashed"
             }
@@ -663,27 +1217,36 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "red",
                 "value": 1
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -700,52 +1263,108 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 12,
-        "y": 37
+        "y": 56,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 1003,
       "type": "row",
       "title": "TCP Health (distributed training)",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 45
-      },
-      "panels": []
+        "y": 64
+      }
     },
     {
+      "id": 15,
       "type": "timeseries",
       "title": "TCP Retransmits",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
-            "showPoints": "never"
-          }
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -771,40 +1390,95 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 46
+        "y": 65,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 16,
       "type": "timeseries",
       "title": "TCP Established & Sockets In Use",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
-            "showPoints": "never"
-          }
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -830,52 +1504,108 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 12,
-        "y": 46
+        "y": 65,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 1004,
       "type": "row",
       "title": "Clock Sync",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 54
-      },
-      "panels": []
+        "y": 73
+      }
     },
     {
+      "id": 18,
       "type": "timeseries",
       "title": "NTP Clock Offset",
+      "description": "Estimated offset from true time. Large drift can desync distributed training.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
-            "showPoints": "never"
-          }
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
         },
         "overrides": []
       },
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
           "calcs": [
             "mean",
             "max"
-          ]
+          ],
+          "displayMode": "table",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "desc"
         }
@@ -891,62 +1621,92 @@
           "legendFormat": "{{instance}}"
         }
       ],
-      "description": "Estimated offset from true time. Large drift can desync distributed training.",
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 55
+        "y": 74,
+        "w": 12,
+        "h": 8
       }
     },
     {
+      "id": 19,
       "type": "state-timeline",
       "title": "Time Sync Status",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
+            "axisPlacement": "auto",
             "fillOpacity": 85,
-            "lineWidth": 0
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
           },
           "mappings": [
             {
-              "type": "value",
               "options": {
                 "0": {
-                  "text": "Synced",
                   "color": "green",
-                  "index": 0
+                  "index": 0,
+                  "text": "Synced"
                 },
                 "1": {
-                  "text": "Unsynced",
                   "color": "red",
-                  "index": 1
+                  "index": 1,
+                  "text": "Unsynced"
                 }
-              }
+              },
+              "type": "value"
             }
           ],
-          "color": {
-            "mode": "thresholds"
-          }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
-        "showValue": "auto",
-        "mergeValues": true,
         "alignValue": "left",
-        "rowHeight": 0.9,
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
           "displayMode": "list",
-          "placement": "bottom"
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
         },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
         "tooltip": {
-          "mode": "single"
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
         }
       },
       "targets": [
@@ -961,10 +1721,10 @@
         }
       ],
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 12,
-        "y": 55
+        "y": 74,
+        "w": 12,
+        "h": 8
       }
     }
   ]

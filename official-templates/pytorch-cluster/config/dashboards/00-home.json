@@ -27,7 +27,7 @@
       "transparent": true,
       "options": {
         "mode": "markdown",
-        "content": "# \ud83d\ude80 Runpod \u2014 GPU Cluster Monitoring\n\nLive GPU, system, and fabric health for your multi-node training cluster.\n\n**Dashboards:**  [GPU Fleet Overview](/d/gpu-fleet-overview)  \u00b7  [GPU Utilization](/d/gpu-utilization)  \u00b7  [GPU Deep Dive](/d/gpu-deep-dive)  \u00b7  [Node & System](/d/cluster-node-system)  \u00b7  [Fabric & Interconnect](/d/cluster-fabric-interconnect)"
+        "content": "# \ud83d\ude80 Runpod \u2014 GPU Cluster Monitoring\n\nLive GPU, system, and fabric health for your multi-node training cluster.\n\n**Dashboards:**  [GPU Fleet Overview](/d/gpu-fleet-overview)  \u00b7  [GPU Utilization](/d/gpu-utilization)  \u00b7  [GPU Deep Dive](/d/gpu-deep-dive)  \u00b7  [Node & System](/d/cluster-node-system)  \u00b7  [Fabric & Interconnect](/d/cluster-fabric-interconnect)  ·  [Slurm Logs](/d/cluster-slurm-logs)"
       },
       "gridPos": {
         "h": 5,
