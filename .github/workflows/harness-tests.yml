@@ -16,7 +16,7 @@ on:
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'

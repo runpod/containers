@@ -14,8 +14,9 @@ inputs:
   cache-key:
     description: >-
       Sticky-disk cache lineage key for this image family (e.g. runpod/containers/base).
-      Trusted main builds use this key as-is. Pull requests and off-main dispatches
-      get a `/pr` suffix so they cannot commit into the release cache lineage.
+      Trusted main builds use this key as-is, pushes to develop get `/dev`.
+      Pull requests and other dispatches get a `/pr` suffix so they cannot
+      commit into either trusted lineage.
     required: true
 
 runs:
@@ -86,6 +87,8 @@ runs:
         # https://docs.blacksmith.sh/blacksmith-caching/dependencies-sticky-disks
         if [ "$EVENT_NAME" != "pull_request" ] && [ "$REF" = "refs/heads/main" ]; then
           KEY="$FAMILY_KEY"
+        elif [ "$EVENT_NAME" != "pull_request" ] && [ "$REF" = "refs/heads/develop" ]; then
+          KEY="${FAMILY_KEY}/dev"
         else
           KEY="${FAMILY_KEY}/pr"
         fi

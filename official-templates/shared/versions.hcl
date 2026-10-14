@@ -8,6 +8,13 @@ variable "RELEASE_SUFFIX" {
   default = "" # Set by CI, not used by humans.
 }
 
+# Appended to every image repo we publish to: "-dev" sends the dev env
+# to the private runpod/<repo>-dev repos, empty keeps the public ones. Set by
+# CI from the compute-version action's repo-suffix output.
+variable "REPO_SUFFIX" {
+  default = ""
+}
+
 UBUNTU_VERSIONS = [
   {
     version = "22.04"

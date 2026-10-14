@@ -8,6 +8,11 @@ name: Build and Release
 # This replaces the previous decoupled model where every workflow recomputed the
 # version independently and release.yml tagged without waiting for the builds
 # (so a release could be cut before/despite a failed or missing image family).
+#
+# Two envs, dev and prod, picked by the compute-version action from the branch: only PRs
+# into main and runs on main use the public runpod/<repo>, and only a push to
+# main tags and releases. Everything else — develop, a PR between two feature
+# branches, a manual run off main — goes to the private runpod/<repo>-dev.
 on:
   # Directory globs (not individual files) so no build-relevant input — e.g.
   # requirements.txt, pre_start.sh, start.sh — is missed. Pipeline-only (ci:)
@@ -17,7 +22,7 @@ on:
       - "official-templates/**"
       - "container-template/**"
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 permissions:
@@ -25,12 +30,13 @@ permissions:
   id-token: write
   pull-requests: read
 
-# PR: cancel superseded runs (per ref). Push to main: SERIALIZE — a constant
-# group with cancel-in-progress:false makes a 2nd merge wait for the 1st to
-# finish (and create its tag), so two merges landing close together can't both
-# compute the same next version and race.
+# PR: cancel superseded runs (per ref). Push: SERIALIZE per branch — a
+# constant group with cancel-in-progress:false makes a 2nd merge wait for the
+# 1st to finish (and create its tag), so two merges landing close together
+# can't both compute the same next version and race. main's group stays
+# `main-release`: manual-release.yml joins it by that name.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'main-release' || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && format('{0}-release', github.ref_name) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -67,7 +73,16 @@ jobs:
               # arrives, and its changes would then never be built. Each
               # family is compared against its own last release tag instead,
               # so anything unreleased is picked up by the next push.
-              MODE=(--since-release)
+              if [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
+                # develop never contains main's tagged merge commits, so its
+                # own tags are out of reach. Everything not yet on main is
+                # what is unreleased there.
+                git diff --name-only "origin/main...HEAD" \
+                  > "${RUNNER_TEMP}/changed.txt"
+                MODE=(--changed-files "${RUNNER_TEMP}/changed.txt")
+              else
+                MODE=(--since-release)
+              fi
               ;;
             *)
               # workflow_dispatch has no diff to read.
@@ -133,6 +148,8 @@ jobs:
       families: ${{ needs.plan.outputs.families }}
 
   # One tag + GitHub Release per changed family, on a releasable push to main.
+  # A push to develop builds the same families into the -dev repos and stops
+  # here: it is released once it reaches main.
   # Each family waits only on its own build: a scan that fails on one image
   # must not keep the others unreleased while their images are already pushed.
   release:
@@ -140,6 +157,7 @@ jobs:
     if: >-
       !cancelled()
       && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
       && needs.plan.result == 'success'
       && needs.plan.outputs.families != '[]'
     runs-on: ubuntu-latest

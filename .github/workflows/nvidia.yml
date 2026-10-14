@@ -20,9 +20,16 @@ jobs:
   # This family's own version series (git tags `nvidia-pytorch-v1.3.1`).
   versions:
     runs-on: ubuntu-latest
+    # pull-requests: compute-version names a develop push's dev image after
+    # the PR it merged.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
+      env: ${{ steps.v.outputs.env }}
+      repo-suffix: ${{ steps.v.outputs.repo-suffix }}
       should-build: ${{ steps.v.outputs.should-build }}
     steps:
       - name: Checkout
@@ -61,7 +68,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/nvidia
 
       - name: Build nvidia images (${{ matrix.nvidia }})
@@ -71,6 +78,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.version }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -131,7 +139,7 @@ jobs:
 
   test-nvidia-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-nvidia-pytorch
+    needs: [versions, build-nvidia-pytorch]
     if: needs.build-nvidia-pytorch.result == 'success'
     strategy:
       fail-fast: false
@@ -167,4 +175,5 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           min-cuda-version: "13.0"

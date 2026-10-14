@@ -46,6 +46,61 @@ assert_eq "no release starts at 1.0.0" 1.0.0 "$(next_version "" minor)"
 assert_eq "a first release ignores major" 1.0.0 "$(next_version "" major)"
 assert_eq "a first release ignores none" 1.0.0 "$(next_version "" none)"
 
+# --- newest_release_tag ----------------------------------------------------
+
+# develop is merged into main with a merge commit, which is what gets tagged;
+# develop then moves on without that commit in its history.
+new_repo
+git tag base-v1.0.0
+git checkout -q -b develop
+commit "feat: on develop"
+git checkout -q -
+git merge -q --no-ff -m "Merge develop" develop
+git tag base-v1.1.0
+git checkout -q develop
+echo x > f && git add f && commit "fix: after the release"
+assert_eq "the tagged merge is unreachable from develop" base-v1.0.0 \
+  "$(latest_release_tag base-)"
+assert_eq "newest_release_tag still finds it" base-v1.1.0 \
+  "$(newest_release_tag base-)"
+assert_eq "and only develop's new commits count since it" patch \
+  "$(bump_for_range base-v1.1.0 .)"
+assert_eq "a series with no tag resolves empty" "" "$(newest_release_tag comfyui-)"
+git tag comfyui-v2.0.0
+assert_eq "a tag on HEAD is skipped" "" "$(newest_release_tag comfyui-)"
+
+# --- pr_from_subject -------------------------------------------------------
+
+assert_eq "a squash subject names its PR" 42 "$(pr_from_subject "fix: CON-1 thing (#42)")"
+assert_eq "a direct push has no PR" "" "$(pr_from_subject "fix: thing")"
+assert_eq "a merge commit's subject is not read" "" \
+  "$(pr_from_subject "Merge pull request #42 from runpod/feat/x")"
+assert_eq "a #ref mid-subject is not the PR" "" \
+  "$(pr_from_subject "fix: revert (#41) partially")"
+
+# --- env_for -----------------------------------------------------------
+
+assert_eq "PR into develop is dev" dev \
+  "$(env_for pull_request refs/pull/7/merge develop)"
+assert_eq "PR into main is prod" prod \
+  "$(env_for pull_request refs/pull/7/merge main)"
+assert_eq "PR between two feature branches is dev" dev \
+  "$(env_for pull_request refs/pull/7/merge feat/base-branch)"
+assert_eq "push to develop is dev" dev "$(env_for push refs/heads/develop "")"
+assert_eq "push to main is prod" prod "$(env_for push refs/heads/main "")"
+assert_eq "dispatch from main is prod" prod \
+  "$(env_for workflow_dispatch refs/heads/main "")"
+assert_eq "dispatch from develop is dev" dev \
+  "$(env_for workflow_dispatch refs/heads/develop "")"
+assert_eq "dispatch from a feature branch is dev" dev \
+  "$(env_for workflow_dispatch refs/heads/feat/x "")"
+assert_eq "a PR's ref does not count, only its base" dev \
+  "$(env_for pull_request refs/heads/main develop)"
+assert_eq "the release branch name is configurable" prod \
+  "$(env_for push refs/heads/release "" release)"
+assert_eq "a branch merely named like main is dev" dev \
+  "$(env_for push refs/heads/feat/main "")"
+
 # --- latest_release_tag ----------------------------------------------------
 
 new_repo

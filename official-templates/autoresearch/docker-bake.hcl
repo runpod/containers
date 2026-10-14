@@ -9,6 +9,12 @@ variable "BASE_VERSION" {
   default = "1.0.7"
 }
 
+# Repo suffix of that runpod/base: "-dev" when CI built it in this run on the
+# dev env (runpod/base-dev), else empty — a published base is public.
+variable "BASE_REPO_SUFFIX" {
+  default = ""
+}
+
 variable "AUTORESEARCH_BUILDS" {
   default = flatten([
     for cuda in CUDA_VERSIONS : [
@@ -76,10 +82,10 @@ target "autoresearch-matrix" {
   name = "autoresearch-${build.ubuntu_name}-cuda${build.cuda_code}"
 
   args = {
-    BASE_IMAGE = "runpod/base:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
+    BASE_IMAGE = "runpod/base${BASE_REPO_SUFFIX}:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
   }
 
   tags = [
-    "runpod/autoresearch:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}",
+    "runpod/autoresearch${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${build.cuda_code}-${build.ubuntu_name}",
   ]
 }

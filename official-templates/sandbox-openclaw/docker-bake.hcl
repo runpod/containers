@@ -29,6 +29,6 @@ target "sandbox-openclaw" {
   }
 
   tags = [
-    "runpod/openclaw:${RELEASE_VERSION}${RELEASE_SUFFIX}-sandbox-${OPENCLAW_VERSION}",
+    "runpod/openclaw${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-sandbox-${OPENCLAW_VERSION}",
   ]
 }
