@@ -25,6 +25,11 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Canonical's service manager, dropped into the base image outside dpkg, so
+# there is no package to purge. tini is pid 1 and nothing invokes it, but its
+# Go stdlib carries 13 findings (2 CRITICAL) with no fixed build in 26.04.
+RUN rm -rf /usr/bin/pebble /var/lib/pebble
+
 # 26.04 builds tar against openat2 with no fallback, and gVisor does not
 # implement that call (google/gvisor#14451), so `tar -x` fails in a sandbox.
 # The 24.04 build is the same 1.35 and works. Drop once the runtime catches up.
