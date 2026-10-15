@@ -1,18 +1,19 @@
-# The ray-cluster image layers Ray onto the published runpod/pytorch
-# `-cluster` images (which already carry RDMA + the DCGM/Prometheus/Grafana
-# monitoring stack). Each entry below MUST correspond to a `-cluster` tag
+# The ray-cluster image layers Ray onto the published runpod/pytorch-cluster
+# images (which already carry RDMA + the DCGM/Prometheus/Grafana monitoring
+# stack). Each entry below MUST correspond to a runpod/pytorch-cluster tag
 # produced by official-templates/pytorch-cluster/docker-bake.hcl.
 #
 # Curated subset, like pytorch-cluster — add entries as more Ray images are
 # needed. RELEASE_VERSION / RELEASE_SUFFIX come from official-templates/shared/
 # versions.hcl (pass it with -f, as bake.sh does).
 
-# The published runpod/pytorch `-cluster` version this Ray layer builds FROM.
-# INTENTIONALLY separate from RELEASE_VERSION (the Ray image's own tag): on a PR
-# the Ray image's version is the future release, whose `-cluster` base may not be
-# published yet, so we build on top of a `-cluster` image that actually exists.
-# CI sets this to the in-run cluster tag when the cluster layer was (re)built,
-# or the last released version otherwise. Defaults to RELEASE_VERSION's default
+# The published runpod/pytorch-cluster version this Ray layer builds FROM.
+# INTENTIONALLY separate from RELEASE_VERSION (the Ray image's own tag): the two
+# families have their own version series, and on a PR the cluster base may not
+# be published at the Ray image's version, so we build on top of a cluster image
+# that actually exists. CI sets this to the in-run cluster tag when
+# pytorch-cluster is part of the build, or its last released version otherwise
+# (see base.yml build-ray-cluster). Defaults to RELEASE_VERSION's default
 # for local runs.
 variable "CLUSTER_BASE_VERSION" {
   default = "1.0.7"
@@ -86,10 +87,10 @@ target "ray-cluster-matrix" {
   inherits = ["ray-cluster-base"]
 
   args = {
-    # Build FROM the published `-cluster` image CI picked (see
-    # CLUSTER_BASE_VERSION): the in-run cluster tag when the cluster layer was
+    # Build FROM the published runpod/pytorch-cluster image CI picked (see
+    # CLUSTER_BASE_VERSION): the in-run cluster tag when pytorch-cluster was
     # rebuilt in this run, else the last released one.
-    BASE_IMAGE   = "runpod/pytorch:${CLUSTER_BASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}-cluster"
+    BASE_IMAGE   = "runpod/pytorch-cluster:${CLUSTER_BASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
     RAY_VERSION  = "${RAY_VERSION}"
   }
 

@@ -1,0 +1,14 @@
+# Findings Grype must not fail the build on. Only for vulnerabilities we cannot
+# act on: no fixed release exists, or the package comes from an upstream base
+# image we do not build. Each entry says why and when to look again; delete it
+# once a fixed image is available.
+
+ignore:
+  # ffmpeg 62.x bundled in nvcr.io/nvidia/pytorch, not the apt ffmpeg we install
+  # and not a pip package. The advisory's only fix is an upstream commit, so no
+  # release carries it and there is nothing to upgrade to. Review on the next
+  # bump of the NVIDIA base image.
+  - vulnerability: CVE-2026-75146
+    package:
+      name: ffmpeg
+      type: binary

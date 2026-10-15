@@ -19,3 +19,6 @@ jobs:
 
       - name: detect-bump unit tests
         run: bash .github/actions/compute-version/test_detect-bump.sh
+
+      - name: resolve-version unit tests
+        run: bash .github/actions/compute-version/test_resolve-version.sh

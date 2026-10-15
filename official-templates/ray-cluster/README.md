@@ -1,6 +1,6 @@
 # Ray cluster (`runpod/ray-cluster`)
 
-Runpod's supported Ray cluster image for Instant Clusters. It layers Ray on the `runpod/pytorch` `-cluster` variant, so it inherits the RDMA/InfiniBand user-space stack and the monitoring stack (DCGM + node_exporter on every node; Prometheus + Grafana on the head), and adds a Ray head/worker launch with Ray's metrics wired into that stack.
+Runpod's supported Ray cluster image for Instant Clusters. It layers Ray on `runpod/pytorch-cluster`, so it inherits the RDMA/InfiniBand user-space stack and the monitoring stack (DCGM + node_exporter on every node; Prometheus + Grafana on the head), and adds a Ray head/worker launch with Ray's metrics wired into that stack.
 
 Published as `runpod/ray-cluster:<version>-cu<cuda>-torch<torch>-<ubuntu>`. Design: [Ray Clusters for Inference (v2: Supported Ray Image)](https://app.notion.com/p/runpod/Ray-Clusters-for-Inference-v2-Supported-Ray-Image-3f4ff732fc34813daebccb35ab5d4712); host side in runpod/host `docs/ray-init-refactor.md`.
 
@@ -47,7 +47,7 @@ It also logs a warning if the installed Ray differs from the version the image w
 | 8265 | Ray dashboard (head, bound `0.0.0.0`) | host readiness/liveness poll (`/nodes?view=summary`, `/api/gcs_healthz`) |
 | 20217 | Ray metrics (every node) | host scrape; the head's Prometheus |
 | 52365 | Ray dashboard agent | local `HEALTHCHECK` (`/api/healthz`) |
-| 8889 | Grafana, token-authenticated (inherited from `-cluster`) | cluster owner's browser; map this in the Runpod template |
+| 8889 | Grafana, token-authenticated (inherited from `pytorch-cluster`) | cluster owner's browser; map this in the Runpod template |
 
 All except Grafana are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. **Do not map 8265 through the Runpod proxy.** The Ray dashboard is unauthenticated and allows job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). An authenticated dashboard route is a launch blocker tracked separately.
 
@@ -70,7 +70,7 @@ This data stays in the cluster. Runpod's copy is the host's own scrape (`host_ra
 official-templates/ray-cluster/tests/contract.sh runpod/ray-cluster:<tag>
 ```
 
-Each matrix entry builds `FROM` a published `runpod/pytorch:<CLUSTER_BASE_VERSION>-…-cluster` tag (see `docker-bake.hcl`), so that image must exist first. In CI, `build-ray-cluster` (in `.github/workflows/base.yml`) runs after `build-cluster`.
+Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BASE_VERSION>-…` tag (see `docker-bake.hcl`), so that image must exist first. In CI, `build-ray-cluster` (in `.github/workflows/base.yml`) runs after `build-pytorch-cluster`. `ray-cluster` is its own release family (`ray-cluster-vX.Y.Z` tags, see `.github/families.yml`), so its version need not match the cluster image it builds on.
 
 `tests/contract.sh` is CPU-only and needs no Runpod credentials. It runs the image under plain Docker with fixture topology env and checks:
 

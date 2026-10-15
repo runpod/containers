@@ -59,6 +59,16 @@ inputs:
       its own entrypoint and would fail the probe.
     required: false
     default: "false"
+  test-torch-packages:
+    description: |
+      'true' to add `test_torch_packages: true` to every group in the
+      generated manifest, extending the CUDA check with torchvision,
+      torchaudio and torchcodec operations. Those packages become
+      mandatory wherever the images are expected to have them, so
+      enable it only where the image is supposed to ship them
+      (runpod/pytorch and its -cluster layer).
+    required: false
+    default: "false"
   test-ports:
     description: |
       Newline-separated HTTP ports to expose and probe with the generic
@@ -329,6 +339,7 @@ runs:
         MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
         MANUFACTURER: ${{ inputs.manufacturer }}
         TEST_JUPYTER: ${{ inputs.test-jupyter }}
+        TEST_TORCH_PACKAGES: ${{ inputs.test-torch-packages }}
         TEST_PORTS: ${{ inputs.test-ports }}
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
@@ -345,6 +356,9 @@ runs:
         EXTRA_ARGS=()
         if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-jupyter)
+        fi
+        if [[ "${TEST_TORCH_PACKAGES,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-torch-packages)
         fi
         if [[ "${TEST_COMFYUI,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-comfyui)

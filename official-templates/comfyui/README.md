@@ -4,17 +4,21 @@ Run the latest ComfyUI with all dependencies pre-installed in the image. On firs
 
 ## Choosing a tag
 
-The image is published for two CUDA versions, and the tag says which one you get:
+The image is published for three CUDA versions, and the tag says which one you get:
 
-| tag ends in | PyTorch built for | use it on |
+| tag ends in | PyTorch | use it on |
 |---|---|---|
-| `-cuda12.8` | CUDA 12.8 | any GPU on a host with a 12.8 or newer driver |
-| `-cuda13.0` | CUDA 13.0 | hosts with a 13.0 or newer driver |
+| `-cuda12.8` | 2.10.0, CUDA 12.8 | any GPU on a host with a 12.8 or newer driver |
+| `-cuda13.0` | 2.10.0, CUDA 13.0 | hosts with a 13.0 or newer driver |
+| `-cuda13.2` | 2.13.0, CUDA 13.2 | hosts with a 13.2 or newer driver; no Volta (V100) |
 
-Both carry the same ComfyUI, the same custom nodes and the same PyTorch
-version — only the CUDA build differs. Pick `-cuda12.8` unless you have a
-reason to want CUDA 13; a `-cuda13.0` pod will not start on a host whose
-driver is still on 12.x.
+All three carry the same ComfyUI and the same custom nodes. `-cuda12.8` and
+`-cuda13.0` differ only in the CUDA build; `-cuda13.2` is on a newer PyTorch,
+because PyTorch has no CUDA 13.2 build older than 2.12. Its torchaudio is the
+CPU build, since torchaudio was never published for CUDA 13.2.
+
+Pick `-cuda12.8` unless you have a reason to want CUDA 13; a CUDA 13 pod will
+not start on a host whose driver is older than the tag.
 
 ## Upgrading from a previous version
 

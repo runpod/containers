@@ -1,5 +1,5 @@
 # The `ray-cluster` image: Runpod's supported Ray cluster image, layered on
-# runpod/pytorch's `-cluster` variant so it inherits the RDMA/InfiniBand
+# runpod/pytorch-cluster so it inherits the RDMA/InfiniBand
 # user-space stack and the monitoring stack (DCGM + node_exporter on every node;
 # Prometheus + Grafana on the head), with Ray's metrics wired into it.
 #
@@ -10,7 +10,7 @@
 # keeping the ENTRYPOINT, the Ray version and the contract ports. See
 # README.md and runpod/host docs/ray-init-refactor.md.
 #
-# BASE_IMAGE is a published runpod/pytorch `-cluster` tag (see docker-bake.hcl).
+# BASE_IMAGE is a published runpod/pytorch-cluster tag (see docker-bake.hcl).
 
 ARG BASE_IMAGE=non-existing
 FROM ${BASE_IMAGE}

@@ -13,10 +13,13 @@ RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
     tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl && \
     rm /tmp/runpodctl.tar.gz
 
-# Clone autoresearch to /opt (safe from volume mounts)
-ARG AUTORESEARCH_REF=master
-RUN git clone --branch "${AUTORESEARCH_REF}" --depth 1 \
-    https://github.com/runpod/autoresearch.git /opt/autoresearch
+# Clone autoresearch to /opt (safe from volume mounts). Pinned to a commit so
+# a rebuild reproduces the image instead of picking up new upstream work.
+ARG AUTORESEARCH_REF=d173f4ec6353213bf644631a8d30fa80974cc65f
+RUN git init -q -b master /opt/autoresearch && \
+    git -C /opt/autoresearch remote add origin https://github.com/runpod/autoresearch.git && \
+    git -C /opt/autoresearch fetch -q --depth 1 origin "${AUTORESEARCH_REF}" && \
+    git -C /opt/autoresearch checkout -q -B master FETCH_HEAD
 
 WORKDIR /opt/autoresearch
 
