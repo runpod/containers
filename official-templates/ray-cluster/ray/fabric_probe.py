@@ -26,6 +26,20 @@ def emit(ok, **kv):
     print(f"RAYFABRIC ok={ok} {' '.join(f'{k}={scrub(v)}' for k, v in sorted(kv.items()))}", flush=True)
 
 
+def hosts_ip(name):
+    # Read /etc/hosts directly, as the entrypoint does: the host rewrites it
+    # while the pod runs, and it is the cluster's membership record.
+    try:
+        with open('/etc/hosts') as f:
+            for line in f:
+                fields = line.split('#', 1)[0].split()
+                if len(fields) > 1 and name in fields[1:] and fields[0].count('.') == 3:
+                    return fields[0]
+    except OSError:
+        pass
+    return ''
+
+
 try:
     import ray
     import torch
@@ -58,7 +72,9 @@ try:
     if world < MIN_NODES:
         emit('skip', reason='single-node', nodes=world)
         sys.exit(0)
-    head_ip = (os.environ.get('NODE_ADDR') or '').split('/')[0]
+    # The probe runs on the head, which is node-0 in /etc/hosts (the
+    # entrypoint binds Ray to that address).
+    head_ip = hosts_ip('node-0')
     if not head_ip:
         emit('skip', reason='no-head-ip')
         sys.exit(0)

@@ -6,10 +6,18 @@
 #
 # It does exactly this, in order:
 #   1. enforce the contract ports (dashboard 8265, metrics 20217);
-#   2. map NODE_ROLE to head/worker and strip the CIDR from NODE_ADDR;
-#   3. on a worker, wait for the head GCS;
+#   2. take the role from NODE_RANK (rank 0 is the head) and this node's
+#      address from its node-<NODE_RANK> entry in /etc/hosts;
+#   3. on a worker, wait with no deadline for the head GCS at node-0;
 #   4. `ray start` with the contract ports, plus $RAY_START_EXTRA_ARGS;
 #   5. exec "$@" (the customer CMD, /start.sh by default).
+#
+# The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
+# and the cluster membership in /etc/hosts (node-0 ... node-N). The other
+# cluster env the host sets (PRIMARY_ADDR, NODE_ADDR, NODE_ROLE, ...) is fixed
+# at create and goes stale, or is left unset, when the head isn't running then.
+# /etc/hosts doesn't: the host appends missing members on every sync, so a
+# worker that started before the head joins once node-0 appears.
 #
 # It does not install packages, write readiness markers, or probe the fabric:
 # the host pins the fabric NIC and polls readiness itself. The ports are a
@@ -30,12 +38,13 @@ die() {
 
 [[ $# -gt 0 ]] || set -- /start.sh
 
-# Not a cluster pod (no daemon-injected role): run the CMD without Ray, so the
+# Not a cluster pod (no daemon-injected rank): run the CMD without Ray, so the
 # image still boots as a plain pod.
-if [[ -z "${NODE_ROLE:-}" ]]; then
-    log "NODE_ROLE unset: not a Ray cluster pod, starting without Ray"
+if [[ -z "${NODE_RANK:-}" ]]; then
+    log "NODE_RANK unset: not a Ray cluster pod, starting without Ray"
     exec "$@"
 fi
+[[ "$NODE_RANK" =~ ^[0-9]+$ ]] || die "NODE_RANK '$NODE_RANK' is not a node rank"
 
 # --- 1. Contract ports ------------------------------------------------------ #
 require_port() { # <var> <contract value>
@@ -57,15 +66,32 @@ for arg in "${extra_args[@]}"; do
 done
 
 # --- 2. Role and node address ----------------------------------------------- #
-case "$NODE_ROLE" in
-    RAY_HEAD) role="head" ;;
-    RAY_WORKER) role="worker" ;;
-    *) die "unknown NODE_ROLE '$NODE_ROLE' (want RAY_HEAD or RAY_WORKER)" ;;
-esac
-[[ -n "${NODE_ADDR:-}" ]] || die "NODE_ADDR unset; the host injects it for every cluster pod"
-node_ip=${NODE_ADDR%%/*}
+# hosts_ip <name>: the IPv4 address /etc/hosts maps <name> to, read from the
+# file itself on every call (not the resolver), since the host rewrites it
+# while the pod runs.
+hosts_ip() {
+    awk -v name="$1" '
+        $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
+            for (i = 2; i <= NF && $i !~ /^#/; i++) if ($i == name) { print $1; exit }
+        }' /etc/hosts
+}
+
+# The control plane gives rank 0 the head role, so the rank decides it.
+if [[ "$NODE_RANK" == 0 ]]; then role="head"; else role="worker"; fi
+self="node-$NODE_RANK"
+
+# This pod is running, so the host listed it at create. The short wait only
+# covers a write still in flight; a pod missing from its own membership is a
+# host bug, and failing loudly beats binding Ray to a guessed address.
+node_ip=""
+for _ in $(seq 1 30); do
+    node_ip=$(hosts_ip "$self")
+    [[ -n "$node_ip" ]] && break
+    sleep 2
+done
+[[ -n "$node_ip" ]] || die "$self is not in /etc/hosts; the host lists every cluster member there"
 gcs_port=${RAY_GCS_PORT:-6379}
-log "role=$role node_ip=$node_ip node_rank=${NODE_RANK:-?} num_nodes=${NUM_NODES:-?}"
+log "role=$role node=$self node_ip=$node_ip num_nodes=${NUM_NODES:-?}"
 
 # A derived image that upgraded Ray drifts from the host's pinned parsers.
 if [[ -n "${RAY_CLUSTER_RAY_VERSION:-}" ]]; then
@@ -117,23 +143,32 @@ if [[ "$role" == head ]]; then
 fi
 
 # --- 3. Worker: wait for the head GCS ----------------------------------- #
-[[ -n "${PRIMARY_ADDR:-}" ]] || die "PRIMARY_ADDR unset; a worker needs the head's address"
-head_ip=${PRIMARY_ADDR%%/*}
-wait_s=${RAY_HEAD_WAIT_SECONDS:-600}
-log "waiting up to ${wait_s}s for the Ray head GCS at $head_ip:$gcs_port"
-deadline=$((SECONDS + wait_s))
-# Bounded per attempt: a connect to a silent overlay peer can hang for minutes.
-until timeout 5 bash -c "echo > /dev/tcp/$head_ip/$gcs_port" 2> /dev/null; do
-    if ((SECONDS >= deadline)); then
-        # Keep the pod up for debugging; the host reports this rank as not alive.
-        log "error: Ray head unreachable at $head_ip:$gcs_port after ${wait_s}s; starting without Ray" >&2
-        exec "$@"
+# No deadline: a missing head is a reason to wait, not to exit. node-0 is
+# re-resolved on every attempt, because it is absent from /etc/hosts while the
+# head is stopped, and the host adds it back (with its overlay peer) once the
+# head runs again. Until then the host reports this rank as not alive.
+log "waiting for the Ray head GCS at node-0:$gcs_port"
+started=$SECONDS
+next_log=$((SECONDS + 60))
+while :; do
+    head_ip=$(hosts_ip node-0)
+    # Bounded per attempt: a connect to a silent overlay peer can hang for minutes.
+    if [[ -n "$head_ip" ]] && timeout 5 bash -c "echo > /dev/tcp/$head_ip/$gcs_port" 2> /dev/null; then
+        break
+    fi
+    if ((SECONDS >= next_log)); then
+        if [[ -n "$head_ip" ]]; then
+            log "still waiting for the Ray head GCS at node-0 ($head_ip:$gcs_port), $((SECONDS - started))s"
+        else
+            log "still waiting for node-0 to appear in /etc/hosts (head not running), $((SECONDS - started))s"
+        fi
+        next_log=$((SECONDS + 60))
     fi
     sleep 5
 done
 
 # --- 4. Start the worker ---------------------------------------------------- #
-log "joining Ray head at $head_ip:$gcs_port"
+log "joining Ray head at node-0 ($head_ip:$gcs_port)"
 ray start --address="$head_ip:$gcs_port" "${common_args[@]}" "${extra_args[@]}" ||
     die "ray start failed to join $head_ip:$gcs_port; see /tmp/ray/session_latest/logs"
 wait_listening "$CONTRACT_METRICS_PORT" "Ray metrics endpoint"

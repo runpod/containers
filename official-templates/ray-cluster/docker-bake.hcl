@@ -20,8 +20,9 @@ variable "CLUSTER_BASE_VERSION" {
 }
 
 variable "RAY_VERSION" {
-  # Ray >= 2.53 for the unified /api/healthz endpoint pkg/rayready and the local
-  # probe rely on. Keep in sync with the Dockerfile's RAY_VERSION default.
+  # Ray >= 2.53 for the unified /api/healthz agent endpoint the local probe
+  # relies on (pkg/rayready polls the dashboard's /api/gcs_healthz). Keep in
+  # sync with the Dockerfile's RAY_VERSION default.
   default = "2.53.0"
 }
 

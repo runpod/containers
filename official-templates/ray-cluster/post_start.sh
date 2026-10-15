@@ -30,7 +30,8 @@ else
     log "warn: /post_start.cluster.sh not found; monitoring stack not started"
 fi
 
-if [[ "${NODE_ROLE:-}" != "RAY_HEAD" ]]; then
+# Same rule as the entrypoint: rank 0 is the head.
+if [[ "${NODE_RANK:-}" != "0" ]]; then
     log "not the Ray head; nothing more to wire"
     exit 0
 fi

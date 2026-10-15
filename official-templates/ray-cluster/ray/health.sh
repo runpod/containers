@@ -12,7 +12,7 @@ set -uo pipefail
 readonly DASHBOARD_AGENT_PORT=52365
 
 # A plain (non-cluster) pod runs no Ray, so there is nothing to be unhealthy.
-[[ -n "${NODE_ROLE:-}" ]] || exit 0
+[[ -n "${NODE_RANK:-}" ]] || exit 0
 
 wget --tries 1 -T "${RAY_HEALTH_TIMEOUT:-5}" -q -O- "http://127.0.0.1:$DASHBOARD_AGENT_PORT/api/healthz" 2> /dev/null |
     grep -q success

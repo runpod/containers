@@ -13,7 +13,8 @@ Ray cluster pods run only on this image or one built `FROM` it. The host daemon 
 | Ray, Python, CUDA, torch versions | Image | Pinned at build time; head and workers share one image |
 | Launch (`ray start --head` / `--address`) | Image | `ENTRYPOINT` `/opt/runpod/ray/entrypoint`, then `exec` into the CMD |
 | Static defaults (`RAY_GCS_PORT=6379`, `RAY_USAGE_STATS_ENABLED=0`, `NCCL_SOCKET_FAMILY=AF_INET`, `NCCL_DEBUG=WARN`, `NCCL_NET_GDR_LEVEL=PHB`) | Image | Dockerfile `ENV` |
-| Topology (`PRIMARY_ADDR`, `NODE_ADDR`, `NODE_RANK`, `NUM_NODES`, `NODE_ROLE`, `WORLD_SIZE`, `NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME`, RDMA `NCCL_IB_*`) | Host | `buildClusterEnv` |
+| Topology the image depends on: `NODE_RANK`, `NUM_NODES`, cluster membership in `/etc/hosts` (`node-0` … `node-N`) | Host | `buildClusterEnv` for the env; the host keeps `/etc/hosts` current while the pod runs, appending members as they start |
+| Topology passed through, not used by the image (`PRIMARY_ADDR`, `MASTER_ADDR`, `NODE_ADDR`, `NODE_ROLE`, `WORLD_SIZE`, …) and NIC/RDMA (`NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME`, `NCCL_IB_*`) | Host | `buildClusterEnv`. The addresses are fixed at create, and unset when the head isn't running then, which is why the image uses `node-0` instead |
 | Observability ports: dashboard 8265, metrics 20217 | Image | Fixed by contract `v1`; the entrypoint refuses overrides |
 | Fabric NIC selection | Host | `NCCL_SOCKET_IFNAME` pinned from ground truth; no in-container self-heal |
 | Readiness, liveness, Runpod metrics | Host | `pkg/rayready` polls the head dashboard; `pkg/raymetrics` scrapes every node's metrics port |
@@ -24,12 +25,12 @@ Ray cluster pods run only on this image or one built `FROM` it. The host daemon 
 `/opt/runpod/ray/entrypoint` is the only Ray launch logic. In order:
 
 1. **Enforces the contract ports.** If `RAY_METRICS_PORT` or `RAY_DASHBOARD_PORT` is set to anything other than 20217 / 8265, or `RAY_START_EXTRA_ARGS` contains `--metrics-export-port` or `--dashboard-port`, it prints an error naming the variable and exits non-zero before starting Ray.
-2. Maps `NODE_ROLE` (`RAY_HEAD` / `RAY_WORKER`) to head or worker and strips the CIDR from `NODE_ADDR`.
-3. On a worker, waits up to `RAY_HEAD_WAIT_SECONDS` (600) for the head GCS. If the head never answers it logs an error and runs the CMD without Ray, so the pod stays up for debugging and the host reports that rank as not alive.
+2. Takes its role from `NODE_RANK` (rank 0 is the head) and its own address from its `node-<NODE_RANK>` entry in `/etc/hosts`, for `--node-ip-address`. If that entry is missing it exits with an error rather than guess.
+3. On a worker, waits with no deadline for the head GCS at `node-0`, re-reading `/etc/hosts` on every attempt and logging once a minute. While the head is stopped `node-0` is absent; the host adds it back once the head runs again, and the worker then joins without being recreated. Until then the host reports that rank as not alive.
 4. Runs `ray start` with `--node-ip-address`, `--metrics-export-port=20217`, plus `--dashboard-host=0.0.0.0 --dashboard-port=8265` on the head, then `$RAY_START_EXTRA_ARGS` for tuning such as `--resources` or `--object-store-memory`. It then waits for the ports to be listening, because a port Ray can't bind kills its agent after `ray start` has returned. A failure here exits non-zero instead of letting Ray move to a port the host can't find.
 5. `exec "$@"` into the CMD (`/start.sh` by default: SSH, Jupyter, and the monitoring bringup in `/post_start.sh`).
 
-It does not install packages, write readiness markers, or probe the fabric. A pod with no `NODE_ROLE` (not a cluster pod) skips straight to the CMD without Ray. Ray is not restarted if it crashes after joining; the container stays up and the host sees the node go from alive to not alive.
+It does not install packages, write readiness markers, or probe the fabric. A pod with no `NODE_RANK` (not a cluster pod) skips straight to the CMD without Ray. Ray is not restarted if it crashes after joining; the container stays up and the host sees the node go from alive to not alive.
 
 It also logs a warning if the installed Ray differs from the version the image was built with (`RAY_CLUSTER_RAY_VERSION`), since the host's parsers are pinned to that version.
 
@@ -76,8 +77,8 @@ Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BAS
 
 - the contract label and `ENTRYPOINT`;
 - that each port override is refused;
-- that a pod without `NODE_ROLE` boots without Ray;
-- that a 2-node cluster forms: head health, both raylets `ALIVE` in `/nodes?view=summary`, metrics on 20217 from both nodes, and the `HEALTHCHECK` passing.
+- that a pod without `NODE_RANK` boots without Ray;
+- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both raylets `ALIVE` in `/nodes?view=summary`, metrics on 20217 from both nodes, and the `HEALTHCHECK` passing.
 
 CI runs it before pushing, and uploads the head's `/nodes` and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.
 
