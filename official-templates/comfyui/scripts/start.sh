@@ -128,6 +128,14 @@ start_jupyter() {
     echo "Jupyter Lab started"
 }
 
+# The manifest alone is not proof: a `cp -r` from an older image, interrupted
+# mid-copy, could leave it behind without the files it stands for.
+comfyui_core_present() {
+    [ -f "$COMFYUI_DIR/main.py" ] \
+        && [ -d "$COMFYUI_DIR/comfy" ] \
+        && [ -d "$COMFYUI_DIR/comfy_extras" ]
+}
+
 # Upgrade the image-managed ComfyUI files while leaving user data on the
 # persistent workspace untouched.
 upgrade_comfyui_if_needed() {
@@ -144,9 +152,14 @@ upgrade_comfyui_if_needed() {
         return
     fi
 
-    if [ -f "$installed_manifest" ] && cmp -s "$baked_manifest" "$installed_manifest"; then
+    if [ -f "$installed_manifest" ] && cmp -s "$baked_manifest" "$installed_manifest" \
+        && comfyui_core_present; then
         echo "Using existing ComfyUI installation (bundle is current)"
         return
+    fi
+
+    if ! comfyui_core_present; then
+        echo "Workspace ComfyUI is missing core files; restoring them from the image"
     fi
 
     echo "============================================="
