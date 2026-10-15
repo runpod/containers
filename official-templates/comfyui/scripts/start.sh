@@ -136,37 +136,9 @@ comfyui_core_present() {
         && [ -d "$COMFYUI_DIR/comfy_extras" ]
 }
 
-# Upgrade the image-managed ComfyUI files while leaving user data on the
-# persistent workspace untouched.
-upgrade_comfyui_if_needed() {
-    local baked_manifest="$BAKED_COMFYUI_DIR/$BUNDLE_VERSION_FILE"
-    local installed_manifest="$COMFYUI_DIR/$BUNDLE_VERSION_FILE"
-
-    # A missing workspace is handled by the first-time setup below.
-    if [ ! -d "$COMFYUI_DIR" ]; then
-        return
-    fi
-
-    if [ ! -f "$baked_manifest" ]; then
-        echo "WARNING: Baked ComfyUI bundle manifest is missing; skipping upgrade"
-        return
-    fi
-
-    if [ -f "$installed_manifest" ] && cmp -s "$baked_manifest" "$installed_manifest" \
-        && comfyui_core_present; then
-        echo "Using existing ComfyUI installation (bundle is current)"
-        return
-    fi
-
-    if ! comfyui_core_present; then
-        echo "Workspace ComfyUI is missing core files; restoring them from the image"
-    fi
-
-    echo "============================================="
-    echo "  Upgrading ComfyUI workspace from baked bundle"
-    echo "  Preserving models, user data, and custom nodes"
-    echo "============================================="
-
+# Kept apart from upgrade_comfyui_if_needed so the whole sync, several minutes
+# of it on a network volume, can run as one step under a heartbeat.
+sync_comfyui_from_baked() {
     # Sync ComfyUI core and remove files that no longer exist in the new
     # release. Excluded paths belong to the user or are managed separately.
     rsync -a --delete \
@@ -198,12 +170,47 @@ upgrade_comfyui_if_needed() {
                 "$COMFYUI_DIR/custom_nodes/$node/"
         fi
     done
+}
+
+# Upgrade the image-managed ComfyUI files while leaving user data on the
+# persistent workspace untouched.
+upgrade_comfyui_if_needed() {
+    local baked_manifest="$BAKED_COMFYUI_DIR/$BUNDLE_VERSION_FILE"
+    local installed_manifest="$COMFYUI_DIR/$BUNDLE_VERSION_FILE"
+
+    # A missing workspace is handled by the first-time setup below.
+    if [ ! -d "$COMFYUI_DIR" ]; then
+        return
+    fi
+
+    if [ ! -f "$baked_manifest" ]; then
+        echo "WARNING: Baked ComfyUI bundle manifest is missing; skipping upgrade"
+        return
+    fi
+
+    if [ -f "$installed_manifest" ] && cmp -s "$baked_manifest" "$installed_manifest" \
+        && comfyui_core_present; then
+        echo "Using existing ComfyUI installation (bundle is current)"
+        return
+    fi
+
+    if ! comfyui_core_present; then
+        echo "Workspace ComfyUI is missing core files; restoring them from the image"
+    fi
+
+    echo "============================================="
+    echo "  Upgrading ComfyUI workspace from baked bundle"
+    echo "  Preserving models, user data, and custom nodes"
+    echo "============================================="
+
+    local started=$SECONDS
+    run_with_heartbeat "still syncing" sync_comfyui_from_baked
 
     # Write the manifest only after every sync succeeds. An interrupted
     # migration is retried on the next container start.
     cp "$baked_manifest" "${installed_manifest}.tmp"
     mv "${installed_manifest}.tmp" "$installed_manifest"
-    echo "ComfyUI workspace upgraded successfully"
+    echo "ComfyUI workspace upgraded successfully in $((SECONDS - started))s"
 }
 
 # A venv belonging to another CUDA variant means this volume carries custom
