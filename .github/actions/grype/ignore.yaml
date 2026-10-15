@@ -12,3 +12,30 @@ ignore:
     package:
       name: ffmpeg
       type: binary
+
+  # tar in the sandbox images is deliberately held at the 24.04 build: the
+  # 26.04 one calls openat2, which gVisor does not implement, so `tar -x`
+  # fails inside a sandbox (see sandbox-ubuntu/Dockerfile). Both "fixes" are
+  # 26.04 builds we cannot take. Review when the runtime implements openat2
+  # and the pin comes out.
+  - vulnerability: CVE-2025-45582
+    package:
+      name: tar
+      type: deb
+  - vulnerability: CVE-2026-5704
+    package:
+      name: tar
+      type: deb
+
+  # coreutils is Essential in ubuntu:26.04 and the installed version is the
+  # only one the release ships — 9.7-3ubuntu2.1 is from a later series, not
+  # resolute or resolute-updates, so there is nothing to upgrade to and the
+  # package cannot be removed. Review when 26.04 publishes a fixed build.
+  - vulnerability: CVE-2025-5278
+    package:
+      name: coreutils
+      type: deb
+  - vulnerability: CVE-2026-56391
+    package:
+      name: coreutils
+      type: deb

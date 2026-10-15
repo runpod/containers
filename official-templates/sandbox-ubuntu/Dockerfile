@@ -58,7 +58,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
 
 # Pinned by digest, not just by tag — a warm pool is keyed on the image, so an
 # upstream rebuild or a re-pushed tag would silently split the pool.
-COPY --from=ghcr.io/astral-sh/uv:0.12.15@sha256:62f8c047d0a0e9ece6b53fc63df902585a67a47a7f318ddec4a37db586edc8e3 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /uvx /usr/local/bin/
 
 # Ubuntu images since 24.04 ship a stock `ubuntu` account on uid 1000; drop it
 # so the sandbox user owns the conventional uid.

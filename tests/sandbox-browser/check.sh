@@ -36,11 +36,29 @@ test "$PY_VERSION" = "$NODE_VERSION"
 test -z "${PLAYWRIGHT_VERSION:-}" || test "$PY_VERSION" = "$PLAYWRIGHT_VERSION"
 say playwright "python $PY_VERSION, node $NODE_VERSION"
 
-# Exactly one Chromium build, and the user cannot remove it.
-mapfile -t BUILDS < <(find "$PLAYWRIGHT_BROWSERS_PATH" -mindepth 1 -maxdepth 1 -name 'chromium-*')
-test "${#BUILDS[@]}" = 1
+# `playwright install chromium` lays down two builds, not one: the browser and
+# the headless shell that a headless launch actually runs. Globbed `chromium*`
+# rather than `chromium-*` because Playwright swaps dashes for underscores in
+# the directory name (chromium_headless_shell-<rev>), so the narrower glob
+# silently matches only the browser.
+shopt -s nullglob
+BUILDS=("$PLAYWRIGHT_BROWSERS_PATH"/chromium*)
+BUILDS=("${BUILDS[@]##*/}")
+# Firefox and WebKit are not baked — each adds hundreds of MB, and this image
+# exists for Chromium.
+OTHERS=("$PLAYWRIGHT_BROWSERS_PATH"/firefox* "$PLAYWRIGHT_BROWSERS_PATH"/webkit*)
+shopt -u nullglob
+
+test "${#BUILDS[@]}" = 2
+REV="${BUILDS[0]##*-}"
+# One revision across both: a split install means a headless launch runs a
+# shell built against a different browser.
+test "${BUILDS[0]}" = "chromium-$REV"
+test "${BUILDS[1]}" = "chromium_headless_shell-$REV"
+test "${#OTHERS[@]}" = 0
+
 test ! -w "$PLAYWRIGHT_BROWSERS_PATH"
-say chromium "$(basename "${BUILDS[0]}") in $PLAYWRIGHT_BROWSERS_PATH, read-only"
+say chromium "${BUILDS[*]} in $PLAYWRIGHT_BROWSERS_PATH, read-only"
 
 # /dev/shm is whatever the runtime gives it (64 MB under plain Docker).
 # Playwright passes --disable-dev-shm-usage, so that must be enough.

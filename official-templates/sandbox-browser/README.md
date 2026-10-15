@@ -48,5 +48,12 @@ const { chromium } = require('playwright');
 ### Notes
 - **No launch flags needed.** Playwright already starts Chromium with `--no-sandbox` (the sandbox itself is the isolation boundary) and `--disable-dev-shm-usage`, so the size of `/dev/shm` does not matter. Do not pass `chromiumSandbox: true`.
 - **Keep to a few pages at once.** A single page fits comfortably in the default 2 vCPU / 4 GB sandbox, and each extra page or context adds a few hundred MB. Running out of memory restarts the whole sandbox and loses its state, so close browsers you are done with.
-- **Only Chromium is baked in.** `playwright install firefox` works if the sandbox can reach Playwright's CDN.
+- **Only Chromium is baked in**, in `/ms-playwright`, which belongs to root — so a plain `playwright install firefox` fails as `user`. Playwright reads exactly one browser directory, so install into a writable one and take Chromium along:
+
+  ```bash
+  export PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright
+  playwright install firefox chromium
+  ```
+
+  Keep that variable set when you launch, or Playwright looks in `/ms-playwright` again. Both commands need outbound access to Playwright's CDN.
 - **Your own Playwright version:** a project's `node_modules` takes precedence over the global one, but a different Playwright version expects a different browser build, and that one is not baked in.
