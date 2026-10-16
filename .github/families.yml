@@ -106,3 +106,11 @@ families:
     depends_on: [sandbox-ubuntu]
     image_repo: runpod/harbor
     workflow: sandbox
+
+  sandbox-browser:
+    paths:
+      - official-templates/sandbox-browser/**
+      - official-templates/shared/**
+    depends_on: [sandbox-ubuntu]
+    image_repo: runpod/browser
+    workflow: sandbox
