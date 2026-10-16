@@ -67,7 +67,8 @@ Changes go `feature → develop → main`. The target branch picks the
 - The dev env logs in to Docker Hub through its own OIDC connection
   (`DOCKERHUB_DEV_OIDC_CONNECTIONID`). Smoke tests run on the same RunPod
   account as prod; their pods pull the private images with the registry
-  credential named by `vars.TESTING_REGISTRY_AUTH_NAME`.
+  RunPod registry credential named by the repo variable
+  `TESTING_REGISTRY_AUTH_NAME`, resolved by name on the testing account.
 - A family rebuilt in the same dev run is layered on its parent's `-dev`
   image (`runpod/base-dev:1.4.0-rc.12-…`); otherwise on the parent's last
   public release, exactly as on prod.
@@ -358,9 +359,12 @@ either.
   `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
   `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
-- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — the RunPod registry credential
-  (on the testing account) that can pull `runpod/*-dev`. Without it dev smoke
-  tests fail at pod creation.
+- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
+  credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
+  `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests
+  pull anonymously and fail with `unauthorized`; set to a name the account
+  doesn't have, they fail before any pod is created
+  (`registry auth '…' not found`).
 - **Docker Hub:** the `runpod/<repo>-dev` repos exist and are **private**; the
   dev OIDC connection accepts PR refs and `refs/heads/develop` and can push to
   all of them.
@@ -398,6 +402,6 @@ either.
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |
 | No release despite a `feat`/`fix` merge to `main`  | The change may not touch any family's `paths` (check the `plan` job's log), or that family's build failed — its Release is skipped with a warning while the others go out. |
 | A family released at a higher bump than the merge  | Expected: the bump covers everything the family still had unreleased, so an older `feat:` outranks today's `fix:`. |
-| Dev smoke test fails with `CREATE_FAIL` / `unauthorized` | The pod could not pull the private `-dev` image: `TESTING_REGISTRY_AUTH_NAME` is unset, or its credential cannot read `runpod/*-dev`. |
+| Dev smoke test fails with `CREATE_FAIL` / `unauthorized` | The pod could not pull the private `-dev` image: the `TESTING_REGISTRY_AUTH_NAME` variable is unset, or its credential cannot read `runpod/*-dev`. |
 | A release merged from develop got a lower bump than expected | `develop → main` was squash-merged, so only the release PR's title counted. Use a merge commit. |
 | PR checks are stuck "Expected"/pending             | Branch-protection required checks likely still reference the old workflow names. Update them to the `Build and Release / …` check names. |
