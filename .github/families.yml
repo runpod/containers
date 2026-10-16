@@ -47,6 +47,14 @@ families:
     image_repo: runpod/pytorch-cluster
     workflow: base
 
+  ray-cluster:
+    paths:
+      - official-templates/ray-cluster/**
+      - official-templates/shared/**
+    depends_on: [pytorch-cluster]
+    image_repo: runpod/ray-cluster
+    workflow: base
+
   autoresearch:
     paths:
       - official-templates/autoresearch/**
