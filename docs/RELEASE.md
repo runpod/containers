@@ -17,6 +17,7 @@ them (reused via `workflow_call`), and tags + releases each family once its
 own build has succeeded.
 
 - [TL;DR](#tldr)
+- [Branches and environments](#branches-and-environments)
 - [Versioning rules](#versioning-rules)
 - [The release flow](#the-release-flow)
 - [Image tags you will see](#image-tags-you-will-see)
@@ -42,6 +43,44 @@ own build has succeeded.
 4. Untouched families are not rebuilt and keep their published version.
 5. `ci:` / `chore:` / `docs:` changes release nothing of their own. They can
    still carry out work that an earlier run left unreleased — see below.
+
+---
+
+## Branches and environments
+
+Changes go `feature → develop → main`. The target branch picks the
+**env**, and the env picks the Docker Hub repos. Only what targets
+`main` is prod; everything else is dev, so nothing that is not headed for
+`main` can reach the public repos:
+
+| Event                 | Env     | Repos                              | Tag suffix    | Tag + Release |
+| --------------------- | ------- | ---------------------------------- | ------------- | ------------- |
+| PR into `develop`, or any branch other than `main` | dev | `runpod/<repo>-dev` (private) | `-rc.<PR#>` | no |
+| Push to `develop`     | dev     | `runpod/<repo>-dev` (private)      | `-dev.<PR#>`, or `-dev.<sha7>` for a direct push | no |
+| PR into `main`        | prod    | `runpod/<repo>` (public)           | `-rc.<PR#>`   | no            |
+| Push to `main`        | prod    | `runpod/<repo>` (public)           | none          | yes           |
+| `workflow_dispatch`   | prod from `main`, else dev | as for the env | `-dev` | no |
+
+- The dev repo of a family is its `image_repo` plus `-dev`
+  (`runpod/ubuntu` → `runpod/ubuntu-dev`); `plan_families.py --image-repos
+  --include-dev` lists both sets.
+- The dev env logs in to Docker Hub through its own OIDC connection
+  (`DOCKERHUB_DEV_OIDC_CONNECTIONID`). Smoke tests run on the same RunPod
+  account as prod; their pods pull the private images with the registry
+  RunPod registry credential named by the repo variable
+  `TESTING_REGISTRY_AUTH_NAME`, resolved by name on the testing account.
+- A family rebuilt in the same dev run is layered on its parent's `-dev`
+  image (`runpod/base-dev:1.4.0-rc.12-…`); otherwise on the parent's last
+  public release, exactly as on prod.
+- **Merge `feature → develop` with squash** (the PR title is the Conventional
+  Commit, as before). **Merge `develop → main` with a merge commit, not
+  squash**: the release bump and notes are computed from the individual
+  commits, and a squash would fold every `feat:` into the release PR's title.
+- Releases are tagged on main's merge commits, which develop never contains.
+  The dev env therefore takes a family's newest tag by version, not the
+  newest reachable one, and a push to develop plans from
+  `git diff origin/main...HEAD` — everything not on main yet. Merging main
+  back into develop (after a hotfix, say) is fine but not required by CI.
 
 ---
 
@@ -135,7 +174,9 @@ it.
 
 ### Manual run (`workflow_dispatch`)
 
-- Builds every family with a `-dev` suffix (e.g. `1.1.0-dev`).
+- Builds every family with a `-dev` suffix (e.g. `1.1.0-dev`) — into the
+  public repos when run from `main`, into `runpod/<repo>-dev` from any other
+  branch.
 - Never creates a tag or release. Useful for testing pipeline changes, since
   pipeline-only edits do not trigger builds automatically (see below).
 
@@ -148,8 +189,11 @@ For the version `1.1.0` as an example:
 | Context            | Suffix        | Example tag                                  |
 | ------------------ | ------------- | -------------------------------------------- |
 | Release (`main`)   | none          | `runpod/base:1.1.0-ubuntu2204`               |
-| Pull request       | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2204`         |
-| Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2204`           |
+| PR into `main`     | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2204`         |
+| PR into `develop`  | `-rc.<PR#>`   | `runpod/base-dev:1.1.0-rc.42-ubuntu2204`     |
+| Push to `develop`  | `-dev.<PR#>`  | `runpod/base-dev:1.1.0-dev.42-ubuntu2204` (PR #42 merged) |
+| Direct push to `develop` | `-dev.<sha7>` | `runpod/base-dev:1.1.0-dev.1a2b3c4-ubuntu2204` |
+| Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2204` (from `main`; `runpod/base-dev` otherwise) |
 
 Image repositories: one per template family, listed in `.github/families.yml`
 (`python3 .github/scripts/plan_families.py --image-repos`).
@@ -312,7 +356,18 @@ either.
 ## Repository requirements
 
 - **Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`,
+  `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
+  `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
+- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
+  credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
+  `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests
+  pull anonymously and fail with `unauthorized`; set to a name the account
+  doesn't have, they fail before any pod is created
+  (`registry auth '…' not found`).
+- **Docker Hub:** the `runpod/<repo>-dev` repos exist and are **private**; the
+  dev OIDC connection accepts PR refs and `refs/heads/develop` and can push to
+  all of them.
 - **Permissions:** the orchestrator grants `id-token: write` (for Cosign
   signing in the reusable builds) and its `release` job uses `contents: write`
   to create tags and Releases. Ensure GitHub Actions is allowed to create
@@ -324,10 +379,13 @@ either.
   as skipped, and the `release` job is a matrix (`release (comfyui)`), so keep
   branch-protection required checks to ones that always run — `plan`, and the
   lint/test workflows.
-- **Merge strategy:** the repo uses **squash merge**. The PR title is what drives
-  the version, so keep it Conventional-Commit compliant.
+- **Merge strategy:** **squash merge** into `develop` — the PR title is what
+  drives the version, so keep it Conventional-Commit compliant. `develop` →
+  `main` is a **merge commit** (see [Branches and environments](#branches-and-environments)).
+- **Branch protection:** `develop` needs the same required checks as `main`.
 - **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
-  (`docker-setup`) so they cannot poison the keys used by main/release. Also
+  (`docker-setup`) so they cannot poison the keys used by main/release; pushes
+  to develop write their own `/dev` lineage. Also
   enable Sticky Disk **Branch Protection** in the Blacksmith dashboard — that
   setting is not in git.
 
@@ -344,4 +402,6 @@ either.
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |
 | No release despite a `feat`/`fix` merge to `main`  | The change may not touch any family's `paths` (check the `plan` job's log), or that family's build failed — its Release is skipped with a warning while the others go out. |
 | A family released at a higher bump than the merge  | Expected: the bump covers everything the family still had unreleased, so an older `feat:` outranks today's `fix:`. |
+| Dev smoke test fails with `CREATE_FAIL` / `unauthorized` | The pod could not pull the private `-dev` image: the `TESTING_REGISTRY_AUTH_NAME` variable is unset, or its credential cannot read `runpod/*-dev`. |
+| A release merged from develop got a lower bump than expected | `develop → main` was squash-merged, so only the release PR's title counted. Use a merge commit. |
 | PR checks are stuck "Expected"/pending             | Branch-protection required checks likely still reference the old workflow names. Update them to the `Build and Release / …` check names. |

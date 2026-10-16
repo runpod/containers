@@ -179,6 +179,15 @@ class GraphFile(unittest.TestCase):
                 f"{name} has no image_repo",
             )
 
+    def test_dev_repos_are_the_public_ones_with_a_suffix(self):
+        """cleanup sweeps both; the -dev names must match what bake pushes."""
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        public = P.image_repos(graph)
+        both = P.image_repos(graph, include_dev=True)
+        self.assertEqual(both[: len(public)], public)
+        self.assertEqual(both[len(public):], [r + "-dev" for r in public])
+        self.assertIn("runpod/ubuntu-dev", both)
+
     def test_every_template_is_in_the_graph(self):
         graph = P.load_graph(P.DEFAULT_GRAPH)
         templates = {
