@@ -281,7 +281,9 @@ create_pip_shim() {
 run_with_heartbeat() {
     local label="$1" started=$SECONDS tick=0 pid
     shift
-    "$@" &
+    # Without clearing the ERR trap the child would run keep_pod_alive itself,
+    # hold there, and leave the heartbeat below ticking forever.
+    ( trap - ERR; "$@" ) &
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         sleep 5
@@ -590,7 +592,7 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
         COPY_STARTED=$SECONDS
         mkdir -p "${COMFYUI_DIR}.incomplete"
         run_with_heartbeat "still copying" \
-            rsync -a "$BAKED_COMFYUI_DIR/" "${COMFYUI_DIR}.incomplete/"
+            rsync -a --delete "$BAKED_COMFYUI_DIR/" "${COMFYUI_DIR}.incomplete/"
         mv "${COMFYUI_DIR}.incomplete" "$COMFYUI_DIR"
         echo "ComfyUI copied to workspace in $((SECONDS - COPY_STARTED))s"
     fi
