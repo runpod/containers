@@ -24,6 +24,40 @@ not start on a host whose driver is older than the tag.
 
 If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration is performed automatically on the next boot. ComfyUI and the bundled custom nodes are updated to the versions pinned by the image, while models, inputs, outputs, user settings, and user-installed custom nodes are preserved. The virtual environment is also migrated to match the CUDA version of the tag you are now running. This may take a few extra minutes on the first start after the update.
 
+### The ComfyUI-Manager interface has changed
+
+ComfyUI-Manager 4.x replaces the old Manager interface with the Nodes Manager built
+into ComfyUI. The familiar **Manager** button is gone, and so are the screens behind
+it — installing and updating custom nodes now happens in the Nodes Manager, reached
+from **Extensions** in the top bar.
+
+Two things are not where they used to be. **Update ComfyUI** is now in the help menu —
+the **?** icon at the bottom of the sidebar — rather than in the Manager. Snapshots have
+no screen at all in the new interface; the files and the API endpoints are still there,
+and the old interface still reads snapshots you saved before.
+
+To get the old interface back, add this to `/workspace/runpod-slim/comfyui_args.txt` and
+restart the pod:
+
+```
+--enable-manager-legacy-ui
+```
+
+Your settings, snapshots and installed custom nodes carry over either way — only the
+interface changes.
+
+Two smaller changes worth knowing about:
+
+- Installing a custom node from a git URL, and installing a pip package from the
+  Manager, are no longer governed by `security_level`. Manager 4.x moved them to
+  `allow_git_url_install` and `allow_pip_install` in
+  `ComfyUI/user/__manager/config.ini`, both off by default. If you had lowered
+  `security_level` to use those features, set the flag you need instead.
+- `network_mode` is set to `personal_cloud` on first boot. Manager 4.x refuses to
+  install anything when ComfyUI listens on a public address, which a pod always does,
+  and this is the setting that tells it the machine is yours. A value you chose
+  yourself is left alone.
+
 ## Access
 
 - `8188`: ComfyUI web UI
@@ -56,8 +90,8 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 ```
 
 ComfyUI-Manager runs from the `comfyui_manager` package installed in the image and
-is started with `--enable-manager`. Add `--enable-manager-legacy-ui` here for the
-older Manager UI.
+is started with `--enable-manager`. Add `--enable-manager-legacy-ui` here for the older
+Manager interface, which is where the snapshot screens live.
 
 ## Directory Structure
 

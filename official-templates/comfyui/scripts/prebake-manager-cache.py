@@ -2,15 +2,19 @@
 """Pre-populate ComfyUI-Manager cache at Docker build time.
 
 Fetches the ComfyRegistry node list and writes it under the cache name
-ComfyUI-Manager derives from the request URI, so the first cold start skips
-the slow paginated fetch from api.comfy.org (~130 requests).
+ComfyUI-Manager derives from the request URI, so the node list is there the
+moment the Manager UI opens.
 
-Cache expires after 24h; after that Manager re-fetches in the background.
+This does not spare the pod the paginated walk of api.comfy.org: Manager runs
+default_cache_update() on every startup, and its reload('remote') asks for the
+registry with cache_mode=False, which bypasses the cache by design and takes
+minutes. What the pre-baked file buys is that every read before that walk
+finishes gets a full node list instead of an empty one. The walk then
+overwrites it, and the entry expires after 24h either way.
 
 Only the registry is pre-baked. The channel lists (custom-node-list.json and
-friends) ship inside the comfyui_manager package, and a pip-installed Manager
-reads them from the package unless a cache file exists — a pre-baked one would
-never be refreshed, so those are left to the package copy.
+friends) are re-fetched by that same default_cache_update(), five files in
+parallel in well under a second, so pre-baking them would buy nothing.
 """
 
 import json
