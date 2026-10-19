@@ -2,8 +2,11 @@
 variable "COMFYUI_VERSION" {
   default = "v0.35.0"
 }
-variable "MANAGER_SHA" {
-  default = "9d4cceea1351"
+# ComfyUI-Manager is a pip package that ComfyUI pins in its own
+# manager_requirements.txt; this must match that pin, and the build fails if it
+# does not. Bump it with COMFYUI_VERSION, not on its own.
+variable "MANAGER_VERSION" {
+  default = "4.2.2"
 }
 variable "KJNODES_SHA" {
   default = "57105374f47d"
@@ -134,7 +137,7 @@ target "comfyui-matrix" {
 
   args = {
     COMFYUI_VERSION     = COMFYUI_VERSION
-    MANAGER_SHA         = MANAGER_SHA
+    MANAGER_VERSION     = MANAGER_VERSION
     KJNODES_SHA         = KJNODES_SHA
     CIVICOMFY_SHA       = CIVICOMFY_SHA
     RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
