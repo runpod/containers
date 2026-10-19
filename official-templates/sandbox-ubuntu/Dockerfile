@@ -25,6 +25,11 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Canonical's service manager, dropped into the base image outside dpkg, so
+# there is no package to purge. tini is pid 1 and nothing invokes it, but its
+# Go stdlib carries 13 findings (2 CRITICAL) with no fixed build in 26.04.
+RUN rm -rf /usr/bin/pebble /var/lib/pebble
+
 # 26.04 builds tar against openat2 with no fallback, and gVisor does not
 # implement that call (google/gvisor#14451), so `tar -x` fails in a sandbox.
 # The 24.04 build is the same 1.35 and works. Drop once the runtime catches up.
@@ -53,7 +58,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
 
 # Pinned by digest, not just by tag — a warm pool is keyed on the image, so an
 # upstream rebuild or a re-pushed tag would silently split the pool.
-COPY --from=ghcr.io/astral-sh/uv:0.12.15@sha256:62f8c047d0a0e9ece6b53fc63df902585a67a47a7f318ddec4a37db586edc8e3 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /uvx /usr/local/bin/
 
 # Ubuntu images since 24.04 ship a stock `ubuntu` account on uid 1000; drop it
 # so the sandbox user owns the conventional uid.
