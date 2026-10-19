@@ -33,10 +33,14 @@ If you have an existing pod created with an older version of this template (CUDA
 
 ## Pre-installed custom nodes
 
-- ComfyUI-Manager
 - ComfyUI-KJNodes
 - Civicomfy
 - ComfyUI-RunpodDirect
+
+ComfyUI-Manager is included too, but not as a custom node: it is the
+`comfyui_manager` pip package installed in the image, which ComfyUI loads itself.
+Pods created with an older template keep a copy under `custom_nodes`; ComfyUI
+ignores it, and the boot log says where it is if you want the space back.
 
 ## Source Code
 
@@ -51,8 +55,13 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 --preview-method auto
 ```
 
+ComfyUI-Manager runs from the `comfyui_manager` package installed in the image and
+is started with `--enable-manager`. Add `--enable-manager-legacy-ui` here for the
+older Manager UI.
+
 ## Directory Structure
 
 - `/workspace/runpod-slim/ComfyUI`: ComfyUI install
+- `/workspace/runpod-slim/ComfyUI/user/__manager/config.ini`: ComfyUI-Manager settings
 - `/workspace/runpod-slim/comfyui_args.txt`: ComfyUI args
 - `/workspace/runpod-slim/filebrowser.db`: FileBrowser DB
