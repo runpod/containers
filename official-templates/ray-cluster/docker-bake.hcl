@@ -13,10 +13,10 @@
 # be published at the Ray image's version, so we build on top of a cluster image
 # that actually exists. CI sets this to the in-run cluster tag when
 # pytorch-cluster is part of the build, or its last released version otherwise
-# (see base.yml build-ray-cluster). Defaults to RELEASE_VERSION's default
-# for local runs.
+# (see base.yml build-ray-cluster). The default is a released pytorch-cluster
+# version for local runs; bump it when a newer cluster release is published.
 variable "CLUSTER_BASE_VERSION" {
-  default = "1.0.7"
+  default = "1.4.1"
 }
 
 variable "RAY_VERSION" {
