@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - develop
   workflow_dispatch:
 
 permissions:
@@ -34,6 +35,8 @@ jobs:
           - dockerfile: official-templates/sandbox-openclaw/Dockerfile
             ignore: "DL3006,DL3008"
           - dockerfile: official-templates/sandbox-harbor/Dockerfile
+            ignore: "DL3006,DL3008"
+          - dockerfile: official-templates/sandbox-browser/Dockerfile
             ignore: "DL3006,DL3008"
     steps:
       - name: Checkout

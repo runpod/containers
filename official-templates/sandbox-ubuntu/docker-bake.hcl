@@ -17,6 +17,6 @@ target "sandbox-ubuntu" {
   }
 
   tags = [
-    "runpod/ubuntu:${RELEASE_VERSION}${RELEASE_SUFFIX}-sandbox-ubuntu2604",
+    "runpod/ubuntu${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-sandbox-ubuntu2604",
   ]
 }
