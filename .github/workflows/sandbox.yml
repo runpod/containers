@@ -535,7 +535,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-browser
 
       - name: Build sandbox-browser image
@@ -545,7 +545,9 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
