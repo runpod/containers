@@ -175,7 +175,7 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
-          on-skip: "warn"
+          on-skip: "fail"
           manufacturer: "NVIDIA"
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"

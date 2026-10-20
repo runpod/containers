@@ -9,7 +9,15 @@ VENV_DIR="$COMFYUI_DIR/$VENV_NAME"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
-BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+BAKED_NODES=("ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+# ComfyUI-Manager now ships as the comfyui_manager pip package in the image, and
+# ComfyUI ignores any copy under custom_nodes once --enable-manager is set
+# (main.py -> comfyui_manager.should_be_disabled). Volumes created by an older
+# image still carry the 3.x clone; it is dead weight, so skip its requirements
+# along with the baked nodes.
+DEP_SKIP_NODES=("${BAKED_NODES[@]}" "ComfyUI-Manager")
+MANAGER_DIR="$COMFYUI_DIR/user/__manager"
+MANAGER_CONFIG="$MANAGER_DIR/config.ini"
 
 # ---------------------------------------------------------------------------- #
 #                          Function Definitions                                  #
@@ -241,7 +249,7 @@ reinstall_user_node_deps() {
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         [ -f "$req" ] || continue
         node=$(basename "$(dirname "$req")")
-        case " ${BAKED_NODES[*]} " in
+        case " ${DEP_SKIP_NODES[*]} " in
             *" $node "*) continue ;;
         esac
         count=$((count + 1))
@@ -295,6 +303,55 @@ run_with_heartbeat() {
     wait "$pid"
 }
 
+# ComfyUI-Manager 4.x refuses its install endpoints unless ComfyUI listens on
+# loopback or the config says the listener is trusted, and this pod serves
+# 0.0.0.0. A pod is a single-tenant machine behind an authenticated proxy,
+# which is what Manager calls `personal_cloud`; without it the Manager UI loads
+# but cannot install a thing. Volumes from an older image carry a config.ini
+# written by Manager 3.x, which has no such gate and left network_mode on its
+# default of `public`.
+# Only that default is rewritten, so a hand-set `private` or `offline` is kept,
+# and the marker stops a hand-set `public` from being reset on the next boot.
+configure_manager_config() {
+    local marker="$MANAGER_DIR/.runpod-network-mode-applied"
+    local tmp="$MANAGER_CONFIG.tmp"
+    local failed=0
+
+    if [ -f "$marker" ]; then
+        return
+    fi
+    mkdir -p "$MANAGER_DIR"
+
+    if [ ! -f "$MANAGER_CONFIG" ] || ! grep -q '^\[default\]' "$MANAGER_CONFIG"; then
+        # The leading newline keeps the section off the end of a last line that
+        # has none. use_uv is spelled out because the image removes uv on purpose.
+        if [ -s "$MANAGER_CONFIG" ]; then
+            printf '\n' >> "$MANAGER_CONFIG" || failed=1
+        fi
+        printf '[default]\nnetwork_mode = personal_cloud\nsecurity_level = normal\nuse_uv = False\n' \
+            >> "$MANAGER_CONFIG" || failed=1
+    elif ! grep -qE '^[[:space:]]*network_mode[[:space:]]*=' "$MANAGER_CONFIG"; then
+        awk '{ print } /^\[default\]/ && !seen { print "network_mode = personal_cloud"; seen = 1 }' \
+            "$MANAGER_CONFIG" > "$tmp" && mv "$tmp" "$MANAGER_CONFIG" || failed=1
+    elif grep -qE '^[[:space:]]*network_mode[[:space:]]*=[[:space:]]*public[[:space:]]*$' "$MANAGER_CONFIG"; then
+        awk '/^[ \t]*network_mode[ \t]*=[ \t]*public[ \t]*$/ { print "network_mode = personal_cloud"; next } { print }' \
+            "$MANAGER_CONFIG" > "$tmp" && mv "$tmp" "$MANAGER_CONFIG" || failed=1
+    else
+        # Already personal_cloud, or set to something else on purpose.
+        touch "$marker"
+        return
+    fi
+
+    if [ "$failed" = "1" ]; then
+        rm -f "$tmp"
+        echo "WARNING: could not write $MANAGER_CONFIG — ComfyUI-Manager may refuse to install nodes."
+        return
+    fi
+
+    echo "ComfyUI-Manager: network_mode = personal_cloud"
+    touch "$marker"
+}
+
 # ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
 # to exact versions, and the workspace checkout can move away from the image via
 # Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
@@ -302,10 +359,20 @@ run_with_heartbeat() {
 # workflow-templates sub-packages; PIP_CONSTRAINT keeps torch where it is.
 sync_comfyui_pinned_packages() {
     local requirements="$COMFYUI_DIR/requirements.txt"
+    # ComfyUI loads the Manager from the comfyui_manager package and pins the
+    # version it expects in manager_requirements.txt, so that pin is checked
+    # with the rest.
+    local manager_requirements="$COMFYUI_DIR/manager_requirements.txt"
     local installed pins spec name have
-    local missing=()
+    local missing=() sources=()
 
-    if [ ! -f "$requirements" ]; then
+    if [ -f "$requirements" ]; then
+        sources+=("$requirements")
+    fi
+    if [ -f "$manager_requirements" ]; then
+        sources+=("$manager_requirements")
+    fi
+    if [ "${#sources[@]}" = "0" ]; then
         return
     fi
 
@@ -320,7 +387,7 @@ sync_comfyui_pinned_packages() {
 
     # Only exact pins; every other line in the file is a range we leave alone.
     # torch and friends are kept aligned by /opt/comfyui-runtime-constraints.txt.
-    pins=$(tr -d '\r' < "$requirements" \
+    pins=$(cat "${sources[@]}" | tr -d '\r' \
         | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==[^[:space:];#]+$' \
         | tr 'A-Z_' 'a-z-' \
         | grep -vE '^(torch|torchvision|torchaudio)==' || true)
@@ -547,7 +614,7 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ] && [ "$VENV_NAME" = ".venv-cu1
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         if [ -f "$req" ]; then
             NODE_NAME=$(basename "$(dirname "$req")")
-            case " ${BAKED_NODES[*]} " in
+            case " ${DEP_SKIP_NODES[*]} " in
                 *" $NODE_NAME "*) continue ;;
             esac
             CURRENT=$((CURRENT + 1))
@@ -648,6 +715,15 @@ fi
 
 create_pip_shim
 
+configure_manager_config
+
+if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager" ]; then
+    echo "ComfyUI-Manager now ships as a pip package in the image; ComfyUI ignores"
+    echo "the copy left in custom_nodes. Your settings, snapshots and installed nodes"
+    echo "are unaffected. Delete it to free volume space:"
+    echo "  rm -rf $COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
+fi
+
 # Interactive sessions are started by sshd, not by this script, and the PATH
 # copied into the login files above was captured before the venv existed —
 # `python` was then missing entirely and `pip` resolved to the base interpreter.
@@ -667,7 +743,9 @@ log_cuda_venv_diagnostics
 cd "$COMFYUI_DIR"
 
 # Array, not a string: argparse needs each flag as its own argv entry.
-COMFY_ARGS=(--listen 0.0.0.0 --port 8188 --enable-cors-header)
+# --enable-manager loads the comfyui_manager package installed in the image.
+# Add --enable-manager-legacy-ui to comfyui_args.txt for the 3.x Manager UI.
+COMFY_ARGS=(--listen 0.0.0.0 --port 8188 --enable-cors-header --enable-manager)
 
 # One array element per word, since a line may hold `--foo bar`.
 if [ -s "$ARGS_FILE" ]; then
