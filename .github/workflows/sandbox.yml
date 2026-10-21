@@ -100,6 +100,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.ubuntu }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |
@@ -247,6 +249,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.openclaw }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |
@@ -423,6 +427,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.harbor }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
           UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
           UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
@@ -546,6 +552,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
           UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
           UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
