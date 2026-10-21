@@ -20,9 +20,15 @@ group "default" {
 }
 
 target "sandbox-openclaw" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/sandbox-openclaw"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod Sandbox OpenClaw"
+    "org.opencontainers.image.description" = "Runpod sandbox image built on the upstream OpenClaw container."
+  }
 
   args = {
     BASE_IMAGE = "ghcr.io/openclaw/openclaw:${OPENCLAW_VERSION}@${OPENCLAW_DIGEST}"

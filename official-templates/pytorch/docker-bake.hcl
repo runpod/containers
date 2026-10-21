@@ -188,11 +188,16 @@ group "cu1320" {
 }
 
 target "pytorch-base" {
+  inherits = ["_oci-labels"]
   context = "official-templates/pytorch"
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64"]
   contexts = {
     requirements = "official-templates/pytorch"
+  }
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod PyTorch"
+    "org.opencontainers.image.description" = "Runpod PyTorch image: runpod/base plus a CUDA-matched PyTorch/torchvision/torchaudio stack."
   }
 }
 

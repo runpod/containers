@@ -79,6 +79,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.version }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |

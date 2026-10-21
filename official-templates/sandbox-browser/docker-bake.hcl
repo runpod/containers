@@ -24,9 +24,15 @@ group "default" {
 }
 
 target "sandbox-browser" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/sandbox-browser"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod Sandbox Browser"
+    "org.opencontainers.image.description" = "Runpod sandbox browser image: the sandbox Ubuntu base plus Playwright for browser automation."
+  }
 
   args = {
     BASE_IMAGE         = "runpod/ubuntu${UBUNTU_BASE_REPO_SUFFIX}:${UBUNTU_BASE_VERSION}-sandbox-ubuntu2604"

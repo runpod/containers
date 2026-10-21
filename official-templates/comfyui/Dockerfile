@@ -204,6 +204,7 @@ RUN apt-get update && \
     openssl \
     ffmpeg \
     rsync \
+    tini \
     && curl -fSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -o cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
@@ -269,4 +270,6 @@ COPY scripts/start.sh /start.sh
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
     update-alternatives --set python3 /usr/bin/python3.12
 
-ENTRYPOINT ["/start.sh"]
+# Run everything under tini as PID 1
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+CMD ["/start.sh"]

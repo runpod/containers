@@ -107,6 +107,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.base }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
         with:
           source: .
           files: |
@@ -241,6 +243,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.autoresearch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
           # Which runpod/base to build FROM: the in-run base tag when base
           # was built in this run, else the last released (public) base.
           # Keyed on the build itself, not the plan: a planned base with
@@ -397,6 +401,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.pytorch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
           # Which runpod/base to build FROM: the in-run base tag when base
           # was built in this run, else the last released (public) base.
           # Keyed on the build itself, not the plan: a planned base with
@@ -556,6 +562,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.cluster }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          GIT_SHA: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.setup.outputs.build-date }}
           # Which runpod/pytorch to build FROM: the in-run pytorch tag when
           # pytorch was built in this run, else the last released (public)
           # pytorch — the only one that exists for a cluster-only change.

@@ -67,9 +67,14 @@ group "cuda1320" {
 }
 
 target "autoresearch-base" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/autoresearch"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod Autoresearch"
+    "org.opencontainers.image.description" = "Runpod autoresearch image built on runpod/base with CUDA 12.8.1."
+  }
 }
 
 target "autoresearch-matrix" {

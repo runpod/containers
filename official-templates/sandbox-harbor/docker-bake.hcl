@@ -23,9 +23,15 @@ group "default" {
 }
 
 target "sandbox-harbor" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/sandbox-harbor"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod Sandbox Harbor"
+    "org.opencontainers.image.description" = "Runpod sandbox harbor image built on the sandbox Ubuntu base."
+  }
 
   args = {
     BASE_IMAGE     = "runpod/ubuntu${UBUNTU_BASE_REPO_SUFFIX}:${UBUNTU_BASE_VERSION}-sandbox-ubuntu2604"
