@@ -114,7 +114,7 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torch==${TORCH_VERSION}" >> requirements.in && \
     echo "torchvision==${TORCHVISION_VERSION}" >> requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
-    echo "pillow>=12.1.1" >> requirements.in && \
+    echo "pillow>=13.0.0" >> requirements.in && \
     echo "tornado>=6.5.10" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
@@ -249,9 +249,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # Jupyter is included in the lock file and installed in the builder stage
 
-# Configure SSH for root login
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+# Key-only SSH: no root password is ever set. The greps fail the build if a
+# future base image drops the stock lines and the edits land nowhere.
+RUN sed -i 's/^#*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PermitUserEnvironment .*/PermitUserEnvironment yes/' /etc/ssh/sshd_config && \
+    grep -q '^PasswordAuthentication no$' /etc/ssh/sshd_config && \
+    grep -q '^PermitUserEnvironment yes$' /etc/ssh/sshd_config && \
     mkdir -p /run/sshd && \
     rm -f /etc/ssh/ssh_host_*
 

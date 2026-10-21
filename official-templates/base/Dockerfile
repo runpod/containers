@@ -99,7 +99,11 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3;
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.4 /uv /uvx /bin/
+
+# Drop any pip-installed uv from the base image (e.g. NGC ships an old one in
+# /usr/local/bin that shadows our pinned /bin/uv and trips Grype).
+RUN pip uninstall -y uv 2>/dev/null || true
 
 COPY --from=requirements requirements.txt /requirements.txt
 COPY --from=scrub_stale_metadata scrub-stale-metadata.py /tmp/scrub-stale-metadata.py
