@@ -114,7 +114,7 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torch==${TORCH_VERSION}" >> requirements.in && \
     echo "torchvision==${TORCHVISION_VERSION}" >> requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
-    echo "pillow>=12.1.1" >> requirements.in && \
+    echo "pillow>=13.0.0" >> requirements.in && \
     echo "tornado>=6.5.10" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
