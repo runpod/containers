@@ -45,7 +45,7 @@ It also logs a warning if the installed Ray differs from the version the image w
 | Port | Service | Who reaches it |
 |---|---|---|
 | 6379 | Ray GCS | workers → head, to register |
-| 8265 | Ray dashboard (head, bound `0.0.0.0`) | host readiness/liveness poll (`/nodes?view=summary`, `/api/gcs_healthz`) |
+| 8265 | Ray dashboard (head, bound `0.0.0.0`) | host readiness/liveness poll (`/api/gcs_healthz`, the State API's `/api/v0/nodes`) |
 | 20217 | Ray metrics (every node) | host scrape; the head's Prometheus |
 | 52365 | Ray dashboard agent | local `HEALTHCHECK` (`/api/healthz`) |
 | 8889 | Grafana, token-authenticated (inherited from `pytorch-cluster`) | cluster owner's browser; map this in the Runpod template |
@@ -78,13 +78,13 @@ Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BAS
 - the contract label and `ENTRYPOINT`;
 - that each port override is refused;
 - that a pod without `NODE_RANK` boots without Ray;
-- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both raylets `ALIVE` in `/nodes?view=summary`, metrics on 20217 from both nodes, and the `HEALTHCHECK` passing.
+- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both nodes `ALIVE` at their addresses in the State API (`/api/v0/nodes`, the query the host makes), metrics on 20217 from both nodes, and the `HEALTHCHECK` passing.
 
-CI runs it before pushing, and uploads the head's `/nodes` and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.
+CI runs it before pushing, and uploads the head's node-list and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.
 
 ## Keeping in sync with the host
 
 On a Ray version bump, verify these together with runpod/host:
 
-- **The dashboard payload shape.** `pkg/rayready` parses `/nodes?view=summary` (`ip`, `raylet.state`). A Ray relabel would make every node read DEAD and hold the cluster never-ready. Refresh the host fixtures from the contract-test artifact.
+- **The node-list payload shape.** `pkg/rayready` parses the State API's `/api/v0/nodes` (`node_ip`, `state`, `num_filtered`), not the dashboard's `/nodes?view=summary`, which is a cache that can trail the GCS. A Ray relabel would make every node read DEAD and hold the cluster never-ready. Refresh the host fixtures from the contract-test artifact.
 - **The contract ports.** Changing 8265 or 20217 is a contract version bump: a new label value and a matching host release.

@@ -14,8 +14,9 @@
 #      first, while node-0 is missing from its /etc/hosts (head not running),
 #      and must join once node-0 is added, as the host's sync does. Then: the
 #      head dashboard's /api/gcs_healthz reports success and its
-#      /nodes?view=summary lists both raylets ALIVE (what pkg/rayready polls
-#      and parses), both nodes serve Ray metrics on 20217, and both pass the
+#      State API node list ($NODES_PATH) has both nodes ALIVE at their
+#      addresses (what pkg/rayready polls and parses), both nodes serve Ray
+#      metrics on 20217, and both pass the
 #      local HEALTHCHECK. The dashboard and metrics checks run from the
 #      worker, over the docker bridge, as the host does.
 #
@@ -30,6 +31,9 @@ readonly METRICS_PORT=20217
 readonly SUBNET=172.31.250.0/24
 readonly HEAD_IP=172.31.250.10
 readonly WORKER_IP=172.31.250.11
+# The node query pkg/rayready makes: the State API's ALIVE nodes, read from the
+# GCS. Not /nodes?view=summary, whose cache can trail the GCS.
+readonly NODES_PATH='/api/v0/nodes?filter_keys=state&filter_predicates=%3D&filter_values=ALIVE&limit=10000'
 
 fail() {
     echo "FAIL: $*" >&2
@@ -89,11 +93,13 @@ serves_ray_metrics() { # <ip>
     body=$(in_worker curl -fsS "http://$1:$METRICS_PORT/metrics") && grep -q '^ray_' <<< "$body"
 }
 
-two_alive() {
+# Both nodes ALIVE at the addresses they were started with, the match
+# pkg/rayready makes against each member's PeerIp.
+both_alive() {
     local alive
-    alive=$(in_worker curl -fsS "http://$HEAD_IP:$DASHBOARD_PORT/nodes?view=summary" |
-        python3 -c 'import json,sys; print(sum(n["raylet"]["state"] == "ALIVE" for n in json.load(sys.stdin)["data"]["summary"]))') &&
-        [[ "$alive" == 2 ]]
+    alive=$(in_worker curl -fsS "http://$HEAD_IP:$DASHBOARD_PORT$NODES_PATH" |
+        python3 -c 'import json,sys; print(" ".join(sorted(n["node_ip"] for n in json.load(sys.stdin)["data"]["result"]["result"] if n["state"] == "ALIVE")))') &&
+        [[ "$alive" == "$HEAD_IP $WORKER_IP" ]]
 }
 
 check_image() {
@@ -143,8 +149,8 @@ check_image() {
     # The host's sync adds the now-running head to the worker's membership.
     in_worker sh -c "echo '$HEAD_IP node-0' >> /etc/hosts"
 
-    wait_for "2 ALIVE raylets" 180 two_alive
-    pass "/nodes?view=summary lists 2 ALIVE raylets"
+    wait_for "both nodes ALIVE" 180 both_alive
+    pass "State API lists both nodes ALIVE at $HEAD_IP and $WORKER_IP"
 
     local ip
     for ip in "$HEAD_IP" "$WORKER_IP"; do
@@ -162,7 +168,7 @@ check_image() {
         local dir
         dir="$RAY_CONTRACT_FIXTURE_DIR/$(tr '/:' '__' <<< "$image")"
         mkdir -p "$dir"
-        in_worker curl -fsS "http://$HEAD_IP:$DASHBOARD_PORT/nodes?view=summary" > "$dir/nodes.json"
+        in_worker curl -fsS "http://$HEAD_IP:$DASHBOARD_PORT$NODES_PATH" > "$dir/nodes.json"
         in_worker curl -fsS "http://$HEAD_IP:$METRICS_PORT/metrics" > "$dir/metrics.txt"
         pass "fixtures saved to $dir"
     fi
