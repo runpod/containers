@@ -23,20 +23,7 @@ The admin user and settings persist in `/workspace/.filebrowser/filebrowser.db`,
 
 - `trustProxyHeaders` is enabled so the session cookie is scoped to the proxy host, which is required for login to work behind the Runpod proxy.
 - `FILEBROWSER_ADMIN_PASSWORD` only applies on first database initialization. To reset it later, remove `/workspace/.filebrowser/filebrowser.db` and restart.
-
-### Available images
-
-The tag embeds the FileBrowser version and the CUDA variant, so multiple FileBrowser versions can ship side by side:
-
-```
-runpod/filebrowser:<release>-filebrowser<filebrowser version>-cuda<cuda version>-ubuntu2404
-```
-
-- FileBrowser v2.0.1-stable:
-    - CUDA 12.8.1: `runpod/filebrowser:1.0.0-filebrowserv2.0.1-stable-cuda1281-ubuntu2404`
-    - CUDA 12.9.0: `runpod/filebrowser:1.0.0-filebrowserv2.0.1-stable-cuda1290-ubuntu2404`
-    - CUDA 13.0.0: `runpod/filebrowser:1.0.0-filebrowserv2.0.1-stable-cuda1300-ubuntu2404`
-    - CUDA 13.2.0: `runpod/filebrowser:1.0.0-filebrowserv2.0.1-stable-cuda1320-ubuntu2404`
+- On the first login of a new pod, FileBrowser shows a "new database was created on startup" notice. This is expected (the database is created on the volume) and appears only once.
 
 ### Links
 
