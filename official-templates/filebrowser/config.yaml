@@ -7,7 +7,8 @@ server:
       config:
         defaultEnabled: true
   database:
-    path: "/workspace/.filebrowser/database.db"
+    # Filename must not be "database.db" (reserved for the v1 legacy file).
+    path: "/workspace/.filebrowser/filebrowser.db"
 auth:
   adminUsername: admin
   methods:
