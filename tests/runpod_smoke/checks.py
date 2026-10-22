@@ -375,13 +375,16 @@ def run_cuda_check(
 # ---------------------------------------------------------------------------
 
 
-# CA roots that must not be trusted anywhere. Names are matched
-# case-insensitively against certificate subjects, so a family prefix
-# ('emSign') covers every root in it. Groups can override per-manifest with
-# `revoked_ca_names:` when a check needs a different list.
+# CA roots that must not be trusted anywhere, named one per entry and
+# matched case-insensitively against certificate subjects.
+#
+# Name the individual root, not the family. Distrust is decided per root:
+# Ubuntu's ca-certificates ships emSign ECC Root CA - G3 disabled while
+# still trusting C1, C3 and G1, so a bare 'emSign' would fail on three
+# roots nobody has revoked. Groups can override with `revoked_ca_names:`.
 REVOKED_CA_NAMES: tuple[str, ...] = (
     # CON-1869 / CVE-2026-111943.
-    "emSign",
+    "emSign ECC Root CA - G3",
 )
 
 
@@ -389,6 +392,28 @@ def _sh_quote_list(values: tuple[str, ...] | list[str]) -> str:
     """Render values as a space-separated list of single-quoted shell words,
     for interpolation into a `for name in ...` loop."""
     return " ".join(shlex.quote(v) for v in values)
+
+
+# Fetch a real HTTPS endpoint through whichever trust store is in play. Kept
+# as two statements rather than `curl ... && echo ...`: under `set -e` a
+# failing left side of an AND-list is exempt, so the && form would let a
+# broken trust store reach the final `exit 0`.
+_TLS_PROBE = (
+    "curl -fsS --max-time 30 https://pypi.org/simple/ -o /dev/null; "
+    "echo 'https fetch ok'"
+)
+
+# Every `uv` reachable on $PATH, one per line, in $FOUND.
+#
+# The `if` is load-bearing. With `[ -x ... ] && echo`, the loop's exit status
+# is the last iteration's test, so a $PATH whose final entry has no uv makes
+# the whole command substitution exit 1 and `set -e` kills the check before
+# it reports anything. An `if` with no `else` returns 0 instead.
+_UV_PATH_SCAN = (
+    "FOUND=$(printf '%s' \"$PATH\" | tr ':' '\\n' | while read -r d; do "
+    "  if [ -n \"$d\" ] && [ -x \"$d/uv\" ]; then echo \"$d/uv\"; fi; "
+    "done)"
+)
 
 
 def pip_check_command(allowed: tuple[str, ...] | list[str] = ()) -> str:
@@ -423,23 +448,43 @@ def pip_check_command(allowed: tuple[str, ...] | list[str] = ()) -> str:
 
 def ca_certs_check_command(
     revoked: tuple[str, ...] | list[str] = REVOKED_CA_NAMES,
+    min_version: str = "",
 ) -> str:
-    """Verify the SYSTEM trust store: no revoked root is still trusted, and
-    an HTTPS fetch against it succeeds.
+    """Verify the SYSTEM trust store: the patched `ca-certificates` package
+    is installed, no revoked root is still trusted, and an HTTPS fetch
+    against the store succeeds.
 
     Deliberately shell-only — sandbox images may ship no Python, and the
     system store is what curl, apt and git use. The certifi bundle that
     Python reaches for is a separate store with its own check below.
 
-    `apt-get install --only-upgrade ca-certificates` is a no-op when the
-    distro has not published the patched package yet, and a no-op exits 0.
-    This check is what turns that silent non-fix into a red build.
+    `min_version` is the floor for the installed package, compared with
+    `dpkg --compare-versions`. It is the direct check: the images ship
+    whatever distrust decision the distro published, so what we assert is
+    that the published package actually arrived. Without it, an
+    `apt-get install --only-upgrade ca-certificates` that found nothing to
+    upgrade exits 0 and the image looks patched when it is not.
     """
+    version_gate = (
+        "VER=$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
+        "  || true); "
+        f"MIN={shlex.quote(min_version)}; "
+        "if [ -z \"$VER\" ]; then "
+        "  echo 'FAIL: ca-certificates is not installed via dpkg'; exit 1; "
+        "fi; "
+        "if dpkg --compare-versions \"$VER\" ge \"$MIN\"; then "
+        "  echo \"ca-certificates $VER >= $MIN\"; "
+        "else "
+        "  echo \"FAIL: ca-certificates $VER is older than $MIN — "
+        "the patched package did not reach this image\"; exit 1; "
+        "fi; "
+    ) if min_version else ""
     return (
         "set -e; "
         "echo \"ca-certificates: "
         "$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
         "  || echo 'not installed via dpkg')\"; "
+        f"{version_gate}"
         "BUNDLE=/etc/ssl/certs/ca-certificates.crt; "
         "test -s \"$BUNDLE\" "
         "  || { echo \"FAIL: $BUNDLE missing or empty\"; exit 1; }; "
@@ -447,12 +492,16 @@ def ca_certs_check_command(
         # Subjects, so a revoked root is matched by name and not by the
         # base64 body. Without openssl, fall back to the per-cert symlink
         # names that update-ca-certificates maintains.
+        # Underscores become spaces so one spelling of a root name matches
+        # both forms: openssl prints 'CN=emSign Root CA - G1', while the
+        # filename fallback has 'emSign_Root_CA_-_G1.pem'.
         "if command -v openssl >/dev/null 2>&1; then "
         "  openssl crl2pkcs7 -nocrl -certfile \"$BUNDLE\" "
-        "    | openssl pkcs7 -print_certs -noout > /tmp/ca-subjects.txt; "
+        "    | openssl pkcs7 -print_certs -noout "
+        "    | tr '_' ' ' > /tmp/ca-subjects.txt; "
         "else "
         "  echo 'openssl not present — matching on /etc/ssl/certs names'; "
-        "  ls /etc/ssl/certs > /tmp/ca-subjects.txt; "
+        "  ls /etc/ssl/certs | tr '_' ' ' > /tmp/ca-subjects.txt; "
         "fi; "
         "rc=0; "
         f"for name in {_sh_quote_list(revoked)}; do "
@@ -464,8 +513,7 @@ def ca_certs_check_command(
         "done; "
         # A trust store can also be broken by over-pruning, so prove it
         # still validates a real endpoint before reporting success.
-        "curl -fsS --max-time 30 https://pypi.org/simple/ -o /dev/null "
-        "  && echo 'https fetch via system store ok'; "
+        f"{_TLS_PROBE}; "
         "exit $rc"
     )
 
@@ -520,11 +568,10 @@ def uv_check_command() -> str:
     return (
         "set -e; "
         "uv --version; "
-        "FOUND=$(printf '%s' \"$PATH\" | tr ':' '\\n' | while read -r d; do "
-        "  [ -n \"$d\" ] && [ -x \"$d/uv\" ] && echo \"$d/uv\"; "
-        "done); "
+        f"{_UV_PATH_SCAN}; "
         "echo \"uv on PATH:\"; printf '%s\\n' \"$FOUND\"; "
-        "COUNT=$(printf '%s\\n' \"$FOUND\" | sed '/^$/d' | wc -l); "
+        "COUNT=$(printf '%s\\n' \"$FOUND\" | sed '/^$/d' | wc -l "
+        "  | tr -d '[:space:]'); "
         "[ \"$COUNT\" -eq 1 ] "
         "  || { echo \"FAIL: expected one uv on PATH, found $COUNT\"; exit 1; }; "
         "if command -v python >/dev/null 2>&1; then "
@@ -561,8 +608,9 @@ def virtualenv_check_command() -> str:
         "for py in $PYS; do "
         "  VER=$(\"$py\" -c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'); "
         # Both /usr/bin and /usr/local/bin can expose the same interpreter;
-        # key on the version so each one is exercised once.
-        "  [ -d \"$TMP/v$VER\" ] && continue; "
+        # key on the version so each one is exercised once. `if` rather than
+        # `[ ... ] && continue` for the same reason as the uv PATH scan.
+        "  if [ -d \"$TMP/v$VER\" ]; then continue; fi; "
         "  \"$py\" -m virtualenv -q \"$TMP/v$VER\"; "
         "  \"$TMP/v$VER/bin/python\" -c "
         "    \"import sys; print('virtualenv ok for $VER ->', "

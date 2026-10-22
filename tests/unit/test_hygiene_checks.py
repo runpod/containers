@@ -7,6 +7,7 @@ quoting, and that the pip-check allow-list gates pass/fail the way the
 manifest promises.
 """
 
+import shutil
 import subprocess
 import tempfile
 import sys
@@ -145,6 +146,24 @@ class RevokedCaNameTests(unittest.TestCase):
         self.assertEqual(proc.stdout.splitlines(), names)
         self.assertFalse(marker.exists(), "quoted name was executed")
 
+    def test_names_identify_one_root_not_a_family(self):
+        # Distrust is per root: Ubuntu ships emSign ECC Root CA - G3
+        # disabled while still trusting C1, C3 and G1. A family prefix
+        # would fail on three roots nobody revoked.
+        for name in checks.REVOKED_CA_NAMES:
+            with self.subTest(name=name):
+                self.assertGreater(
+                    len(name.split()), 1,
+                    f"{name!r} names a family, not a root",
+                )
+
+    def test_matching_normalises_underscores_to_spaces(self):
+        # One spelling has to match both haystacks: openssl prints
+        # 'CN=emSign Root CA - G1', the filename fallback has
+        # 'emSign_Root_CA_-_G1.pem'.
+        command = checks.ca_certs_check_command(("emSign Root CA - G1",))
+        self.assertEqual(command.count("tr '_' ' '"), 2)
+
     def test_a_quoted_name_does_not_break_the_command(self):
         command = checks.ca_certs_check_command(["x'; touch /tmp/pwned; '"])
         proc = subprocess.run(
@@ -191,6 +210,132 @@ class CommandShapeTests(unittest.TestCase):
         # Over-pruning a trust store is as broken as not pruning it, so a
         # clean name scan alone must not be enough to pass.
         self.assertIn("https://pypi.org/simple/", checks.ca_certs_check_command())
+
+
+class SetEFragmentTests(unittest.TestCase):
+    """The fragments that `set -e` is easy to get wrong in.
+
+    Every hygiene command runs under `set -e`, where a plain `cmd && echo`
+    or a loop ending on a false test changes the exit status of the whole
+    check. Both shapes shipped once and had to be fixed: the uv scan killed
+    the check before it reported anything, and the TLS probe would have let
+    a broken trust store pass.
+    """
+
+    def _bin(self, name: str, body: str) -> str:
+        d = Path(tempfile.mkdtemp())
+        script = d / name
+        script.write_text(f"#!/bin/bash\n{body}\n")
+        script.chmod(0o755)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return str(d)
+
+    def _run(self, fragment: str, *dirs: str):
+        # Fake binaries win, then the real PATH so tr/sed/wc resolve.
+        path = ":".join([*dirs, "/usr/bin", "/bin"])
+        return subprocess.run(
+            ["/bin/bash", "-c", f"set -e; {fragment}; echo REACHED_END"],
+            capture_output=True, text=True, env={"PATH": path},
+        )
+
+    def _empty_dir(self) -> str:
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def test_uv_scan_survives_a_path_entry_without_uv(self):
+        # The regression: a $PATH entry with no uv made the last loop
+        # iteration exit 1, which killed the command substitution and —
+        # under set -e — the whole check, before it reported anything.
+        with_uv = self._bin("uv", "echo uv 0.0.0")
+        proc = self._run(
+            checks._UV_PATH_SCAN + '; printf "%s\\n" "$FOUND"',
+            with_uv, self._empty_dir(),
+        )
+        self.assertIn("REACHED_END", proc.stdout, proc.stderr)
+        self.assertIn(f"{with_uv}/uv", proc.stdout)
+
+    def test_uv_scan_finds_every_copy(self):
+        first = self._bin("uv", "true")
+        second = self._bin("uv", "true")
+        proc = self._run(
+            checks._UV_PATH_SCAN + '; printf "%s\\n" "$FOUND"',
+            first, second,
+        )
+        self.assertIn("REACHED_END", proc.stdout, proc.stderr)
+        self.assertIn(f"{first}/uv", proc.stdout)
+        self.assertIn(f"{second}/uv", proc.stdout)
+
+    def test_uv_scan_survives_when_no_entry_has_uv(self):
+        proc = self._run(
+            checks._UV_PATH_SCAN + '; printf "%s\\n" "$FOUND"',
+            self._empty_dir(), self._empty_dir(),
+        )
+        self.assertIn("REACHED_END", proc.stdout, proc.stderr)
+
+    def test_tls_probe_fails_the_check_when_the_fetch_fails(self):
+        # A broken trust store must not reach a passing exit status.
+        failing_curl = self._bin("curl", "exit 60")
+        proc = self._run(checks._TLS_PROBE, failing_curl)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("REACHED_END", proc.stdout)
+
+    def test_tls_probe_passes_when_the_fetch_succeeds(self):
+        ok_curl = self._bin("curl", "exit 0")
+        proc = self._run(checks._TLS_PROBE, ok_curl)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("REACHED_END", proc.stdout)
+
+
+class CaCertsVersionFloorTests(unittest.TestCase):
+    """The floor is the direct check: the distrust decision is the distro's,
+    so what we assert is that its patched package actually arrived."""
+
+    FLOOR = "20260816"
+    # Both pod versions seen in CI, plus the pre-fix one they replaced.
+    PATCHED = ("20260816ubuntu0.22.04.1", "20260816ubuntu0.24.04.1")
+    STALE = ("20240203", "20250419ubuntu0.24.04.1")
+
+    def _compare(self, installed: str) -> int:
+        """dpkg's own comparison, which is what the check shells out to."""
+        return subprocess.run(
+            ["dpkg", "--compare-versions", installed, "ge", self.FLOOR],
+        ).returncode
+
+    @unittest.skipIf(shutil.which("dpkg") is None, "dpkg not available")
+    def test_patched_versions_clear_the_floor(self):
+        for version in self.PATCHED:
+            with self.subTest(version=version):
+                self.assertEqual(self._compare(version), 0)
+
+    @unittest.skipIf(shutil.which("dpkg") is None, "dpkg not available")
+    def test_pre_fix_versions_do_not(self):
+        for version in self.STALE:
+            with self.subTest(version=version):
+                self.assertNotEqual(self._compare(version), 0)
+
+    def test_floor_is_only_emitted_when_asked_for(self):
+        self.assertNotIn(
+            "compare-versions", checks.ca_certs_check_command(("x",)),
+        )
+        self.assertIn(
+            "compare-versions",
+            checks.ca_certs_check_command(("x",), self.FLOOR),
+        )
+
+    def test_a_missing_package_fails_rather_than_passing_the_floor(self):
+        # dpkg-query on an absent package yields an empty version, which
+        # must not quietly compare as "good enough".
+        command = checks.ca_certs_check_command(("x",), self.FLOOR)
+        self.assertIn("ca-certificates is not installed via dpkg", command)
+
+    def test_floor_is_quoted(self):
+        command = checks.ca_certs_check_command(("x",), "2026; rm -rf /")
+        proc = subprocess.run(
+            ["bash", "-n"], input=command, capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("'2026; rm -rf /'", command)
 
 
 class PipCheckGatingTests(unittest.TestCase):

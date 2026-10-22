@@ -169,6 +169,7 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           min-cuda-version: "13.0"
           test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
           test-python-tls: "true"
           test-uv: "true"
           test-pip-check: "true"

@@ -178,7 +178,11 @@ RUN printf "torch==%s\ntorchvision==%s\ntorchaudio==%s\n" \
     "$TORCH_VERSION" "$TORCHVISION_VERSION" "$TORCHAUDIO_VERSION" \
     > /opt/comfyui-runtime-constraints.txt
 
-# Update and install runtime dependencies, CUDA, and common tools
+# Update and install runtime dependencies, CUDA, and common tools. The
+# `upgrade` is what carries CON-1869: it pulls the patched ca-certificates,
+# dropping the distrusted emSign root (CVE-2026-111943). The smoke check
+# asserts the installed version, so a repo that has not published it yet
+# fails the build instead of passing quietly.
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -213,12 +217,6 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* \
     && rm cuda-keyring_1.1-1_all.deb \
     && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
-
-# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
-RUN apt-get update && \
-    apt-get install -y --only-upgrade ca-certificates && \
-    update-ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages, executables, and Jupyter data from builder stage
 COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12

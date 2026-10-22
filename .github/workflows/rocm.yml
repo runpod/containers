@@ -165,6 +165,7 @@ jobs:
           on-skip: "warn"
           manufacturer: "AMD"
           test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
           test-python-tls: "true"
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"

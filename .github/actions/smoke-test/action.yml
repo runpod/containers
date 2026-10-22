@@ -99,6 +99,14 @@ inputs:
       no patched package yet, and this is what catches that.
     required: false
     default: "false"
+  min-ca-certs-version:
+    description: |
+      dpkg version floor for the installed ca-certificates package, e.g.
+      '20260816'. Asserts the patched package actually reached the image:
+      an `--only-upgrade` that found nothing to upgrade exits 0 and
+      otherwise looks exactly like success. Needs test-ca-certs.
+    required: false
+    default: ""
   test-python-tls:
     description: |
       'true' to emit `test_python_tls: true`: the same revoked-root check
@@ -405,6 +413,7 @@ runs:
         TEST_PIP_CHECK: ${{ inputs.test-pip-check }}
         PIP_CHECK_ALLOW: ${{ inputs.pip-check-allow }}
         TEST_CA_CERTS: ${{ inputs.test-ca-certs }}
+        MIN_CA_CERTS_VERSION: ${{ inputs.min-ca-certs-version }}
         TEST_PYTHON_TLS: ${{ inputs.test-python-tls }}
         PYTHON_TLS_VENV: ${{ inputs.python-tls-venv }}
         REVOKED_CA_NAMES: ${{ inputs.revoked-ca-names }}
@@ -441,6 +450,9 @@ runs:
         fi
         if [[ "${TEST_CA_CERTS,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-ca-certs)
+        fi
+        if [[ -n "${MIN_CA_CERTS_VERSION}" ]]; then
+          EXTRA_ARGS+=(--min-ca-certs-version "${MIN_CA_CERTS_VERSION}")
         fi
         if [[ "${TEST_PYTHON_TLS,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-python-tls)

@@ -418,6 +418,7 @@ GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
 #   GROUP_TEST_PIP_CHECK    — `pip check` must be clean
 #   GROUP_PIP_CHECK_ALLOW   — conflict substrings accepted for that group
 #   GROUP_TEST_CA_CERTS     — system trust store carries no revoked root
+#   GROUP_MIN_CA_CERTS_VER  — floor for the installed ca-certificates
 #   GROUP_TEST_PYTHON_TLS   — certifi bundle carries no revoked root
 #   GROUP_REVOKED_CA_NAMES  — per-group override of checks.REVOKED_CA_NAMES
 #   GROUP_PYTHON_TLS_VENV   — activate script, for app-owned virtualenvs
@@ -426,6 +427,7 @@ GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
 GROUP_TEST_PIP_CHECK: dict[str, bool] = {}
 GROUP_PIP_CHECK_ALLOW: dict[str, list[str]] = {}
 GROUP_TEST_CA_CERTS: dict[str, bool] = {}
+GROUP_MIN_CA_CERTS_VER: dict[str, str] = {}
 GROUP_TEST_PYTHON_TLS: dict[str, bool] = {}
 GROUP_REVOKED_CA_NAMES: dict[str, list[str]] = {}
 GROUP_PYTHON_TLS_VENV: dict[str, str] = {}

@@ -311,7 +311,12 @@ def _hygiene_checks(group: str) -> list[tuple[str, str]]:
     if config.GROUP_TEST_UV.get(group, False):
         checks.append(("uv", uv_check_command()))
     if config.GROUP_TEST_CA_CERTS.get(group, False):
-        checks.append(("CA trust store", ca_certs_check_command(revoked)))
+        checks.append((
+            "CA trust store",
+            ca_certs_check_command(
+                revoked, config.GROUP_MIN_CA_CERTS_VER.get(group, ""),
+            ),
+        ))
     if config.GROUP_TEST_PYTHON_TLS.get(group, False):
         checks.append((
             "certifi / python TLS",

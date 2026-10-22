@@ -187,6 +187,7 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           test-ca-certs: true
+          min-ca-certs-version: "20260816"
           test-python-tls: true
           test-uv: true
           test-virtualenv: true
@@ -330,6 +331,7 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           test-ca-certs: true
+          min-ca-certs-version: "20260816"
           test-python-tls: true
           exclude-instances: |
             RTX 2000 Ada
@@ -488,6 +490,7 @@ jobs:
           test-jupyter: true
           test-torch-packages: true
           test-ca-certs: true
+          min-ca-certs-version: "20260816"
           test-python-tls: true
           test-pip-check: true
           # Patterns match catalog DISPLAY names, which never contain the
@@ -641,6 +644,7 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-torch-packages: true
           test-ca-certs: true
+          min-ca-certs-version: "20260816"
           test-python-tls: true
           # torch 2.12/2.13 here take torchvision from cu129, which upstream
           # builds without Blackwell.

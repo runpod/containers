@@ -215,9 +215,13 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
 
     if _normalize_bool(contents.get("test_ca_certs")):
         config.GROUP_TEST_CA_CERTS[grp] = True
+        floor = str(contents.get("min_ca_certs_version") or "").strip()
+        if floor:
+            config.GROUP_MIN_CA_CERTS_VER[grp] = floor
         log(
             f"group '{grp}': test_ca_certs=true "
-            f"(system trust store, revoked={revoked or 'default'})"
+            f"(revoked={revoked or 'default'}, "
+            f"min version={floor or 'not enforced'})"
         )
 
     if _normalize_bool(contents.get("test_python_tls")):

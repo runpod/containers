@@ -175,6 +175,7 @@ jobs:
           # The ComfyUI venv is created with --system-site-packages, so
           # certifi resolves to the system copy and one check covers both.
           test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
           test-python-tls: "true"
           test-comfyui: "true"
           test-comfyui-functional: ${{ inputs.run-functional-tests }}

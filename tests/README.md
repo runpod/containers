@@ -346,6 +346,7 @@ groupname:
     pip_check_allow:          # ...except these inherited conflicts
     - "datasets 4.4.1 has requirement fsspec"
     test_ca_certs: true       # no revoked root in the system trust store
+    min_ca_certs_version: 20260816   # ...and the patched package arrived
     test_python_tls: true     # ...nor in the certifi bundle
     python_tls_venv: /path/to/venv/bin/activate   # if the app owns a venv
     revoked_ca_names:         # overrides the default list in checks.py
@@ -375,6 +376,7 @@ Field reference:
 | `test_pip_check` | `true` / `false` — runs `pip check` in the pod and fails on any conflict not matched by `pip_check_allow`. Catches a bumped pin that no longer satisfies something already in the image, which a boot check cannot see. Default: `false`. |
 | `pip_check_allow` | List of substrings of `pip check` output to accept instead of failing on, for conflicts inherited from a vendor base image. Keep each entry narrow (`datasets 4.4.1 has requirement fsspec`, not `datasets`) so a *new* conflict in the same package still fails. Matched as plain substrings, not patterns. |
 | `test_ca_certs` | `true` / `false` — asserts no CA in `revoked_ca_names` is still trusted in the **system** store, and that HTTPS still validates against it. Shell-only, so it is safe for images with no Python. Worth enabling everywhere: `apt-get install --only-upgrade ca-certificates` exits 0 when the distro has not published the patched package yet, and this is what turns that silent non-fix into a red build. Default: `false`. |
+| `min_ca_certs_version` | dpkg version floor for the installed `ca-certificates` package, e.g. `20260816`. This is the direct check: the images ship whatever distrust decision the distro published, so what we assert is that its patched package actually arrived. Without it an `--only-upgrade` that found nothing to upgrade exits 0 and the image looks patched when it is not. Requires `test_ca_certs`. |
 | `test_python_tls` | `true` / `false` — the same assertion against the **certifi** bundle, which is the store `pip`, `requests` and ComfyUI use. Separate flag because upgrading the system store does not touch certifi, and not every image ships Python. Default: `false`. |
 | `python_tls_venv` | Path to an `activate` script sourced before the certifi check, for images whose application runs in its own virtualenv rather than the system interpreter (ComfyUI). Default: system `python`. |
 | `revoked_ca_names` | CA subject substrings that must not be trusted, matched case-insensitively against certificate subjects, so a family prefix (`emSign`) covers every root in it. Applies to both CA checks. Default: the list in `tests/runpod_smoke/checks.py` — extend that when a root is revoked, and use this field only for a one-off run. |
@@ -703,10 +705,14 @@ which Python reads. An image can pass one and fail the other, and in the case
 that motivated these checks it would have.
 
 When a root is revoked, add it to `REVOKED_CA_NAMES` in
-`runpod_smoke/checks.py` — names are matched case-insensitively against
-certificate subjects, so the family prefix (`emSign`) covers every root in
-it. `revoked_ca_names:` in a manifest overrides that list for one group, for
-a one-off run.
+`runpod_smoke/checks.py`, and raise `min_ca_certs_version` in the workflows
+to the package that carries the distrust. Name the individual root, not the
+family: distrust is decided per root, and Ubuntu's `ca-certificates` ships
+`emSign ECC Root CA - G3` disabled while still trusting C1, C3 and G1 — a
+bare `emSign` fails on three roots nobody revoked. Underscores and spaces
+are equivalent when matching, so one spelling covers both the `openssl`
+subject form and the certificate filenames. `revoked_ca_names:` in a
+manifest overrides the list for one group, for a one-off run.
 
 `pip_check_allow` entries are plain substrings, not patterns. Keep each one
 narrow enough to name a single known conflict: `datasets 4.4.1 has

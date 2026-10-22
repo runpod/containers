@@ -35,7 +35,10 @@ WORKDIR /
 
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-# Install
+# Install. The `upgrade` is what carries CON-1869: it pulls the patched
+# ca-certificates, dropping the distrusted emSign root (CVE-2026-111943).
+# The smoke check asserts the installed version, so a repo that has not
+# published it yet fails the build instead of passing quietly.
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
@@ -112,12 +115,6 @@ COPY --from=scrub_stale_metadata scrub-stale-metadata.py /tmp/scrub-stale-metada
 RUN python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
     python /tmp/scrub-stale-metadata.py /requirements.txt && \
     rm /tmp/scrub-stale-metadata.py
-
-# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
-RUN apt-get update && \
-    apt-get install --yes --only-upgrade ca-certificates && \
-    update-ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
 
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf

@@ -84,6 +84,7 @@ def render_yaml(groups: dict) -> str:
             "test_comfyui_functional",
             "test_pip_check",
             "test_ca_certs",
+            "min_ca_certs_version",
             "test_python_tls",
             "python_tls_venv",
             "test_uv",
@@ -137,6 +138,7 @@ def build_groups(
     test_pip_check: bool = False,
     pip_check_allow: list[str] | None = None,
     test_ca_certs: bool = False,
+    min_ca_certs_version: str = "",
     test_python_tls: bool = False,
     python_tls_venv: str = "",
     revoked_ca_names: list[str] | None = None,
@@ -232,6 +234,8 @@ def build_groups(
                 body["pip_check_allow"] = list(pip_check_allow)
         if test_ca_certs:
             body["test_ca_certs"] = True
+            if min_ca_certs_version:
+                body["min_ca_certs_version"] = min_ca_certs_version
         if test_python_tls:
             body["test_python_tls"] = True
             if python_tls_venv:
@@ -380,6 +384,17 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--min-ca-certs-version",
+        default="",
+        metavar="VERSION",
+        help=(
+            "dpkg version floor for the installed ca-certificates package, "
+            "e.g. '20260816'. Asserts the patched package actually reached "
+            "the image — an --only-upgrade that found nothing exits 0 and "
+            "otherwise looks like success. Requires --test-ca-certs."
+        ),
+    )
+    ap.add_argument(
         "--test-python-tls",
         action="store_true",
         help=(
@@ -516,6 +531,7 @@ def main() -> int:
         test_pip_check=args.test_pip_check,
         pip_check_allow=args.pip_check_allow,
         test_ca_certs=args.test_ca_certs,
+        min_ca_certs_version=args.min_ca_certs_version,
         test_python_tls=args.test_python_tls,
         python_tls_venv=args.python_tls_venv,
         revoked_ca_names=args.revoked_ca_name,

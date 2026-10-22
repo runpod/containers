@@ -31,7 +31,7 @@ RUN apt-get update --yes && \
 
 # CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
 RUN apt-get update --yes && \
-    apt-get install --yes --only-upgrade ca-certificates && \
+    apt-get install --yes --no-install-recommends --only-upgrade ca-certificates && \
     update-ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
