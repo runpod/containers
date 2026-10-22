@@ -45,12 +45,13 @@ It also logs a warning if the installed Ray differs from the version the image w
 | Port | Service | Who reaches it |
 |---|---|---|
 | 6379 | Ray GCS | workers → head, to register |
-| 8265 | Ray dashboard (head, bound `0.0.0.0`) | host readiness/liveness poll (`/api/gcs_healthz`, the State API's `/api/v0/nodes`) |
+| 8265 | Ray dashboard (head, bound `0.0.0.0`) | host readiness/liveness poll (`/api/gcs_healthz`, the State API's `/api/v0/nodes`); proxy upstream |
+| 8266 | Ray dashboard behind the token-gated proxy (head) | cluster owner's browser; map this in the Runpod template |
 | 20217 | Ray metrics (every node) | host scrape; the head's Prometheus |
 | 52365 | Ray dashboard agent | local `HEALTHCHECK` (`/api/healthz`) |
 | 8889 | Grafana, token-authenticated (inherited from `pytorch-cluster`) | cluster owner's browser; map this in the Runpod template |
 
-All except Grafana are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. **Do not map 8265 through the Runpod proxy.** The Ray dashboard is unauthenticated and allows job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). An authenticated dashboard route is a launch blocker tracked separately.
+All except Grafana and the dashboard proxy are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. **Do not map 8265 through the Runpod proxy.** The Ray dashboard is unauthenticated and allows job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). For browser access, map 8266 instead: unlike Grafana (which has a login form to fall back on), the dashboard can't be partially trusted, so the proxy fails closed — only requests carrying `?token=` or its session cookie are forwarded upstream, and with neither `RAY_DASHBOARD_PASSWORD` nor `JUPYTER_PASSWORD` set it refuses all traffic. The token model (shared secret, `?token=` login, cookie thereafter) is the same one Jupyter's `JUPYTER_PASSWORD` uses. The raw dashboard on 8265 stays live on the bridge for the host's polls either way. WebSocket upgrades are not proxied; the dashboard's log views degrade to polling.
 
 ## Metrics for the cluster owner
 
@@ -62,6 +63,7 @@ This data stays in the cluster. Runpod's copy is the host's own scrape (`host_ra
 
 - `/opt/runpod/ray/health`: the local probe behind the Docker `HEALTHCHECK`; exits 0 when this node's agent reports the raylet and GCS healthy.
 - `/opt/runpod/ray/fabric-probe`: opt-in NCCL all-reduce across one GPU per node. Run it on the head once every node has joined. It prints one `RAYFABRIC ok=... gbps=... reason=...` line and always exits 0. It is not on the boot path.
+- `/opt/runpod/ray/dashboard-proxy`: the token-gated dashboard front end on 8266 (supervisord program `ray-dashboard-proxy`, started by `post_start.sh` on the head). Token: `RAY_DASHBOARD_PASSWORD`, else `JUPYTER_PASSWORD` — open once with `?token=<token>` and the cookie keeps the session; fail-closed with neither set.
 
 ## Build and test
 
@@ -78,7 +80,8 @@ Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BAS
 - the contract label and `ENTRYPOINT`;
 - that each port override is refused;
 - that a pod without `NODE_RANK` boots without Ray;
-- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both nodes `ALIVE` at their addresses in the State API (`/api/v0/nodes`, the query the host makes), metrics on 20217 from both nodes, and the `HEALTHCHECK` passing.
+- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both nodes `ALIVE` at their addresses in the State API (`/api/v0/nodes`, the query the host makes), metrics on 20217 from both nodes, and the `HEALTHCHECK` passing;
+- that the dashboard proxy is installed with 8266 `EXPOSE`d, denies token-less requests with 403 (never reaching the dashboard), is fail-closed with no secret set, and admits `?token=` while setting the session cookie.
 
 CI runs it before pushing, and uploads the head's node-list and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.
 

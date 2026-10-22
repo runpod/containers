@@ -19,6 +19,13 @@
 #      metrics on 20217, and both pass the
 #      local HEALTHCHECK. The dashboard and metrics checks run from the
 #      worker, over the docker bridge, as the host does.
+#   5. the dashboard proxy: image bits are in place (8266 EXPOSEd, proxy and
+#      supervisor conf installed), the token flow admits ?token= and sets the
+#      session cookie, token-less requests get 403 without touching the
+#      dashboard, and with no secret configured the proxy is fail-closed.
+#      (The contract containers override the CMD, so post_start.sh's
+#      supervisorctl start never runs; the proxy is launched directly, as
+#      post_start would.)
 #
 # Usage: contract.sh <image-ref> [<image-ref>...]
 # Set RAY_CONTRACT_FIXTURE_DIR to save the head's /nodes and /metrics payloads
@@ -28,6 +35,9 @@ set -euo pipefail
 readonly CONTRACT=v1
 readonly DASHBOARD_PORT=8265
 readonly METRICS_PORT=20217
+readonly PROXY_PORT=8266
+readonly PROXY_PORT_ALT=18266
+readonly PROXY_TOKEN=contract-test-token
 readonly SUBNET=172.31.250.0/24
 readonly HEAD_IP=172.31.250.10
 readonly WORKER_IP=172.31.250.11
@@ -102,7 +112,25 @@ both_alive() {
         [[ "$alive" == "$HEAD_IP $WORKER_IP" ]]
 }
 
+# Token flow on the gated dashboard port: ?token= admits and sets the session
+# cookie (the banner the SPA then rides); no token is a 403 that never reaches
+# the dashboard. Body captured first: grep -q exiting early would SIGPIPE curl
+# under pipefail.
+proxy_denies_without_token() { # <port>
+    local code
+    code=$(in_worker curl -s -o /dev/null -w '%{http_code}' "http://$HEAD_IP:$1/api/version?token=$PROXY_TOKEN") &&
+        [[ "$code" == 403 ]]
+}
+
+proxy_admits_with_token() {
+    local body
+    body=$(in_worker curl -fsS -D /tmp/proxy-headers "http://$HEAD_IP:$PROXY_PORT/api/gcs_healthz?token=$PROXY_TOKEN") &&
+        grep -q success <<< "$body" &&
+        in_worker grep -qi 'set-cookie: ray_dashboard_auth=' /tmp/proxy-headers
+}
+
 check_image() {
+
     local image=$1
     echo "=== $image"
 
@@ -112,6 +140,16 @@ check_image() {
     [[ "$(docker image inspect -f '{{json .Config.Entrypoint}}' "$image")" == '["/opt/runpod/ray/entrypoint"]' ]] ||
         fail "ENTRYPOINT is not /opt/runpod/ray/entrypoint"
     pass "contract label $CONTRACT and ENTRYPOINT"
+
+    # Dashboard proxy: the gated port is EXPOSEd; the proxy and its supervisor
+    # conf are installed.
+    [[ "$(docker image inspect -f '{{json .Config.ExposedPorts}}' "$image")" == *8266* ]] ||
+        fail "8266 is not EXPOSEd"
+    docker run --rm "$image" test -f /opt/runpod/ray/dashboard-proxy ||
+        fail "/opt/runpod/ray/dashboard-proxy is missing"
+    docker run --rm "$image" test -f /etc/supervisor/conf.d/ray-dashboard-proxy.conf ||
+        fail "/etc/supervisor/conf.d/ray-dashboard-proxy.conf is missing"
+    pass "dashboard proxy installed and 8266 EXPOSEd"
 
     # 2. Port overrides are refused before Ray starts.
     expect_boot_error "$image" "RAY_METRICS_PORT is fixed at $METRICS_PORT" -e RAY_METRICS_PORT=8080
@@ -157,6 +195,21 @@ check_image() {
         wait_for "ray_* metrics on $ip:$METRICS_PORT" 60 serves_ray_metrics "$ip"
     done
     pass "both nodes serve Ray metrics on $METRICS_PORT"
+
+    # 5. Dashboard proxy. post_start.sh would `supervisorctl start` it on the
+    # head, but these containers run a CMD (no supervisord); launch it directly.
+    # One instance with a secret, one without — the token env comes only from
+    # these execs, so the fixture requires the container env to carry neither.
+    docker exec "$run_id-head" bash -c '[[ -z "${RAY_DASHBOARD_PASSWORD:-}" && -z "${JUPYTER_PASSWORD:-}" ]]' ||
+        fail "test fixture expects RAY_DASHBOARD_PASSWORD and JUPYTER_PASSWORD unset on the head"
+    docker exec -d -e RAY_DASHBOARD_PASSWORD="$PROXY_TOKEN" "$run_id-head" \
+        python /opt/runpod/ray/dashboard-proxy > /dev/null
+    docker exec -d -e PROXY_LISTEN_PORT="$PROXY_PORT_ALT" "$run_id-head" \
+        python /opt/runpod/ray/dashboard-proxy > /dev/null
+    wait_for "dashboard proxy up" 60 proxy_denies_without_token "$PROXY_PORT"
+    wait_for "dashboard proxy fail-closed with no secret" 60 proxy_denies_without_token "$PROXY_PORT_ALT"
+    wait_for "dashboard proxy admits ?token= and sets the cookie" 60 proxy_admits_with_token
+    pass "dashboard proxy gates $PROXY_PORT (deny / fail-closed / token+cookie)"
 
     local node
     for node in head worker; do

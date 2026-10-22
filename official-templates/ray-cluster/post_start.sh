@@ -36,6 +36,17 @@ if [[ "${NODE_RANK:-}" != "0" ]]; then
     exit 0
 fi
 
+# The dashboard on 8265 is unauthenticated job submission (ShadowRay,
+# CVE-2023-48022) and stays unmapped; the proxy on 8266 gates the same UI
+# behind RAY_DASHBOARD_PASSWORD (else JUPYTER_PASSWORD), which is the one
+# dashboard port safe to expose through Runpod's proxy. With neither set the
+# proxy runs fail-closed and refuses everything.
+if supervisorctl start ray-dashboard-proxy > /dev/null 2>&1; then
+    log "dashboard proxy started on :8266 (token: RAY_DASHBOARD_PASSWORD or JUPYTER_PASSWORD)"
+else
+    log "warn: could not start ray-dashboard-proxy; dashboard reachable on the bridge only"
+fi
+
 if [[ "${RAY_CLUSTER_METRICS:-1}" == "0" ]]; then
     log "RAY_CLUSTER_METRICS=0: stopping the head Prometheus + Grafana"
     supervisorctl stop grafana-proxy grafana prometheus > /dev/null 2>&1

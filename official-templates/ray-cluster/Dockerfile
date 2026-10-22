@@ -40,6 +40,14 @@ COPY --chmod=755 ray/entrypoint.sh /opt/runpod/ray/entrypoint
 COPY --chmod=755 ray/health.sh /opt/runpod/ray/health
 COPY --chmod=755 ray/fabric_probe.py /opt/runpod/ray/fabric-probe
 
+# Dashboard access proxy: the dashboard on 8265 is unauthenticated job
+# submission (ShadowRay, CVE-2023-48022) and stays unmapped; this token-gated
+# proxy (supervisord program started by post_start.sh on the head) exposes the
+# same UI behind JUPYTER_PASSWORD / RAY_DASHBOARD_PASSWORD on 8266, the one
+# dashboard port safe to expose through Runpod's proxy.
+COPY ray/dashboard_proxy.py /opt/runpod/ray/dashboard-proxy
+COPY config/supervisor/ray-dashboard-proxy.conf /etc/supervisor/conf.d/ray-dashboard-proxy.conf
+
 # Head metrics stack: Ray's generated dashboards next to the inherited ones,
 # plus Runpod's Ray overview, and capped Prometheus retention so the stack
 # can't fill the head's disk.
@@ -60,8 +68,10 @@ COPY --chmod=755 post_start.sh /post_start.sh
 #   20217 Ray metrics: host scrape and the head's Prometheus
 #   52365 Ray dashboard agent: local HEALTHCHECK
 #   6379  Ray GCS: workers register here
+#   8266  Ray dashboard, behind the token-gated proxy on the head: the one
+#         dashboard port safe to expose through the Runpod proxy
 # 8889 Grafana (token-authenticated) is inherited from the -cluster base.
-EXPOSE 8265 20217 52365 6379
+EXPOSE 8265 20217 52365 6379 8266
 
 # Local, defence-in-depth signal; the authoritative verdict is host-side.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
