@@ -28,7 +28,7 @@ Ray cluster pods run only on this image or one built `FROM` it. The host daemon 
 2. Takes its role from `NODE_RANK` (rank 0 is the head) and its own address from its `node-<NODE_RANK>` entry in `/etc/hosts`, for `--node-ip-address`. If that entry is missing it exits with an error rather than guess.
 3. On a worker, waits with no deadline for the head GCS at `node-0`, re-reading `/etc/hosts` on every attempt and logging once a minute. While the head is stopped `node-0` is absent; the host adds it back once the head runs again, and the worker then joins without being recreated. Until then the host reports that rank as not alive.
 4. Runs `ray start` with `--node-ip-address`, `--metrics-export-port=20217`, plus `--dashboard-host=0.0.0.0 --dashboard-port=8265` on the head, then `$RAY_START_EXTRA_ARGS` for tuning such as `--resources` or `--object-store-memory`. It then waits for the ports to be listening, because a port Ray can't bind kills its agent after `ray start` has returned. A failure here exits non-zero instead of letting Ray move to a port the host can't find.
-5. `exec "$@"` into the CMD (`/start.sh` by default: SSH, Jupyter, and the monitoring bringup in `/post_start.sh`).
+5. `exec "$@"` into the CMD (`/start.sh` by default: SSH, Jupyter, and the monitoring bringup in `/post_start.sh`). On a worker, `JUPYTER_PASSWORD` and `JUPYTER_DISABLE_AUTH` are cleared first, so Jupyter runs on the head only; map 8888 on the head. Any node can still `ray.init()` into the cluster.
 
 It does not install packages, write readiness markers, or probe the fabric. A pod with no `NODE_RANK` (not a cluster pod) skips straight to the CMD without Ray. Ray is not restarted if it crashes after joining; the container stays up and the host sees the node go from alive to not alive.
 
@@ -80,7 +80,7 @@ Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BAS
 - the contract label and `ENTRYPOINT`;
 - that each port override is refused;
 - that a pod without `NODE_RANK` boots without Ray;
-- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both nodes `ALIVE` at their addresses in the State API (`/api/v0/nodes`, the query the host makes), metrics on 20217 from both nodes, and the `HEALTHCHECK` passing;
+- that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both nodes `ALIVE` at their addresses in the State API (`/api/v0/nodes`, the query the host makes), metrics on 20217 from both nodes, the worker's CMD running without the Jupyter env, and the `HEALTHCHECK` passing;
 - that the dashboard proxy is installed with 8266 `EXPOSE`d, denies token-less requests with 403 (never reaching the dashboard), is fail-closed with no secret set, and admits `?token=` while setting the session cookie.
 
 CI runs it before pushing, and uploads the head's node-list and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.

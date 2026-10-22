@@ -170,7 +170,8 @@ check_image() {
     # The worker starts while the head isn't running: node-0 is not in its
     # /etc/hosts yet. It must wait, not exit or start Ray.
     docker run -d --name "$run_id-worker" --hostname node-1 --ip "$WORKER_IP" "${topo[@]}" \
-        --add-host "node-1:$WORKER_IP" -e NODE_RANK=1 "$image" sleep infinity > /dev/null
+        --add-host "node-1:$WORKER_IP" -e NODE_RANK=1 -e JUPYTER_PASSWORD=contract-test \
+        -e JUPYTER_DISABLE_AUTH=true "$image" sleep infinity > /dev/null
     wait_for "worker waiting for node-0" 120 worker_waiting_for_head
     sleep 10
     [[ "$(docker inspect -f '{{.State.Running}}' "$run_id-worker")" == true ]] ||
@@ -194,6 +195,12 @@ check_image() {
         wait_for "ray_* metrics on $ip:$METRICS_PORT" 60 serves_ray_metrics "$ip"
     done
     pass "both nodes serve Ray metrics on $METRICS_PORT"
+
+    # Jupyter is head-only: the worker's CMD (PID 1 after the entrypoint's
+    # exec) must not inherit the Jupyter env, or /start.sh would start it.
+    ! in_worker grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' /proc/1/environ ||
+        fail "the worker's CMD inherited the Jupyter env"
+    pass "worker CMD runs without the Jupyter env"
 
     # 5. Dashboard proxy. post_start.sh would `supervisorctl start` it on the
     # head, but these containers run a CMD (no supervisord); launch it directly.

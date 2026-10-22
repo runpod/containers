@@ -10,7 +10,8 @@
 #      address from its node-<NODE_RANK> entry in /etc/hosts;
 #   3. on a worker, wait with no deadline for the head GCS at node-0;
 #   4. `ray start` with the contract ports, plus $RAY_START_EXTRA_ARGS;
-#   5. exec "$@" (the customer CMD, /start.sh by default).
+#   5. exec "$@" (the customer CMD, /start.sh by default); on a worker, with
+#      the Jupyter env cleared so /start.sh leaves Jupyter to the head.
 #
 # The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
 # and the cluster membership in /etc/hosts (node-0 ... node-N). The other
@@ -173,4 +174,8 @@ ray start --address="$head_ip:$gcs_port" "${common_args[@]}" "${extra_args[@]}" 
     die "ray start failed to join $head_ip:$gcs_port; see /tmp/ray/session_latest/logs"
 wait_listening "$CONTRACT_METRICS_PORT" "Ray metrics endpoint"
 log "Ray worker joined"
-exec "$@"
+# Jupyter runs on the head only: the driver belongs there, and a notebook
+# server per worker is one more JUPYTER_PASSWORD login exposed for nothing
+# (any node can still ray.init() into the cluster). /start.sh starts Jupyter
+# only when one of these is set.
+exec env -u JUPYTER_PASSWORD -u JUPYTER_DISABLE_AUTH "$@"
