@@ -82,6 +82,12 @@ def render_yaml(groups: dict) -> str:
             "check_all_gpu",
             "test_comfyui",
             "test_comfyui_functional",
+            "test_pip_check",
+            "test_ca_certs",
+            "test_python_tls",
+            "python_tls_venv",
+            "test_uv",
+            "test_virtualenv",
         ):
             if key in body:
                 val = body[key]
@@ -92,6 +98,11 @@ def render_yaml(groups: dict) -> str:
             lines.append("    test_ports:")
             for port in body["test_ports"]:
                 lines.append(f"    - {port}")
+        for list_key in ("pip_check_allow", "revoked_ca_names"):
+            if body.get(list_key):
+                lines.append(f"    {list_key}:")
+                for entry in body[list_key]:
+                    lines.append(f"    - {entry}")
         # cuda_versions is either the literal `all` or a list of X.Y
         # versions; the scalar form goes through the key loop above.
         if isinstance(body.get("cuda_versions"), list):
@@ -123,6 +134,14 @@ def build_groups(
     test_ports: list[int] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
+    test_pip_check: bool = False,
+    pip_check_allow: list[str] | None = None,
+    test_ca_certs: bool = False,
+    test_python_tls: bool = False,
+    python_tls_venv: str = "",
+    revoked_ca_names: list[str] | None = None,
+    test_uv: bool = False,
+    test_virtualenv: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
@@ -207,6 +226,22 @@ def build_groups(
             body["test_comfyui"] = True
         if test_comfyui_functional:
             body["test_comfyui_functional"] = True
+        if test_pip_check:
+            body["test_pip_check"] = True
+            if pip_check_allow:
+                body["pip_check_allow"] = list(pip_check_allow)
+        if test_ca_certs:
+            body["test_ca_certs"] = True
+        if test_python_tls:
+            body["test_python_tls"] = True
+            if python_tls_venv:
+                body["python_tls_venv"] = python_tls_venv
+        if (test_ca_certs or test_python_tls) and revoked_ca_names:
+            body["revoked_ca_names"] = list(revoked_ca_names)
+        if test_uv:
+            body["test_uv"] = True
+        if test_virtualenv:
+            body["test_virtualenv"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if gpu_group and wants_all_cuda:
@@ -312,6 +347,87 @@ def main() -> int:
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument(
+        "--test-pip-check",
+        action="store_true",
+        help=(
+            "Emit `test_pip_check: true` so the pod runs `pip check` and "
+            "fails on any dependency conflict not listed in "
+            "--pip-check-allow. Catches a bumped pin that no longer "
+            "satisfies something else already in the image."
+        ),
+    )
+    ap.add_argument(
+        "--pip-check-allow",
+        action="append",
+        default=[],
+        metavar="SUBSTRING",
+        help=(
+            "Substring of a `pip check` line to accept rather than fail on. "
+            "For conflicts inherited from a vendor base image. Repeat per "
+            "accepted conflict; keep each one narrow enough that a new "
+            "conflict in the same package still fails."
+        ),
+    )
+    ap.add_argument(
+        "--test-ca-certs",
+        action="store_true",
+        help=(
+            "Emit `test_ca_certs: true` so the pod proves no revoked CA "
+            "root is still trusted in the SYSTEM store, and that HTTPS "
+            "still validates against it. Shell-only, so it is safe for "
+            "images without Python."
+        ),
+    )
+    ap.add_argument(
+        "--test-python-tls",
+        action="store_true",
+        help=(
+            "Emit `test_python_tls: true` for the same check against the "
+            "certifi bundle, which is the store pip and requests use. "
+            "Separate flag because upgrading the system store does not "
+            "touch certifi, and not every image ships Python."
+        ),
+    )
+    ap.add_argument(
+        "--python-tls-venv",
+        default="",
+        metavar="PATH",
+        help=(
+            "Path to an `activate` script sourced before the certifi "
+            "check, for images whose application runs in its own "
+            "virtualenv (ComfyUI). Empty = system interpreter."
+        ),
+    )
+    ap.add_argument(
+        "--revoked-ca-name",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "CA subject substring that must NOT be trusted, matched "
+            "case-insensitively. Repeat per root family. Empty = the "
+            "default list in tests/runpod_smoke/checks.py."
+        ),
+    )
+    ap.add_argument(
+        "--test-uv",
+        action="store_true",
+        help=(
+            "Emit `test_uv: true`: exactly one uv on PATH, no pip-installed "
+            "copy shadowing it, and a real resolve. Guards the removal of "
+            "the uv that the NGC bases ship."
+        ),
+    )
+    ap.add_argument(
+        "--test-virtualenv",
+        action="store_true",
+        help=(
+            "Emit `test_virtualenv: true`: create a virtualenv with every "
+            "python3.X the image ships. For runpod/base, which pins one "
+            "virtualenv version across five interpreters."
+        ),
+    )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
@@ -397,6 +513,14 @@ def main() -> int:
         test_ports=args.test_port,
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
+        test_pip_check=args.test_pip_check,
+        pip_check_allow=args.pip_check_allow,
+        test_ca_certs=args.test_ca_certs,
+        test_python_tls=args.test_python_tls,
+        python_tls_venv=args.python_tls_venv,
+        revoked_ca_names=args.revoked_ca_name,
+        test_uv=args.test_uv,
+        test_virtualenv=args.test_virtualenv,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,

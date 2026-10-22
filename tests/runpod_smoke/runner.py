@@ -19,20 +19,27 @@ from typing import Optional
 
 from . import config
 from .checks import (
+    REVOKED_CA_NAMES,
     SshEndpoint,
+    ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
     dump_pod_logs,
     fetch_pod_cuda_version,
     host_incompatibility,
+    pip_check_command,
+    python_tls_check_command,
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
     run_jupyter_static_check,
     run_port_check,
     run_port_proxy_check,
+    run_simple_check,
     scan_pod_logs_for_errors,
     ssh_probe,
+    uv_check_command,
+    virtualenv_check_command,
 )
 from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
@@ -285,6 +292,59 @@ def _run_cuda_step(
         dump_pod_logs(pod_id, image)
         return "FAIL", "CUDA/GPU functional check failed"
     log("cuda check passed", indent=2)
+    return None
+
+
+def _hygiene_checks(group: str) -> list[tuple[str, str]]:
+    """(label, command) for each hygiene check the group opted into, in the
+    order they run. Cheap, deterministic checks first so a broken pin is
+    reported before anything spends time on the network."""
+    revoked = tuple(
+        config.GROUP_REVOKED_CA_NAMES.get(group) or REVOKED_CA_NAMES
+    )
+    checks: list[tuple[str, str]] = []
+    if config.GROUP_TEST_PIP_CHECK.get(group, False):
+        allowed = tuple(config.GROUP_PIP_CHECK_ALLOW.get(group, ()))
+        checks.append(("pip check", pip_check_command(allowed)))
+    if config.GROUP_TEST_VIRTUALENV.get(group, False):
+        checks.append(("virtualenv", virtualenv_check_command()))
+    if config.GROUP_TEST_UV.get(group, False):
+        checks.append(("uv", uv_check_command()))
+    if config.GROUP_TEST_CA_CERTS.get(group, False):
+        checks.append(("CA trust store", ca_certs_check_command(revoked)))
+    if config.GROUP_TEST_PYTHON_TLS.get(group, False):
+        checks.append((
+            "certifi / python TLS",
+            python_tls_check_command(
+                revoked, config.GROUP_PYTHON_TLS_VENV.get(group, ""),
+            ),
+        ))
+    return checks
+
+
+def _run_hygiene_steps(
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
+    `test_python_tls`, `test_uv`, `test_virtualenv`).
+
+    Runs after the CUDA gate — these answer "is the image put together
+    correctly", which is only worth asking once the image boots and its
+    GPU stack works. All of them are stopped at the first failure so the
+    log ends on the thing that broke."""
+    checks = _hygiene_checks(group)
+    if not (endpoint and checks):
+        return None
+    for label, command in checks:
+        log(f"running {label} check for group '{group}'...", indent=2)
+        ok, output = run_simple_check(endpoint, command)
+        for line in (output or "").splitlines():
+            log(f"  {line}", indent=2)
+        if not ok:
+            log(f"{label} check FAILED", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"{label} check failed"
+        log(f"{label} check passed", indent=2)
     return None
 
 
@@ -565,6 +625,9 @@ def test_pair(
         # (no fancy abstraction) so the failure points stay easy to read
         # in stack traces / logs.
         outcome = _run_cuda_step(endpoint, image, group, pod_id)
+        if outcome is not None:
+            return outcome
+        outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
         outcome = _run_jupyter_steps(endpoint, pod_id, image, group)

@@ -4,6 +4,8 @@
   * cuda_check_command / run_cuda_check — torch.cuda or nvidia-smi assertion
   * jupyter_check_command / run_jupyter_check — in-pod Jupyter probe over SSH
   * run_jupyter_proxy_check — public proxy probe from the test machine
+  * pip_check / ca_certs / python_tls / uv / virtualenv command builders —
+    opt-in image hygiene checks, all run through `run_simple_check`
  * REST API v2 log helpers / dump_pod_logs — diagnose failures before termination
 
 Selection of the CUDA check is driven by the IMAGE REF, not the manifest
@@ -360,6 +362,231 @@ def run_cuda_check(
         return False, _SSH_BINARY_NOT_FOUND
     combined = _strip_cr(r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
+
+
+# ---------------------------------------------------------------------------
+# Image hygiene checks (opt-in)
+#
+# Each builds a command that exits non-zero on failure and is run by
+# `run_simple_check` over SSH. All of them are manifest opt-ins rather than
+# auto-detected: an image that cannot satisfy one must say so by leaving the
+# flag off, so a missing interpreter reads as a config decision and not as a
+# silently skipped check.
+# ---------------------------------------------------------------------------
+
+
+# CA roots that must not be trusted anywhere. Names are matched
+# case-insensitively against certificate subjects, so a family prefix
+# ('emSign') covers every root in it. Groups can override per-manifest with
+# `revoked_ca_names:` when a check needs a different list.
+REVOKED_CA_NAMES: tuple[str, ...] = (
+    # CON-1869 / CVE-2026-111943.
+    "emSign",
+)
+
+
+def _sh_quote_list(values: tuple[str, ...] | list[str]) -> str:
+    """Render values as a space-separated list of single-quoted shell words,
+    for interpolation into a `for name in ...` loop."""
+    return " ".join(shlex.quote(v) for v in values)
+
+
+def pip_check_command(allowed: tuple[str, ...] | list[str] = ()) -> str:
+    """Run `pip check` and fail on any conflict that isn't in `allowed`.
+
+    `allowed` holds substrings of accepted conflict lines (manifest field
+    `pip_check_allow`), for pre-existing conflicts inherited from a vendor
+    base image that we have decided not to carry as a red build. Anything
+    else — including a new conflict introduced by bumping a pinned
+    dependency — fails.
+    """
+    program = (
+        "import subprocess, sys\n"
+        f"allowed = {list(allowed)!r}\n"
+        "r = subprocess.run([sys.executable, '-m', 'pip', 'check'],\n"
+        "                   capture_output=True, text=True)\n"
+        "out = (r.stdout + r.stderr).strip()\n"
+        "print(out or '(pip check produced no output)')\n"
+        "bad = [ln for ln in out.splitlines()\n"
+        "       if ln.strip()\n"
+        "       and not ln.startswith('No broken requirements')\n"
+        "       and not any(a in ln for a in allowed)]\n"
+        "if bad:\n"
+        "    print('FAIL: unexpected dependency conflicts:')\n"
+        "    for ln in bad:\n"
+        "        print('  ' + ln)\n"
+        "    sys.exit(1)\n"
+        "print(f'pip check ok ({len(allowed)} known conflict(s) allowed)')\n"
+    )
+    return f"python - <<'PY'\n{program}PY"
+
+
+def ca_certs_check_command(
+    revoked: tuple[str, ...] | list[str] = REVOKED_CA_NAMES,
+) -> str:
+    """Verify the SYSTEM trust store: no revoked root is still trusted, and
+    an HTTPS fetch against it succeeds.
+
+    Deliberately shell-only — sandbox images may ship no Python, and the
+    system store is what curl, apt and git use. The certifi bundle that
+    Python reaches for is a separate store with its own check below.
+
+    `apt-get install --only-upgrade ca-certificates` is a no-op when the
+    distro has not published the patched package yet, and a no-op exits 0.
+    This check is what turns that silent non-fix into a red build.
+    """
+    return (
+        "set -e; "
+        "echo \"ca-certificates: "
+        "$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
+        "  || echo 'not installed via dpkg')\"; "
+        "BUNDLE=/etc/ssl/certs/ca-certificates.crt; "
+        "test -s \"$BUNDLE\" "
+        "  || { echo \"FAIL: $BUNDLE missing or empty\"; exit 1; }; "
+        "echo \"trusted roots: $(grep -c 'BEGIN CERTIFICATE' \"$BUNDLE\")\"; "
+        # Subjects, so a revoked root is matched by name and not by the
+        # base64 body. Without openssl, fall back to the per-cert symlink
+        # names that update-ca-certificates maintains.
+        "if command -v openssl >/dev/null 2>&1; then "
+        "  openssl crl2pkcs7 -nocrl -certfile \"$BUNDLE\" "
+        "    | openssl pkcs7 -print_certs -noout > /tmp/ca-subjects.txt; "
+        "else "
+        "  echo 'openssl not present — matching on /etc/ssl/certs names'; "
+        "  ls /etc/ssl/certs > /tmp/ca-subjects.txt; "
+        "fi; "
+        "rc=0; "
+        f"for name in {_sh_quote_list(revoked)}; do "
+        "  if grep -qi -- \"$name\" /tmp/ca-subjects.txt; then "
+        "    echo \"FAIL: revoked CA still trusted: $name\"; rc=1; "
+        "  else "
+        "    echo \"revoked CA absent: $name\"; "
+        "  fi; "
+        "done; "
+        # A trust store can also be broken by over-pruning, so prove it
+        # still validates a real endpoint before reporting success.
+        "curl -fsS --max-time 30 https://pypi.org/simple/ -o /dev/null "
+        "  && echo 'https fetch via system store ok'; "
+        "exit $rc"
+    )
+
+
+def python_tls_check_command(
+    revoked: tuple[str, ...] | list[str] = REVOKED_CA_NAMES,
+    venv_activate: str = "",
+) -> str:
+    """Verify the certifi bundle, which is the store pip, requests and
+    ComfyUI actually use — upgrading the system store does not touch it.
+
+    `venv_activate` is an optional path to an `activate` script, for images
+    whose application runs in a virtualenv with its own certifi.
+    """
+    program = (
+        "import ssl, sys, urllib.request\n"
+        "import certifi\n"
+        "bundle = certifi.where()\n"
+        "print('certifi', certifi.__version__, bundle)\n"
+        "data = open(bundle, encoding='utf-8', errors='replace').read()\n"
+        # certifi carries a '# Label: \"...\"' comment per root. Without
+        # them a name search would pass on any bundle, so say so loudly
+        # rather than report a clean result we cannot stand behind.
+        "if '# Label:' not in data:\n"
+        "    print('FAIL: certifi bundle carries no labels — '\n"
+        "          'cannot match roots by name')\n"
+        "    sys.exit(1)\n"
+        f"revoked = {list(revoked)!r}\n"
+        "found = [n for n in revoked if n.lower() in data.lower()]\n"
+        "if found:\n"
+        "    print(f'FAIL: revoked CA present in certifi bundle: {found}')\n"
+        "    sys.exit(1)\n"
+        "print(f'certifi bundle clean ({len(revoked)} name(s) checked)')\n"
+        "ctx = ssl.create_default_context(cafile=bundle)\n"
+        "with urllib.request.urlopen('https://pypi.org/simple/',\n"
+        "                            context=ctx, timeout=30) as r:\n"
+        "    assert r.status == 200, f'pypi returned {r.status}'\n"
+        "print('https fetch via certifi ok')\n"
+    )
+    prefix = f". {shlex.quote(venv_activate)}; " if venv_activate else ""
+    return f"{prefix}python - <<'PY'\n{program}PY"
+
+
+def uv_check_command() -> str:
+    """Verify uv is the single pinned copy and can actually resolve.
+
+    The duplicate test is the point: the NGC bases ship a pip-installed uv
+    in /usr/local/bin that shadows the pinned /bin/uv and keeps showing up
+    in scans. The Dockerfiles remove it, and this fails the build if a base
+    image brings it back.
+    """
+    return (
+        "set -e; "
+        "uv --version; "
+        "FOUND=$(printf '%s' \"$PATH\" | tr ':' '\\n' | while read -r d; do "
+        "  [ -n \"$d\" ] && [ -x \"$d/uv\" ] && echo \"$d/uv\"; "
+        "done); "
+        "echo \"uv on PATH:\"; printf '%s\\n' \"$FOUND\"; "
+        "COUNT=$(printf '%s\\n' \"$FOUND\" | sed '/^$/d' | wc -l); "
+        "[ \"$COUNT\" -eq 1 ] "
+        "  || { echo \"FAIL: expected one uv on PATH, found $COUNT\"; exit 1; }; "
+        "if command -v python >/dev/null 2>&1; then "
+        "  if python -m pip show uv >/dev/null 2>&1; then "
+        "    echo 'FAIL: uv is also installed as a pip package'; exit 1; "
+        "  fi; "
+        "  echo 'no pip-installed uv'; "
+        "fi; "
+        "TMP=$(mktemp -d); "
+        "uv venv \"$TMP/venv\" >/dev/null; "
+        "uv pip install --python \"$TMP/venv/bin/python\" --quiet six; "
+        "\"$TMP/venv/bin/python\" -c "
+        "  \"import six; print('uv pip install ok', six.__version__)\"; "
+        "rm -rf \"$TMP\""
+    )
+
+
+def virtualenv_check_command() -> str:
+    """Create a virtualenv with every python3.X the image ships.
+
+    The images pin one virtualenv version across five interpreters, and a
+    pin that stops supporting the oldest of them fails only for whoever
+    happens to use that interpreter. Enumerating what is installed is the
+    whole check — a hard-coded list would pass by testing nothing after an
+    interpreter is dropped.
+    """
+    return (
+        "set -e; "
+        "PYS=$(ls /usr/local/bin/python3.* /usr/bin/python3.* 2>/dev/null "
+        "  | grep -E 'python3\\.[0-9]+$' || true); "
+        "[ -n \"$PYS\" ] "
+        "  || { echo 'FAIL: no python3.X interpreters found'; exit 1; }; "
+        "TMP=$(mktemp -d); "
+        "for py in $PYS; do "
+        "  VER=$(\"$py\" -c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'); "
+        # Both /usr/bin and /usr/local/bin can expose the same interpreter;
+        # key on the version so each one is exercised once.
+        "  [ -d \"$TMP/v$VER\" ] && continue; "
+        "  \"$py\" -m virtualenv -q \"$TMP/v$VER\"; "
+        "  \"$TMP/v$VER/bin/python\" -c "
+        "    \"import sys; print('virtualenv ok for $VER ->', "
+        "     sys.version.split()[0])\"; "
+        "done; "
+        "rm -rf \"$TMP\"; "
+        "echo 'virtualenv ok on every interpreter'"
+    )
+
+
+def run_simple_check(
+    endpoint: SshEndpoint, command: str, timeout: int = 180,
+) -> tuple[bool, str]:
+    """Run one opt-in hygiene check over SSH. Returns (ok, output)."""
+    ssh_cmd = [*_ssh_command_prefix(endpoint), command]
+    try:
+        r = subprocess.run(
+            ssh_cmd, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"check timed out after {timeout}s"
+    except FileNotFoundError:
+        return False, _SSH_BINARY_NOT_FOUND
+    return (r.returncode == 0), _strip_cr(r.stdout + r.stderr).strip()
 
 
 # ---------------------------------------------------------------------------

@@ -172,6 +172,10 @@ jobs:
           min-vram-gb: "80"
           create-timeout: "1200"
           test-jupyter: "true"
+          # The ComfyUI venv is created with --system-site-packages, so
+          # certifi resolves to the system copy and one check covers both.
+          test-ca-certs: "true"
+          test-python-tls: "true"
           test-comfyui: "true"
           test-comfyui-functional: ${{ inputs.run-functional-tests }}
           save-comfyui-images: ${{ inputs.run-functional-tests }}
