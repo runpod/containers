@@ -10,7 +10,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 USER root
 
+# Install. apt-get upgrade also pulls the patched ca-certificates
+# (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
     build-essential jq less python3-pip ripgrep tmux unzip wget zip zstd sudo && \
     apt-get clean && \
@@ -26,13 +29,6 @@ RUN apt-get update --yes && \
     libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 \
     libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 \
     libxext6 libxfixes3 libxkbcommon0 libxrandr2 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
-RUN apt-get update --yes && \
-    apt-get install --yes --no-install-recommends --only-upgrade ca-certificates && \
-    update-ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

@@ -35,8 +35,7 @@ WORKDIR /
 
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-# Install. apt-get upgrade also pulls the patched ca-certificates
-# (CON-1869: drops emSign root, CVE-2026-111943).
+# Install.
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
@@ -49,6 +48,15 @@ RUN apt-get update --yes && \
     software-properties-common sudo tmux unzip vim wget zip zstd && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
+
+# CON-1869: CUDA bases pin apt to a snapshot that lags the emSign removal
+# (CVE-2026-111943), so install the patched ca-certificates from the archive.
+RUN . /etc/os-release && \
+    deb="ca-certificates_20260816ubuntu0.${VERSION_ID}.1_all.deb" && \
+    curl -fsSL -o "/tmp/${deb}" \
+        "http://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
+    dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}" && \
+    update-ca-certificates
     
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
 # Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
@@ -100,7 +108,7 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip && \
     ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3;
 
-COPY --from=ghcr.io/astral-sh/uv:0.13.4 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /uvx /bin/
 
 # Drop any pip-installed uv from the base image (e.g. NGC ships an old one in
 # /usr/local/bin that shadows our pinned /bin/uv and trips Grype).

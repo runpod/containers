@@ -17,18 +17,14 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 # in a sandbox fails.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
+# Install. apt-get upgrade also pulls the patched ca-certificates
+# (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
     build-essential ca-certificates curl git jq less openssh-client \
     python-is-python3 python3 python3-dev python3-pip python3-venv ripgrep \
     sudo tini tmux unzip wget xz-utils zip zstd && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
-RUN apt-get update --yes && \
-    apt-get install --yes --no-install-recommends --only-upgrade ca-certificates && \
-    update-ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

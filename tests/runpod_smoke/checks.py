@@ -561,12 +561,18 @@ def python_tls_check_command(
     if venv_activate:
         # The app venv ships its own certifi; its activate puts python on PATH.
         prefix = f". {shlex.quote(venv_activate)}; "
+        interp = "python"
     else:
-        # The SSH exec PATH often drops /usr/local/bin, where the base images
-        # put the `python` symlink (python3.12, which carries the pinned
-        # certifi). Add it back so the check runs the right interpreter.
-        prefix = "export PATH=/usr/local/bin:$PATH; "
-    return f"{prefix}python - <<'PY'\n{program}PY"
+        # SSH exec PATH often drops /usr/local/bin (the base `python` symlink),
+        # and some images expose only python3. Add the dir back and resolve
+        # whichever interpreter exists.
+        prefix = (
+            "export PATH=/usr/local/bin:$PATH; "
+            "PYBIN=$(command -v python || command -v python3) "
+            "|| { echo 'FAIL: no python on PATH'; exit 1; }; "
+        )
+        interp = '"$PYBIN"'
+    return f"{prefix}{interp} - <<'PY'\n{program}PY"
 
 
 def uv_check_command() -> str:
