@@ -12,6 +12,9 @@
 #   image_repo  where it publishes. One repo per family today; the field
 #               exists because that is not guaranteed — a repo can hold tags
 #               from more than one family.
+#   mirror_repos  optional extra repos that receive the same tags (e.g. a
+#               private -dev copy). Swept by cleanup like image_repo; the
+#               release checks only look at image_repo.
 #   workflow    which reusable build workflow covers it, so the orchestrator
 #               knows which ones to call at all. Inside it the family's jobs
 #               are `build-<family>` and, where there is one, `test-<family>`.
@@ -53,6 +56,7 @@ families:
       - official-templates/shared/**
     depends_on: [pytorch-cluster]
     image_repo: runpod/ray-cluster
+    mirror_repos: [runpod/ray-cluster-dev]
     workflow: base
 
   autoresearch:

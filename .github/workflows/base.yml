@@ -709,6 +709,20 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      # Each image is tagged twice: runpod/ray-cluster and its private mirror
+      # runpod/ray-cluster-dev, same tag, same image. Test, scan and smoke-test
+      # only the public refs; push and sign both.
+      - name: Pick test refs
+        id: test-refs
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          set -euo pipefail
+          TEST_REFS=$(jq -c 'map(select(test("(^|/)runpod/ray-cluster:")))' <<< "$REFS")
+          [ "$(jq length <<< "$TEST_REFS")" -gt 0 ] || { echo "::error::no runpod/ray-cluster refs in $REFS"; exit 1; }
+          echo "refs=${TEST_REFS}" >> "$GITHUB_OUTPUT"
+
       # CPU-only: runs the loaded images under plain Docker with fixture
       # topology env and checks what runpod/host depends on (ports, label,
       # 2-node formation). Gates the push. Also captures the /nodes and
@@ -716,7 +730,7 @@ jobs:
       - name: Image contract test
         shell: bash
         env:
-          REFS: ${{ steps.refs.outputs.refs }}
+          REFS: ${{ steps.test-refs.outputs.refs }}
           RAY_CONTRACT_FIXTURE_DIR: ${{ runner.temp }}/ray-contract-fixtures
         run: |
           set -euo pipefail
@@ -734,7 +748,7 @@ jobs:
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
-          image-refs: ${{ steps.refs.outputs.refs }}
+          image-refs: ${{ steps.test-refs.outputs.refs }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -755,7 +769,7 @@ jobs:
       - name: Save refs artifact
         shell: bash
         env:
-          REFS: ${{ steps.refs.outputs.refs }}
+          REFS: ${{ steps.test-refs.outputs.refs }}
         run: |
           mkdir -p /tmp/ray-cluster-refs
           printf '%s\n' "$REFS" > /tmp/ray-cluster-refs/refs.json
