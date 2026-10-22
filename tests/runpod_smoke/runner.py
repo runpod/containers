@@ -21,6 +21,7 @@ from . import config
 from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
+    autoresearch_check_command,
     ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
@@ -295,27 +296,36 @@ def _run_cuda_step(
     return None
 
 
-def _hygiene_checks(group: str) -> list[tuple[str, str]]:
-    """(label, command) for each hygiene check the group opted into, in the
-    order they run. Cheap, deterministic checks first so a broken pin is
+_HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
+_AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+
+
+def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
+    """(label, command, timeout) for each hygiene check the group opted into,
+    in the order they run. Cheap, deterministic checks first so a broken pin is
     reported before anything spends time on the network."""
     revoked = tuple(
         config.GROUP_REVOKED_CA_NAMES.get(group) or REVOKED_CA_NAMES
     )
-    checks: list[tuple[str, str]] = []
+    checks: list[tuple[str, str, int]] = []
     if config.GROUP_TEST_PIP_CHECK.get(group, False):
         allowed = tuple(config.GROUP_PIP_CHECK_ALLOW.get(group, ()))
-        checks.append(("pip check", pip_check_command(allowed)))
+        checks.append(
+            ("pip check", pip_check_command(allowed), _HYGIENE_TIMEOUT)
+        )
     if config.GROUP_TEST_VIRTUALENV.get(group, False):
-        checks.append(("virtualenv", virtualenv_check_command()))
+        checks.append(
+            ("virtualenv", virtualenv_check_command(), _HYGIENE_TIMEOUT)
+        )
     if config.GROUP_TEST_UV.get(group, False):
-        checks.append(("uv", uv_check_command()))
+        checks.append(("uv", uv_check_command(), _HYGIENE_TIMEOUT))
     if config.GROUP_TEST_CA_CERTS.get(group, False):
         checks.append((
             "CA trust store",
             ca_certs_check_command(
                 revoked, config.GROUP_MIN_CA_CERTS_VER.get(group, ""),
             ),
+            _HYGIENE_TIMEOUT,
         ))
     if config.GROUP_TEST_PYTHON_TLS.get(group, False):
         checks.append((
@@ -323,6 +333,13 @@ def _hygiene_checks(group: str) -> list[tuple[str, str]]:
             python_tls_check_command(
                 revoked, config.GROUP_PYTHON_TLS_VENV.get(group, ""),
             ),
+            _HYGIENE_TIMEOUT,
+        ))
+    if config.GROUP_TEST_AUTORESEARCH.get(group, False):
+        checks.append((
+            "autoresearch train.py",
+            autoresearch_check_command(),
+            _AUTORESEARCH_TIMEOUT,
         ))
     return checks
 
@@ -340,9 +357,9 @@ def _run_hygiene_steps(
     checks = _hygiene_checks(group)
     if not (endpoint and checks):
         return None
-    for label, command in checks:
+    for label, command, timeout in checks:
         log(f"running {label} check for group '{group}'...", indent=2)
-        ok, output = run_simple_check(endpoint, command)
+        ok, output = run_simple_check(endpoint, command, timeout=timeout)
         for line in (output or "").splitlines():
             log(f"  {line}", indent=2)
         if not ok:

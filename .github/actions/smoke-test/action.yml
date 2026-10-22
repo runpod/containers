@@ -142,6 +142,13 @@ inputs:
       virtualenv version across five interpreters.
     required: false
     default: "false"
+  test-autoresearch:
+    description: |
+      'true' to emit `test_autoresearch: true`: run autoresearch's train.py
+      end to end on a short time budget, catching a broken image or dep bump.
+      For runpod/autoresearch only.
+    required: false
+    default: "false"
   test-comfyui:
     description: |
       Emit `test_comfyui: true` for each generated group. Exposes :8188 as
@@ -419,6 +426,7 @@ runs:
         REVOKED_CA_NAMES: ${{ inputs.revoked-ca-names }}
         TEST_UV: ${{ inputs.test-uv }}
         TEST_VIRTUALENV: ${{ inputs.test-virtualenv }}
+        TEST_AUTORESEARCH: ${{ inputs.test-autoresearch }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         INSTANCES: ${{ inputs.instances }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
@@ -465,6 +473,9 @@ runs:
         fi
         if [[ "${TEST_VIRTUALENV,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-virtualenv)
+        fi
+        if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-autoresearch)
         fi
         # pip-check-allow and revoked-ca-names are newline lists. Entries
         # are passed as single argv elements and NOT stripped of a leading

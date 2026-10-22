@@ -424,6 +424,7 @@ GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
 #   GROUP_PYTHON_TLS_VENV   — activate script, for app-owned virtualenvs
 #   GROUP_TEST_UV           — exactly one uv, and it resolves
 #   GROUP_TEST_VIRTUALENV   — virtualenv works on every shipped interpreter
+#   GROUP_TEST_AUTORESEARCH — autoresearch train.py runs end to end
 GROUP_TEST_PIP_CHECK: dict[str, bool] = {}
 GROUP_PIP_CHECK_ALLOW: dict[str, list[str]] = {}
 GROUP_TEST_CA_CERTS: dict[str, bool] = {}
@@ -433,3 +434,4 @@ GROUP_REVOKED_CA_NAMES: dict[str, list[str]] = {}
 GROUP_PYTHON_TLS_VENV: dict[str, str] = {}
 GROUP_TEST_UV: dict[str, bool] = {}
 GROUP_TEST_VIRTUALENV: dict[str, bool] = {}
+GROUP_TEST_AUTORESEARCH: dict[str, bool] = {}

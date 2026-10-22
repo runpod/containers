@@ -74,7 +74,7 @@ class HygieneSelectionTests(unittest.TestCase):
 
     def test_only_opted_in_checks_appear(self):
         config.GROUP_TEST_UV["grp"] = True
-        labels = [label for label, _ in _hygiene_checks("grp")]
+        labels = [label for label, _, _ in _hygiene_checks("grp")]
         self.assertEqual(labels, ["uv"])
 
     def test_order_is_cheap_checks_first(self):
@@ -86,7 +86,7 @@ class HygieneSelectionTests(unittest.TestCase):
             config.GROUP_TEST_VIRTUALENV,
         ):
             d["grp"] = True
-        labels = [label for label, _ in _hygiene_checks("grp")]
+        labels = [label for label, _, _ in _hygiene_checks("grp")]
         self.assertEqual(
             labels,
             [
@@ -112,21 +112,21 @@ class RevokedCaNameTests(unittest.TestCase):
 
     def test_default_list_is_used_when_group_sets_none(self):
         config.GROUP_TEST_CA_CERTS["grp"] = True
-        (_, command), = _hygiene_checks("grp")
+        (_, command, _), = _hygiene_checks("grp")
         for name in checks.REVOKED_CA_NAMES:
             self.assertIn(name, command)
 
     def test_group_override_replaces_the_default(self):
         config.GROUP_TEST_CA_CERTS["grp"] = True
         config.GROUP_REVOKED_CA_NAMES["grp"] = ["SomeOtherRoot"]
-        (_, command), = _hygiene_checks("grp")
+        (_, command, _), = _hygiene_checks("grp")
         self.assertIn("SomeOtherRoot", command)
         self.assertNotIn("emSign", command)
 
     def test_override_reaches_the_certifi_check_too(self):
         config.GROUP_TEST_PYTHON_TLS["grp"] = True
         config.GROUP_REVOKED_CA_NAMES["grp"] = ["SomeOtherRoot"]
-        (_, command), = _hygiene_checks("grp")
+        (_, command, _), = _hygiene_checks("grp")
         self.assertIn("SomeOtherRoot", command)
 
     def test_shell_metacharacters_in_a_name_stay_literal(self):
@@ -184,6 +184,7 @@ class CommandShapeTests(unittest.TestCase):
             ),
             "uv": checks.uv_check_command(),
             "virtualenv": checks.virtualenv_check_command(),
+            "autoresearch": checks.autoresearch_check_command(),
         }
         for name, command in commands.items():
             with self.subTest(command=name):
@@ -205,6 +206,12 @@ class CommandShapeTests(unittest.TestCase):
         command = checks.uv_check_command()
         self.assertIn("expected one uv on PATH", command)
         self.assertIn("uv is also installed as a pip package", command)
+
+    def test_autoresearch_runs_train_in_the_venv(self):
+        command = checks.autoresearch_check_command()
+        self.assertIn("/opt/autoresearch/.venv/bin/activate", command)
+        self.assertIn("runpy.run_path('train.py'", command)
+        self.assertIn("prepare.TIME_BUDGET = 5", command)
 
     def test_ca_check_proves_tls_still_works(self):
         # Over-pruning a trust store is as broken as not pruning it, so a

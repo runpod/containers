@@ -644,6 +644,23 @@ def virtualenv_check_command() -> str:
     )
 
 
+def autoresearch_check_command(time_budget: int = 5) -> str:
+    """Run the real autoresearch command (train.py) end to end on a short
+    time budget, so a broken image or dependency bump fails here rather than
+    in a user's run. TIME_BUDGET is patched via runpy so the read-only
+    prepare.py is untouched; torch.compile runs for real, so the caller must
+    allow a generous timeout."""
+    return (
+        "set -e; "
+        ". /opt/autoresearch/.venv/bin/activate; "
+        "cd /opt/autoresearch; "
+        "python -c \""
+        f"import prepare; prepare.TIME_BUDGET = {time_budget}; "
+        "import runpy; runpy.run_path('train.py', run_name='__main__')\"; "
+        "echo 'autoresearch train.py ok'"
+    )
+
+
 def run_simple_check(
     endpoint: SshEndpoint, command: str, timeout: int = 180,
 ) -> tuple[bool, str]:

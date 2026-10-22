@@ -333,6 +333,11 @@ jobs:
           test-ca-certs: true
           min-ca-certs-version: "20260816"
           test-python-tls: true
+          # certifi lives in the uv venv (no --system-site-packages), so point
+          # the check there instead of the system python.
+          python-tls-venv: "/opt/autoresearch/.venv/bin/activate"
+          # Run the real train.py end to end to catch a broken dep bump.
+          test-autoresearch: true
           exclude-instances: |
             RTX 2000 Ada
 

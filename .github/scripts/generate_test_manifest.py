@@ -89,6 +89,7 @@ def render_yaml(groups: dict) -> str:
             "python_tls_venv",
             "test_uv",
             "test_virtualenv",
+            "test_autoresearch",
         ):
             if key in body:
                 val = body[key]
@@ -144,6 +145,7 @@ def build_groups(
     revoked_ca_names: list[str] | None = None,
     test_uv: bool = False,
     test_virtualenv: bool = False,
+    test_autoresearch: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
@@ -246,6 +248,8 @@ def build_groups(
             body["test_uv"] = True
         if test_virtualenv:
             body["test_virtualenv"] = True
+        if test_autoresearch:
+            body["test_autoresearch"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if gpu_group and wants_all_cuda:
@@ -443,6 +447,15 @@ def main() -> int:
             "virtualenv version across five interpreters."
         ),
     )
+    ap.add_argument(
+        "--test-autoresearch",
+        action="store_true",
+        help=(
+            "Emit `test_autoresearch: true`: run autoresearch's train.py end "
+            "to end on a short time budget, so a broken image or dep bump is "
+            "caught. For runpod/autoresearch only."
+        ),
+    )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
@@ -537,6 +550,7 @@ def main() -> int:
         revoked_ca_names=args.revoked_ca_name,
         test_uv=args.test_uv,
         test_virtualenv=args.test_virtualenv,
+        test_autoresearch=args.test_autoresearch,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,
