@@ -73,6 +73,8 @@ expect_boot_error() {
 
 # in_worker <cmd...>: run in the worker container (reaches the head over the bridge).
 in_worker() { docker exec "$run_id-worker" "$@"; }
+# The worker's CMD is `sleep infinity`; PID 1 is that once the entrypoint execs.
+worker_pid1_is_cmd() { [[ "$(in_worker cat /proc/1/comm)" == sleep ]]; }
 
 wait_for() { # <description> <timeout_s> <cmd...>
     local what=$1 timeout=$2
@@ -198,6 +200,10 @@ check_image() {
 
     # Jupyter is head-only: the worker's CMD (PID 1 after the entrypoint's
     # exec) must not inherit the Jupyter env, or /start.sh would start it.
+    # The metrics port comes up before the entrypoint notices and execs, so
+    # wait for PID 1 to be the CMD first: until then it is the entrypoint,
+    # which still has the env.
+    wait_for "worker entrypoint to exec its CMD" 30 worker_pid1_is_cmd
     ! in_worker grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' /proc/1/environ ||
         fail "the worker's CMD inherited the Jupyter env"
     pass "worker CMD runs without the Jupyter env"
