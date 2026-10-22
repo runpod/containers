@@ -410,9 +410,14 @@ _TLS_PROBE = (
 # the whole command substitution exit 1 and `set -e` kills the check before
 # it reports anything. An `if` with no `else` returns 0 instead.
 _UV_PATH_SCAN = (
+    # Resolve each hit to its canonical path and dedupe: on a usr-merged
+    # image /bin is a symlink to /usr/bin, so one uv shows up under both PATH
+    # entries. Distinct binaries have distinct realpaths and still both count.
     "FOUND=$(printf '%s' \"$PATH\" | tr ':' '\\n' | while read -r d; do "
-    "  if [ -n \"$d\" ] && [ -x \"$d/uv\" ]; then echo \"$d/uv\"; fi; "
-    "done)"
+    "  if [ -n \"$d\" ] && [ -x \"$d/uv\" ]; then "
+    "    readlink -f \"$d/uv\" 2>/dev/null || echo \"$d/uv\"; "
+    "  fi; "
+    "done | sort -u)"
 )
 
 

@@ -266,6 +266,22 @@ class SetEFragmentTests(unittest.TestCase):
         self.assertIn(f"{first}/uv", proc.stdout)
         self.assertIn(f"{second}/uv", proc.stdout)
 
+    def test_uv_scan_dedupes_a_symlinked_path_entry(self):
+        # usr-merge: /bin is a symlink to /usr/bin, so one uv is reachable
+        # under two PATH entries. The scan must collapse them to a single copy.
+        real = self._bin("uv", "true")
+        parent = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        link = Path(parent) / "bin"
+        link.symlink_to(real)
+        proc = self._run(
+            checks._UV_PATH_SCAN + '; printf "%s\\n" "$FOUND"',
+            real, str(link),
+        )
+        self.assertIn("REACHED_END", proc.stdout, proc.stderr)
+        hits = [ln for ln in proc.stdout.splitlines() if ln.endswith("/uv")]
+        self.assertEqual(len(hits), 1, proc.stdout)
+
     def test_uv_scan_survives_when_no_entry_has_uv(self):
         proc = self._run(
             checks._UV_PATH_SCAN + '; printf "%s\\n" "$FOUND"',
