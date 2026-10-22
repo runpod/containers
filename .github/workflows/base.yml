@@ -338,7 +338,16 @@ jobs:
           python-tls-venv: "/opt/autoresearch/.venv/bin/activate"
           # Run the real train.py end to end to catch a broken dep bump.
           test-autoresearch: true
+          # train.py's baseline model needs ~44GB and fetches FlashAttention-3
+          # kernels by capability (no Blackwell build), so pin to a big
+          # non-Blackwell GPU (A100 80GB / H100).
+          min-vram-gb: "80"
           exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *
             RTX 2000 Ada
 
   build-pytorch:
