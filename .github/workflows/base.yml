@@ -336,12 +336,12 @@ jobs:
           # certifi lives in the uv venv (no --system-site-packages), so point
           # the check there instead of the system python.
           python-tls-venv: "/opt/autoresearch/.venv/bin/activate"
-          # Run the real train.py end to end to catch a broken dep bump.
+          # Run the real train.py end to end to catch a broken dep bump. The
+          # check shrinks seq length so it fits a cheap 24GB GPU; still needs
+          # FlashAttention-3 kernels, which have no Blackwell build.
           test-autoresearch: true
-          # train.py's baseline model needs ~44GB and fetches FlashAttention-3
-          # kernels by capability (no Blackwell build), so pin to a big
-          # non-Blackwell GPU (A100 80GB / H100).
-          min-vram-gb: "80"
+          min-vram-gb: "24"
+          create-timeout: "1200"
           exclude-instances: |
             B200*
             B300*
