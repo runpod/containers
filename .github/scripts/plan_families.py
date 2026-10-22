@@ -14,7 +14,7 @@ lives in .github/families.yml.
     plan_families.py --workflow comfyui    # which workflow builds this family
     plan_families.py --paths comfyui       # pathspecs feeding it, deps included
     plan_families.py --image-repo comfyui  # just read one field of the graph
-    plan_families.py --image-repos         # every repo we publish to (mirrors too)
+    plan_families.py --image-repos         # every repo we publish to, one per line
 
 Prints a JSON array in build order on stdout and a human summary on stderr.
 """
@@ -54,14 +54,10 @@ def load_graph(path: Path) -> dict[str, dict]:
             raise GraphError(f"{path}: family '{name}' has no paths")
         if not isinstance(deps, list):
             raise GraphError(f"{path}: family '{name}' has a malformed depends_on")
-        mirrors = spec.get("mirror_repos") or []
-        if not isinstance(mirrors, list):
-            raise GraphError(f"{path}: family '{name}' has a malformed mirror_repos")
         graph[name] = {
             "paths": list(paths),
             "depends_on": list(deps),
             "image_repo": spec.get("image_repo") or "",
-            "mirror_repos": list(mirrors),
             "workflow": spec.get("workflow") or "",
         }
 
@@ -236,8 +232,7 @@ def main() -> int:
     ap.add_argument(
         "--image-repos",
         action="store_true",
-        help="print every Docker Hub repo the families publish to (mirrors "
-             "included), one per line",
+        help="print every Docker Hub repo the families publish to, one per line",
     )
     ap.add_argument(
         "--image-repo",
@@ -254,9 +249,7 @@ def main() -> int:
     try:
         graph = load_graph(args.graph)
         if args.image_repos:
-            repos = (r for s in graph.values()
-                     for r in [s["image_repo"], *s["mirror_repos"]])
-            for repo in dict.fromkeys(repos):
+            for repo in dict.fromkeys(s["image_repo"] for s in graph.values()):
                 print(repo)
             return 0
         if args.image_repo:

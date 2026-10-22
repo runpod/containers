@@ -96,10 +96,8 @@ target "ray-cluster-matrix" {
   }
 
   # The Ray image's OWN tag keeps RELEASE_SUFFIX so dev/PR builds don't clobber
-  # the released tag. Published under runpod/ray-cluster and mirrored, same
-  # tag, to the private runpod/ray-cluster-dev (see families.yml mirror_repos).
+  # the released tag. Published under runpod/ray-cluster.
   tags = [
     "runpod/ray-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
-    "runpod/ray-cluster-dev:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }
