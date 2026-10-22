@@ -35,10 +35,8 @@ WORKDIR /
 
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-# Install. The `upgrade` is what carries CON-1869: it pulls the patched
-# ca-certificates, dropping the distrusted emSign root (CVE-2026-111943).
-# The smoke check asserts the installed version, so a repo that has not
-# published it yet fails the build instead of passing quietly.
+# Install. apt-get upgrade also pulls the patched ca-certificates
+# (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \

@@ -558,7 +558,14 @@ def python_tls_check_command(
         "    assert r.status == 200, f'pypi returned {r.status}'\n"
         "print('https fetch via certifi ok')\n"
     )
-    prefix = f". {shlex.quote(venv_activate)}; " if venv_activate else ""
+    if venv_activate:
+        # The app venv ships its own certifi; its activate puts python on PATH.
+        prefix = f". {shlex.quote(venv_activate)}; "
+    else:
+        # The SSH exec PATH often drops /usr/local/bin, where the base images
+        # put the `python` symlink (python3.12, which carries the pinned
+        # certifi). Add it back so the check runs the right interpreter.
+        prefix = "export PATH=/usr/local/bin:$PATH; "
     return f"{prefix}python - <<'PY'\n{program}PY"
 
 
@@ -569,9 +576,14 @@ def uv_check_command() -> str:
     in /usr/local/bin that shadows the pinned /bin/uv and keeps showing up
     in scans. The Dockerfiles remove it, and this fails the build if a base
     image brings it back.
+
+    /usr/local/bin is forced onto PATH: the SSH exec PATH often drops it, and
+    without it the scan cannot see a uv there and `python` (the base-image
+    symlink) is not found, so the pip-package guard would silently skip.
     """
     return (
         "set -e; "
+        "export PATH=/usr/local/bin:$PATH; "
         "uv --version; "
         f"{_UV_PATH_SCAN}; "
         "echo \"uv on PATH:\"; printf '%s\\n' \"$FOUND\"; "
