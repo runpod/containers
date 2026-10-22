@@ -499,6 +499,11 @@ jobs:
           test-ports: |
             80
           exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *
             RTX 2000 Ada
 
   build-pytorch:
