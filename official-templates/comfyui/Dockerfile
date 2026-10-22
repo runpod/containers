@@ -116,6 +116,7 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
     echo "pillow>=13.0.0" >> requirements.in && \
     echo "tornado>=6.5.10" >> requirements.in && \
+    echo "certifi>=2026.10.18" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
     PIP_INDEX_URL=https://pypi.org/simple \
@@ -212,6 +213,12 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* \
     && rm cuda-keyring_1.1-1_all.deb \
     && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
+
+# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
+RUN apt-get update && \
+    apt-get install -y --only-upgrade ca-certificates && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages, executables, and Jupyter data from builder stage
 COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12

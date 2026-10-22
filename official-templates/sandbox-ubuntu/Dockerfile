@@ -25,6 +25,13 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
+RUN apt-get update --yes && \
+    apt-get install --yes --only-upgrade ca-certificates && \
+    update-ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # Canonical's service manager, dropped into the base image outside dpkg, so
 # there is no package to purge. tini is pid 1 and nothing invokes it, but its
 # Go stdlib carries 13 findings (2 CRITICAL) with no fixed build in 26.04.
@@ -58,7 +65,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
 
 # Pinned by digest, not just by tag — a warm pool is keyed on the image, so an
 # upstream rebuild or a re-pushed tag would silently split the pool.
-COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /uvx /usr/local/bin/
 
 # Ubuntu images since 24.04 ship a stock `ubuntu` account on uid 1000; drop it
 # so the sandbox user owns the conventional uid.

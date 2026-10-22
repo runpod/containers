@@ -29,6 +29,13 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
+RUN apt-get update --yes && \
+    apt-get install --yes --only-upgrade ca-certificates && \
+    update-ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # Upstream runs as `node` with no route to root, so nothing can be installed
 # from inside a sandbox.
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node && \

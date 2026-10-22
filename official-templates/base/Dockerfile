@@ -113,6 +113,12 @@ RUN python -m pip install --upgrade --no-cache-dir -r requirements.txt && \
     python /tmp/scrub-stale-metadata.py /requirements.txt && \
     rm /tmp/scrub-stale-metadata.py
 
+# CON-1869: force the patched CA store, dropping compromised emSign roots (CVE-2026-111943).
+RUN apt-get update && \
+    apt-get install --yes --only-upgrade ca-certificates && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
 # NGINX Proxy
 COPY --from=proxy nginx.conf /etc/nginx/nginx.conf
 COPY --from=proxy snippets /etc/nginx/snippets
