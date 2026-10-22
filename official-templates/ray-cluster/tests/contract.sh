@@ -116,9 +116,9 @@ both_alive() {
 # cookie (the banner the SPA then rides); no token is a 403 that never reaches
 # the dashboard. Body captured first: grep -q exiting early would SIGPIPE curl
 # under pipefail.
-proxy_denies_without_token() { # <port>
+proxy_denies() { # <port> [<query>]
     local code
-    code=$(in_worker curl -s -o /dev/null -w '%{http_code}' "http://$HEAD_IP:$1/api/version?token=$PROXY_TOKEN") &&
+    code=$(in_worker curl -s -o /dev/null -w '%{http_code}' "http://$HEAD_IP:$1/api/version${2:-}") &&
         [[ "$code" == 403 ]]
 }
 
@@ -130,7 +130,6 @@ proxy_admits_with_token() {
 }
 
 check_image() {
-
     local image=$1
     echo "=== $image"
 
@@ -206,8 +205,8 @@ check_image() {
         python /opt/runpod/ray/dashboard-proxy > /dev/null
     docker exec -d -e PROXY_LISTEN_PORT="$PROXY_PORT_ALT" "$run_id-head" \
         python /opt/runpod/ray/dashboard-proxy > /dev/null
-    wait_for "dashboard proxy up" 60 proxy_denies_without_token "$PROXY_PORT"
-    wait_for "dashboard proxy fail-closed with no secret" 60 proxy_denies_without_token "$PROXY_PORT_ALT"
+    wait_for "dashboard proxy up" 60 proxy_denies "$PROXY_PORT"
+    wait_for "dashboard proxy fail-closed with no secret" 60 proxy_denies "$PROXY_PORT_ALT" "?token=$PROXY_TOKEN"
     wait_for "dashboard proxy admits ?token= and sets the cookie" 60 proxy_admits_with_token
     pass "dashboard proxy gates $PROXY_PORT (deny / fail-closed / token+cookie)"
 
