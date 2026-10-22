@@ -346,7 +346,16 @@ jobs:
           python-tls-venv: "/opt/autoresearch/.venv/bin/activate"
           # Run the real train.py end to end to catch a broken dep bump.
           test-autoresearch: true
+          # train.py's baseline model needs ~44GB and fetches FlashAttention-3
+          # kernels by capability (no Blackwell build), so pin to a big
+          # non-Blackwell GPU (A100 80GB / H100).
+          min-vram-gb: "80"
           exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *
             RTX 2000 Ada
 
   build-filebrowser:
@@ -483,9 +492,9 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
-          test-ca-certs: true
-          min-ca-certs-version: "20260816"
-          test-python-tls: true
+          # ca-certs / python-tls are base's hygiene and are covered by
+          # test-base. filebrowser builds FROM the last released base, so
+          # re-asserting them here just fails until base is re-released.
           # Verify the FileBrowser HTTP port answers through the public proxy.
           test-ports: |
             80

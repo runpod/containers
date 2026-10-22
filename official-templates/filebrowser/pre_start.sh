@@ -7,4 +7,7 @@
 mkdir -p /workspace/.filebrowser
 
 echo "Starting FileBrowser on :80..."
-nohup filebrowser > /filebrowser.log 2>&1 &
+# tee so output shows in the pod's log stream (PID 1 stdout) as well as the
+# file. With a plain '> /filebrowser.log' redirect, a startup error is only
+# visible via `cat` inside the pod, not in the Runpod console.
+nohup filebrowser 2>&1 | tee /filebrowser.log &
