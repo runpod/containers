@@ -196,6 +196,7 @@ class GraphFile(unittest.TestCase):
             [
                 "autoresearch",
                 "base",
+                "filebrowser",
                 "nvidia-pytorch",
                 "pytorch",
                 "pytorch-cluster",

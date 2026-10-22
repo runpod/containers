@@ -55,6 +55,14 @@ families:
     image_repo: runpod/autoresearch
     workflow: base
 
+  filebrowser:
+    paths:
+      - official-templates/filebrowser/**
+      - official-templates/shared/**
+    depends_on: [base]
+    image_repo: runpod/filebrowser
+    workflow: base
+
   rocm:
     paths:
       - official-templates/rocm/**

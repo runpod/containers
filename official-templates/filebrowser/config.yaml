@@ -1,0 +1,18 @@
+# FileBrowser Quantum config for the Runpod template.
+server:
+  port: 80
+  sources:
+    - path: "/workspace"
+      config:
+        defaultEnabled: true
+  database:
+    path: "/workspace/.filebrowser/database.db"
+http:
+  # Scope the session JWT cookie to X-Forwarded-Host, not the pod internal IP,
+  # so login works behind the Runpod proxy.
+  trustProxyHeaders: true
+auth:
+  adminUsername: admin
+  methods:
+    password:
+      enabled: true
