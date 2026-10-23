@@ -7,7 +7,7 @@ jupyter_server==2.21.0
 jupyterlab==4.6.4
 mistune==3.3.3
 msgpack==1.2.1
-nbconvert==7.17.1
+nbconvert==7.17.2
 notebook==7.6.3
 onnx==1.21.0
 pillow==13.0.0
