@@ -15,7 +15,7 @@ Browse, upload, download, and edit files in your pod from the browser, with Jupy
 
 1. Launch a pod with this template and expose HTTP port `80`.
 2. Open the pod's `:80` proxy URL. Log in as `admin`.
-3. Set `FILEBROWSER_ADMIN_PASSWORD` in the pod env to choose the admin password up front. Without it, FileBrowser generates a temporary password on first boot; read it from `/filebrowser.log` inside the pod.
+3. Set `FILEBROWSER_ADMIN_PASSWORD` in the pod env to choose the admin password up front. Without it, FileBrowser prints a one-time password to `/filebrowser.log` on first boot; log in with it and FileBrowser prompts you to set a permanent password.
 
 The admin user and settings persist in `/workspace/.filebrowser/filebrowser.db`, so they survive restarts on a network volume.
 
