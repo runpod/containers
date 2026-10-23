@@ -186,6 +186,11 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          test-uv: true
+          test-virtualenv: true
           on-skip: "warn"
           exclude-instances: |
             RTX 2000 Ada
@@ -325,7 +330,24 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # certifi lives in the uv venv (no --system-site-packages), so point
+          # the check there instead of the system python.
+          python-tls-venv: "/opt/autoresearch/.venv/bin/activate"
+          # Run the real train.py end to end to catch a broken dep bump. The
+          # check shrinks seq length so it fits a cheap 24GB GPU; still needs
+          # FlashAttention-3 kernels, which have no Blackwell build.
+          test-autoresearch: true
+          min-vram-gb: "24"
+          create-timeout: "1200"
           exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *
             RTX 2000 Ada
 
   build-pytorch:
@@ -481,6 +503,14 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           test-torch-packages: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          test-pip-check: true
+          # Inherited from the CUDA base on 22.04: python3-gi ships without
+          # python3-gi-cairo, and nothing in our images uses it.
+          pip-check-allow: |
+            pygobject 3.42.1 requires pycairo
           # Patterns match catalog DISPLAY names, which never contain the
           # word "Blackwell" — only the ids do. Enumerate the cards, with a
           # trailing * so the MIG slices ('B300 MIG 34GB') match too.
@@ -631,6 +661,9 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-torch-packages: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
           # torch 2.12/2.13 here take torchvision from cu129, which upstream
           # builds without Blackwell.
           exclude-instances: |

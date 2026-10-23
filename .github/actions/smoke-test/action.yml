@@ -75,6 +75,80 @@ inputs:
       proxy-first reachability check. Accepts plain lines or `- 8080`.
     required: false
     default: ""
+  test-pip-check:
+    description: |
+      'true' to emit `test_pip_check: true`, running `pip check` in the pod
+      and failing on any conflict not listed in pip-check-allow. Catches a
+      bumped pin that no longer satisfies something else in the image.
+    required: false
+    default: "false"
+  pip-check-allow:
+    description: |
+      Newline-separated substrings of `pip check` output to accept instead
+      of failing on, for conflicts inherited from a vendor base image.
+      Keep each narrow enough that a NEW conflict in the same package
+      still fails.
+    required: false
+    default: ""
+  test-ca-certs:
+    description: |
+      'true' to emit `test_ca_certs: true`: no revoked CA root is trusted
+      in the system store and HTTPS still validates against it. Shell-only,
+      so it is safe for images that ship no Python. Enable everywhere —
+      `apt-get --only-upgrade ca-certificates` exits 0 when the distro has
+      no patched package yet, and this is what catches that.
+    required: false
+    default: "false"
+  min-ca-certs-version:
+    description: |
+      dpkg version floor for the installed ca-certificates package, e.g.
+      '20260816'. Asserts the patched package actually reached the image:
+      an `--only-upgrade` that found nothing to upgrade exits 0 and
+      otherwise looks exactly like success. Needs test-ca-certs.
+    required: false
+    default: ""
+  test-python-tls:
+    description: |
+      'true' to emit `test_python_tls: true`: the same revoked-root check
+      against the certifi bundle, which is the store pip and requests use.
+      Separate from test-ca-certs because upgrading the system store does
+      not touch certifi. Only for images with Python.
+    required: false
+    default: "false"
+  python-tls-venv:
+    description: |
+      Path to an `activate` script sourced before the certifi check, for
+      images whose application runs in its own virtualenv (ComfyUI).
+    required: false
+    default: ""
+  revoked-ca-names:
+    description: |
+      Newline-separated CA subject substrings that must not be trusted,
+      matched case-insensitively. Empty uses the default list in
+      tests/runpod_smoke/checks.py — extend that list when a new root is
+      revoked, and use this input only for a one-off run.
+    required: false
+    default: ""
+  test-uv:
+    description: |
+      'true' to emit `test_uv: true`: exactly one uv on PATH, no
+      pip-installed copy shadowing it, and a real resolve.
+    required: false
+    default: "false"
+  test-virtualenv:
+    description: |
+      'true' to emit `test_virtualenv: true`: create a virtualenv with
+      every python3.X the image ships. For runpod/base, which pins one
+      virtualenv version across five interpreters.
+    required: false
+    default: "false"
+  test-autoresearch:
+    description: |
+      'true' to emit `test_autoresearch: true`: run autoresearch's train.py
+      end to end on a short time budget, catching a broken image or dep bump.
+      For runpod/autoresearch only.
+    required: false
+    default: "false"
   test-comfyui:
     description: |
       Emit `test_comfyui: true` for each generated group. Exposes :8188 as
@@ -343,6 +417,16 @@ runs:
         TEST_PORTS: ${{ inputs.test-ports }}
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
+        TEST_PIP_CHECK: ${{ inputs.test-pip-check }}
+        PIP_CHECK_ALLOW: ${{ inputs.pip-check-allow }}
+        TEST_CA_CERTS: ${{ inputs.test-ca-certs }}
+        MIN_CA_CERTS_VERSION: ${{ inputs.min-ca-certs-version }}
+        TEST_PYTHON_TLS: ${{ inputs.test-python-tls }}
+        PYTHON_TLS_VENV: ${{ inputs.python-tls-venv }}
+        REVOKED_CA_NAMES: ${{ inputs.revoked-ca-names }}
+        TEST_UV: ${{ inputs.test-uv }}
+        TEST_VIRTUALENV: ${{ inputs.test-virtualenv }}
+        TEST_AUTORESEARCH: ${{ inputs.test-autoresearch }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         INSTANCES: ${{ inputs.instances }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
@@ -369,6 +453,46 @@ runs:
         if [[ "${CHECK_ALL_GPU,,}" == "true" ]]; then
           EXTRA_ARGS+=(--check-all-gpu)
         fi
+        if [[ "${TEST_PIP_CHECK,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-pip-check)
+        fi
+        if [[ "${TEST_CA_CERTS,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-ca-certs)
+        fi
+        if [[ -n "${MIN_CA_CERTS_VERSION}" ]]; then
+          EXTRA_ARGS+=(--min-ca-certs-version "${MIN_CA_CERTS_VERSION}")
+        fi
+        if [[ "${TEST_PYTHON_TLS,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-python-tls)
+        fi
+        if [[ -n "${PYTHON_TLS_VENV}" ]]; then
+          EXTRA_ARGS+=(--python-tls-venv "${PYTHON_TLS_VENV}")
+        fi
+        if [[ "${TEST_UV,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-uv)
+        fi
+        if [[ "${TEST_VIRTUALENV,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-virtualenv)
+        fi
+        if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-autoresearch)
+        fi
+        # pip-check-allow and revoked-ca-names are newline lists. Entries
+        # are passed as single argv elements and NOT stripped of a leading
+        # '-' the way ports are: a pip check line can legitimately start
+        # with one, and these are matched as literal substrings.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--pip-check-allow "${line}")
+        done <<< "${PIP_CHECK_ALLOW}"
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--revoked-ca-name "${line}")
+        done <<< "${REVOKED_CA_NAMES}"
         # Split TEST_PORTS on newlines. Accept both "8080" and "- 8080"
         # so workflow input can match the generated manifest syntax.
         while IFS= read -r line; do

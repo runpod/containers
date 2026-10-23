@@ -409,3 +409,29 @@ GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
 # Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
 # rather than stopping after the first passing candidate.
 GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
+
+# Image hygiene opt-ins, from the manifest fields of the same name. They
+# catch regressions a boot check cannot see: a dependency pin that conflicts
+# with something already in the image, a CA upgrade that silently did
+# nothing, a vendor base re-introducing a shadowing uv.
+#
+#   GROUP_TEST_PIP_CHECK    — `pip check` must be clean
+#   GROUP_PIP_CHECK_ALLOW   — conflict substrings accepted for that group
+#   GROUP_TEST_CA_CERTS     — system trust store carries no revoked root
+#   GROUP_MIN_CA_CERTS_VER  — floor for the installed ca-certificates
+#   GROUP_TEST_PYTHON_TLS   — certifi bundle carries no revoked root
+#   GROUP_REVOKED_CA_NAMES  — per-group override of checks.REVOKED_CA_NAMES
+#   GROUP_PYTHON_TLS_VENV   — activate script, for app-owned virtualenvs
+#   GROUP_TEST_UV           — exactly one uv, and it resolves
+#   GROUP_TEST_VIRTUALENV   — virtualenv works on every shipped interpreter
+#   GROUP_TEST_AUTORESEARCH — autoresearch train.py runs end to end
+GROUP_TEST_PIP_CHECK: dict[str, bool] = {}
+GROUP_PIP_CHECK_ALLOW: dict[str, list[str]] = {}
+GROUP_TEST_CA_CERTS: dict[str, bool] = {}
+GROUP_MIN_CA_CERTS_VER: dict[str, str] = {}
+GROUP_TEST_PYTHON_TLS: dict[str, bool] = {}
+GROUP_REVOKED_CA_NAMES: dict[str, list[str]] = {}
+GROUP_PYTHON_TLS_VENV: dict[str, str] = {}
+GROUP_TEST_UV: dict[str, bool] = {}
+GROUP_TEST_VIRTUALENV: dict[str, bool] = {}
+GROUP_TEST_AUTORESEARCH: dict[str, bool] = {}
