@@ -50,12 +50,24 @@ RUN apt-get update --yes && \
     rm -rf /var/lib/apt/lists/*
 
 # CON-1869: CUDA bases pin apt to a snapshot that lags the emSign removal
-# (CVE-2026-111943), so install the patched ca-certificates from the archive.
+# (CVE-2026-111943), and plain `apt-get upgrade` there only reaches the stale
+# version. Pull the patched ca-certificates from the archive over https,
+# checksum it, and install only when newer so we never downgrade a fresher one.
 RUN . /etc/os-release && \
-    deb="ca-certificates_20260816ubuntu0.${VERSION_ID}.1_all.deb" && \
-    curl -fsSL -o "/tmp/${deb}" \
-        "http://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
-    dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}" && \
+    ver="20260816ubuntu0.${VERSION_ID}.1" && \
+    deb="ca-certificates_${ver}_all.deb" && \
+    case "${VERSION_ID}" in \
+      22.04) sha=29ca037f49f7a4b41d67ad72946c2e541f3ae52d8f6ab1495d2af09aa391144b ;; \
+      24.04) sha=8a0a754aaafed72cc8efb8c1731808133284a84fbfc76a4fcc73fce9e01b4187 ;; \
+      *) echo "no pinned ca-certificates for ${VERSION_ID}" && exit 1 ;; \
+    esac && \
+    cur="$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null || echo 0)" && \
+    if dpkg --compare-versions "$cur" lt "$ver"; then \
+      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
+      echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
+      dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
+    fi && \
     update-ca-certificates
     
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.

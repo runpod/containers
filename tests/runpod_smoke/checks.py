@@ -485,7 +485,9 @@ def ca_certs_check_command(
         "fi; "
     ) if min_version else ""
     return (
-        "set -e; "
+        # pipefail: the subject scan below pipes openssl into openssl; without
+        # it a failed openssl leaves an empty list and every root reads absent.
+        "set -e; set -o pipefail; "
         "echo \"ca-certificates: "
         "$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
         "  || echo 'not installed via dpkg')\"; "
