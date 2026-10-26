@@ -288,13 +288,20 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
             )
         reach = _normalize_bool(contents.get("test_comfyui"))
         functional = _normalize_bool(contents.get("test_comfyui_functional"))
+        manager = _normalize_bool(contents.get("test_comfyui_manager"))
         if functional:
             config.GROUP_TEST_COMFYUI_FUNCTIONAL[grp] = True
             log(
                 f"group '{grp}': test_comfyui_functional=true "
                 "(provision model, run workflow, validate PNG)"
             )
-        if reach or functional:
+        if manager:
+            config.GROUP_TEST_COMFYUI_MANAGER[grp] = True
+            log(
+                f"group '{grp}': test_comfyui_manager=true "
+                "(install a node via ComfyUI-Manager, reboot, verify it imports)"
+            )
+        if reach or functional or manager:
             config.GROUP_TEST_COMFYUI[grp] = True
             log(
                 f"group '{grp}': test_comfyui=true "

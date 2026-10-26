@@ -1,0 +1,6 @@
+{
+  "id": "comfyui-depthanythingv2",
+  "selected_version": "latest",
+  "verify_class": "DepthAnything_V2",
+  "note": "Installed via ComfyUI-Manager to exercise torch-dependent dep resolution. Its dep 'accelerate' depends on torch, and the node imports torch/torchvision, so the class only appears in /object_info if the install resolved against the baked torch and the node imported after reboot."
+}

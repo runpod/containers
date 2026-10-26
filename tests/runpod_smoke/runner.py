@@ -34,7 +34,11 @@ from .checks import (
     scan_pod_logs_for_errors,
     ssh_probe,
 )
-from .comfyui import probe_comfyui_alive, run_comfyui_check
+from .comfyui import (
+    probe_comfyui_alive,
+    run_comfyui_check,
+    run_comfyui_manager_check,
+)
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log, set_worker_context
 from .pod import (
@@ -397,22 +401,38 @@ def _run_comfyui_steps(
     if outcome is not None:
         dump_pod_logs(pod_id, image)
         return outcome
-    if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
-        return None
 
-    log("running ComfyUI functional check (via proxy)...", indent=2)
-    ok, detail = run_comfyui_check(
-        pod_id,
-        on_line=lambda line: log(f"  {line}", indent=2),
-        save_dir=config.COMFYUI_SAVE_DIR,
-        tag=pod_id,
-    )
-    if ok:
-        log("ComfyUI functional check passed", indent=2)
-        return None
-    log(f"ComfyUI functional check FAILED -- {detail}", indent=2)
-    dump_pod_logs(pod_id, image)
-    return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
+    if config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
+        log("running ComfyUI functional check (via proxy)...", indent=2)
+        ok, detail = run_comfyui_check(
+            pod_id,
+            on_line=lambda line: log(f"  {line}", indent=2),
+            save_dir=config.COMFYUI_SAVE_DIR,
+            tag=pod_id,
+        )
+        if ok:
+            log("ComfyUI functional check passed", indent=2)
+        else:
+            log(f"ComfyUI functional check FAILED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
+
+    if config.GROUP_TEST_COMFYUI_MANAGER.get(group, False):
+        # Runs last: it reboots ComfyUI, so any functional check above must
+        # already have generated its image.
+        log("running ComfyUI-Manager install check (via proxy)...", indent=2)
+        ok, detail = run_comfyui_manager_check(
+            pod_id,
+            on_line=lambda line: log(f"  {line}", indent=2),
+        )
+        if ok:
+            log("ComfyUI-Manager install check passed", indent=2)
+        else:
+            log(f"ComfyUI-Manager install check FAILED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"ComfyUI-Manager install check failed: {detail[:160]}"
+
+    return None
 
 
 def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:

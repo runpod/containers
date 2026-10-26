@@ -131,11 +131,12 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
 | 6 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
 | 7 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
-| 8 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
-| 9 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 10 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
-| 11 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
-| 12 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
+| 8 | **ComfyUI-Manager install** (only when `test_comfyui_manager: true`) — install the node in `manager_node.json` via the Manager, reboot ComfyUI, then verify its class imports via `/object_info` | `FAIL` (install, reboot, or torch-dependent dep resolution failure) |
+| 9 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
+| 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
+| 11 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
+| 12 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
+| 13 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
 result was `UNAVAILABLE`, `STUCK` or `UNVERIFIED`, and short-circuits on
@@ -361,6 +362,7 @@ Field reference:
 | `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
+| `test_comfyui_manager` | `true` / `false` — implies `test_comfyui`; installs the custom node in `comfyui/manager_node.json` through ComfyUI-Manager (`/v2/manager/queue`), reboots ComfyUI (`/v2/manager/reboot`), then verifies the node's class is importable via `/object_info`. The default node has torch-dependent deps, so it exercises pip resolving against the baked torch. Needs a `comfyui_manager` (4.x) image with Manager `network_mode = personal_cloud`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
 list for that group — no `instances:` / `max_price_per_hour:` /

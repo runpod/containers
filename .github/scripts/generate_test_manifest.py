@@ -82,6 +82,7 @@ def render_yaml(groups: dict) -> str:
             "check_all_gpu",
             "test_comfyui",
             "test_comfyui_functional",
+            "test_comfyui_manager",
         ):
             if key in body:
                 val = body[key]
@@ -123,6 +124,7 @@ def build_groups(
     test_ports: list[int] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
+    test_comfyui_manager: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
@@ -207,6 +209,8 @@ def build_groups(
             body["test_comfyui"] = True
         if test_comfyui_functional:
             body["test_comfyui_functional"] = True
+        if test_comfyui_manager:
+            body["test_comfyui_manager"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if gpu_group and wants_all_cuda:
@@ -312,6 +316,7 @@ def main() -> int:
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument("--test-comfyui-manager", action="store_true")
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
@@ -397,6 +402,7 @@ def main() -> int:
         test_ports=args.test_port,
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
+        test_comfyui_manager=args.test_comfyui_manager,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,

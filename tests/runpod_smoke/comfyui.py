@@ -293,3 +293,178 @@ def run_comfyui_check(
         return False, "output PNG failed validation"
     emit("COMFYUI FUNCTIONAL CHECK OK")
     return True, "generated + validated PNG"
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI-Manager install check
+# ---------------------------------------------------------------------------
+
+# A fixed client_id so queue/status and queue/history can be filtered to our
+# own install task instead of whatever else the pod is doing.
+_MANAGER_CLIENT_ID = "runpod-smoke-manager"
+
+
+def _wait_for_manager(base: str, emit: Callable[[str], None]) -> bool:
+    """Wait for ComfyUI-Manager's HTTP API to answer (it loads after ComfyUI)."""
+    deadline = time.monotonic() + config.COMFYUI_MANAGER_READY_TIMEOUT
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            code, body = _request(base + "/v2/manager/version", timeout=10)
+            if code == 200:
+                emit(f"ComfyUI-Manager ready (v{body.decode('utf-8', 'replace').strip()})")
+                return True
+            last_error = f"HTTP {code}"
+        except OSError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        time.sleep(3)
+    emit(f"FAIL: ComfyUI-Manager /v2/manager/version unavailable ({last_error})")
+    return False
+
+
+def _object_info_has_class(base: str, node_class: str) -> bool:
+    """True when ComfyUI reports the node class, i.e. the node imported cleanly."""
+    try:
+        code, body = _request(
+            base + "/object_info/" + urllib.parse.quote(node_class), timeout=30
+        )
+        if code != 200:
+            return False
+        return node_class in json.loads(body)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def _wait_for_object_info(
+    base: str, node_class: str, emit: Callable[[str], None],
+) -> bool:
+    deadline = time.monotonic() + config.COMFYUI_MANAGER_VERIFY_TIMEOUT
+    while time.monotonic() < deadline:
+        if _object_info_has_class(base, node_class):
+            return True
+        time.sleep(3)
+    return False
+
+
+def _dump_manager_history(base: str, emit: Callable[[str], None]) -> None:
+    """Best-effort: log the Manager task history for our client on failure."""
+    try:
+        code, body = _request(
+            base + "/v2/manager/queue/history?client_id="
+            + urllib.parse.quote(_MANAGER_CLIENT_ID),
+            timeout=20,
+        )
+        if code == 200:
+            emit(f"manager task history: {body.decode('utf-8', 'replace')[:1000]}")
+    except OSError:
+        pass
+
+
+def _manager_install_node(
+    base: str, node: dict, emit: Callable[[str], None],
+) -> bool:
+    """Queue a Manager install task, start the worker, and wait for it to drain."""
+    version = node.get("selected_version", "latest")
+    task = {
+        "ui_id": f"smoke-{int(time.time())}",
+        "client_id": _MANAGER_CLIENT_ID,
+        "kind": "install",
+        "params": {
+            "id": node["id"],
+            "version": version,
+            "selected_version": version,
+            # `cache` reads the prebaked registry DB; the archive still downloads.
+            "mode": "cache",
+            "channel": "default",
+        },
+    }
+    code, body = _request(
+        base + "/v2/manager/queue/task", json.dumps(task).encode(), timeout=30
+    )
+    if code != 200:
+        emit(f"FAIL: queue/task returned HTTP {code}: {body[:300]!r}")
+        return False
+    # Empty JSON body so the CSRF guard sees a non-simple Content-Type.
+    code, _ = _request(base + "/v2/manager/queue/start", b"", timeout=30)
+    if code not in (200, 201):
+        emit(f"FAIL: queue/start returned HTTP {code}")
+        return False
+
+    status_url = (
+        base + "/v2/manager/queue/status?client_id="
+        + urllib.parse.quote(_MANAGER_CLIENT_ID)
+    )
+    deadline = time.monotonic() + config.COMFYUI_MANAGER_INSTALL_TIMEOUT
+    status: dict = {}
+    while time.monotonic() < deadline:
+        try:
+            code, body = _request(status_url, timeout=15)
+            status = json.loads(body) if code == 200 else {}
+        except (OSError, json.JSONDecodeError):
+            status = {}
+        # done_count only says the task left the queue, not that it succeeded;
+        # the object_info check after reboot is the real pass/fail gate.
+        if (
+            status.get("done_count", 0) >= 1
+            and status.get("total_count", 0) == 0
+            and not status.get("is_processing", False)
+        ):
+            emit("install task finished")
+            return True
+        time.sleep(3)
+    emit(f"FAIL: install task did not finish in {config.COMFYUI_MANAGER_INSTALL_TIMEOUT}s (last={status})")
+    return False
+
+
+def _manager_reboot(base: str, emit: Callable[[str], None]) -> None:
+    """Request a ComfyUI restart. The server execs itself, so a dropped
+    connection here is the expected outcome, not a failure."""
+    try:
+        code, _ = _request(base + "/v2/manager/reboot", b"", timeout=15)
+        emit(f"reboot requested (HTTP {code})")
+    except OSError as exc:
+        emit(f"reboot requested (connection closed: {type(exc).__name__})")
+
+
+def run_comfyui_manager_check(
+    pod_id: str, on_line: Optional[Callable[[str], None]] = None,
+) -> tuple[bool, str]:
+    """Install a custom node via ComfyUI-Manager, reboot, and verify it loads."""
+    emit = on_line or (lambda _message: None)
+    base = _base_url(pod_id)
+    emit(f"ComfyUI-Manager install check via proxy: {base}")
+    try:
+        node = _load_json(config.COMFYUI_MANAGER_NODE_MANIFEST)
+    except OSError as exc:
+        return False, f"could not read manager node manifest: {exc}"
+    node_class = node.get("verify_class")
+    if not node.get("id") or not node_class:
+        return False, "manager node manifest needs 'id' and 'verify_class'"
+
+    if not _wait_for_system_stats(base, emit):
+        return False, "ComfyUI /system_stats unavailable"
+    if not _wait_for_manager(base, emit):
+        return False, "ComfyUI-Manager API unavailable"
+
+    if _object_info_has_class(base, node_class):
+        return False, f"node class {node_class} already present before install"
+
+    emit(f"installing {node['id']}@{node.get('selected_version', 'latest')} via Manager...")
+    if not _manager_install_node(base, node, emit):
+        _dump_manager_history(base, emit)
+        return False, f"Manager install failed for {node['id']}"
+
+    emit("rebooting ComfyUI to activate the node...")
+    _manager_reboot(base, emit)
+    # Give the server a moment to drop before we start polling for it to return.
+    time.sleep(10)
+    if not _wait_for_system_stats(base, emit):
+        return False, "ComfyUI did not come back after reboot"
+
+    emit(f"verifying node class {node_class} is importable...")
+    if not _wait_for_object_info(base, node_class, emit):
+        _dump_manager_history(base, emit)
+        return False, f"node class {node_class} not available after install+reboot"
+
+    emit("COMFYUI MANAGER CHECK OK")
+    return True, f"installed + activated {node['id']} ({node_class})"
