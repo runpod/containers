@@ -107,7 +107,7 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
       "$py" -m pip install --upgrade --no-cache-dir \
         "pip==26.2.0" "virtualenv==21.14.13" \
         "filelock==4.2.1; python_version>='3.11'" \
-        "filelock==3.20.4; python_version<'3.11'" || exit 1; \
+        "filelock==3.32.7; python_version<'3.11'" || exit 1; \
     done;
 
 # Symlink default python/pip
