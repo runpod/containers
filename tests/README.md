@@ -381,7 +381,7 @@ Field reference:
 | `python_tls_venv` | Path to an `activate` script sourced before the certifi check, for images whose application runs in its own virtualenv rather than the system interpreter (ComfyUI). Default: system `python`. |
 | `revoked_ca_names` | CA subject substrings that must not be trusted, matched case-insensitively against certificate subjects, so a family prefix (`emSign`) covers every root in it. Applies to both CA checks. Default: the list in `tests/runpod_smoke/checks.py` — extend that when a root is revoked, and use this field only for a one-off run. |
 | `test_uv` | `true` / `false` — exactly one `uv` on `$PATH`, no pip-installed copy shadowing it, and a real `uv venv` + `uv pip install`. The duplicate test is the point: the NGC bases ship a pip-installed uv that shadows the pinned binary, the Dockerfiles remove it, and this fails if a base image brings it back. Default: `false`. |
-| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across three interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across four interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
 list for that group — no `instances:` / `max_price_per_hour:` /

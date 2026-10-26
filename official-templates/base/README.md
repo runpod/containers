@@ -5,14 +5,14 @@
 The Runpod Base images provide a clean, developer friendly environment for everything from quick experiments to production, supporting both GPU and CPU-only workloads. Use them standalone for a preconfigured workspace, or as the foundation for your own images.
 
 ### What's included
-- **Multiple Python versions**: 3.11–3.13 preinstalled; 3.12 is the default.
+- **Multiple Python versions**: 3.10–3.13 preinstalled; 3.12 is the default.
 - **ML ready**: Essential libraries for scientific computing, computer vision, and machine learning, plus SLURM support.
 - **Developer friendly**: SSH server preconfigured for seamless remote development and debugging.
 - **Smart workspace**: Optimized directory structure and package caches for faster dependency installation.
 - **Performance tuned**: Environment variables and cache strategies optimized for faster builds and execution.
 - **Jupyter ready (optional)**: Notebook and JupyterLab with widgets/extensions. Set `JUPYTER_PASSWORD` and it becomes the login token; omit it and JupyterLab does not start. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD` — the `:8888` proxy URL is public, so anyone with it gets a root shell.
 
-> **Python 3.9 and 3.10 removed.** Both reached end-of-life (3.9 in Oct 2025, 3.10 in Oct 2026) and no longer get security-patched pip and toolchain builds, so runpod/base now ships only Python 3.11–3.13. To migrate: recreate any 3.9/3.10 virtualenv with a supported interpreter (`python3.12 -m venv .venv`) and reinstall your dependencies. The default `python`, `pip` and `python3` already point to 3.12, so plain `python ...` keeps working.
+> **Python 3.9 removed.** It reached end-of-life (Oct 2025) and no longer gets a security-patched pip, so runpod/base now ships Python 3.10–3.13. To migrate: recreate any 3.9 virtualenv with a supported interpreter (`python3.12 -m venv .venv`) and reinstall your dependencies. The default `python`, `pip` and `python3` point to 3.12, so plain `python ...` keeps working.
 
 ### Available configurations
 - **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble)

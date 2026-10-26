@@ -75,10 +75,12 @@ RUN . /etc/os-release && \
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
-# Install Python versions
+# Install Python versions. python3.10 is only kept because it is Ubuntu 22.04's
+# system interpreter; drop it when CON-1619 removes 22.04.
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt-get install --yes --no-install-recommends \
+        python3.10-dev python3.10-venv python3.10-distutils \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
         python3.13-dev python3.13-venv && \
@@ -93,6 +95,7 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
         "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
     echo "${GET_PIP_SHA256}  /tmp/get-pip.py" | sha256sum -c - && \
+    python3.10 /tmp/get-pip.py && \
     python3.11 /tmp/get-pip.py && \
     python3.12 /tmp/get-pip.py && \
     python3.13 /tmp/get-pip.py && \
@@ -100,9 +103,11 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
 
 # Install virtualenv
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    for py in python3.11 python3.12 python3.13; do \
+    for py in python3.10 python3.11 python3.12 python3.13; do \
       "$py" -m pip install --upgrade --no-cache-dir \
-        "pip==26.2.0" "virtualenv==21.14.13" "filelock==4.2.1" || exit 1; \
+        "pip==26.2.0" "virtualenv==21.14.13" \
+        "filelock==4.2.1; python_version>='3.11'" \
+        "filelock==3.20.4; python_version<'3.11'" || exit 1; \
     done;
 
 # Symlink default python/pip

@@ -399,7 +399,10 @@ def _sh_quote_list(values: tuple[str, ...] | list[str]) -> str:
 # failing left side of an AND-list is exempt, so the && form would let a
 # broken trust store reach the final `exit 0`.
 _TLS_PROBE = (
-    "curl -fsS --max-time 30 https://pypi.org/simple/ -o /dev/null; "
+    # HEAD, not GET: this only has to validate the TLS chain against the
+    # trust store, and pypi.org/simple/ is a ~50MB index that times out on a
+    # slow pod if downloaded in full.
+    "curl -fsS --max-time 30 -I https://pypi.org/simple/ -o /dev/null; "
     "echo 'https fetch ok'"
 )
 
@@ -617,7 +620,7 @@ def uv_check_command() -> str:
 def virtualenv_check_command() -> str:
     """Create a virtualenv with every python3.X the image ships.
 
-    The images pin one virtualenv version across three interpreters, and a
+    The images pin one virtualenv version across four interpreters, and a
     pin that stops supporting the oldest of them fails only for whoever
     happens to use that interpreter. Enumerating what is installed is the
     whole check — a hard-coded list would pass by testing nothing after an

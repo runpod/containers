@@ -444,7 +444,7 @@ def main() -> int:
         help=(
             "Emit `test_virtualenv: true`: create a virtualenv with every "
             "python3.X the image ships. For runpod/base, which pins one "
-            "virtualenv version across three interpreters."
+            "virtualenv version across four interpreters."
         ),
     )
     ap.add_argument(
