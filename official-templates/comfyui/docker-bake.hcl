@@ -9,11 +9,15 @@ variable "COMFYUI_VERSIONS" {
     { version = "v0.41.0", manager_version = "4.2.2" }
   ]
 }
+# TEMP (CON-1262 test): KJNodes and Civicomfy pinned to OLD versions so
+# ComfyUI-Manager shows "update available" and the Update button can be
+# exercised. Revert before merge:
+#   KJNODES_SHA=57105374f47d  CIVICOMFY_SHA=555e984bbcb0
 variable "KJNODES_SHA" {
-  default = "57105374f47d"
+  default = "e27a505b3ba6" # 1.4.7 -> latest 1.5.x
 }
 variable "CIVICOMFY_SHA" {
-  default = "555e984bbcb0"
+  default = "bf80797dfa5e" # 1.0.5 -> latest 1.1.0
 }
 variable "RUNPODDIRECT_SHA" {
   default = "9e32b1a09577"
