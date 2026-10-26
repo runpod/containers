@@ -63,33 +63,25 @@ RUN curl -fSL "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/${COM
 # silently.
 RUN test "$(tr -d '[:space:]' < ComfyUI/manager_requirements.txt)" = "comfyui_manager==${MANAGER_VERSION}"
 
-WORKDIR /tmp/build/ComfyUI/custom_nodes
-RUN curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.tar.gz" -o kjnodes.tar.gz && \
-    mkdir -p ComfyUI-KJNodes && tar xzf kjnodes.tar.gz --strip-components=1 -C ComfyUI-KJNodes && rm kjnodes.tar.gz && \
-    curl -fSL "https://github.com/MoonGoblinDev/Civicomfy/archive/${CIVICOMFY_SHA}.tar.gz" -o civicomfy.tar.gz && \
-    mkdir -p Civicomfy && tar xzf civicomfy.tar.gz --strip-components=1 -C Civicomfy && rm civicomfy.tar.gz && \
-    curl -fSL "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
-    mkdir -p ComfyUI-RunpodDirect && tar xzf runpoddirect.tar.gz --strip-components=1 -C ComfyUI-RunpodDirect && rm runpoddirect.tar.gz
-
-# Init git repos with upstream remotes so ComfyUI-Manager can detect versions
-# and users can update via Manager at their own risk
+# ComfyUI core: synthetic git so Manager can read its version. Done while
+# custom_nodes is still empty, so `git add -A` captures core only. ComfyUI core
+# is image-managed (upgraded by start.sh from the baked bundle), not via Manager.
 WORKDIR /tmp/build/ComfyUI
 RUN git init && git add -A && \
     git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
     git tag "${COMFYUI_VERSION}" && \
-    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
-    git -C custom_nodes/ComfyUI-KJNodes init && \
-    git -C custom_nodes/ComfyUI-KJNodes add -A && \
-    git -C custom_nodes/ComfyUI-KJNodes -c user.name=- -c user.email=- commit -q -m "ComfyUI-KJNodes ${KJNODES_SHA}" && \
-    git -C custom_nodes/ComfyUI-KJNodes remote add origin https://github.com/kijai/ComfyUI-KJNodes.git && \
-    git -C custom_nodes/Civicomfy init && \
-    git -C custom_nodes/Civicomfy add -A && \
-    git -C custom_nodes/Civicomfy -c user.name=- -c user.email=- commit -q -m "Civicomfy ${CIVICOMFY_SHA}" && \
-    git -C custom_nodes/Civicomfy remote add origin https://github.com/MoonGoblinDev/Civicomfy.git && \
-    git -C custom_nodes/ComfyUI-RunpodDirect init && \
-    git -C custom_nodes/ComfyUI-RunpodDirect add -A && \
-    git -C custom_nodes/ComfyUI-RunpodDirect -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
-    git -C custom_nodes/ComfyUI-RunpodDirect remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git
+
+# Custom nodes: real git clones reset to the pinned commit. Real shared history
+# with origin lets ComfyUI-Manager's git update path fast-forward instead of
+# failing on the synthetic single-commit history these used to carry.
+WORKDIR /tmp/build/ComfyUI/custom_nodes
+RUN git clone "https://github.com/kijai/ComfyUI-KJNodes.git" ComfyUI-KJNodes && \
+    git -C ComfyUI-KJNodes reset --hard "${KJNODES_SHA}" && \
+    git clone "https://github.com/MoonGoblinDev/Civicomfy.git" Civicomfy && \
+    git -C Civicomfy reset --hard "${CIVICOMFY_SHA}" && \
+    git clone "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git" ComfyUI-RunpodDirect && \
+    git -C ComfyUI-RunpodDirect reset --hard "${RUNPODDIRECT_SHA}"
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build

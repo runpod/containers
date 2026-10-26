@@ -211,6 +211,18 @@ COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900")
 COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
 COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
 
+# `test_comfyui_manager` installs a custom node through ComfyUI-Manager, reboots
+# ComfyUI to activate it, and verifies the node's class is importable. The node
+# is picked for torch-dependent deps so the install exercises pip resolving
+# against the baked torch stack. Install is generous: deps may be built/fetched.
+COMFYUI_MANAGER_NODE_MANIFEST = os.environ.get(
+    "COMFYUI_MANAGER_NODE_MANIFEST",
+    os.path.join(_TESTS_DIR, "comfyui", "manager_node.json"),
+)
+COMFYUI_MANAGER_READY_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_READY_TIMEOUT", "180"))
+COMFYUI_MANAGER_INSTALL_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_INSTALL_TIMEOUT", "900"))
+COMFYUI_MANAGER_VERIFY_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_VERIFY_TIMEOUT", "300"))
+
 
 # ---------------------------------------------------------------------------
 # CPU groups + candidates
@@ -405,6 +417,10 @@ GROUP_TEST_COMFYUI: dict[str, bool] = {}
 # End-to-end ComfyUI generation test. It implies GROUP_TEST_COMFYUI so the
 # public reachability check always runs before model provisioning.
 GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
+
+# ComfyUI-Manager install test: install a custom node through the Manager,
+# reboot, and verify it imports. Implies GROUP_TEST_COMFYUI for port exposure.
+GROUP_TEST_COMFYUI_MANAGER: dict[str, bool] = {}
 
 # Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
 # rather than stopping after the first passing candidate.
