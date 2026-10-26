@@ -102,7 +102,7 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     for py in python3.11 python3.12 python3.13; do \
       "$py" -m pip install --upgrade --no-cache-dir \
-        "pip==26.2.0" "virtualenv==21.14.12" "filelock==4.2.1" || exit 1; \
+        "pip==26.2.0" "virtualenv==21.14.13" "filelock==4.2.1" || exit 1; \
     done;
 
 # Symlink default python/pip
