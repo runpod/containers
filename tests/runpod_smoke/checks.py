@@ -617,7 +617,7 @@ def uv_check_command() -> str:
 def virtualenv_check_command() -> str:
     """Create a virtualenv with every python3.X the image ships.
 
-    The images pin one virtualenv version across five interpreters, and a
+    The images pin one virtualenv version across three interpreters, and a
     pin that stops supporting the oldest of them fails only for whoever
     happens to use that interpreter. Enumerating what is installed is the
     whole check — a hard-coded list would pass by testing nothing after an

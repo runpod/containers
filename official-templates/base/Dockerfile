@@ -79,8 +79,6 @@ RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt-get install --yes --no-install-recommends \
-        python3.9-dev python3.9-venv python3.9-distutils \
-        python3.10-dev python3.10-venv python3.10-distutils \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
         python3.13-dev python3.13-venv && \
@@ -91,28 +89,21 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
 # Install pip via verified get-pip.py
 ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
 ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
-ARG GET_PIP_39_SHA256=95c0ae79ccf9ac1e47e4187f49081d6ae1f45997afd4549e14f37337cbcfd766
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
         "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
     echo "${GET_PIP_SHA256}  /tmp/get-pip.py" | sha256sum -c - && \
-    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip-3.9.py \
-        "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/3.9/get-pip.py" && \
-    echo "${GET_PIP_39_SHA256}  /tmp/get-pip-3.9.py" | sha256sum -c - && \
-    python3.9  /tmp/get-pip-3.9.py && \
-    python3.10 /tmp/get-pip.py && \
     python3.11 /tmp/get-pip.py && \
     python3.12 /tmp/get-pip.py && \
     python3.13 /tmp/get-pip.py && \
-    rm /tmp/get-pip.py /tmp/get-pip-3.9.py
+    rm /tmp/get-pip.py
 
 # Install virtualenv
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    python3.9 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.10 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.11 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.12 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.13 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12";
+    for py in python3.11 python3.12 python3.13; do \
+      "$py" -m pip install --upgrade --no-cache-dir \
+        "pip==26.2.0" "virtualenv==21.14.12" "filelock==4.2.1" || exit 1; \
+    done;
 
 # Symlink default python/pip
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
