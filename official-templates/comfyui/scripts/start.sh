@@ -443,8 +443,6 @@ PY
 # Setup environment
 if [ -f "$PIP_CONSTRAINT_FILE" ]; then
     export PIP_CONSTRAINT="$PIP_CONSTRAINT_FILE"
-    # Since pip 26.2, PIP_CONSTRAINT no longer reaches isolated build envs, so a
-    # node built from source (e.g. sam2) would resolve its own torch without this.
     export PIP_BUILD_CONSTRAINT="$PIP_CONSTRAINT_FILE"
     echo "Using runtime pip constraints from $PIP_CONSTRAINT_FILE"
 fi
