@@ -1,0 +1,58 @@
+name: Template Staleness Scraper
+
+# Weekly check for upstream releases we do not yet ship (pytorch, comfyui).
+# Opens a draft PR per stale family; the matrix is verified by the build CI on
+# that PR. Rules live in .github/scraper/staleness-playbook.md.
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
+  workflow_dispatch:
+  # Test trigger until this lands on main and the cron can fire. Label a PR
+  # `test-staleness-scraper` to run it; pushes to that PR re-run it.
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: staleness-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # On PRs, only run when explicitly labeled for a test.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'test-staleness-scraper')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Test runs use the PR branch so the PR's own playbook is exercised;
+          # otherwise branch work off develop.
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          fetch-depth: 0
+
+      - name: Scan upstream and open PRs
+        uses: anthropics/claude-code-action@v1
+        env:
+          # PAT/app token so Claude's PR triggers the build CI. The default
+          # GITHUB_TOKEN cannot trigger other workflows, so the matrix would
+          # never get verified. Falls back to GITHUB_TOKEN if the PAT is unset.
+          GH_TOKEN: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read .github/scraper/staleness-playbook.md and follow it exactly.
+            Use the GH_TOKEN env var for all `gh` commands. Open each PR as a draft.
+            If every covered family is already current, make no changes and exit.
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 60
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(pip index:*)"
