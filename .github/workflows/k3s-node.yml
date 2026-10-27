@@ -6,7 +6,7 @@ name: k3s Node Image Build
 #
 # The k3s node image is not a user template: it runs a k3s agent and carries no
 # sshd/nginx/Jupyter, so the pod-based smoke test does not apply. It is verified
-# in-container, for both platforms, before the push instead.
+# before the push instead: amd64 in a container, arm64 by inspecting its binaries.
 on:
   workflow_call:
     inputs:
@@ -60,15 +60,6 @@ jobs:
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/k3s-node
 
-      # arm64 (GB10/Grace hosts) is built and verified under emulation on this
-      # amd64 runner. Registered after Docker Setup: the emulator registered
-      # before it was gone by the time the verify step ran its arm64 container
-      # ("exec format error"), while the build still passed.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          platforms: arm64
-
       - name: Build k3s-node image
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -109,35 +100,48 @@ jobs:
           test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["agent"]'
           say entrypoint "k3s-node agent"
 
-          for platform in linux/amd64 linux/arm64; do
-            echo "$platform"
-            docker run --rm --platform "$platform" -e K3S_VERSION="$K3S_VERSION" --entrypoint bash "$IMAGE" -eo pipefail -c '
-              say() { printf "  %-14s %s\n" "$1" "$2"; }
+          echo linux/amd64
+          docker run --rm --platform linux/amd64 -e K3S_VERSION="$K3S_VERSION" --entrypoint bash "$IMAGE" -eo pipefail -c '
+            say() { printf "  %-14s %s\n" "$1" "$2"; }
 
-              # Same binary for every arch name, so check the machine too.
-              say arch "$(uname -m)"
+            # Same binary for every arch name, so check the machine too.
+            say arch "$(uname -m)"
 
-              k3s --version | grep -qF "k3s version ${K3S_VERSION} "
-              say k3s "$(k3s --version | head -1 | cut -d" " -f3)"
+            k3s --version | grep -qF "k3s version ${K3S_VERSION} "
+            say k3s "$(k3s --version | head -1 | cut -d" " -f3)"
 
-              # The security minimum k3s does not bundle yet; k3s-node swaps it in.
-              /usr/local/lib/k3s-node/runc --version | grep -q "^runc version 1.4.3"
-              say runc "$(/usr/local/lib/k3s-node/runc --version | head -1 | cut -d" " -f3)"
+            # The security minimum k3s does not bundle yet; k3s-node swaps it in.
+            /usr/local/lib/k3s-node/runc --version | grep -q "^runc version 1.4.3"
+            say runc "$(/usr/local/lib/k3s-node/runc --version | head -1 | cut -d" " -f3)"
 
-              # k3s adds the nvidia containerd runtime when it finds this binary.
-              test -x /usr/bin/nvidia-container-runtime
-              say nvidia-ctk "$(nvidia-ctk --version | head -1 | grep -o "[0-9.]*$")"
+            # k3s adds the nvidia containerd runtime when it finds this binary.
+            test -x /usr/bin/nvidia-container-runtime
+            say nvidia-ctk "$(nvidia-ctk --version | head -1 | grep -o "[0-9.]*$")"
 
-              # The tunnel to the server, and the node password derivation.
-              wg --version >/dev/null && ip -V >/dev/null && openssl version >/dev/null
-              say tunnel "wireguard-tools, iproute2, openssl"
+            # The tunnel to the server, and the node password derivation.
+            wg --version >/dev/null && ip -V >/dev/null && openssl version >/dev/null
+            say tunnel "wireguard-tools, iproute2, openssl"
 
-              # Without K3S_TOKEN the entrypoint waits instead of crash-looping.
-              out=$(timeout 3 /usr/local/bin/k3s-node agent 2>&1 || true)
-              grep -q "waiting for control plane" <<< "$out"
-              say waits "no K3S_TOKEN: sleeps until the control plane exists"
-            '
+            # Without K3S_TOKEN the entrypoint waits instead of crash-looping.
+            out=$(timeout 3 /usr/local/bin/k3s-node agent 2>&1 || true)
+            grep -q "waiting for control plane" <<< "$out"
+            say waits "no K3S_TOKEN: sleeps until the control plane exists"
+          '
+
+          # arm64 is built under emulation, but this runner cannot run arm64
+          # containers: setup-qemu-action's registration did not stick here
+          # ("exec format error"). The build already checked the arm64 k3s and runc
+          # downloads against their checksums, so check the arm64 variant exists
+          # and its binaries are aarch64, without running them.
+          echo linux/arm64
+          cid=$(docker create --platform linux/arm64 "$IMAGE")
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          for bin in /bin/k3s /usr/local/lib/k3s-node/runc /usr/bin/nvidia-container-runtime /usr/bin/bash; do
+            docker cp -L "$cid:$bin" "$RUNNER_TEMP/arm64-bin"
+            # ELF e_machine at offset 18, little endian: 0x00b7 is aarch64.
+            test "$(od -An -tx2 -j18 -N2 "$RUNNER_TEMP/arm64-bin" | tr -d ' ')" = 00b7
           done
+          say binaries "k3s, runc, nvidia-container-runtime and bash are aarch64"
 
       - name: Grype scan
         uses: ./.github/actions/grype
