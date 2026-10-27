@@ -21,6 +21,7 @@ on:
       - ".github/workflows/rocm.yml"
       - ".github/workflows/comfyui.yml"
       - ".github/workflows/sandbox.yml"
+      - ".github/workflows/k3s-node.yml"
       - "official-templates/**"
   workflow_dispatch:
 
