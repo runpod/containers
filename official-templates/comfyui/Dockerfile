@@ -43,7 +43,7 @@ RUN apt-get update && \
 
 # Install pip and pip-tools for lock file generation.
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.12 get-pip.py "pip==26.1.2" && \
+    python3.12 get-pip.py "pip==26.2.1" && \
     python3.12 -m pip install --no-cache-dir "pip-tools==7.6.0" && \
     rm get-pip.py
 
@@ -173,6 +173,9 @@ ARG FILEBROWSER_SHA256
 # The pins carry a local version (+cu128), which PyPI does not serve — without
 # this index every runtime install that touches torch fails to resolve.
 ENV PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}"
+# pip's pinned here, so its "new release available" notice is noise — and users
+# reading Manager install logs take it for an error.
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN printf "torch==%s\ntorchvision==%s\ntorchaudio==%s\n" \
     "$TORCH_VERSION" "$TORCHVISION_VERSION" "$TORCHAUDIO_VERSION" \
     > /opt/comfyui-runtime-constraints.txt
