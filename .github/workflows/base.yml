@@ -491,18 +491,12 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
-          # ca-certs / python-tls are base's hygiene and are covered by
-          # test-base. filebrowser builds FROM the last released base, so
-          # re-asserting them here just fails until base is re-released.
-          # Verify the FileBrowser HTTP port answers through the public proxy.
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
           test-ports: |
             80
           exclude-instances: |
-            B200*
-            B300*
-            RTX 5090
-            RTX PRO *
-            PRO 6000 MIG *
             RTX 2000 Ada
 
   build-pytorch:
