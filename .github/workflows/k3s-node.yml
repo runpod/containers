@@ -52,13 +52,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # arm64 (GB10/Grace hosts) is built under emulation on this amd64 runner.
-      # Registered before the builder starts, so it sees both platforms.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          platforms: arm64
-
       - name: Setup Docker
         uses: ./.github/actions/docker-setup
         id: setup
@@ -66,6 +59,15 @@ jobs:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/k3s-node
+
+      # arm64 (GB10/Grace hosts) is built and verified under emulation on this
+      # amd64 runner. Registered after Docker Setup: the emulator registered
+      # before it was gone by the time the verify step ran its arm64 container
+      # ("exec format error"), while the build still passed.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
 
       - name: Build k3s-node image
         id: build
