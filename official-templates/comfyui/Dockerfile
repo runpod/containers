@@ -114,8 +114,9 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torch==${TORCH_VERSION}" >> requirements.in && \
     echo "torchvision==${TORCHVISION_VERSION}" >> requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
-    echo "pillow>=12.1.1" >> requirements.in && \
+    echo "pillow>=13.0.0" >> requirements.in && \
     echo "tornado>=6.5.10" >> requirements.in && \
+    echo "certifi>=2026.10.19" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
     PIP_INDEX_URL=https://pypi.org/simple \
@@ -177,7 +178,8 @@ RUN printf "torch==%s\ntorchvision==%s\ntorchaudio==%s\n" \
     "$TORCH_VERSION" "$TORCHVISION_VERSION" "$TORCHAUDIO_VERSION" \
     > /opt/comfyui-runtime-constraints.txt
 
-# Update and install runtime dependencies, CUDA, and common tools
+# Install runtime deps, CUDA, and tools. apt-get upgrade also pulls the
+# patched ca-certificates (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \

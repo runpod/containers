@@ -17,7 +17,10 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 # in a sandbox fails.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
+# Install. apt-get upgrade also pulls the patched ca-certificates
+# (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
     build-essential ca-certificates curl git jq less openssh-client \
     python-is-python3 python3 python3-dev python3-pip python3-venv ripgrep \
@@ -58,7 +61,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
 
 # Pinned by digest, not just by tag — a warm pool is keyed on the image, so an
 # upstream rebuild or a re-pushed tag would silently split the pool.
-COPY --from=ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /uvx /usr/local/bin/
 
 # Ubuntu images since 24.04 ship a stock `ubuntu` account on uid 1000; drop it
 # so the sandbox user owns the conventional uid.
