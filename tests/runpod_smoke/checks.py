@@ -399,7 +399,10 @@ def _sh_quote_list(values: tuple[str, ...] | list[str]) -> str:
 # failing left side of an AND-list is exempt, so the && form would let a
 # broken trust store reach the final `exit 0`.
 _TLS_PROBE = (
-    "curl -fsS --max-time 30 https://pypi.org/simple/ -o /dev/null; "
+    # HEAD, not GET: this only has to validate the TLS chain against the
+    # trust store, and pypi.org/simple/ is a ~50MB index that times out on a
+    # slow pod if downloaded in full.
+    "curl -fsS --max-time 30 -I https://pypi.org/simple/ -o /dev/null; "
     "echo 'https fetch ok'"
 )
 
@@ -485,7 +488,9 @@ def ca_certs_check_command(
         "fi; "
     ) if min_version else ""
     return (
-        "set -e; "
+        # pipefail: the subject scan below pipes openssl into openssl; without
+        # it a failed openssl leaves an empty list and every root reads absent.
+        "set -e; set -o pipefail; "
         "echo \"ca-certificates: "
         "$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
         "  || echo 'not installed via dpkg')\"; "
@@ -615,7 +620,7 @@ def uv_check_command() -> str:
 def virtualenv_check_command() -> str:
     """Create a virtualenv with every python3.X the image ships.
 
-    The images pin one virtualenv version across five interpreters, and a
+    The images pin one virtualenv version across four interpreters, and a
     pin that stops supporting the oldest of them fails only for whoever
     happens to use that interpreter. Enumerating what is installed is the
     whole check — a hard-coded list would pass by testing nothing after an
@@ -644,18 +649,22 @@ def virtualenv_check_command() -> str:
     )
 
 
-def autoresearch_check_command(time_budget: int = 5) -> str:
-    """Run the real autoresearch command (train.py) end to end on a short
-    time budget, so a broken image or dependency bump fails here rather than
-    in a user's run. TIME_BUDGET is patched via runpy so the read-only
-    prepare.py is untouched; torch.compile runs for real, so the caller must
-    allow a generous timeout."""
+def autoresearch_check_command(
+    time_budget: int = 5, seq_len: int = 256, eval_tokens: int = 1 << 18,
+) -> str:
+    """Run the real autoresearch command (train.py) end to end, but light:
+    a short time budget, a short sequence length (the batch x seq activations,
+    not the ~100M model, drive VRAM, so this fits a cheap GPU), and a small
+    eval. All three live in the read-only prepare.py and are patched via runpy
+    so train.py is untouched; torch.compile runs for real, hence the generous
+    timeout the caller must allow."""
     return (
         "set -e; "
         ". /opt/autoresearch/.venv/bin/activate; "
         "cd /opt/autoresearch; "
         "python -c \""
         f"import prepare; prepare.TIME_BUDGET = {time_budget}; "
+        f"prepare.MAX_SEQ_LEN = {seq_len}; prepare.EVAL_TOKENS = {eval_tokens}; "
         "import runpy; runpy.run_path('train.py', run_name='__main__')\"; "
         "echo 'autoresearch train.py ok'"
     )

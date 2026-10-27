@@ -50,12 +50,24 @@ RUN apt-get update --yes && \
     rm -rf /var/lib/apt/lists/*
 
 # CON-1869: CUDA bases pin apt to a snapshot that lags the emSign removal
-# (CVE-2026-111943), so install the patched ca-certificates from the archive.
+# (CVE-2026-111943), and plain `apt-get upgrade` there only reaches the stale
+# version. Pull the patched ca-certificates from the archive over https,
+# checksum it, and install only when newer so we never downgrade a fresher one.
 RUN . /etc/os-release && \
-    deb="ca-certificates_20260816ubuntu0.${VERSION_ID}.1_all.deb" && \
-    curl -fsSL -o "/tmp/${deb}" \
-        "http://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
-    dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}" && \
+    ver="20260816ubuntu0.${VERSION_ID}.1" && \
+    deb="ca-certificates_${ver}_all.deb" && \
+    case "${VERSION_ID}" in \
+      22.04) sha=29ca037f49f7a4b41d67ad72946c2e541f3ae52d8f6ab1495d2af09aa391144b ;; \
+      24.04) sha=8a0a754aaafed72cc8efb8c1731808133284a84fbfc76a4fcc73fce9e01b4187 ;; \
+      *) echo "no pinned ca-certificates for ${VERSION_ID}" && exit 1 ;; \
+    esac && \
+    cur="$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null || echo 0)" && \
+    if dpkg --compare-versions "$cur" lt "$ver"; then \
+      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
+      echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
+      dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
+    fi && \
     update-ca-certificates
     
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
@@ -63,11 +75,11 @@ RUN . /etc/os-release && \
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
-# Install Python versions
+# Install Python versions. python3.10 is only kept because it is Ubuntu 22.04's
+# system interpreter; drop it when CON-1619 removes 22.04.
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt-get install --yes --no-install-recommends \
-        python3.9-dev python3.9-venv python3.9-distutils \
         python3.10-dev python3.10-venv python3.10-distutils \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
@@ -79,28 +91,24 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
 # Install pip via verified get-pip.py
 ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
 ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
-ARG GET_PIP_39_SHA256=95c0ae79ccf9ac1e47e4187f49081d6ae1f45997afd4549e14f37337cbcfd766
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
         "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
     echo "${GET_PIP_SHA256}  /tmp/get-pip.py" | sha256sum -c - && \
-    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip-3.9.py \
-        "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/3.9/get-pip.py" && \
-    echo "${GET_PIP_39_SHA256}  /tmp/get-pip-3.9.py" | sha256sum -c - && \
-    python3.9  /tmp/get-pip-3.9.py && \
     python3.10 /tmp/get-pip.py && \
     python3.11 /tmp/get-pip.py && \
     python3.12 /tmp/get-pip.py && \
     python3.13 /tmp/get-pip.py && \
-    rm /tmp/get-pip.py /tmp/get-pip-3.9.py
+    rm /tmp/get-pip.py
 
 # Install virtualenv
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    python3.9 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.10 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.11 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.12 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12" && \
-    python3.13 -m pip install --upgrade --no-cache-dir pip "virtualenv==21.14.12";
+    for py in python3.10 python3.11 python3.12 python3.13; do \
+      "$py" -m pip install --upgrade --no-cache-dir \
+        "pip==26.2.0" "virtualenv==21.14.13" \
+        "filelock==4.2.1; python_version>='3.11'" \
+        "filelock==3.32.7; python_version<'3.11'" || exit 1; \
+    done;
 
 # Symlink default python/pip
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \

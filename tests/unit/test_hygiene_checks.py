@@ -212,6 +212,8 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("/opt/autoresearch/.venv/bin/activate", command)
         self.assertIn("runpy.run_path('train.py'", command)
         self.assertIn("prepare.TIME_BUDGET = 5", command)
+        # Sequence length is shrunk so the check fits a cheap GPU.
+        self.assertIn("prepare.MAX_SEQ_LEN = 256", command)
 
     def test_ca_check_proves_tls_still_works(self):
         # Over-pruning a trust store is as broken as not pruning it, so a
