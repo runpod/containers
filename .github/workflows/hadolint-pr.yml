@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   hadolint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +31,8 @@ jobs:
           - dockerfile: official-templates/sandbox-openclaw/Dockerfile
             ignore: "DL3006,DL3008"
           - dockerfile: official-templates/sandbox-harbor/Dockerfile
+            ignore: "DL3006,DL3008"
+          - dockerfile: official-templates/sandbox-browser/Dockerfile
             ignore: "DL3006,DL3008"
     steps:
       - name: Checkout

@@ -19,7 +19,7 @@ permissions:
 jobs:
   # This family's own version series (git tags `rocm-v1.3.1`).
   versions:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
@@ -164,6 +164,9 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           on-skip: "warn"
           manufacturer: "AMD"
+          test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
+          test-python-tls: "true"
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
           create-timeout: "1200"

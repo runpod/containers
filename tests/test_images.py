@@ -186,6 +186,70 @@ def _coerce_ports(raw_ports: object, group: str) -> list[int]:
     return ports
 
 
+def _coerce_str_list(raw: object) -> list[str]:
+    """Coerce an optional manifest list to stripped, non-empty strings."""
+    if not isinstance(raw, list):
+        return []
+    return [s for s in (str(entry).strip() for entry in raw) if s]
+
+
+def _apply_hygiene_flags(grp: str, contents: dict) -> None:
+    """Populate the opt-in image hygiene flags for one manifest group.
+
+    Kept separate from the other overrides because these five travel
+    together: they are the checks that look at how the image is assembled
+    rather than at whether it boots."""
+    if _normalize_bool(contents.get("test_pip_check")):
+        config.GROUP_TEST_PIP_CHECK[grp] = True
+        allowed = _coerce_str_list(contents.get("pip_check_allow"))
+        if allowed:
+            config.GROUP_PIP_CHECK_ALLOW[grp] = allowed
+        log(
+            f"group '{grp}': test_pip_check=true "
+            f"({len(allowed)} known conflict(s) allowed)"
+        )
+
+    revoked = _coerce_str_list(contents.get("revoked_ca_names"))
+    if revoked:
+        config.GROUP_REVOKED_CA_NAMES[grp] = revoked
+
+    if _normalize_bool(contents.get("test_ca_certs")):
+        config.GROUP_TEST_CA_CERTS[grp] = True
+        floor = str(contents.get("min_ca_certs_version") or "").strip()
+        if floor:
+            config.GROUP_MIN_CA_CERTS_VER[grp] = floor
+        log(
+            f"group '{grp}': test_ca_certs=true "
+            f"(revoked={revoked or 'default'}, "
+            f"min version={floor or 'not enforced'})"
+        )
+
+    if _normalize_bool(contents.get("test_python_tls")):
+        config.GROUP_TEST_PYTHON_TLS[grp] = True
+        venv = str(contents.get("python_tls_venv") or "").strip()
+        if venv:
+            config.GROUP_PYTHON_TLS_VENV[grp] = venv
+        log(
+            f"group '{grp}': test_python_tls=true "
+            f"(certifi bundle{f', venv {venv}' if venv else ''})"
+        )
+
+    if _normalize_bool(contents.get("test_uv")):
+        config.GROUP_TEST_UV[grp] = True
+        log(f"group '{grp}': test_uv=true (single uv on PATH, resolve works)")
+
+    if _normalize_bool(contents.get("test_virtualenv")):
+        config.GROUP_TEST_VIRTUALENV[grp] = True
+        log(
+            f"group '{grp}': test_virtualenv=true "
+            "(every shipped python3.X interpreter)"
+        )
+
+    if _normalize_bool(contents.get("test_autoresearch")):
+        config.GROUP_TEST_AUTORESEARCH[grp] = True
+        log(f"group '{grp}': test_autoresearch=true (train.py runs end to end)")
+
+
 def _apply_cuda_axis(group: str, raw: object) -> None:
     """Read the `cuda_versions:` manifest field for one group.
 
@@ -241,8 +305,9 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     `GROUP_TEST_TORCH_PACKAGES` (opt-in for the torchvision/torchaudio part
     of the CUDA check), and
     `GROUP_TEST_PORTS` (generic public HTTP service probes),
-    `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), and the
-    ComfyUI reachability / functional-generation opt-ins."""
+    `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), the
+    ComfyUI reachability / functional-generation opt-ins, and the image
+    hygiene opt-ins (`_apply_hygiene_flags`)."""
     for grp, contents in manifest.items():
         normalized = _normalize_cuda_version(contents.get("min_cuda_version"))
         if normalized:
@@ -277,6 +342,8 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
                 f"group '{grp}': test_ports={ports} "
                 "(expose as <port>/http, probe public proxy first)"
             )
+    for grp, contents in manifest.items():
+        _apply_hygiene_flags(grp, contents)
     for grp, contents in manifest.items():
         _apply_cuda_axis(grp, contents.get("cuda_versions"))
     for grp, contents in manifest.items():

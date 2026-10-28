@@ -19,7 +19,7 @@ permissions:
 jobs:
   # This family's own version series (git tags `nvidia-pytorch-v1.3.1`).
   versions:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
@@ -168,3 +168,14 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           min-cuda-version: "13.0"
+          test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
+          test-python-tls: "true"
+          test-uv: "true"
+          test-pip-check: "true"
+          # Conflicts inherited from the NGC base, not ours to fix
+          # here. Narrow on purpose: a new conflict in either package
+          # still fails.
+          pip-check-allow: |
+            datasets 4.4.1 has requirement fsspec
+            nvidia-resiliency-ext 0.4.1+cuda13 requires pynvml

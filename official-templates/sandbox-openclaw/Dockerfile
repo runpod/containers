@@ -10,7 +10,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 USER root
 
+# Install. apt-get upgrade also pulls the patched ca-certificates
+# (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update --yes && \
+    apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
     build-essential jq less python3-pip ripgrep tmux unzip wget zip zstd sudo && \
     apt-get clean && \

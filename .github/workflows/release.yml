@@ -37,7 +37,7 @@ jobs:
   # Which families this event touches, plus everything that builds FROM them.
   # One mechanism for PRs, pushes and manual runs: the family graph.
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     outputs:
       families: ${{ steps.p.outputs.families }}
       workflows: ${{ steps.p.outputs.workflows }}
@@ -142,7 +142,7 @@ jobs:
       && github.event_name == 'push'
       && needs.plan.result == 'success'
       && needs.plan.outputs.families != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     permissions:
       contents: write
     strategy:
