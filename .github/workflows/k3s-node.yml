@@ -4,6 +4,7 @@ name: k3s Node Image Build
 # which passes in the families it planned. Not triggered on its own — the
 # orchestrator owns triggers, concurrency and release.
 #
+#
 # The k3s node image is not a user template: it runs a k3s agent and carries no
 # sshd/nginx/Jupyter, so the pod-based smoke test does not apply. It is verified
 # before the push instead: amd64 in a container, arm64 by inspecting its binaries.
