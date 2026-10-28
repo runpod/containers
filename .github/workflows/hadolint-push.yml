@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   hadolint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     strategy:
       fail-fast: false
       matrix:

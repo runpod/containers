@@ -25,7 +25,7 @@ jobs:
   # sandbox-ubuntu, so `ubuntu-published` is what they build FROM when ubuntu
   # is not rebuilt here.
   versions:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     outputs:
       suffix: ${{ steps.ubuntu.outputs.suffix }}
       ubuntu: ${{ steps.ubuntu.outputs.version }}
