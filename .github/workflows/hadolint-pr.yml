@@ -26,6 +26,8 @@ jobs:
             ignore: "DL3008"
           - dockerfile: official-templates/comfyui/Dockerfile
             ignore: "DL3008"
+          - dockerfile: official-templates/filebrowser/Dockerfile
+            ignore: ""
           - dockerfile: official-templates/sandbox-ubuntu/Dockerfile
             ignore: "DL3006,DL3008"
           - dockerfile: official-templates/sandbox-openclaw/Dockerfile
