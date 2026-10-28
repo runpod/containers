@@ -95,12 +95,30 @@ fi
 # The node password: k3s stores a random one in /etc/rancher/node/password on the first join, and
 # the server keeps it per node name (secret <node>.node-password.k3s). A recreated node pod (image
 # bump, pod edit, host reboot) has a new container filesystem, so a new password, and the server
-# rejects it ("Node password rejected"). Derive it from K3S_TOKEN and NODE_RANK instead, like the
-# WireGuard keys: the same node rank always presents the same password.
+# rejects it ("Node password rejected"). Derive it from K3S_TOKEN and NODE_RANK instead
+# (PBKDF2-HMAC-SHA256): the same node rank always presents the same password. If the derivation
+# fails, the node does not start.
 if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ] && [ -n "${NODE_RANK:-}" ]; then
-  mkdir -p /etc/rancher/node
-  ( umask 077; printf 'node-password-%s' "$NODE_RANK" \
-      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -hex | awk '{print $NF}' > /etc/rancher/node/password )
+  (
+    umask 077
+    mkdir -p /etc/rancher/node || exit 1
+
+    node_password=$(
+      openssl kdf -keylen 32 \
+        -kdfopt digest:SHA256 \
+        -kdfopt "pass:$K3S_TOKEN" \
+        -kdfopt "salt:node-password-$NODE_RANK" \
+        -kdfopt iter:600000 \
+        PBKDF2
+    ) || {
+      printf '%s\n' 'k3s-node: failed to derive the node password' >&2
+      exit 1
+    }
+
+    node_password=$(printf '%s' "$node_password" | tr -d '[:space:]:') || exit 1
+    printf '%s\n' "$node_password" > /etc/rancher/node/password || exit 1
+    chmod 600 /etc/rancher/node/password || exit 1
+  ) || exit 1
 fi
 
 # The cluster network: on a node group with one, the host gives every cluster pod its own overlay
