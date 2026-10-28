@@ -99,7 +99,9 @@ def render_yaml(groups: dict) -> str:
         if body.get("test_ports"):
             lines.append("    test_ports:")
             for port in body["test_ports"]:
-                lines.append(f"    - {port}")
+                # Quote `<port>/<path>` entries so YAML keeps them as strings.
+                value = f'"{port}"' if "/" in str(port) else port
+                lines.append(f"    - {value}")
         for list_key in ("pip_check_allow", "revoked_ca_names"):
             if body.get(list_key):
                 lines.append(f"    {list_key}:")
@@ -133,7 +135,7 @@ def build_groups(
     manufacturer: str,
     test_jupyter: bool = False,
     test_torch_packages: bool = False,
-    test_ports: list[int] | None = None,
+    test_ports: list[str] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
     test_pip_check: bool = False,
@@ -289,6 +291,20 @@ def build_groups(
     raise ValueError(f"unknown profile: {profile!r}")
 
 
+def _port_spec(value: str) -> str:
+    """Validate a `--test-port` arg: `<port>` or `<port>/<path>`."""
+    port_text, sep, _path = value.partition("/")
+    try:
+        port = int(port_text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: port must be an integer, optionally '<port>/<path>'"
+        )
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"{value!r}: port out of range 1-65535")
+    return value if sep else str(port)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -349,9 +365,12 @@ def main() -> int:
         "--test-port",
         action="append",
         default=[],
-        type=int,
-        metavar="PORT",
-        help="HTTP port to expose and probe. Repeat for multiple ports.",
+        type=_port_spec,
+        metavar="PORT[/PATH]",
+        help=(
+            "HTTP port to expose and probe, optionally with a path to hit, "
+            "e.g. 80 or 80/health. Repeat for multiple ports."
+        ),
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")

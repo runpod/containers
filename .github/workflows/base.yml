@@ -356,6 +356,7 @@ jobs:
             RTX 5090
             RTX PRO *
             PRO 6000 MIG *
+            RTX 2000 Ada
 
   build-filebrowser:
     needs: [versions, build-base]
@@ -370,12 +371,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Ubuntu 24.04 only, one 24.04 image per CUDA version. Shard by CUDA so each
-    # runner builds a single image, matching the autoresearch layout.
-    strategy:
-      fail-fast: false
-      matrix:
-        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    # Ubuntu 24.04 only: a CPU image plus one CUDA image (FileBrowser does not
+    # use the GPU; the CUDA variant is for pods that want GPU tooling alongside).
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -388,9 +385,9 @@ jobs:
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
-          cache-key: ${{ github.repository }}/filebrowser-${{ matrix.cuda }}
+          cache-key: ${{ github.repository }}/filebrowser
 
-      - name: Build filebrowser images (${{ matrix.cuda }})
+      - name: Build filebrowser images
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
@@ -405,7 +402,6 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/filebrowser/docker-bake.hcl
-          targets: ${{ matrix.cuda }}
           load: true
           push: false
 
@@ -419,6 +415,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -447,7 +444,7 @@ jobs:
       - name: Upload refs artifact
         uses: actions/upload-artifact@v7
         with:
-          name: filebrowser-refs-${{ matrix.cuda }}
+          name: filebrowser-refs
           path: /tmp/filebrowser-refs/refs.json
           retention-days: 1
           if-no-files-found: error
@@ -456,20 +453,16 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-filebrowser
     if: "!cancelled() && needs.build-filebrowser.result == 'success'"
-    strategy:
-      fail-fast: false
-      matrix:
-        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Download refs for ${{ matrix.cuda }}
+      - name: Download refs artifact
         uses: actions/download-artifact@v8
         with:
-          name: filebrowser-refs-${{ matrix.cuda }}
+          name: filebrowser-refs
           path: /tmp/filebrowser-refs
 
       - name: Read refs
@@ -483,19 +476,23 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test (${{ matrix.cuda }})
+      - name: Smoke test
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          profile: gpu
+          # base profile routes the CPU tag to a CPU pod and the CUDA tag to a
+          # GPU pod by tag content; the functional check follows the image ref.
+          profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"
           test-python-tls: true
+          # Hit FileBrowser's /health route (HTTP 200) so the probe proves
+          # FileBrowser is up, not just that something answers on :80.
           test-ports: |
-            80
+            80/health
           exclude-instances: |
             RTX 2000 Ada
 
