@@ -37,7 +37,7 @@ jobs:
   # Which families this event touches, plus everything that builds FROM them.
   # One mechanism for PRs, pushes and manual runs: the family graph.
   plan:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       families: ${{ steps.p.outputs.families }}
       workflows: ${{ steps.p.outputs.workflows }}

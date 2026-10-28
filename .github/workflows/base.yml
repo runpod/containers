@@ -25,7 +25,7 @@ jobs:
   # last RELEASED version of a family — what a dependent layers onto when that
   # family is not rebuilt in this run.
   versions:
-    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       suffix: ${{ steps.base.outputs.suffix }}
       base: ${{ steps.base.outputs.version }}
