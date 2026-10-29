@@ -43,7 +43,7 @@ jobs:
   build-k3s-node:
     needs: versions
     if: contains(fromJSON(inputs.families), 'k3s-node')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     permissions:
       contents: read
       id-token: write
