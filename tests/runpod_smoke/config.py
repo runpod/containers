@@ -16,6 +16,37 @@ _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _TESTS_DIR = os.path.dirname(_PKG_DIR)
 
 # ---------------------------------------------------------------------------
+# Target environment
+# ---------------------------------------------------------------------------
+
+# Which RunPod environment to provision in. Prod is the default for pods;
+# Instant Clusters are expensive and prod rarely has a free one, so cluster
+# groups only run against dev (see ALLOW_PROD_CLUSTERS). The API key must
+# belong to the same environment — a prod key is rejected by dev and vice
+# versa.
+VALID_ENVS = ("prod", "dev")
+_ENV_DEFAULTS = {
+    # (API origin, pod HTTP proxy domain)
+    "prod": ("https://api.runpod.io", "proxy.runpod.net"),
+    "dev": ("https://api.runpod.dev", "dev-proxy.runpod.net"),
+}
+RUNPOD_ENV = os.environ.get("RUNPOD_ENV", "prod").strip().lower() or "prod"
+_api_default, _proxy_default = _ENV_DEFAULTS.get(RUNPOD_ENV, _ENV_DEFAULTS["prod"])
+# Overrides for a one-off host (staging, a local API). REST v2 lives under
+# `<origin>/v2`, GraphQL under `<origin>/graphql`.
+API_ORIGIN = os.environ.get("RUNPOD_API_ORIGIN", _api_default).rstrip("/")
+REST_URL = f"{API_ORIGIN}/v2"
+GRAPHQL_URL = f"{API_ORIGIN}/graphql"
+# `<pod-id>-<port>.<PROXY_DOMAIN>` serves every `<port>/http` the pod exposes.
+PROXY_DOMAIN = os.environ.get("RUNPOD_PROXY_DOMAIN", _proxy_default).strip(".")
+
+
+def proxy_url(pod_id: str, port: int) -> str:
+    """Public HTTPS origin for one of the pod's `<port>/http` ports."""
+    return f"https://{pod_id}-{port}.{PROXY_DOMAIN}"
+
+
+# ---------------------------------------------------------------------------
 # Pod / scheduling
 # ---------------------------------------------------------------------------
 
@@ -93,6 +124,10 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # about slow pulls / possible Docker Hub rate limit. Doesn't fail the pod
 # — just an informational note in the logs.
 STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
+# While SSH probes keep failing identically the probe line is printed once,
+# so a long image pull looks like a hang. Print a progress line this often
+# (seconds) instead; 0 disables it.
+PROBE_HEARTBEAT_SEC = int(os.environ.get("PROBE_HEARTBEAT_SEC", "60"))
 
 
 # Docker Hub authenticated pulls. Unset means anonymous pulls: fine for
@@ -210,6 +245,51 @@ COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
 COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900"))
 COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
 COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
+
+
+# ---------------------------------------------------------------------------
+# Instant Clusters (`cluster: true` groups)
+# ---------------------------------------------------------------------------
+
+# Clusters bill every node at a premium and prod almost never has one free,
+# so a cluster group refuses to run outside RUNPOD_ENV=dev unless this is
+# set — a manifest copied from a dev run must not quietly buy prod nodes.
+ALLOW_PROD_CLUSTERS = os.environ.get("ALLOW_PROD_CLUSTERS", "0") == "1"
+
+DEFAULT_CLUSTER_NODES = 2
+
+# Optional csv pinning cluster placement, e.g. `MFS-1`. Empty lets RunPod
+# pick any data center with a free node group.
+CLUSTER_DATA_CENTER_IDS = os.environ.get("CLUSTER_DATA_CENTER_IDS", "")
+
+# Per-node hourly price; createCluster's `deployCost` is this times the node
+# count. 0 (default) reads the current price from the API; set it only to
+# override a price lookup that is wrong or failing.
+CLUSTER_DEPLOY_COST = float(os.environ.get("CLUSTER_DEPLOY_COST", "0") or 0)
+
+# How long createCluster may take to materialise every member pod in the
+# cluster record. Booting them is then bounded by CLUSTER_BOOT_TIMEOUT.
+CLUSTER_PODS_TIMEOUT = int(os.environ.get("CLUSTER_PODS_TIMEOUT", "300"))
+
+# How long a member pod may take to answer SSH (image pull included). Longer
+# than CREATE_TIMEOUT because pytorch-cluster is a large image, cluster hosts
+# on dev often start with a cold cache, and the cluster has already been paid
+# for by the time we wait — giving up early wastes more than waiting does.
+CLUSTER_BOOT_TIMEOUT = int(os.environ.get("CLUSTER_BOOT_TIMEOUT", "1500"))
+
+# Grafana's public port on the head node (the auth proxy in front of it —
+# see official-templates/pytorch-cluster/config/grafana-proxy).
+GRAFANA_PORT = int(os.environ.get("GRAFANA_PORT", "8889"))
+
+# Budget for the head node's monitoring stack to come up and for Prometheus
+# to have scraped every node at least once (scrape_interval is 15s).
+MONITORING_WAIT_TIMEOUT = int(os.environ.get("MONITORING_WAIT_TIMEOUT", "240"))
+
+# dcgm-exporter needs DCGM support from the GPU and driver; GeForce cards
+# (common on dev) may not give it. 0 drops dcgm from the required programs
+# and Prometheus jobs — node_exporter still proves the cross-node wiring.
+CLUSTER_REQUIRE_DCGM = os.environ.get("CLUSTER_REQUIRE_DCGM", "1") == "1"
+GRAFANA_PROXY_TIMEOUT = int(os.environ.get("GRAFANA_PROXY_TIMEOUT", "180"))
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +489,20 @@ GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
 # Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
 # rather than stopping after the first passing candidate.
 GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
+
+# Instant Cluster opt-in, from the `cluster:` manifest field. A cluster group
+# provisions a whole cluster per attempt instead of one pod — head node
+# (`node-0`) plus workers — and runs the cluster checks (SSH + Jupyter on
+# every node, the monitoring stack on the head). Its `instances:` are the
+# GPU types to try, in order.
+#
+#   GROUP_CLUSTER                — the group runs as an Instant Cluster
+#   GROUP_CLUSTER_NODES          — pods per cluster (`cluster_nodes`, ≥ 2)
+#   GROUP_CLUSTER_GPUS_PER_NODE  — `cluster_gpus_per_node`; 0 picks the
+#                                  smallest size the GPU type offers
+GROUP_CLUSTER: dict[str, bool] = {}
+GROUP_CLUSTER_NODES: dict[str, int] = {}
+GROUP_CLUSTER_GPUS_PER_NODE: dict[str, int] = {}
 
 # Image hygiene opt-ins, from the manifest fields of the same name. They
 # catch regressions a boot check cannot see: a dependency pin that conflicts

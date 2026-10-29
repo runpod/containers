@@ -67,3 +67,12 @@ jobs:
             exit 1
           fi
           echo "OK: instances and check-all-gpu are mutually exclusive"
+
+          # Cluster groups pick from the cluster catalog, so the per-pod
+          # budget filters must not leak into them.
+          gen --profile cluster --refs '["runpod/pytorch-cluster:1.4.0"]' \
+            --cluster-nodes 3 --output "${RUNNER_TEMP}/m-cluster.yaml" >/dev/null
+          grep -q 'cluster: true' "${RUNNER_TEMP}/m-cluster.yaml"
+          grep -q 'cluster_nodes: 3' "${RUNNER_TEMP}/m-cluster.yaml"
+          ! grep -q 'max_price_per_hour' "${RUNNER_TEMP}/m-cluster.yaml"
+          echo "OK: cluster profile"

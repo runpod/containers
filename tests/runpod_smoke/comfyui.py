@@ -17,7 +17,7 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def _base_url(pod_id: str) -> str:
-    return f"https://{pod_id}-{config.COMFYUI_PORT}.proxy.runpod.net"
+    return config.proxy_url(pod_id, config.COMFYUI_PORT)
 
 
 def _request(

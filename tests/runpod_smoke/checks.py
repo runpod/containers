@@ -14,6 +14,7 @@ group name: new groups added in the future won't silently skip the check.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -125,12 +126,114 @@ def _strip_cr(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+# RunPod's SSH proxy only hands out an interactive shell: a command given on
+# the ssh command line is ignored and the session sits at a prompt until it
+# is killed. So on a PTY endpoint the command is *typed* into that shell
+# instead, base64-encoded so no quoting or heredoc can be mangled by the
+# line editor, between two markers that carry the exit status back. Each
+# marker is written split by quotes, so the terminal's echo of what we typed
+# can never be mistaken for the marker itself.
+_PTY_BEGIN = "__SMOKE_BEGIN__"
+_PTY_RC_RE = re.compile(r"^__SMOKE_RC=(\d+)__$", re.MULTILINE)
+
+
+def _pty_script(remote_cmd: str) -> str:
+    """The keystrokes that run `remote_cmd` in an interactive shell."""
+    b64 = base64.b64encode(remote_cmd.encode()).decode()
+    return (
+        f'echo "__SMOKE_""BEGIN__"; '
+        f'bash -c "$(echo {b64} | base64 -d)" </dev/null 2>&1; '
+        f'echo "__SMOKE_""RC=$?__"; exit\n'
+    )
+
+
+def _pty_result(stdout: str) -> tuple[Optional[int], str]:
+    """(exit status, output) from a PTY session; status is None when the
+    command never finished (no RC marker), output is what it printed."""
+    text = _strip_cr(stdout)
+    begin = text.rfind(_PTY_BEGIN + "\n")
+    body = text[begin + len(_PTY_BEGIN) + 1:] if begin >= 0 else text
+    m = _PTY_RC_RE.search(body)
+    if m is None:
+        return None, body
+    return int(m.group(1)), body[:m.start()]
+
+
+def _run_pty(argv: list[str], keys: str, timeout: float) -> tuple[int, str, str]:
+    """Type `keys` into an interactive session and wait for it to end.
+
+    stdin stays open until the session closes itself (our script ends with
+    `exit`): an EOF can reach the remote terminal as ^D, and an interactive
+    shell that sees ^D before it has read the line logs out without running
+    it. Raises TimeoutExpired / FileNotFoundError like subprocess.run.
+    """
+    proc = subprocess.Popen(
+        argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+    )
+    out: list[str] = []
+    err: list[str] = []
+    readers = [
+        threading.Thread(target=lambda: out.append(proc.stdout.read()), daemon=True),
+        threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True),
+    ]
+    for t in readers:
+        t.start()
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(keys)
+        proc.stdin.flush()
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    except BrokenPipeError:
+        proc.wait(timeout=timeout)   # the session ended before reading
+    finally:
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+    for t in readers:
+        t.join(timeout=5)
+    return proc.returncode, "".join(out), "".join(err)
+
+
+def run_ssh(
+    endpoint: SshEndpoint, remote_cmd: str, timeout: float,
+) -> subprocess.CompletedProcess:
+    """Run `remote_cmd` on the pod; same contract as `subprocess.run`
+    (raises TimeoutExpired / FileNotFoundError), with stdout already CR-free.
+
+    stdin is never inherited: an `ssh -tt` holding the caller's terminal
+    switches it to raw mode and, when killed by the timeout, leaves it there.
+    """
+    prefix = _ssh_command_prefix(endpoint)
+    if not endpoint.pty:
+        r = subprocess.run(
+            [*prefix, remote_cmd], stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return subprocess.CompletedProcess(
+            r.args, r.returncode, _strip_cr(r.stdout), r.stderr,
+        )
+    ssh_rc, stdout, stderr = _run_pty(prefix, _pty_script(remote_cmd), timeout)
+    rc, out = _pty_result(stdout)
+    if rc is None:
+        # The session ended without the command finishing: a refused or
+        # dropped connection. Keep ssh's own status and words for the log.
+        return subprocess.CompletedProcess(
+            prefix, ssh_rc or 255, "", (stderr or out).strip(),
+        )
+    return subprocess.CompletedProcess(prefix, rc, out, stderr if rc else "")
+
+
 def ssh_probe(endpoint: SshEndpoint, timeout: int = 8) -> tuple[bool, str]:
     """One-shot SSH connection attempt. Returns (success, stderr_excerpt).
     Used as the real container-readiness signal."""
-    cmd = [*_ssh_command_prefix(endpoint), "echo", "ready"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = run_ssh(endpoint, "echo ready", timeout)
     except subprocess.TimeoutExpired:
         return False, "ssh probe timed out"
     except FileNotFoundError:
@@ -353,9 +456,8 @@ def run_cuda_check(
     cmd = cuda_check_command(image, torch_packages)
     if not cmd:
         return True, "(no GPU check for this image)"
-    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=90)
+        r = run_ssh(endpoint, cmd, 90)
     except subprocess.TimeoutExpired:
         return False, "cuda check timed out after 90s"
     except FileNotFoundError:
@@ -674,11 +776,8 @@ def run_simple_check(
     endpoint: SshEndpoint, command: str, timeout: int = 180,
 ) -> tuple[bool, str]:
     """Run one opt-in hygiene check over SSH. Returns (ok, output)."""
-    ssh_cmd = [*_ssh_command_prefix(endpoint), command]
     try:
-        r = subprocess.run(
-            ssh_cmd, capture_output=True, text=True, timeout=timeout,
-        )
+        r = run_ssh(endpoint, command, timeout)
     except subprocess.TimeoutExpired:
         return False, f"check timed out after {timeout}s"
     except FileNotFoundError:
@@ -747,14 +846,11 @@ def run_jupyter_check(endpoint: SshEndpoint) -> tuple[bool, str]:
     when jupyter probe exited non-zero (server not running / wrong token
     / API not healthy)."""
     cmd = jupyter_check_command(config.JUPYTER_WAIT_TIMEOUT)
-    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     # SSH command has its own grace loop (JUPYTER_WAIT_TIMEOUT) plus a 10s
     # curl; pad the outer timeout to leave room for SSH handshake.
     outer_timeout = config.JUPYTER_WAIT_TIMEOUT + 30
     try:
-        r = subprocess.run(
-            ssh_cmd, capture_output=True, text=True, timeout=outer_timeout
-        )
+        r = run_ssh(endpoint, cmd, outer_timeout)
     except subprocess.TimeoutExpired:
         return False, f"jupyter check timed out after {outer_timeout}s"
     except FileNotFoundError:
@@ -806,14 +902,15 @@ def run_port_check(
     on_line: Optional[Callable[[str], None]] = None,
 ) -> tuple[bool, str]:
     """Run the in-pod fallback probe with live progress and a hard timeout."""
-    ssh_cmd = [
-        *_ssh_command_prefix(endpoint),
-        port_check_command(test_port, config.PORT_WAIT_TIMEOUT),
-    ]
+    remote_cmd = port_check_command(test_port, config.PORT_WAIT_TIMEOUT)
+    ssh_cmd = _ssh_command_prefix(endpoint)
+    if not endpoint.pty:
+        ssh_cmd.append(remote_cmd)
     outer_timeout = config.PORT_WAIT_TIMEOUT + 60
     try:
         proc = subprocess.Popen(
             ssh_cmd,
+            stdin=subprocess.PIPE if endpoint.pty else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -822,6 +919,16 @@ def run_port_check(
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
     assert proc.stdout is not None
+    if endpoint.pty:
+        # See _pty_script: the proxy ignores a command argument.
+        assert proc.stdin is not None
+        # Left open until the session ends — see _run_pty.
+        proc.stdin.write(_pty_script(remote_cmd))
+        proc.stdin.flush()
+    # On a PTY the prompt and our own typing come first; stream only what
+    # the command printed, between the markers.
+    in_body = not endpoint.pty
+    pty_rc: Optional[int] = None
 
     timed_out = [False]
 
@@ -838,8 +945,16 @@ def run_port_check(
     last_line = ""
     try:
         for raw in iter(proc.stdout.readline, ""):
-            line = raw.rstrip("\n")
-            if line:
+            line = raw.rstrip("\r\n")
+            if endpoint.pty:
+                if line == _PTY_BEGIN:
+                    in_body = True
+                    continue
+                m = _PTY_RC_RE.match(line) if in_body else None
+                if m:
+                    pty_rc, in_body = int(m.group(1)), False
+                    continue
+            if line and in_body:
                 if on_line:
                     on_line(line)
                 last_line = line
@@ -854,11 +969,18 @@ def run_port_check(
         return False, f"port {test_port} check errored: {exc}"
     finally:
         watchdog.cancel()
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
 
     if timed_out[0]:
         return False, (
             f"port {test_port} check wall-clock timeout after {outer_timeout}s"
         )
+    if endpoint.pty:
+        return pty_rc == 0, last_line
     return proc.returncode == 0, last_line
 
 
@@ -869,7 +991,7 @@ def _proxy_status_ok(code: int) -> bool:
 
 def run_port_proxy_check(pod_id: str, test_port: int) -> tuple[bool, str]:
     """Probe a generic HTTP service through RunPod's public proxy."""
-    url = f"https://{pod_id}-{test_port}.proxy.runpod.net/"
+    url = f"{config.proxy_url(pod_id, test_port)}/"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
     lines = [f"GET {url}"]
     last_error = ""
@@ -904,7 +1026,7 @@ def run_port_proxy_check(pod_id: str, test_port: int) -> tuple[bool, str]:
 
 
 def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
-    """Hit `https://<pod-id>-8888.proxy.runpod.net/api/status?token=admin`
+    """Hit `https://<pod-id>-8888.<proxy domain>/api/status?token=admin`
     from the test machine. Verifies that:
 
       1. RunPod's public proxy has the pod registered for port 8888.
@@ -919,14 +1041,14 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     table for ~10–30s. Returns (ok, multi-line log).
     """
     url = (
-        f"https://{pod_id}-8888.proxy.runpod.net/api/status"
+        f"{config.proxy_url(pod_id, 8888)}/api/status"
         f"?token={config.JUPYTER_TEST_PASSWORD}"
     )
     # Same URL with the token stripped — used in log lines so we never
     # write the bearer token to stdout / CI logs. The real `url` (with
     # token) only ever goes to urlopen.
     redacted_url = (
-        f"https://{pod_id}-8888.proxy.runpod.net/api/status?token=<redacted>"
+        f"{config.proxy_url(pod_id, 8888)}/api/status?token=<redacted>"
     )
     deadline = time.monotonic() + config.JUPYTER_PROXY_TIMEOUT
     lines = [f"GET {redacted_url}"]
@@ -974,7 +1096,7 @@ def run_jupyter_static_check(pod_id: str) -> tuple[bool, str]:
     jupyter_server (tornadoweb/tornado#3724) and what makes the Lab UI render
     as a blank page. Only a static fetch covers that. Returns (ok, log).
     """
-    url = f"https://{pod_id}-8888.proxy.runpod.net/static/favicons/favicon.ico"
+    url = f"{config.proxy_url(pod_id, 8888)}/static/favicons/favicon.ico"
     lines = [f"GET {url}"]
     err = ""
     try:
@@ -1021,7 +1143,7 @@ def fetch_pod_logs_api(
         return None
     tail = tail or config.LOG_API_TAIL
     req = urllib.request.Request(
-        f"https://api.runpod.io/v2/pods/{pod_id}/logs?source={source}&tail={tail}",
+        f"{config.REST_URL}/pods/{pod_id}/logs?source={source}&tail={tail}",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Accept": "text/event-stream",
@@ -1343,15 +1465,14 @@ def fetch_logs_via_ssh(
     if not smi_block:
         return None
     remote_cmd = "set +e; " + smi_block
-    cmd = [*_ssh_command_prefix(endpoint), remote_cmd]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        r = run_ssh(endpoint, remote_cmd, 45)
     except subprocess.TimeoutExpired:
         return None
     except FileNotFoundError:
         return None
     if r.returncode == 0 and r.stdout.strip():
-        return _strip_cr(r.stdout)
+        return r.stdout
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 

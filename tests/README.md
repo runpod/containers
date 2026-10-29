@@ -17,18 +17,22 @@ The code is split into a small package next to the entry point:
 tests/
 ├── README.md               ← you are here
 ├── test_images.py          ← entry point: main() + summary + CLI
+├── reap_clusters.py        ← deletes leaked smoke-test Instant Clusters (dev)
 ├── comfyui/                ← ComfyUI functional-test models and workflow
 ├── unit/                   ← unittest suite for the logic below (no network)
 └── runpod_smoke/
     ├── config.py           ← env vars, sentinels, shared mutable state
     ├── log.py              ← thread-tagged logging
     ├── manifest.py         ← parser + value normalizers
-    ├── api.py              ← REST API v2 client: auth, requests, error classification
+    ├── api.py              ← REST API v2 + GraphQL client: auth, requests, error classification
     ├── instances.py        ← GPU/CPU catalog, budget resolution, exclude filter, CUDA axis
     ├── pod.py              ← pod create/lifecycle/signals, registry auth
     ├── checks.py           ← SSH/proxy checks, CUDA functional check, REST API v2 log diagnostics
     ├── comfyui.py          ← ComfyUI proxy, model, workflow, and PNG checks
-    └── runner.py           ← test_pair / test_image (per-image orchestration)
+    ├── runner.py           ← test_pair / test_image (per-image orchestration)
+    ├── cluster.py          ← Instant Cluster create/members/delete (GraphQL), signal-safe cleanup
+    ├── cluster_checks.py   ← pytorch-cluster checks: node identity, monitoring stack, Grafana
+    └── cluster_runner.py   ← test_cluster_pair (one cluster per attempt)
 ```
 
 
@@ -370,6 +374,9 @@ Field reference:
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening. Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
 | `test_torch_packages` | `true` / `false` — extends the CUDA check with a torchvision `nms` and a torchaudio `resample` on the GPU, plus a torchcodec WAV round trip on torch 2.9+ (the version from which the images ship it). All three become **required** where they are expected: an image in the group that doesn't have one fails. Use for `runpod/pytorch` and its `-cluster` layer; skip for images that ship torch alone (NGC `nvidia-pytorch`, `runpod/base` `-pytorch251` tags). Default: `false`. |
+| `cluster` | `true` / `false` — run the group as an **Instant Cluster** instead of a pod. See [Instant Cluster tests](#instant-cluster-tests-pytorch-cluster). Refused unless `RUNPOD_ENV=dev` (or `ALLOW_PROD_CLUSTERS=1`). Implies `test_jupyter`; ignores `check_all_gpu` and `cuda_versions`. Default: `false`. |
+| `cluster_nodes` | Pods per cluster, ≥ 1. Default: `2` (head + one worker — the smallest shape that exercises cross-node scraping). |
+| `cluster_gpus_per_node` | GPUs per node. Must be a size the GPU type offers for clusters (`nodeGroupGpuSizes`); unset picks the smallest. |
 | `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
@@ -606,6 +613,17 @@ pytorch:
 
 | var | default | description |
 |---|---|---|
+| `RUNPOD_ENV` | `prod` | `prod` or `dev`. Selects the API (`api.runpod.io` / `api.runpod.dev`) and the pod proxy (`proxy.runpod.net` / `dev-proxy.runpod.net`). The API key and registered SSH key must belong to the same environment. |
+| `RUNPOD_API_ORIGIN` / `RUNPOD_PROXY_DOMAIN` | per `RUNPOD_ENV` | Override either host directly. REST v2 is `<origin>/v2`, GraphQL `<origin>/graphql`. |
+| `ALLOW_PROD_CLUSTERS` | `0` | `1` lets `cluster: true` groups run on prod. |
+| `CLUSTER_DATA_CENTER_IDS` | `""` | Optional csv pinning cluster placement (e.g. `MFS-1`). |
+| `CLUSTER_DEPLOY_COST` | `0` | Per-node $/hr; `createCluster`'s `deployCost` is this × `cluster_nodes` (the API divides it by the pod count). `0` reads the current price (`lowestPrice` with `isCluster`, else `clusterPrice` × GPUs per node); the API rejects anything below its current minimum. |
+| `CLUSTER_PODS_TIMEOUT` | `300` | Seconds for every member pod to appear in the cluster record after `createCluster`. Booting is then bounded by `CLUSTER_BOOT_TIMEOUT`. |
+| `CLUSTER_BOOT_TIMEOUT` | `1500` | Seconds for every member pod to answer SSH, image pull included (one deadline shared by all nodes; they boot in parallel). |
+| `PROBE_HEARTBEAT_SEC` | `60` | While SSH probes keep failing, print a progress line (elapsed, pull stage, last error) this often. `0` disables it. |
+| `MONITORING_WAIT_TIMEOUT` | `240` | Seconds for each monitoring wait on a node: supervisord programs, Grafana health, Prometheus scraping every node. |
+| `GRAFANA_PROXY_TIMEOUT` | `180` | Seconds for Grafana to answer `/api/health` through the public proxy. |
+| `CLUSTER_REQUIRE_DCGM` | `1` | `0` drops dcgm-exporter from the required programs and Prometheus jobs, for GPUs without DCGM support (some GeForce cards on dev). |
 | `CLOUD_TYPE` | `SECURE` | `SECURE`, `COMMUNITY`, both as a comma list, or `ALL`. Multiple tiers are planned and swept in one invocation — see [CUDA axis](#cuda-axis). |
 | `DISK_GB` | `100` | Container disk size for GPU pods. |
 | `CPU_DISK_GB` | `20` | Container disk size for CPU pods. RunPod caps this per CPU flavor (20 GB on the cheapest, 30 GB on larger ones); 20 is the universal safe value. |
@@ -726,6 +744,57 @@ both running and exposed as `8888/http`, so SSH is skipped. On failure the
 test SSHes in and probes `/api/status` to distinguish a Jupyter startup
 problem from an HTTP exposure/proxy problem.
 
+
+## Instant Cluster tests (pytorch-cluster)
+
+`runpod/pytorch-cluster` is meant to run as an Instant Cluster: `node-0` is
+the head and additionally runs Prometheus + Grafana. A pod cannot show that,
+so a `cluster: true` group provisions a real cluster per attempt through
+GraphQL (`createCluster` → checks → `deleteCluster`). Clusters are expensive
+and prod rarely has a free one, so this runs on **dev**:
+
+```bash
+export RUNPOD_ENV=dev RUNPOD_API_KEY=<dev key>   # SSH key registered on the dev account
+cat > cluster.yaml <<'YAML'
+pytorch_cluster:
+    images:
+    - runpod/pytorch-cluster:1.4.0-cu1281-torch280-ubuntu2404
+    cluster: true
+    cluster_nodes: 2
+    exclude_instances:
+    - "*GB10*"
+YAML
+python3 tests/test_images.py cluster.yaml
+```
+
+Without `instances:`, candidates are every GPU type the cluster catalog
+offers, cheapest node first (GB10 is arm64, hence the exclude). Each
+attempt checks, failing on the first problem with the node named:
+
+1. **SSH** on every node — the usual readiness probe, per member pod.
+2. **Rank** — `hostname -s` is `node-<clusterIdx>`; the image decides
+   head vs worker from `node-0`.
+3. **CUDA** functional check and **Jupyter** (public proxy first) on every node.
+4. **Monitoring** — workers run node_exporter + dcgm-exporter and *not*
+   Prometheus/Grafana; the head runs all five, Grafana and Prometheus are
+   healthy, and Prometheus reports every node's exporters `up`. That last
+   check is what proves the multi-node wiring (`/etc/hosts` peers →
+   `prometheus.yml`), not just one healthy pod.
+5. **Grafana on the head via the public proxy** (`<pod>-8889.<proxy>`):
+   `/api/health` ok, `?token=<JUPYTER_PASSWORD>` logs in through the auth
+   proxy, no token is refused, and a query through the Prometheus
+   datasource returns series.
+6. Opted-in hygiene checks (head only), log scan, dwell, SSH re-probe.
+
+The cluster is deleted in a `finally` and by the same atexit/signal handler
+as pods. `.github/workflows/reap-clusters.yml` is the backstop: hourly, it
+runs `reap_clusters.py --delete` against dev for `smoketest-*` clusters
+older than 90 minutes.
+
+In CI, `base.yml`'s `test-pytorch-cluster-instant` job runs this on dev for
+the cu1281 build with `profile: cluster`. It needs the
+`DEV_TESTING_RUNPOD_API_KEY` and `DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY`
+secrets and skips with a warning until they exist.
 
 ## Unit tests
 

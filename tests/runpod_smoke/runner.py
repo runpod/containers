@@ -704,6 +704,11 @@ def test_image(
     whether this image works" must not be filed under "no capacity".
     """
     log(f"image: {image}")
+    attempt = test_pair
+    if config.GROUP_CLUSTER.get(group, False):
+        # Imported here: cluster_runner reuses this module's step helpers.
+        from .cluster_runner import test_cluster_pair
+        attempt = test_cluster_pair
     stuck_instances: list[str] = []
     unavailable_instances: list[str] = []
     unverified: list[tuple[str, str]] = []
@@ -712,7 +717,7 @@ def test_image(
     for inst in instances:
         set_worker_context(inst)
         try:
-            result, detail = test_pair(image, inst, group, cuda_pin, cloud)
+            result, detail = attempt(image, inst, group, cuda_pin, cloud)
         finally:
             set_worker_context(None)
         host_cuda = _take_host_cuda()

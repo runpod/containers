@@ -19,10 +19,32 @@ inputs:
         gpu   Put every ref into a single base_gpu group with the
               budget / vRAM / manufacturer filter applied. Use for every
               pure-GPU workflow (autoresearch, pytorch, nvidia-pytorch, rocm).
+        cluster
+              One Instant Cluster per image (node-0 head + workers) instead
+              of a pod: SSH, Jupyter and CUDA on every node, the monitoring
+              stack and Grafana on node-0. For runpod/pytorch-cluster. Needs
+              runpod-env: dev (prod clusters are refused).
       The functional check (nvidia-smi / torch.cuda / rocm-smi / skip) is
       always derived from the IMAGE REF, never from the profile, so the
       same `gpu` profile works regardless of what the image actually is.
     required: true
+  runpod-env:
+    description: |
+      RunPod environment to provision in: 'prod' (default) or 'dev'. Picks
+      the API and proxy hosts; the API key and the registered SSH key must
+      belong to the same environment.
+    required: false
+    default: "prod"
+  cluster-nodes:
+    description: "Pods per Instant Cluster (profile: cluster)"
+    required: false
+    default: "2"
+  cluster-gpus-per-node:
+    description: |
+      GPUs per cluster node (profile: cluster). Empty picks the smallest
+      node size each GPU type offers.
+    required: false
+    default: ""
   runpod-api-key:
     description: "RunPod API key (pod-management permissions required)"
     required: true
@@ -432,6 +454,8 @@ runs:
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
+        CLUSTER_NODES: ${{ inputs.cluster-nodes }}
+        CLUSTER_GPUS_PER_NODE: ${{ inputs.cluster-gpus-per-node }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -476,6 +500,12 @@ runs:
         fi
         if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-autoresearch)
+        fi
+        if [[ "${PROFILE}" == "cluster" ]]; then
+          EXTRA_ARGS+=(--cluster-nodes "${CLUSTER_NODES:-2}")
+          if [[ -n "${CLUSTER_GPUS_PER_NODE}" ]]; then
+            EXTRA_ARGS+=(--cluster-gpus-per-node "${CLUSTER_GPUS_PER_NODE}")
+          fi
         fi
         # pip-check-allow and revoked-ca-names are newline lists. Entries
         # are passed as single argv elements and NOT stripped of a leading
@@ -563,6 +593,9 @@ runs:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
         # 'Configure RunPod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
+        # Validated by test_images.py (prod / dev); cluster groups refuse
+        # anything but dev.
+        RUNPOD_ENV: ${{ inputs.runpod-env }}
         # Unknown tier names are dropped by config._parse_cloud_types, which
         # falls back to SECURE, so the raw input is safe to propagate.
         CLOUD_TYPE: ${{ inputs.cloud-type }}

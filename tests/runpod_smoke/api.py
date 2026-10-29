@@ -1,8 +1,10 @@
-"""RunPod REST API v2 client.
+"""RunPod REST API v2 client, plus a thin GraphQL client.
 
 Replaces the `runpodctl` subprocess calls. One place for the API key,
 request plumbing and the mapping from HTTP status + `ErrorResponse` onto
-the outcome vocabulary the runner speaks.
+the outcome vocabulary the runner speaks. GraphQL is used only where v2 has
+no endpoint (Instant Clusters); its errors are folded into the same
+`(status, {"detail": ...})` shape so `classify_error` works on both.
 
 Every helper returns `(status, data)` instead of raising, matching the
 style in comfyui.py: transport failures come back as status 0 so callers
@@ -21,10 +23,9 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+from . import config
 from .log import log
 
-
-BASE_URL = "https://api.runpod.io/v2"
 
 # api.runpod.io sits behind Cloudflare, which rejects the default
 # Python-urllib User-Agent with error 1010.
@@ -68,11 +69,7 @@ def request(
     status 0 means the request never reached the API. `parsed_body` is the
     decoded JSON, or None for 204 / non-JSON / transport failures.
     """
-    api_key = load_api_key()
-    if not api_key:
-        return _TRANSPORT_ERROR, {"detail": "no RunPod API key available"}
-
-    url = f"{BASE_URL}{path}"
+    url = f"{config.REST_URL}{path}"
     if params:
         # Repeated keys would be wrong here: the v2 API takes multi-valued
         # query params (include, product, cudaVersions) comma-separated.
@@ -83,6 +80,17 @@ def request(
         }
         if flat:
             url += "?" + urllib.parse.urlencode(flat)
+
+    return _send(method, url, body=body, timeout=timeout)
+
+
+def _send(
+    method: str, url: str, *, body: Optional[dict], timeout: int,
+) -> tuple[int, object]:
+    """Authenticated JSON request shared by the REST and GraphQL clients."""
+    api_key = load_api_key()
+    if not api_key:
+        return _TRANSPORT_ERROR, {"detail": "no RunPod API key available"}
 
     data = json.dumps(body).encode() if body is not None else None
     headers = {
@@ -111,6 +119,37 @@ def request(
     except (OSError, ValueError) as exc:
         # urllib.error.URLError and TimeoutError both derive from OSError.
         return _TRANSPORT_ERROR, {"detail": f"{type(exc).__name__}: {exc}"}
+
+
+def graphql(
+    query: str, variables: Optional[dict] = None, *, timeout: int = 60,
+) -> tuple[int, object]:
+    """POST one GraphQL document. Returns `(status, data)` like `request`.
+
+    GraphQL reports most failures as HTTP 200 with an `errors` array, which
+    would read as success to every caller. Those are rewritten to status 400
+    with the messages joined into `detail`, so capacity wording ("no longer
+    any instances available") still classifies as UNAVAILABLE. On success
+    `data` is the document's `data` object, not the envelope.
+    """
+    body: dict = {"query": query}
+    if variables:
+        body["variables"] = variables
+    status, data = _send("POST", config.GRAPHQL_URL, body=body, timeout=timeout)
+    if not isinstance(data, dict):
+        return status, data
+    errors = data.get("errors")
+    if errors:
+        messages = [
+            str(e.get("message") if isinstance(e, dict) else e) for e in errors
+        ]
+        # Keep a 5xx/429 as is so it still retries as TRANSIENT.
+        return (status if status >= 429 else 400), {
+            "detail": "; ".join(messages[:3])
+        }
+    if 200 <= status < 300:
+        return status, data.get("data")
+    return status, data
 
 
 def error_detail(status: int, data: object) -> str:

@@ -8,8 +8,12 @@ they succeed — the address they reached is a live pod. Silent wrong-pod
 results, not a crash.
 """
 
+import shutil
+import sys
 import unittest
+from unittest import mock
 
+from runpod_smoke import checks
 from runpod_smoke.checks import SshEndpoint, _ssh_command_prefix
 
 
@@ -82,3 +86,58 @@ class CommandConstruction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# A stand-in for RunPod's SSH proxy: an interactive bash on a PTY that, like
+# the proxy, ignores any command on its argv, echoes what is typed and ends
+# the session when the shell exits. `script` differs between BSD and util-linux.
+_SHELL = "bash --norc --noprofile -i"
+_FAKE_PROXY = (
+    ["script", "-q", "/dev/null", *_SHELL.split()] if sys.platform == "darwin"
+    else ["script", "-qfec", _SHELL, "/dev/null"]
+)
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("script"),
+                     "needs bash and script")
+class CommandsOverAnInteractiveProxy(unittest.TestCase):
+    """The proxy hands out a shell and ignores `ssh host <cmd>`: sending the
+    command as an argument made every probe hang until its timeout."""
+
+    EP = SshEndpoint(PROXY_HOST, 22, "tok", pty=True)
+
+    def _run(self, fn, *args):
+        with mock.patch.object(checks, "_ssh_command_prefix",
+                               side_effect=lambda _e: list(_FAKE_PROXY)):
+            return fn(self.EP, *args)
+
+    def test_probe_succeeds(self):
+        self.assertEqual(self._run(checks.ssh_probe, 15), (True, ""))
+
+    def test_exit_status_and_output_survive_the_shell(self):
+        cmd = "echo \"it's\"; cat <<EOF\nx $((2+2))\nEOF\nexit 3"
+        r = self._run(checks.run_ssh, cmd, 15)
+        self.assertEqual(r.returncode, 3)
+        self.assertEqual(r.stdout, "it's\nx 4\n")
+
+    def test_simple_check_failure_is_reported(self):
+        self.assertEqual(
+            self._run(checks.run_simple_check, "echo FAIL: nope; false", 15),
+            (False, "FAIL: nope"),
+        )
+
+    def test_typed_echo_is_not_mistaken_for_the_result(self):
+        rc, out = checks._pty_result(
+            'echo "__SMOKE_""BEGIN__"; bash -c "$(echo eA== | base64 -d)"; '
+            'echo "__SMOKE_""RC=$?__"; exit\r\n'
+            "prompt$ \r\n"
+        )
+        self.assertIsNone(rc)   # never ran: a dropped session, not a pass
+
+
+class NonPtyEndpointsNeverTouchTheTerminal(unittest.TestCase):
+    def test_stdin_is_devnull(self):
+        with mock.patch.object(checks.subprocess, "run") as run:
+            run.return_value = checks.subprocess.CompletedProcess([], 0, "ready\n", "")
+            checks.ssh_probe(SshEndpoint("1.2.3.4", 40022))
+        self.assertIs(run.call_args.kwargs["stdin"], checks.subprocess.DEVNULL)

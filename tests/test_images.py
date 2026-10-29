@@ -30,7 +30,9 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from runpod_smoke import api, config
+from runpod_smoke.cluster import cluster_catalog
 from runpod_smoke.instances import (
+    _apply_exclude_filter,
     cuda_axis_for,
     cuda_versions_offered,
     discover_gpu_catalog,
@@ -86,6 +88,16 @@ def _check_prereqs(manifest_path: Path) -> Optional[int]:
     if not manifest_path.is_file():
         log(f"Images manifest not found: {manifest_path}")
         return 1
+    if config.RUNPOD_ENV not in config.VALID_ENVS:
+        log(
+            f"RUNPOD_ENV={config.RUNPOD_ENV!r} is not one of "
+            f"{', '.join(config.VALID_ENVS)}"
+        )
+        return 1
+    log(
+        f"target: RUNPOD_ENV={config.RUNPOD_ENV} (API {config.API_ORIGIN}, "
+        f"proxy *.{config.PROXY_DOMAIN})"
+    )
     ok, detail = api.api_available()
     if not ok:
         log(detail)
@@ -297,6 +309,53 @@ def _apply_cuda_axis(group: str, raw: object) -> None:
         )
 
 
+def _positive_int(raw: object, field: str, group: str, default: int) -> int:
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"group '{group}': {field} must be a positive integer, got {raw!r}")
+    return value
+
+
+def _apply_cluster_flags(grp: str, contents: dict) -> None:
+    """`cluster: true` runs the group as an Instant Cluster (cluster_runner).
+
+    Jupyter is part of the cluster contract, so it is switched on rather
+    than left to `test_jupyter`. Refuses to run outside dev unless
+    ALLOW_PROD_CLUSTERS=1 — see config.ALLOW_PROD_CLUSTERS."""
+    if not _normalize_bool(contents.get("cluster")):
+        return
+    if config.RUNPOD_ENV != "dev" and not config.ALLOW_PROD_CLUSTERS:
+        raise ValueError(
+            f"group '{grp}' is a cluster group but RUNPOD_ENV={config.RUNPOD_ENV}; "
+            "Instant Cluster smoke tests run on dev (RUNPOD_ENV=dev with a dev "
+            "API key). Set ALLOW_PROD_CLUSTERS=1 to run them on prod anyway."
+        )
+    config.GROUP_CLUSTER[grp] = True
+    config.GROUP_TEST_JUPYTER[grp] = True
+    nodes = _positive_int(
+        contents.get("cluster_nodes"), "cluster_nodes", grp,
+        config.DEFAULT_CLUSTER_NODES,
+    )
+    config.GROUP_CLUSTER_NODES[grp] = nodes
+    gpus = _positive_int(
+        contents.get("cluster_gpus_per_node"), "cluster_gpus_per_node", grp, 0,
+    )
+    if gpus:
+        config.GROUP_CLUSTER_GPUS_PER_NODE[grp] = gpus
+    ignored = [k for k in ("check_all_gpu", "cuda_versions") if contents.get(k)]
+    log(
+        f"group '{grp}': cluster=true ({nodes} nodes x "
+        f"{gpus or 'smallest offered'} GPU(s); SSH + Jupyter on every node, "
+        f"Grafana on node-0 :{config.GRAFANA_PORT})"
+        + (f" — ignoring {', '.join(ignored)}" if ignored else "")
+    )
+
+
 def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     """Populate the per-group dicts on `config` that `pod.create_pod` and
     `runner.test_pair` consult at run-time: `GROUP_MIN_CUDA` (fallback
@@ -343,6 +402,8 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
                 "(expose as <port>/http, probe public proxy first)"
             )
     for grp, contents in manifest.items():
+        _apply_cluster_flags(grp, contents)
+    for grp, contents in manifest.items():
         _apply_hygiene_flags(grp, contents)
     for grp, contents in manifest.items():
         _apply_cuda_axis(grp, contents.get("cuda_versions"))
@@ -372,8 +433,31 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
 def _resolve_all_instances(manifest: dict[str, dict]) -> dict[str, list[str]]:
     """Per-group instance lookup — done up-front so we can warn about
     typos / empty lists once, instead of per-job."""
-    return {grp: resolve_instances(grp, contents)
-            for grp, contents in manifest.items()}
+    return {
+        grp: (
+            _resolve_cluster_instances(grp, contents)
+            if config.GROUP_CLUSTER.get(grp)
+            else resolve_instances(grp, contents)
+        )
+        for grp, contents in manifest.items()
+    }
+
+
+def _resolve_cluster_instances(group: str, contents: dict) -> list[str]:
+    """Cluster groups take their explicit `instances:` as given; without
+    them, every GPU type Instant Clusters offer, cheapest node first. The
+    per-pod budget/vRAM filters don't apply — cluster pricing differs."""
+    if contents.get("instances"):
+        return resolve_instances(group, contents)
+    catalog = cluster_catalog() or []
+    names = [gpu.gpu_id for gpu in catalog]
+    names = _apply_exclude_filter(
+        names, list(contents.get("exclude_instances") or []), group_name=group,
+    )
+    log(
+        f"group '{group}': cluster GPU candidates: {', '.join(names) or '(none)'}"
+    )
+    return names
 
 
 def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
@@ -385,6 +469,8 @@ def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
         for instances in resolved.values()
         for inst in instances
         if not config.is_cpu_instance(inst) and not is_known_gpu(inst)
+        # Cluster candidates from the cluster catalog are gpu ids.
+        and inst not in config.GPU_ID_MAP.values()
     })
     if not unmapped:
         return
@@ -444,6 +530,10 @@ def _build_jobs(
             continue
         if group in config.CPU_GROUP_NAMES and not first_pass:
             continue
+        # Clusters are one tier with no CUDA axis: plan them once.
+        is_cluster = config.GROUP_CLUSTER.get(group, False)
+        if is_cluster and not first_pass:
+            continue
         instances = resolved.get(group, [])
         if not instances:
             if not first_pass:
@@ -464,7 +554,9 @@ def _build_jobs(
             or config.GROUP_CUDA_VERSIONS.get(group)
         )
         for img in contents.get("images", []):
-            if cuda_axis and check_all:
+            if is_cluster:
+                jobs.append((img, group, instances, "", cloud))
+            elif cuda_axis and check_all:
                 jobs.extend(
                     _cuda_matrix_jobs(img, group, instances, results, cloud)
                 )

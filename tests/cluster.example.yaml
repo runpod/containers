@@ -1,0 +1,28 @@
+# Instant Cluster smoke test for runpod/pytorch-cluster — runs on DEV.
+# Prerequisites: a dev API key (scopes: Instant clusters R/W, Pods R/W,
+# Catalog R, Authentication R) and an SSH key registered on the dev account.
+#
+#   RUNPOD_ENV=dev RUNPOD_API_KEY=<dev key> \
+#     python3 tests/test_images.py tests/cluster.yaml
+#
+# Add CLUSTER_REQUIRE_DCGM=0 if dcgm-exporter can't run on the GPU it lands on
+# (some GeForce cards), and DWELL_SEC=0 for a faster debugging loop.
+pytorch_cluster:
+    images:
+    - runpod/pytorch-cluster:1.5.0-cu1281-torch280-ubuntu2404
+    # Head (node-0, runs Prometheus + Grafana) plus one worker — the smallest
+    # shape that proves Prometheus scrapes across nodes.
+    cluster: true
+    cluster_nodes: 2
+    # GPU ids from the dev cluster catalog, tried in order until one has
+    # capacity. Cheapest node first; A40 is left out because its only node
+    # size is 10 GPUs, and GB10 because it is arm64.
+    instances:
+    - NVIDIA L4
+    - NVIDIA GeForce RTX 4090
+    # Same image checks the per-pod CI job runs (base.yml test-pytorch-cluster).
+    # Jupyter needs no flag: cluster groups always check it on every node.
+    test_torch_packages: true
+    test_ca_certs: true
+    min_ca_certs_version: "20260816"
+    test_python_tls: true

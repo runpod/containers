@@ -405,3 +405,34 @@ class Aggregation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProbeHeartbeat(unittest.TestCase):
+    """Deduped probe lines made a long image pull look like a hang."""
+
+    def test_repeated_failures_still_print_progress(self):
+        state = {
+            "status": "RUNNING", "ssh_ip": "", "ssh_port": 0,
+            "proxy_host": "ssh.dev.runpod.io", "proxy_port": 22,
+            "proxy_user": "pod1-64410007", "proxy_command": "",
+        }
+        clock = iter(range(0, 10_000, 30))       # each time.time() call: +30s
+        lines: list[str] = []
+        with mock.patch.object(config, "POLL_INTERVAL", 0), \
+                mock.patch.object(config, "PROBE_HEARTBEAT_SEC", 60), \
+                mock.patch.object(pod.time, "time", side_effect=lambda: next(clock)), \
+                mock.patch.object(pod, "pod_state", return_value=state), \
+                mock.patch.object(pod, "ssh_probe",
+                                  return_value=(False, "container not found")), \
+                mock.patch.object(pod, "container_progress", return_value=None), \
+                mock.patch.object(pod, "pod_stage", return_value=checks.PodStage(
+                    pulling=True, pull_done=False, container_started=False)), \
+                mock.patch.object(pod, "_log_system_errors"), \
+                mock.patch.object(pod, "log", side_effect=lambda m, **_: lines.append(m)):
+            outcome, _, _ = pod.wait_for_running("pod1", timeout=300)
+        self.assertEqual(outcome, "TIMEOUT_INFRA")
+        beats = [line for line in lines if "still waiting for sshd" in line]
+        self.assertGreaterEqual(len(beats), 2)
+        self.assertIn("still pulling the image", beats[0])
+        self.assertIn("container not found", beats[0])
+        self.assertIn("giving up at t+300s", beats[0])

@@ -90,6 +90,9 @@ def render_yaml(groups: dict) -> str:
             "test_uv",
             "test_virtualenv",
             "test_autoresearch",
+            "cluster",
+            "cluster_nodes",
+            "cluster_gpus_per_node",
         ):
             if key in body:
                 val = body[key]
@@ -152,6 +155,8 @@ def build_groups(
     min_cuda_version: str | None = None,
     cuda_versions: list[str] | None = None,
     explicit_budget: bool = False,
+    cluster_nodes: int = 2,
+    cluster_gpus_per_node: int = 0,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -286,6 +291,18 @@ def build_groups(
             "base_gpu": _decorate({"images": refs}, gpu_group=True)
         }
 
+    if profile == "cluster":
+        # Instant Cluster: one cluster per image (head node-0 + workers),
+        # run by tests/runpod_smoke/cluster_runner.py. Candidates are the
+        # explicit instances, else every GPU type the cluster catalog
+        # offers — the per-pod budget / vRAM filters don't apply.
+        body: dict = {"images": refs, "cluster": True, "cluster_nodes": cluster_nodes}
+        if cluster_gpus_per_node:
+            body["cluster_gpus_per_node"] = cluster_gpus_per_node
+        if instances:
+            body["instances"] = list(instances)
+        return {"pytorch_cluster": _decorate(body, gpu_group=False)}
+
     raise ValueError(f"unknown profile: {profile!r}")
 
 
@@ -297,7 +314,7 @@ def main() -> int:
     ap.add_argument(
         "--profile",
         required=True,
-        choices=["base", "gpu"],
+        choices=["base", "gpu", "cluster"],
     )
     ap.add_argument(
         "--refs",
@@ -508,6 +525,21 @@ def main() -> int:
             "vRAM / vendor filters no longer apply."
         ),
     )
+    ap.add_argument(
+        "--cluster-nodes",
+        type=int,
+        default=2,
+        help="Pods per Instant Cluster for --profile cluster (default: 2)",
+    )
+    ap.add_argument(
+        "--cluster-gpus-per-node",
+        type=int,
+        default=0,
+        help=(
+            "GPUs per cluster node for --profile cluster. 0 (default) picks "
+            "the smallest node size the GPU type offers."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -556,6 +588,8 @@ def main() -> int:
         exclude_instances=args.exclude_instance,
         min_cuda_version=(args.min_cuda_version or None),
         cuda_versions=args.cuda_versions,
+        cluster_nodes=args.cluster_nodes,
+        cluster_gpus_per_node=args.cluster_gpus_per_node,
     )
 
     if not groups:

@@ -661,3 +661,67 @@ jobs:
             RTX 5090
             RTX PRO *
             PRO 6000 MIG *
+
+  # The per-pod job above proves the image on every CUDA variant; this one
+  # proves the cluster behaviour a single pod can't: node-0 as head, Grafana
+  # on :8889, Prometheus scraping every node. Runs on dev — prod rarely has a
+  # free cluster and they are expensive — and on one CUDA variant only.
+  test-pytorch-cluster-instant:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-pytorch-cluster
+    if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
+    steps:
+      - name: Check dev credentials
+        id: creds
+        shell: bash
+        env:
+          DEV_KEY: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
+          DEV_SSH: ${{ secrets.DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${DEV_KEY}" && -n "${DEV_SSH}" ]]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Instant Cluster smoke test skipped: set DEV_TESTING_RUNPOD_API_KEY and DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY (dev account)"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for cu1281
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cluster-refs-cu1281
+          path: /tmp/cluster-refs
+
+      - name: Read refs
+        if: steps.creds.outputs.ok == 'true'
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Instant Cluster smoke test (dev)
+        if: steps.creds.outputs.ok == 'true'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: cluster
+          runpod-env: dev
+          runpod-api-key: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          cluster-nodes: "2"
+          # dev cluster capacity comes and goes; don't block on it.
+          on-skip: "warn"
+          # GB10 nodes are arm64; the image is amd64-only.
+          exclude-instances: |
+            *GB10*
