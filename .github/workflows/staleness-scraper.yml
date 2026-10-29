@@ -10,7 +10,6 @@ on:
   # Test trigger until this lands on main and the cron can fire. Label a PR
   # `test-staleness-scraper` to run it; pushes to that PR re-run it.
   pull_request:
-    types: [labeled, synchronize]
 
 permissions:
   contents: write
