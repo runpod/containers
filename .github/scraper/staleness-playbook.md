@@ -16,6 +16,10 @@ Covered families: **pytorch**, **comfyui**. Ignore all others for now.
 - Never replace a supported version with a newer one. Add the new version
   **alongside** the existing ones and leave the old entries untouched. We keep
   shipping the old versions; the scraper only ever adds.
+- When you bump a pin that is a git commit SHA, always add a short trailing
+  comment. Use the version when the commit maps to a release tag
+  (`FOO_SHA = "abc123..." # v1.2.3`); when it is untagged, use the commit date
+  instead (`FOO_SHA = "abc123..." # 2026-10-20`).
 - When you cannot verify that a build input (a wheel, a release asset, a checksum)
   actually exists, do NOT guess it in. Leave it out and say so in the PR body.
   The CUDA/wheel matrix is hand-curated, a wrong pin fails the build.

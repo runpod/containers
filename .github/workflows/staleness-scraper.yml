@@ -29,7 +29,13 @@ jobs:
     strategy:
       fail-fast: false # One stale family should not block the other.
       matrix:
-        family: [pytorch, comfyui]
+        include:
+          # pytorch needs more turns: it verifies wheels across many CUDA x
+          # python combos plus companion versions. comfyui is lighter.
+          - family: pytorch
+            turns: 120
+          - family: comfyui
+            turns: 60
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -40,7 +46,7 @@ jobs:
           fetch-depth: 0
 
       - name: Scan ${{ matrix.family }}
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
         env:
           # PAT/app token so Claude's PR triggers the build CI. The default
           # GITHUB_TOKEN cannot trigger other workflows, so the matrix would
@@ -60,5 +66,5 @@ jobs:
             If ${{ matrix.family }} is already current, make no changes and exit.
           claude_args: |
             --model claude-opus-4-8
-            --max-turns 60
+            --max-turns ${{ matrix.turns }}
             --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(pip index:*)"
