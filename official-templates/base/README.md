@@ -14,7 +14,7 @@ The Runpod Base images provide a clean, developer friendly environment for every
 
 ### Available configurations
 - **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble)
-- **CUDA**: 12.8.0, 12.8.1, 12.9.0, 13.0.0, and 13.2.0
+- **CUDA**: 12.8.0, 12.8.1, 12.9.0, 13.0.0, 13.2.0, and 13.4.3
 
 Need something more specialized? Explore the templates in `official-templates` for ROCm, PyTorch, and more.
 
@@ -41,4 +41,6 @@ Need something more specialized? Explore the templates in `official-templates` f
     - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1300-ubuntu2404`
 - 13.2.0:
     - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1320-ubuntu2404`
+- 13.4.3:
+    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1343-ubuntu2404`
 </div>
