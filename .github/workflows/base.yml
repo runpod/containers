@@ -520,7 +520,9 @@ jobs:
       !cancelled() && contains(fromJSON(inputs.families), 'pytorch-cluster')
       && needs.versions.outputs.cluster-build == 'true'
       && (needs.build-pytorch.result == 'success'
-          || needs.build-pytorch.result == 'skipped')
+          || (needs.build-pytorch.result == 'skipped'
+              && !(contains(fromJSON(inputs.families), 'pytorch')
+                   && needs.versions.outputs.pytorch-build == 'true')))
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read

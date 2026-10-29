@@ -91,6 +91,12 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
         python3.13-dev python3.13-venv && \
+    . /etc/os-release && \
+    if [[ "${VERSION_ID}" != "24.04" ]]; then \
+      apt-mark manual lsb-release libcap2-bin && \
+      apt-get purge --yes software-properties-common && \
+      apt-get autoremove --purge --yes; \
+    fi && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*;
