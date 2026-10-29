@@ -50,6 +50,18 @@ variable "TORCH_META" {
       torchaudio  = "2.11.0"
       torchcodec  = "0.16.0"
     }
+    # torchcodec 0.17.0 is the release paired with torch 2.14; like 0.12+ it
+    # declares torch >= 2.11 (no upper bound), so it loads fine against 2.14.
+    "2.14.0" = {
+      torchvision = "0.29.0"
+      torchaudio  = "2.11.0"
+      torchcodec  = "0.17.0"
+    }
+    "2.14.1" = {
+      torchvision = "0.29.1"
+      torchaudio  = "2.11.0"
+      torchcodec  = "0.17.0"
+    }
   }
 }
 
@@ -74,7 +86,11 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.8.1", torch = "2.9.1", whl_src = "128" },
     { cuda_version = "12.8.1", torch = "2.12.1", whl_src = "129" },
     { cuda_version = "12.8.1", torch = "2.13.0", whl_src = "129" },
-    
+    # 2.14.x has no 12.x wheel: cu129 was dropped after 2.13, cu128 ended at
+    # 2.11, and cu126 (the only remaining 12.x index) stops at sm_90 with no
+    # PTX, so it cannot run on Blackwell. torch 2.14 ships cu126/cu130/cu132
+    # only — 12.8.1 and 12.9.0 are omitted for it until a usable wheel exists.
+
     { cuda_version = "12.9.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "12.9.0", torch = "2.7.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.8.0", whl_src = "129" },
@@ -94,6 +110,8 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.0.0", torch = "2.12.0", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.12.1", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.13.0", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.14.0", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.14.1", whl_src = "130" },
 
     { cuda_version = "13.2.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "13.2.0", torch = "2.7.1", whl_src = "128" },
@@ -107,6 +125,8 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.14.0", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.14.1", whl_src = "132", audio_index = "cpu" },
   ]
 }
 
