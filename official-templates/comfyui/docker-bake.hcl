@@ -3,10 +3,10 @@ variable "COMFYUI_VERSION" {
   default = "v0.35.0"
 }
 variable "MANAGER_SHA" {
-  default = "9d4cceea1351"
+  default = "8afdee041650" # 2026-10-28
 }
 variable "KJNODES_SHA" {
-  default = "57105374f47d"
+  default = "ab72eda7ffad" # 2026-10-29
 }
 variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
@@ -15,10 +15,10 @@ variable "RUNPODDIRECT_SHA" {
   default = "9e32b1a09577"
 }
 variable "FILEBROWSER_VERSION" {
-  default = "v2.59.0"
+  default = "v2.63.23"
 }
 variable "FILEBROWSER_SHA256" {
-  default = "8cd8c3baecb086028111b912f252a6e3169737fa764b5c510139e81f9da87799"
+  default = "b14db2bb8033caa3f80205eb6578b2ed0744ebd9e716b790bc4a9703ce909e88"
 }
 
 # The 13.2 image is the only one on the newer stack: the cu132 index has no
