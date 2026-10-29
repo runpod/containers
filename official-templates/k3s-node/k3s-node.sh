@@ -3,9 +3,9 @@
 # Runpod pod may use.
 #
 # The kubelet reads the host's /proc, so inside a pod it always sees the whole machine. Under
-# sysbox, the pod's own cgroup limits are visible at /sys/fs/cgroup. This script reserves the part
-# of the host above those limits in the kubelet. A pod that owns its host has no limits ("max"),
-# and then only the headroom below is reserved.
+# sysbox, the pod's own cgroup limits are visible at /sys/fs/cgroup (on cgroup v1, the memory limit
+# only; see below). This script reserves the part of the host above those limits in the kubelet. A
+# pod that owns its host has no limits ("max"), and then only the headroom below is reserved.
 set -eu
 
 # Headroom for the kubelet, containerd and the Runpod daemon.
@@ -22,19 +22,34 @@ if [ "${1:-}" = agent ]; then
   host_cpu_m=$(( $(grep -c '^processor' /proc/cpuinfo) * 1000 ))
   host_mem_mi=$(( $(awk '/^MemTotal:/ { print $2 }' /proc/meminfo) / 1024 ))
 
-  limit_cpu_m=$host_cpu_m
-  if [ -r "$CG/cpu.max" ]; then
-    read -r quota period < "$CG/cpu.max"
-    if [ "$quota" != max ]; then limit_cpu_m=$(( quota * 1000 / period )); fi
+  # cgroup v2 has one tree with cpu.max and memory.max. v1 has one tree per controller; there "no
+  # limit" is a quota of -1, or a memory limit above the host's memory.
+  if [ "$(stat -fc %T "$CG")" = cgroup2fs ]; then
+    cgroup_v1=false
+    quota=max period=100000
+    if [ -r "$CG/cpu.max" ]; then read -r quota period < "$CG/cpu.max"; fi
+    cpuset_file=$CG/cpuset.cpus.effective
+    mem_file=$CG/memory.max
+  else
+    cgroup_v1=true
+    quota=$(cat "$CG/cpu,cpuacct/cpu.cfs_quota_us" 2>/dev/null || echo -1)
+    period=$(cat "$CG/cpu,cpuacct/cpu.cfs_period_us" 2>/dev/null || echo 100000)
+    if [ "$quota" -lt 0 ]; then quota=max; fi
+    cpuset_file=$CG/cpuset/cpuset.effective_cpus
+    mem_file=$CG/memory/memory.limit_in_bytes
   fi
-  if [ -r "$CG/cpuset.cpus.effective" ]; then
-    cpuset_m=$(( $(cpuset_count "$(cat "$CG/cpuset.cpus.effective")") * 1000 ))
+
+  limit_cpu_m=$host_cpu_m
+  if [ "$quota" != max ]; then limit_cpu_m=$(( quota * 1000 / period )); fi
+  if [ -r "$cpuset_file" ]; then
+    cpuset_m=$(( $(cpuset_count "$(cat "$cpuset_file")") * 1000 ))
     if [ "$cpuset_m" -gt 0 ] && [ "$cpuset_m" -lt "$limit_cpu_m" ]; then limit_cpu_m=$cpuset_m; fi
   fi
 
   limit_mem_mi=$host_mem_mi
-  if [ -r "$CG/memory.max" ] && [ "$(cat "$CG/memory.max")" != max ]; then
-    limit_mem_mi=$(( $(cat "$CG/memory.max") / 1048576 ))
+  if [ -r "$mem_file" ] && [ "$(cat "$mem_file")" != max ]; then
+    mem_file_mi=$(( $(cat "$mem_file") / 1048576 ))
+    if [ "$mem_file_mi" -lt "$host_mem_mi" ]; then limit_mem_mi=$mem_file_mi; fi
   fi
 
   cpu_m=$RESERVE_CPU_M
@@ -45,6 +60,17 @@ if [ "${1:-}" = agent ]; then
   shift
   set -- agent --kubelet-arg="system-reserved=cpu=${cpu_m}m,memory=${mem_mi}Mi" "$@"
   echo "k3s-node: host cpu=${host_cpu_m}m mem=${host_mem_mi}Mi, pod limit cpu=${limit_cpu_m}m mem=${limit_mem_mi}Mi, system-reserved cpu=${cpu_m}m memory=${mem_mi}Mi" >&2
+
+  # cgroup v1: the kubelet refuses to start unless fail-cgroupv1=false. Under sysbox, the pod's CPU
+  # quota sits on a parent cgroup the node cannot see (so limit_cpu_m above is the host's), and v1
+  # rejects a child quota above it ("cpu.cfs_quota_us: invalid argument"): every k8s pod with a
+  # higher CPU limit fails to start. So the kubelet sets no CFS quotas: CPU limits are not enforced
+  # per k8s pod, while CPU requests (cpu.shares) and the Runpod pod's own quota still apply.
+  if [ "$cgroup_v1" = true ]; then
+    shift
+    set -- agent --kubelet-arg=fail-cgroupv1=false --kubelet-arg=cpu-cfs-quota=false "$@"
+    echo "k3s-node: cgroup v1: kubelet fail-cgroupv1=false, cpu-cfs-quota=false" >&2
+  fi
 fi
 
 # A K8S node pod starts before its control plane exists. It gets K3S_TOKEN and WG_ENDPOINT (the
