@@ -132,11 +132,21 @@ jobs:
     with:
       families: ${{ needs.plan.outputs.families }}
 
+  k3s-node:
+    needs: plan
+    if: >-
+      !cancelled()
+      && contains(fromJSON(needs.plan.outputs.workflows), 'k3s-node')
+    uses: ./.github/workflows/k3s-node.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
   # One tag + GitHub Release per changed family, on a releasable push to main.
   # Each family waits only on its own build: a scan that fails on one image
   # must not keep the others unreleased while their images are already pushed.
   release:
-    needs: [plan, base, nvidia, rocm, comfyui, sandbox]
+    needs: [plan, base, nvidia, rocm, comfyui, sandbox, k3s-node]
     if: >-
       !cancelled()
       && github.event_name == 'push'

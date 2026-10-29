@@ -395,9 +395,11 @@ GROUP_TEST_JUPYTER: dict[str, bool] = {}
 GROUP_TEST_TORCH_PACKAGES: dict[str, bool] = {}
 
 # Per-group HTTP ports populated from the optional `test_ports:` manifest
-# list. They are exposed as `<port>/http` and checked through the public
-# proxy first; SSH only diagnoses a proxy failure.
-GROUP_TEST_PORTS: dict[str, list[int]] = {}
+# list, as (port, path) pairs. Each port is exposed as `<port>/http` and the
+# path (default "/") is probed through the public proxy first (HTTP 200
+# required); SSH only diagnoses a proxy failure. A `<port>/<path>` entry lets
+# a template hit a dedicated health route, e.g. 80/health.
+GROUP_TEST_PORTS: dict[str, list[tuple[int, str]]] = {}
 
 # ComfyUI-specific public-proxy reachability smoke.
 GROUP_TEST_COMFYUI: dict[str, bool] = {}

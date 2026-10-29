@@ -150,7 +150,7 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
-        test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
+        test_ports = [port for port, _path in config.GROUP_TEST_PORTS.get(group) or []]
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
         pod_id, kind, raw = create_pod(
@@ -422,13 +422,14 @@ def _run_jupyter_steps(
 
 def _check_port_proxy_first(
     endpoint: SshEndpoint, pod_id: str, test_port: int, label: str,
+    path: str = "/",
 ) -> Optional[_Outcome]:
     """Check public reachability first; use SSH only to diagnose failure."""
     log(
         f"running {label} check (public proxy) for pod {pod_id}...",
         indent=2,
     )
-    ok, output = run_port_proxy_check(pod_id, test_port)
+    ok, output = run_port_proxy_check(pod_id, test_port, path)
     for line in output.splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -441,7 +442,8 @@ def _check_port_proxy_first(
         indent=2,
     )
     ok, detail = run_port_check(
-        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2)
+        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2),
+        path=path,
     )
     if ok:
         failure = f"{label}: reachable in-pod but not via proxy"
@@ -457,9 +459,10 @@ def _run_port_steps(
     endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Run each generic `test_ports` check."""
-    for test_port in config.GROUP_TEST_PORTS.get(group) or []:
+    for test_port, test_path in config.GROUP_TEST_PORTS.get(group) or []:
+        label = f"port {test_port}" + (test_path if test_path != "/" else "")
         outcome = _check_port_proxy_first(
-            endpoint, pod_id, test_port, f"port {test_port}",
+            endpoint, pod_id, test_port, label, path=test_path,
         )
         if outcome is not None:
             dump_pod_logs(pod_id, image)

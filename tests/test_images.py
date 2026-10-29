@@ -162,27 +162,33 @@ def _init_registry_auth() -> Optional[int]:
 # ---------------------------------------------------------------------------
 
 
-def _coerce_ports(raw_ports: object, group: str) -> list[int]:
-    """Coerce optional `test_ports` list entries to valid TCP port numbers."""
+def _coerce_ports(raw_ports: object, group: str) -> list[tuple[int, str]]:
+    """Coerce optional `test_ports` entries to (port, path) pairs.
+
+    An entry is `<port>` (probe `/`) or `<port>/<path>` (probe that path,
+    e.g. `80/health`). The path is everything from the first `/`.
+    """
     if not isinstance(raw_ports, list):
         return []
-    ports: list[int] = []
+    ports: list[tuple[int, str]] = []
     for entry in raw_ports:
+        text = str(entry).strip()
+        port_text, sep, path = text.partition("/")
         try:
-            port = int(str(entry).strip())
+            port = int(port_text.strip())
         except (TypeError, ValueError):
             log(
                 f"warn: group '{group}': test_ports entry {entry!r} "
                 "is not a valid TCP port — skipping"
             )
             continue
-        if 1 <= port <= 65535:
-            ports.append(port)
-        else:
+        if not 1 <= port <= 65535:
             log(
                 f"warn: group '{group}': test_ports entry {entry!r} "
                 "is outside 1–65535 — skipping"
             )
+            continue
+        ports.append((port, f"/{path}" if sep else "/"))
     return ports
 
 
