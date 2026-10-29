@@ -12,7 +12,7 @@ USER root
 
 # Installed as a root-owned tool on PATH rather than into the user's home, so
 # a sandbox cannot leave itself without a working `harbor`.
-ARG HARBOR_VERSION=0.23.0
+ARG HARBOR_VERSION=0.25.0
 ENV UV_TOOL_DIR=/opt/uv-tools
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 RUN uv tool install --no-cache "harbor==${HARBOR_VERSION}" && \

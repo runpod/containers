@@ -2,7 +2,7 @@
 # and Python toolchain stay identical across the sandbox family.
 
 variable "HARBOR_VERSION" {
-  default = "0.23.0"
+  default = "0.25.0"
 }
 
 # Which published runpod/ubuntu to build FROM — in-run sandbox-ubuntu tag when
