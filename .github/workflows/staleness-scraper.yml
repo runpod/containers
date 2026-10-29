@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404 # On the org IP allow list; ubuntu-latest is not.
     timeout-minutes: 45
     steps:
       - name: Checkout
