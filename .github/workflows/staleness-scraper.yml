@@ -48,6 +48,7 @@ jobs:
           # the job runs on a PR branch before this workflow is on main. A PAT or
           # app token in SCRAPER_PR_TOKEN also lets Claude's PRs trigger build CI.
           github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
+          show_full_output: true
           prompt: |
             Read .github/scraper/staleness-playbook.md and follow it exactly.
             Use the GH_TOKEN env var for all `gh` commands. Open each PR as a draft.
