@@ -5,6 +5,16 @@ variable "K3S_VERSION" {
   default = "v1.37.1+k3s1"
 }
 
+# Remove with the runc swap in k3s-node.sh once k3s bundles runc >= 1.4.3.
+variable "RUNC_VERSION" {
+  default = "v1.4.3"
+}
+
+# The apt package version of nvidia-container-toolkit and its libraries.
+variable "NVIDIA_CTK_VERSION" {
+  default = "1.20.1-1"
+}
+
 group "default" {
   targets = ["k3s-node"]
 }
@@ -22,12 +32,11 @@ target "k3s-node" {
     K3S_SHA256_AMD64 = "92b94582eb7b34a8cf532e6006842b9ed215a6783cf56a3dd6271fd35243b2c0"
     K3S_SHA256_ARM64 = "a1561ca4aef8b99f5588a840d4468ac39c8c1cd92470bbcb9634823fa221741a"
 
-    # Remove with the runc swap in k3s-node.sh once k3s bundles runc >= 1.4.3.
-    RUNC_VERSION      = "v1.4.3"
+    RUNC_VERSION      = RUNC_VERSION
     RUNC_SHA256_AMD64 = "f6ae8efc0fa40079e1475e97cbe9d1bd3f106a28d6af78a11d9f1bd565515e60"
     RUNC_SHA256_ARM64 = "633301e2e32f8a5ad54031aab4901eb00308bec677dd15faa2751e8f9dab5ca4"
 
-    NVIDIA_CTK_VERSION = "1.20.1-1"
+    NVIDIA_CTK_VERSION = NVIDIA_CTK_VERSION
   }
 
   # The k3s version without its build suffix: v1.37.1+k3s1 -> k3s-v1.37.1.

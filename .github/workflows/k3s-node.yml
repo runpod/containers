@@ -92,9 +92,16 @@ jobs:
 
           IMAGE=$(jq -er '.[] | select(contains("runpod/k3s-node:"))' <<< "$REFS")
           echo "Verifying $IMAGE"
-          # The k3s version the bake file pins, so a bump needs no edit here.
-          K3S_VERSION=$(sed -n 's/^ *default = "\(v[0-9.]*+k3s[0-9]*\)"/\1/p' official-templates/k3s-node/docker-bake.hcl)
-          test -n "$K3S_VERSION"
+          # The versions the bake file pins, so a bump needs no edit here.
+          bake_default() {
+            awk -v var="variable \"$1\"" 'index($0, var) == 1 { f = 1 }
+              f && /default *=/ { gsub(/^[^"]*"|".*$/, ""); print; exit }' \
+              official-templates/k3s-node/docker-bake.hcl
+          }
+          K3S_VERSION=$(bake_default K3S_VERSION)
+          RUNC_VERSION=$(bake_default RUNC_VERSION)
+          NVIDIA_CTK_VERSION=$(bake_default NVIDIA_CTK_VERSION)
+          test -n "$K3S_VERSION" && test -n "$RUNC_VERSION" && test -n "$NVIDIA_CTK_VERSION"
 
           # The entrypoint wraps `k3s agent`; the Runpod pod only sets env.
           test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/local/bin/k3s-node"]'
@@ -102,7 +109,9 @@ jobs:
           say entrypoint "k3s-node agent"
 
           echo linux/amd64
-          docker run --rm --platform linux/amd64 -e K3S_VERSION="$K3S_VERSION" --entrypoint bash "$IMAGE" -eo pipefail -c '
+          docker run --rm --platform linux/amd64 \
+            -e K3S_VERSION="$K3S_VERSION" -e RUNC_VERSION="$RUNC_VERSION" -e NVIDIA_CTK_VERSION="$NVIDIA_CTK_VERSION" \
+            --entrypoint bash "$IMAGE" -eo pipefail -c '
             say() { printf "  %-14s %s\n" "$1" "$2"; }
 
             # Same binary for every arch name, so check the machine too.
@@ -112,11 +121,12 @@ jobs:
             say k3s "$(k3s --version | head -1 | cut -d" " -f3)"
 
             # The security minimum k3s does not bundle yet; k3s-node swaps it in.
-            /usr/local/lib/k3s-node/runc --version | grep -q "^runc version 1.4.3"
+            /usr/local/lib/k3s-node/runc --version | grep -qx "runc version ${RUNC_VERSION#v}"
             say runc "$(/usr/local/lib/k3s-node/runc --version | head -1 | cut -d" " -f3)"
 
             # k3s adds the nvidia containerd runtime when it finds this binary.
             test -x /usr/bin/nvidia-container-runtime
+            nvidia-ctk --version | head -1 | grep -q " ${NVIDIA_CTK_VERSION%-*}$"
             say nvidia-ctk "$(nvidia-ctk --version | head -1 | grep -o "[0-9.]*$")"
 
             # The tunnel to the server, and the node password derivation.
