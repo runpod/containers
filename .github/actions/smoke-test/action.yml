@@ -72,7 +72,9 @@ inputs:
   test-ports:
     description: |
       Newline-separated HTTP ports to expose and probe with the generic
-      proxy-first reachability check. Accepts plain lines or `- 8080`.
+      proxy-first reachability check (HTTP 200 required). Accepts plain lines
+      or `- 8080`. Append a path to probe a specific route, e.g. `80/health`,
+      instead of `/`.
     required: false
     default: ""
   test-pip-check:
