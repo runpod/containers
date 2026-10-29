@@ -3,10 +3,10 @@ variable "COMFYUI_VERSION" {
   default = "v0.35.0"
 }
 variable "MANAGER_SHA" {
-  default = "8afdee041650"
+  default = "8afdee041650" # 2026-10-28
 }
 variable "KJNODES_SHA" {
-  default = "b5316a9e2473"
+  default = "b5316a9e2473" # 2026-10-28
 }
 variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
