@@ -26,6 +26,10 @@ jobs:
   scrape:
     runs-on: blacksmith-4vcpu-ubuntu-2404 # On the org IP allow list; ubuntu-latest is not.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false # One stale family should not block the other.
+      matrix:
+        family: [pytorch, comfyui]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -35,7 +39,7 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
           fetch-depth: 0
 
-      - name: Scan upstream and open PRs
+      - name: Scan ${{ matrix.family }}
         uses: anthropics/claude-code-action@v1
         env:
           # PAT/app token so Claude's PR triggers the build CI. The default
@@ -50,9 +54,10 @@ jobs:
           github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
           show_full_output: true
           prompt: |
-            Read .github/scraper/staleness-playbook.md and follow it exactly.
-            Use the GH_TOKEN env var for all `gh` commands. Open each PR as a draft.
-            If every covered family is already current, make no changes and exit.
+            Read .github/scraper/staleness-playbook.md and follow it exactly, but
+            only for the `${{ matrix.family }}` family; ignore the others.
+            Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
+            If ${{ matrix.family }} is already current, make no changes and exit.
           claude_args: |
             --model claude-opus-4-8
             --max-turns 60
