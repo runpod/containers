@@ -41,8 +41,8 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${TAR_DEB}" \
 # vendored node-* tree (babel, handlebars, pacote) old enough to fail the
 # HIGH/CRITICAL gate. 24 is the current LTS and the first line whose bundled
 # npm carries a patched pacote.
-ARG NODE_VERSION=24.21.0
-ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+ARG NODE_VERSION=24.22.2
+ARG NODE_SHA256=48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
         "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" && \
     echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
@@ -53,7 +53,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
 
 # Pinned by digest, not just by tag — a warm pool is keyed on the image, so an
 # upstream rebuild or a re-pushed tag would silently split the pool.
-COPY --from=ghcr.io/astral-sh/uv:0.12.15@sha256:62f8c047d0a0e9ece6b53fc63df902585a67a47a7f318ddec4a37db586edc8e3 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 /uv /uvx /usr/local/bin/
 
 # Ubuntu images since 24.04 ship a stock `ubuntu` account on uid 1000; drop it
 # so the sandbox user owns the conventional uid.
