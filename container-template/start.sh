@@ -35,7 +35,7 @@ setup_ssh() {
             ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub
         fi
 
-        if [[ ! -f /etc/ssh/ssh_host_dsa_key ]]; then
+        if [[ ! -f /etc/ssh/ssh_host_dsa_key ]] && ssh -Q key | grep -qx ssh-dss; then
             ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -q -N ''
             echo "DSA key fingerprint:"
             ssh-keygen -lf /etc/ssh/ssh_host_dsa_key.pub

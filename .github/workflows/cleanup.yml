@@ -3,7 +3,7 @@ name: Docker Hub Tag Cleanup
 # Prunes ephemeral image tags from Docker Hub once they age out:
 #   * -rc.<PR#>   release-candidate images built for pull requests
 #   * -dev / -dev-* images built by manual (workflow_dispatch) runs
-# Release tags (e.g. 1.2.3-ubuntu2204, 1.2.3-cuda1281-ubuntu2404) and `latest`
+# Release tags (e.g. 1.2.3-ubuntu2604, 1.2.3-cuda1281-ubuntu2404) and `latest`
 # are never eligible — the delete filter only matches the -rc./-dev markers.
 #
 # It also removes orphaned Cosign signatures (`sha256-<digest>.sig` / `.att`):

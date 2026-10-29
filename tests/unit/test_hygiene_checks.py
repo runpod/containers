@@ -317,8 +317,8 @@ class CaCertsVersionFloorTests(unittest.TestCase):
     so what we assert is that its patched package actually arrived."""
 
     FLOOR = "20260816"
-    # Both pod versions seen in CI, plus the pre-fix one they replaced.
-    PATCHED = ("20260816ubuntu0.22.04.1", "20260816ubuntu0.24.04.1")
+    # The patched builds the base Dockerfile pins, plus the pre-fix ones.
+    PATCHED = ("20260816ubuntu0.24.04.1", "20260816ubuntu0.26.04.1")
     STALE = ("20240203", "20250419ubuntu0.24.04.1")
 
     def _compare(self, installed: str) -> int:

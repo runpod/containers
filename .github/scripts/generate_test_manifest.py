@@ -21,7 +21,7 @@ rocm-smi vs skip) from the **image ref itself**, not from the group name.
 
 Usage:
     generate_test_manifest.py --profile base \\
-        --refs '["docker.io/runpod/base:1.0.6-...-ubuntu2204", ...]' \\
+        --refs '["docker.io/runpod/base:1.0.6-...-ubuntu2404", ...]' \\
         --budget 1.0 \\
         --output manifest.yaml
 """
@@ -36,8 +36,8 @@ from pathlib import Path
 
 # A tag is treated as GPU iff it contains any of these (case-insensitive)
 # substrings. Matches our actual tag conventions:
-#   runpod/base:...-cuda1281-ubuntu2204                  -> cuda
-#   runpod/base:...-rocm644-ubuntu2204-py310-pytorch251  -> rocm, py, pytorch
+#   runpod/base:...-cuda1281-ubuntu2404                  -> cuda
+#   runpod/base:...-rocm644-ubuntu2404-py312-pytorch260  -> rocm, py, pytorch
 #   runpod/pytorch:...-cuda1281-py3.10-pytorch251-...    -> cuda, py, pytorch
 # CPU base images carry only ubuntu+suffix, none of these substrings.
 GPU_TAG_PATTERN = re.compile(r"(cuda|pytorch|py|rocm)", re.IGNORECASE)

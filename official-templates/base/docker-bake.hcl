@@ -1,5 +1,5 @@
 group "cpu" {
-  targets = ["cpu-ubuntu2204", "cpu-ubuntu2404"]
+  targets = ["cpu-ubuntu2404", "cpu-ubuntu2604"]
 }
 
 group "default" {
@@ -19,16 +19,6 @@ target "common-base" {
   }
 }
 
-target "cpu-ubuntu2204" {
-  inherits = ["common-base"]
-  tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2204",
-  ]
-  args = {
-    BASE_IMAGE = "ubuntu:22.04"
-  }
-}
-
 target "cpu-ubuntu2404" {
   inherits = ["common-base"]
   tags = [
@@ -36,6 +26,16 @@ target "cpu-ubuntu2404" {
   ]
   args = {
     BASE_IMAGE = "ubuntu:24.04"
+  }
+}
+
+target "cpu-ubuntu2604" {
+  inherits = ["common-base"]
+  tags = [
+    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2604",
+  ]
+  args = {
+    BASE_IMAGE = "ubuntu:26.04"
   }
 }
 

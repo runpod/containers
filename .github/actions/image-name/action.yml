@@ -8,7 +8,7 @@ inputs:
 
 outputs:
   refs:
-    description: "JSON array of image references (e.g. [\"docker.io/runpod/base:1.0.3-ubuntu2204\", ...])"
+    description: "JSON array of image references (e.g. [\"docker.io/runpod/base:1.0.3-ubuntu2404\", ...])"
     value: ${{ steps.extract.outputs.refs }}
   digests:
     description: "JSON array of image digests in registry/image@sha256:... format"
