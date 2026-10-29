@@ -6,7 +6,7 @@ variable "MANAGER_SHA" {
   default = "8afdee041650" # 2026-10-28
 }
 variable "KJNODES_SHA" {
-  default = "b5316a9e2473" # 2026-10-28
+  default = "ab72eda7ffad" # 2026-10-29
 }
 variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
