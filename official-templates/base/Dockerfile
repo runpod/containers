@@ -68,8 +68,8 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     rm -rf /var/lib/apt/lists/*;
 
 # Install pip via verified get-pip.py
-ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
-ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
+ARG GET_PIP_COMMIT=fa4e90301bf000c36309f3ad79c3ac720b55d6df # 26.2.2
+ARG GET_PIP_SHA256=f4448a01e3ab2914c65f4ca59d4cacba6b2dbde19a483fbac46587f8bbaff424
 ARG GET_PIP_39_SHA256=95c0ae79ccf9ac1e47e4187f49081d6ae1f45997afd4549e14f37337cbcfd766
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
