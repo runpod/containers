@@ -1,6 +1,7 @@
 name: Template Staleness Scraper
 
-# Weekly check for upstream releases we do not yet ship (pytorch, comfyui).
+# Weekly check for upstream releases we do not yet ship (pytorch, comfyui,
+# autoresearch, base, pytorch-cluster).
 # Opens a draft PR per stale family; the matrix is verified by the build CI on
 # that PR. Rules live in .github/scraper/staleness-playbook.md.
 on:
@@ -36,6 +37,12 @@ jobs:
             turns: 120
           - family: comfyui
             turns: 60
+          - family: autoresearch
+            turns: 40
+          - family: base
+            turns: 60
+          - family: pytorch-cluster
+            turns: 90
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
