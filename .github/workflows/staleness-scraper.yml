@@ -38,7 +38,7 @@ jobs:
           - family: comfyui
             turns: 60
           - family: autoresearch
-            turns: 40
+            turns: 60
           - family: base
             turns: 60
           - family: pytorch-cluster
