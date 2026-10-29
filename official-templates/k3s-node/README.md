@@ -12,6 +12,7 @@
 ### How it starts
 The entrypoint, `k3s-node`, wraps `k3s agent`:
 - It sets the kubelet's `system-reserved` to the part of the host the Runpod pod does not rent, read from the pod's cgroup limits.
+- It works on cgroup v1 and v2 hosts. On v1 it adds the kubelet flags `fail-cgroupv1=false` and `cpu-cfs-quota=false`: under sysbox the node cannot see its CPU quota, so k8s CPU limits are not enforced per pod there.
 - Without `K3S_TOKEN` and `WG_ENDPOINT` it waits: a cluster's pods start before its control plane exists.
 - It derives the WireGuard keys and the node password from `K3S_TOKEN` and `NODE_RANK`, so a recreated node pod joins as the same node.
 
