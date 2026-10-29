@@ -61,6 +61,13 @@ class GraphqlErrors(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(api.classify_error(status, data), "UNAVAILABLE")
 
+    def test_insufficient_resources_is_capacity(self):
+        """createCluster's reply when no hosts can fit the cluster (dev)."""
+        payload = {"errors": [{"message": "Insufficient resources"}]}
+        with mock.patch.object(api, "_send", return_value=(200, payload)):
+            status, data = api.graphql("q")
+        self.assertEqual(api.classify_error(status, data), "UNAVAILABLE")
+
     def test_server_error_stays_transient(self):
         payload = {"errors": [{"message": "boom"}]}
         with mock.patch.object(api, "_send", return_value=(502, payload)):
@@ -432,3 +439,95 @@ class Reaper(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClusterTypes(unittest.TestCase):
+    """Dev refused TRAINING clusters for a GPU it deploys fine as SLURM."""
+
+    def setUp(self):
+        self._saved = dict(config.GROUP_CLUSTER_TYPES)
+        config.GROUP_CLUSTER_TYPES.clear()
+
+    def tearDown(self):
+        config.GROUP_CLUSTER_TYPES.clear()
+        config.GROUP_CLUSTER_TYPES.update(self._saved)
+
+    def test_input_carries_the_type(self):
+        body = cluster.create_cluster_input(
+            "img", "NVIDIA L4", "n", node_count=2, gpus_per_node=1,
+            cluster_type="SLURM",
+        )
+        self.assertEqual(body["type"], "SLURM")
+
+    def test_default_is_standard_then_slurm(self):
+        with mock.patch.object(config, "CLUSTER_TYPES_OVERRIDE", ""):
+            self.assertEqual(cluster.cluster_types_for("g"), ("TRAINING", "SLURM"))
+
+    def test_env_override_wins_over_the_manifest(self):
+        config.GROUP_CLUSTER_TYPES["g"] = ("TRAINING",)
+        with mock.patch.object(config, "CLUSTER_TYPES_OVERRIDE", "slurm, ray"):
+            self.assertEqual(cluster.cluster_types_for("g"), ("SLURM", "RAY"))
+
+    def test_parse_rejects_unknown_and_empty(self):
+        with self.assertRaises(ValueError):
+            cluster.parse_cluster_types(["TRAINING", "STANDARD"], "x")
+        with self.assertRaises(ValueError):
+            cluster.parse_cluster_types([], "x")
+        self.assertEqual(
+            cluster.parse_cluster_types(["slurm", "SLURM", "training"], "x"),
+            ("SLURM", "TRAINING"),
+        )
+
+    def _create(self, results):
+        calls = []
+
+        def fake(*_a, cluster_type, **_k):
+            calls.append(cluster_type)
+            return results[cluster_type]
+
+        with mock.patch.object(cluster_runner, "create_cluster", side_effect=fake), \
+             mock.patch.object(config, "CLUSTER_TYPES_OVERRIDE", ""), \
+             mock.patch.object(config, "CREATE_RETRIES", 1):
+            out = cluster_runner._create_cluster_with_retries("img", "NVIDIA L4", "g", 2, 1)
+        return out, calls
+
+    def test_refused_standard_falls_back_to_slurm(self):
+        out, calls = self._create({
+            "TRAINING": (None, "UNAVAILABLE", "Insufficient resources"),
+            "SLURM": ("cl-slurm", "", ""),
+        })
+        self.assertEqual(out, ("cl-slurm", "", ""))
+        self.assertEqual(calls, ["TRAINING", "SLURM"])
+
+    def test_standard_success_never_tries_slurm(self):
+        out, calls = self._create({"TRAINING": ("cl1", "", ""), "SLURM": ("x", "", "")})
+        self.assertEqual(out[0], "cl1")
+        self.assertEqual(calls, ["TRAINING"])
+
+    def test_all_refused_reports_the_last_verdict(self):
+        out, _ = self._create({
+            "TRAINING": (None, "FATAL", "some bug"),
+            "SLURM": (None, "UNAVAILABLE", "Insufficient resources"),
+        })
+        self.assertEqual(out[:2], (None, "UNAVAILABLE"))
+
+
+class ExcludedDataCenter(unittest.TestCase):
+    """createCluster still places on a stopped dev host (K3S-POC)."""
+
+    NODES = [cluster.ClusterNode("p0", 0), cluster.ClusterNode("p1", 1)]
+
+    def _dc(self, dcs, excluded="K3S-POC"):
+        with mock.patch.object(config, "CLUSTER_EXCLUDE_DATA_CENTERS", excluded), \
+             mock.patch.object(cluster_runner, "pod_state",
+                               side_effect=lambda pid: {"data_center": dcs[pid]}):
+            return cluster_runner._excluded_data_center(self.NODES)
+
+    def test_dead_host_is_caught(self):
+        self.assertEqual(self._dc({"p0": "SPACE-1", "p1": "K3S-POC"}), "K3S-POC")
+
+    def test_healthy_placement_passes(self):
+        self.assertEqual(self._dc({"p0": "SPACE-1", "p1": "SPACE-1"}), "")
+
+    def test_empty_list_disables_the_check(self):
+        self.assertEqual(self._dc({"p0": "K3S-POC", "p1": "K3S-POC"}, excluded=""), "")

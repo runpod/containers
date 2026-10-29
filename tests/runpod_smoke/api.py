@@ -178,7 +178,8 @@ _UNAVAILABLE_RE = re.compile(
     r"|does\s+not\s+have\s+the\s+resources"
     r"|try\s+a\s+different\s+machine"
     r"|no\s+(?:machines|capacity|hosts|gpus|instances)\s+available"
-    r"|insufficient\s+capacity"
+    # createCluster's wording when no host set can fit the whole cluster.
+    r"|insufficient\s+(?:capacity|resources)"
     r"|unavailable"
     r"|out\s+of\s+stock"
     r"|sold\s+out"

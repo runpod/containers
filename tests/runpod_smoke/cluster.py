@@ -262,6 +262,33 @@ def cluster_ports() -> str:
     return f"8888/http,{config.GRAFANA_PORT}/http,22/tcp"
 
 
+def cluster_types_for(group: str) -> tuple[str, ...]:
+    """The createCluster types to try for `group`, in order."""
+    if config.CLUSTER_TYPES_OVERRIDE:
+        return parse_cluster_types(config.CLUSTER_TYPES_OVERRIDE, "CLUSTER_TYPES")
+    return config.GROUP_CLUSTER_TYPES.get(group) or config.DEFAULT_CLUSTER_TYPES
+
+
+def parse_cluster_types(raw: object, where: str) -> tuple[str, ...]:
+    """A csv string or list of types -> validated, de-duplicated tuple."""
+    items = raw.split(",") if isinstance(raw, str) else list(raw or [])
+    types: list[str] = []
+    for item in items:
+        t = str(item).strip().upper()
+        if not t:
+            continue
+        if t not in config.VALID_CLUSTER_TYPES:
+            raise ValueError(
+                f"{where}: unknown cluster type {item!r}; expected one of "
+                + ", ".join(config.VALID_CLUSTER_TYPES)
+            )
+        if t not in types:
+            types.append(t)
+    if not types:
+        raise ValueError(f"{where}: no cluster types given")
+    return tuple(types)
+
+
 def create_cluster_input(
     image: str,
     gpu_id: str,
@@ -271,6 +298,7 @@ def create_cluster_input(
     gpus_per_node: int,
     group: Optional[str] = None,
     deploy_cost: Optional[float] = None,
+    cluster_type: str = "TRAINING",
 ) -> dict:
     """The `CreateClusterInput` for one smoke attempt. Split out so it can
     be asserted on without an API."""
@@ -287,7 +315,7 @@ def create_cluster_input(
         "gpuTypeId": gpu_id,
         "podCount": node_count,
         "gpuCountPerPod": gpus_per_node,
-        "type": "TRAINING",
+        "type": cluster_type,
         "imageName": image,
         "containerDiskInGb": config.DISK_GB,
         "volumeInGb": 0,
@@ -318,6 +346,7 @@ def create_cluster(
     node_count: int,
     gpus_per_node: int,
     group: Optional[str] = None,
+    cluster_type: str = "TRAINING",
 ) -> tuple[Optional[str], str, str]:
     """Create a cluster. Same `(id, kind, detail)` contract as
     pod.create_pod: kind is '' on success, else UNAVAILABLE / TRANSIENT /
@@ -335,6 +364,7 @@ def create_cluster(
     body = create_cluster_input(
         image, gpu_id, name, node_count=node_count,
         gpus_per_node=gpus_per_node, group=group, deploy_cost=deploy_cost,
+        cluster_type=cluster_type,
     )
     status, data = api.graphql(_CREATE_CLUSTER, {"input": body}, timeout=180)
     if 200 <= status < 300 and isinstance(data, dict):

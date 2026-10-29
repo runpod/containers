@@ -258,9 +258,27 @@ ALLOW_PROD_CLUSTERS = os.environ.get("ALLOW_PROD_CLUSTERS", "0") == "1"
 
 DEFAULT_CLUSTER_NODES = 2
 
+# createCluster `type` values, tried in order for each GPU until one is
+# created. TRAINING is the console's "Standard cluster": our image on every
+# node and nothing else. SLURM ("Slurm cluster") runs the same image with a
+# Slurm controller/compute role layered on top; it is the fallback because
+# dev has refused TRAINING clusters that it deploys as SLURM. Per group:
+# `cluster_types:`; CLUSTER_TYPES (csv) overrides every group.
+VALID_CLUSTER_TYPES = ("TRAINING", "SLURM", "APPLICATION", "RAY")
+DEFAULT_CLUSTER_TYPES = ("TRAINING", "SLURM")
+CLUSTER_TYPES_OVERRIDE = os.environ.get("CLUSTER_TYPES", "")
+
 # Optional csv pinning cluster placement, e.g. `MFS-1`. Empty lets RunPod
 # pick any data center with a free node group.
 CLUSTER_DATA_CENTER_IDS = os.environ.get("CLUSTER_DATA_CENTER_IDS", "")
+
+# Data centers whose placements are never usable: a cluster that lands there
+# is deleted at once and the attempt counts as no capacity. K3S-POC is a dev
+# proof-of-concept whose EC2 host is stopped, yet createCluster still places
+# L4 clusters on it; the pods report RUNNING and never start.
+CLUSTER_EXCLUDE_DATA_CENTERS = os.environ.get(
+    "CLUSTER_EXCLUDE_DATA_CENTERS", "K3S-POC",
+)
 
 # Per-node hourly price; createCluster's `deployCost` is this times the node
 # count. 0 (default) reads the current price from the API; set it only to
@@ -503,6 +521,7 @@ GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
 GROUP_CLUSTER: dict[str, bool] = {}
 GROUP_CLUSTER_NODES: dict[str, int] = {}
 GROUP_CLUSTER_GPUS_PER_NODE: dict[str, int] = {}
+GROUP_CLUSTER_TYPES: dict[str, tuple[str, ...]] = {}
 
 # Image hygiene opt-ins, from the manifest fields of the same name. They
 # catch regressions a boot check cannot see: a dependency pin that conflicts

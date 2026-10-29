@@ -30,7 +30,9 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from runpod_smoke import api, config
-from runpod_smoke.cluster import cluster_catalog
+from runpod_smoke.cluster import (
+    cluster_catalog, cluster_types_for, parse_cluster_types,
+)
 from runpod_smoke.instances import (
     _apply_exclude_filter,
     cuda_axis_for,
@@ -347,11 +349,16 @@ def _apply_cluster_flags(grp: str, contents: dict) -> None:
     )
     if gpus:
         config.GROUP_CLUSTER_GPUS_PER_NODE[grp] = gpus
+    if contents.get("cluster_types") is not None:
+        config.GROUP_CLUSTER_TYPES[grp] = parse_cluster_types(
+            contents["cluster_types"], f"group '{grp}' cluster_types",
+        )
+    types = cluster_types_for(grp)
     ignored = [k for k in ("check_all_gpu", "cuda_versions") if contents.get(k)]
     log(
         f"group '{grp}': cluster=true ({nodes} nodes x "
         f"{gpus or 'smallest offered'} GPU(s); SSH + Jupyter on every node, "
-        f"Grafana on node-0 :{config.GRAFANA_PORT})"
+        f"Grafana on node-0 :{config.GRAFANA_PORT}; types {' -> '.join(types)})"
         + (f" — ignoring {', '.join(ignored)}" if ignored else "")
     )
 

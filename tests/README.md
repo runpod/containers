@@ -377,6 +377,7 @@ Field reference:
 | `cluster` | `true` / `false` — run the group as an **Instant Cluster** instead of a pod. See [Instant Cluster tests](#instant-cluster-tests-pytorch-cluster). Refused unless `RUNPOD_ENV=dev` (or `ALLOW_PROD_CLUSTERS=1`). Implies `test_jupyter`; ignores `check_all_gpu` and `cuda_versions`. Default: `false`. |
 | `cluster_nodes` | Pods per cluster, ≥ 1. Default: `2` (head + one worker — the smallest shape that exercises cross-node scraping). |
 | `cluster_gpus_per_node` | GPUs per node. Must be a size the GPU type offers for clusters (`nodeGroupGpuSizes`); unset picks the smallest. |
+| `cluster_types` | createCluster types to try, in order, for each GPU before moving to the next GPU: `TRAINING` (console: Standard cluster), `SLURM`, `APPLICATION`, `RAY`. Any refusal of one type moves on to the next. Default: `[TRAINING, SLURM]`. |
 | `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
@@ -616,6 +617,8 @@ pytorch:
 | `RUNPOD_ENV` | `prod` | `prod` or `dev`. Selects the API (`api.runpod.io` / `api.runpod.dev`) and the pod proxy (`proxy.runpod.net` / `dev-proxy.runpod.net`). The API key and registered SSH key must belong to the same environment. |
 | `RUNPOD_API_ORIGIN` / `RUNPOD_PROXY_DOMAIN` | per `RUNPOD_ENV` | Override either host directly. REST v2 is `<origin>/v2`, GraphQL `<origin>/graphql`. |
 | `ALLOW_PROD_CLUSTERS` | `0` | `1` lets `cluster: true` groups run on prod. |
+| `CLUSTER_EXCLUDE_DATA_CENTERS` | `K3S-POC` | csv of data centers a cluster must not land in; one that does is deleted at once and the GPU counts as no capacity. K3S-POC is a stopped dev host that placement still picks. |
+| `CLUSTER_TYPES` | `""` | csv overriding every group's `cluster_types`, e.g. `SLURM` to skip Standard entirely. |
 | `CLUSTER_DATA_CENTER_IDS` | `""` | Optional csv pinning cluster placement (e.g. `MFS-1`). |
 | `CLUSTER_DEPLOY_COST` | `0` | Per-node $/hr; `createCluster`'s `deployCost` is this × `cluster_nodes` (the API divides it by the pod count). `0` reads the current price (`lowestPrice` with `isCluster`, else `clusterPrice` × GPUs per node); the API rejects anything below its current minimum. |
 | `CLUSTER_PODS_TIMEOUT` | `300` | Seconds for every member pod to appear in the cluster record after `createCluster`. Booting is then bounded by `CLUSTER_BOOT_TIMEOUT`. |

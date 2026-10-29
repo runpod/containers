@@ -31,6 +31,7 @@ from .cluster import (
     ClusterNode,
     cleanup_cluster,
     cluster_gpu_sizes,
+    cluster_types_for,
     create_cluster,
     pick_gpus_per_node,
     register_cluster,
@@ -60,7 +61,31 @@ def _create_cluster_with_retries(
     image: str, gpu_id: str, group: str, node_count: int, gpus_per_node: int,
 ) -> tuple[Optional[str], str, str]:
     """(cluster_id, "", "") or (None, UNAVAILABLE | CREATE_FAIL, detail).
-    Same retry policy as runner._create_pod_with_retries."""
+
+    Each cluster type is tried in turn, and any refusal moves on to the next
+    one rather than to the next GPU: dev has rejected one type for a GPU it
+    deploys fine as another, so a refusal says something about the type, not
+    only about capacity. The verdict is the last type's when all fail.
+    """
+    types = cluster_types_for(group)
+    result: tuple[Optional[str], str, str] = (None, "CREATE_FAIL", "")
+    for i, cluster_type in enumerate(types):
+        log(f"cluster type: {cluster_type}", indent=2)
+        result = _create_one_type(
+            image, gpu_id, group, node_count, gpus_per_node, cluster_type,
+        )
+        if result[0]:
+            return result
+        if i + 1 < len(types):
+            log(f"{cluster_type} refused, trying {types[i + 1]}", indent=2)
+    return result
+
+
+def _create_one_type(
+    image: str, gpu_id: str, group: str, node_count: int, gpus_per_node: int,
+    cluster_type: str,
+) -> tuple[Optional[str], str, str]:
+    """One cluster type, with runner._create_pod_with_retries' policy."""
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
         # `smoketest-<epoch>-` is what reap_clusters.py keys on.
@@ -70,12 +95,12 @@ def _create_cluster_with_retries(
         )
         cluster_id, kind, raw = create_cluster(
             image, gpu_id, name, node_count=node_count,
-            gpus_per_node=gpus_per_node, group=group,
+            gpus_per_node=gpus_per_node, group=group, cluster_type=cluster_type,
         )
         if cluster_id:
             return cluster_id, "", ""
         if kind == "UNAVAILABLE":
-            log(f"no cluster capacity, will try next ({raw[:160]})", indent=2)
+            log(f"no {cluster_type} capacity ({raw[:160]})", indent=2)
             return None, "UNAVAILABLE", ""
         if kind == "TRANSIENT" and attempt < config.CREATE_RETRIES:
             backoff = config.CREATE_RETRY_BACKOFF * attempt
@@ -250,6 +275,21 @@ def _run_cluster_checks(
     return "PASS", ""
 
 
+def _excluded_data_center(nodes: list[ClusterNode]) -> str:
+    """The excluded data center a member landed in, or "" if none did."""
+    excluded = {
+        d.strip().upper()
+        for d in config.CLUSTER_EXCLUDE_DATA_CENTERS.split(",") if d.strip()
+    }
+    if not excluded:
+        return ""
+    for node in nodes:
+        dc = str(pod_state(node.pod_id).get("data_center") or "")
+        if dc.upper() in excluded:
+            return dc
+    return ""
+
+
 def test_cluster_pair(
     image: str, instance: str, group: str, cuda_pin: str = "", cloud: str = "",
 ) -> _Outcome:
@@ -286,6 +326,14 @@ def test_cluster_pair(
             "members: " + ", ".join(f"{n.hostname}={n.pod_id}" for n in nodes),
             indent=2,
         )
+        dead = _excluded_data_center(nodes)
+        if dead:
+            log(
+                f"placed in excluded data center {dead} (CLUSTER_EXCLUDE_DATA_CENTERS)"
+                " -- deleting, UNAVAILABLE (trying next instance type)",
+                indent=2,
+            )
+            return "UNAVAILABLE", ""
         return _run_cluster_checks(nodes, image, group)
     finally:
         cleanup_cluster(cluster_id)

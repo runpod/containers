@@ -3,7 +3,7 @@
 # Catalog R, Authentication R) and an SSH key registered on the dev account.
 #
 #   RUNPOD_ENV=dev RUNPOD_API_KEY=<dev key> \
-#     python3 tests/test_images.py tests/cluster.yaml
+#     python3 tests/test_images.py tests/cluster.example.yaml
 #
 # Add CLUSTER_REQUIRE_DCGM=0 if dcgm-exporter can't run on the GPU it lands on
 # (some GeForce cards), and DWELL_SEC=0 for a faster debugging loop.
@@ -14,6 +14,13 @@ pytorch_cluster:
     # shape that proves Prometheus scrapes across nodes.
     cluster: true
     cluster_nodes: 2
+    # createCluster types, tried in order per GPU. TRAINING is the console's
+    # "Standard cluster"; SLURM is the fallback because dev has refused
+    # Standard clusters it deploys fine as Slurm. CLUSTER_TYPES=SLURM (env)
+    # skips Standard for a whole run.
+    cluster_types:
+    # - TRAINING
+    - SLURM
     # GPU ids from the dev cluster catalog, tried in order until one has
     # capacity. Cheapest node first; A40 is left out because its only node
     # size is 10 GPUs, and GB10 because it is arm64.
