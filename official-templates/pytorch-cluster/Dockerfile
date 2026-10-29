@@ -50,8 +50,8 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node_exporter.tar.gz \
     rm -rf /tmp/node_exporter*
 
 # Prometheus — scraper + query engine (pinned + SHA-256 verified).
-ARG PROMETHEUS_VERSION=3.14.0
-ARG PROMETHEUS_SHA256=f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d
+ARG PROMETHEUS_VERSION=3.15.1
+ARG PROMETHEUS_SHA256=6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/prometheus.tar.gz \
         "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" && \
     echo "${PROMETHEUS_SHA256}  /tmp/prometheus.tar.gz" | sha256sum -c - && \
@@ -62,9 +62,9 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/prometheus.tar.gz \
     rm -rf /tmp/prometheus*
 
 # Grafana OSS — dashboards (pinned + SHA-256 verified).
-ARG GRAFANA_VERSION=13.1.5
-ARG GRAFANA_BUILD=33098073184
-ARG GRAFANA_SHA256=35d3f3b93777564a95b6f2f9380340ac07b0f238e2df6ba46a106fde785d61f7
+ARG GRAFANA_VERSION=13.3.0
+ARG GRAFANA_BUILD=40412481033
+ARG GRAFANA_SHA256=cec8f98cc59bc1a1945833b652371a073be678c5c159a9b1695ad63c04fae5a7
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/grafana.tar.gz \
         "https://dl.grafana.com/grafana/release/${GRAFANA_VERSION}/grafana_${GRAFANA_VERSION}_${GRAFANA_BUILD}_linux_amd64.tar.gz" && \
     echo "${GRAFANA_SHA256}  /tmp/grafana.tar.gz" | sha256sum -c - && \
