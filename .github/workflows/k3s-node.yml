@@ -1,0 +1,166 @@
+name: k3s Node Image Build
+
+# Reusable building block invoked by the release orchestrator (release.yml),
+# which passes in the families it planned. Not triggered on its own — the
+# orchestrator owns triggers, concurrency and release.
+#
+#
+# The k3s node image is not a user template: it runs a k3s agent and carries no
+# sshd/nginx/Jupyter, so the pod-based smoke test does not apply. It is verified
+# before the push instead: amd64 in a container, arm64 by inspecting its binaries.
+on:
+  workflow_call:
+    inputs:
+      families:
+        description: >-
+          JSON array of families to build, from .github/scripts/plan_families.py.
+          A family absent from it keeps its published images and version.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
+    outputs:
+      suffix: ${{ steps.k3s-node.outputs.suffix }}
+      k3s-node: ${{ steps.k3s-node.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: k3s-node
+        id: k3s-node
+        uses: ./.github/actions/compute-version
+        with:
+          family: k3s-node
+
+  build-k3s-node:
+    needs: versions
+    if: contains(fromJSON(inputs.families), 'k3s-node')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/k3s-node
+
+      - name: Build k3s-node image
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.k3s-node }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/k3s-node/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Verify k3s-node
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          set -euo pipefail
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+          IMAGE=$(jq -er '.[] | select(contains("runpod/k3s-node:"))' <<< "$REFS")
+          echo "Verifying $IMAGE"
+          # The k3s version the bake file pins, so a bump needs no edit here.
+          K3S_VERSION=$(sed -n 's/^ *default = "\(v[0-9.]*+k3s[0-9]*\)"/\1/p' official-templates/k3s-node/docker-bake.hcl)
+          test -n "$K3S_VERSION"
+
+          # The entrypoint wraps `k3s agent`; the Runpod pod only sets env.
+          test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/usr/local/bin/k3s-node"]'
+          test "$(docker inspect -f '{{json .Config.Cmd}}' "$IMAGE")" = '["agent"]'
+          say entrypoint "k3s-node agent"
+
+          echo linux/amd64
+          docker run --rm --platform linux/amd64 -e K3S_VERSION="$K3S_VERSION" --entrypoint bash "$IMAGE" -eo pipefail -c '
+            say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+            # Same binary for every arch name, so check the machine too.
+            say arch "$(uname -m)"
+
+            k3s --version | grep -qF "k3s version ${K3S_VERSION} "
+            say k3s "$(k3s --version | head -1 | cut -d" " -f3)"
+
+            # The security minimum k3s does not bundle yet; k3s-node swaps it in.
+            /usr/local/lib/k3s-node/runc --version | grep -q "^runc version 1.4.3"
+            say runc "$(/usr/local/lib/k3s-node/runc --version | head -1 | cut -d" " -f3)"
+
+            # k3s adds the nvidia containerd runtime when it finds this binary.
+            test -x /usr/bin/nvidia-container-runtime
+            say nvidia-ctk "$(nvidia-ctk --version | head -1 | grep -o "[0-9.]*$")"
+
+            # The tunnel to the server, and the node password derivation.
+            wg --version >/dev/null && ip -V >/dev/null && openssl version >/dev/null
+            say tunnel "wireguard-tools, iproute2, openssl"
+
+            # Without K3S_TOKEN the entrypoint waits instead of crash-looping.
+            out=$(timeout 3 /usr/local/bin/k3s-node agent 2>&1 || true)
+            grep -q "waiting for control plane" <<< "$out"
+            say waits "no K3S_TOKEN: sleeps until the control plane exists"
+          '
+
+          # arm64 is built under emulation, but this runner cannot run arm64
+          # containers: setup-qemu-action's registration did not stick here
+          # ("exec format error"). The build already checked the arm64 k3s and runc
+          # downloads against their checksums, so check the arm64 variant exists
+          # and its binaries are aarch64, without running them.
+          echo linux/arm64
+          cid=$(docker create --platform linux/arm64 "$IMAGE")
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          for bin in /bin/k3s /usr/local/lib/k3s-node/runc /usr/bin/nvidia-container-runtime /usr/bin/bash; do
+            docker cp -L "$cid:$bin" "$RUNNER_TEMP/arm64-bin"
+            # ELF e_machine at offset 18, little endian: 0x00b7 is aarch64.
+            test "$(od -An -tx2 -j18 -N2 "$RUNNER_TEMP/arm64-bin" | tr -d ' ')" = 00b7
+          done
+          say binaries "k3s, runc, nvidia-container-runtime and bash are aarch64"
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
