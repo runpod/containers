@@ -1,7 +1,7 @@
 name: Template Staleness Scraper
 
 # Weekly check for upstream releases we do not yet ship (pytorch, comfyui,
-# autoresearch, base, pytorch-cluster).
+# autoresearch, base, pytorch-cluster, and the sandbox-* families).
 # Opens a draft PR per stale family; the matrix is verified by the build CI on
 # that PR. Rules live in .github/scraper/staleness-playbook.md.
 on:
@@ -43,6 +43,14 @@ jobs:
             turns: 60
           - family: pytorch-cluster
             turns: 90
+          - family: sandbox-ubuntu
+            turns: 70
+          - family: sandbox-browser
+            turns: 50
+          - family: sandbox-harbor
+            turns: 50
+          - family: sandbox-openclaw
+            turns: 50
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -74,4 +82,4 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(pip index:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"

@@ -6,7 +6,8 @@ not yet ship, and, where you can verify the build inputs exist, open a draft PR 
 adds them following the exact conventions already in the repo.
 
 Covered families: **pytorch**, **comfyui**, **autoresearch**, **base**,
-**pytorch-cluster**. Ignore all others.
+**pytorch-cluster**, and the four sandboxes (**sandbox-ubuntu**,
+**sandbox-browser**, **sandbox-harbor**, **sandbox-openclaw**). Ignore all others.
 
 ## Ground rules
 
@@ -149,24 +150,19 @@ Two things to monitor; everything else in base is managed by hand, do not touch 
 - `GET_PIP_39_SHA256`: sha256 of `public/3.9/get-pip.py` at that commit.
   Fetch both files at the commit and compute the hashes, do not guess.
 
-**nvidia/cuda**: our CUDA bases live in `CUDA_VERSIONS` in
-`official-templates/shared/versions.hcl`, built as
-`nvidia/cuda:<version>-cudnn-devel-ubuntu<U>`. Check Docker Hub for a
-`-cudnn-devel-ubuntu*` tag of a CUDA version newer than our highest, but only for
-**Ubuntu 24.04 and newer** (ignore 22.04, it is being retired). Confirm the exact
-tag exists before adding. Add the new version to `CUDA_VERSIONS` alongside the
-existing ones with `ubuntu = ["24.04"]` (plus any newer Ubuntu it ships for),
-never 22.04.
+**nvidia/cuda** — **detection only, do not apply.** Adding a CUDA version is too
+risky for now: `CUDA_VERSIONS` in `official-templates/shared/versions.hcl` is
+shared by every family (base and autoresearch would start building it, pytorch
+needs hand-written `CUDA_TORCH_COMBINATIONS` rows), so a human decides when to wire
+it in. Still check Docker Hub for a `nvidia/cuda:<ver>-cudnn-devel-ubuntu*` tag of
+a CUDA version newer than our highest, but only for **Ubuntu 24.04 and newer**
+(ignore 22.04). If you find one, do NOT edit `CUDA_VERSIONS`, the README, or
+anything else. Just mark it: append a line to the Actions job summary
+(`echo "..." >> "$GITHUB_STEP_SUMMARY"`) naming the new tag and that it was skipped
+as too risky, and if a base PR is open for get-pip, note it there too.
 
-`CUDA_VERSIONS` is shared by every family, so this has a wide blast radius: base
-and autoresearch start building the new CUDA, and pytorch needs
-`CUDA_TORCH_COMBINATIONS` rows added by hand. Do NOT edit other families' matrices
-here. Spell out the blast radius in the PR body and leave the follow-up to humans.
-
-When you add a CUDA version, also update `official-templates/base/README.md`: add
-it to the CUDA line under the configurations list and add a block under "CUDA
-Images ... by Version" with the Ubuntu 24.04 tag only. A get-pip bump needs no
-README change (no version is listed there).
+A get-pip bump needs no README change (no version is listed there), and base makes
+no other README change while CUDA is detection-only.
 
 ## pytorch-cluster
 
@@ -193,6 +189,47 @@ is coupled, handle with care:
   exporter binary and `/etc/dcgm-exporter` contents must be re-verified.
 
 This README lists no component versions, so no README change.
+
+## sandbox-ubuntu
+
+Base image for the other sandboxes. Four pins, each a plain bump:
+- **Ubuntu digest**: `BASE_IMAGE = "ubuntu:26.04@sha256:..."` in
+  `official-templates/sandbox-ubuntu/docker-bake.hcl`. Keep the `26.04` tag; if the
+  tag's current Docker Hub digest differs from the pinned one, update the digest
+  (`docker buildx imagetools inspect ubuntu:26.04`).
+- **Node**: `NODE_VERSION` + `NODE_SHA256` in the Dockerfile. Latest Node 24 LTS
+  from nodejs.org/dist, asset `node-v<ver>-linux-x64.tar.xz`. Stay on the 24 LTS
+  line (the README says "Node.js 24 LTS").
+- **tar deb**: `TAR_DEB` + `TAR_DEB_SHA256`. Newest `tar_*_amd64.deb` in
+  `https://archive.ubuntu.com/ubuntu/pool/main/t/tar/`, download it and hash it.
+- **uv**: `ghcr.io/astral-sh/uv:<ver>@sha256:...` in the Dockerfile COPY. Latest
+  `astral-sh/uv` release; update both the version and the digest
+  (`docker buildx imagetools inspect ghcr.io/astral-sh/uv:<ver>`).
+
+The README states only majors (Ubuntu 26.04, Node 24, Python 3.14), so these bumps
+need no README change unless a stated major/LTS line changes.
+
+## sandbox-browser
+
+`PLAYWRIGHT_VERSION` in `official-templates/sandbox-browser/Dockerfile` (one pin
+for both the npm and the pip install). Bump to the latest Playwright release,
+verifying it exists on both npm (`playwright`) and PyPI (`playwright`). Update the
+"Playwright X.Y.Z" line in the README.
+
+## sandbox-harbor
+
+`HARBOR_VERSION` in `official-templates/sandbox-harbor/Dockerfile`, installed via
+`uv tool install harbor==`. Bump to the latest `harbor` release on PyPI. Update the
+"Harbor X.Y.Z" line in the README.
+
+## sandbox-openclaw
+
+`OPENCLAW_VERSION` + `OPENCLAW_DIGEST` in
+`official-templates/sandbox-openclaw/docker-bake.hcl` (image
+`ghcr.io/openclaw/openclaw:<ver>@<digest>`). Bump to the latest openclaw release
+tag and update the digest together
+(`docker buildx imagetools inspect ghcr.io/openclaw/openclaw:<ver>`); the two must
+stay in lockstep. Update the "OpenClaw <version>" line in the README.
 
 ## PR body
 
