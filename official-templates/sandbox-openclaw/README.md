@@ -5,7 +5,7 @@
 A sandbox for running the OpenClaw agent on isolated, disposable compute instead of your own machine. OpenClaw executes shell commands and edits files, so giving it a sandbox rather than a laptop is the point.
 
 ### What's included
-- **OpenClaw 2026.9.4** with its bundled plugins, `openclaw` on `PATH`.
+- **OpenClaw 2026.10.8** with its bundled plugins, `openclaw` on `PATH`.
 - **Node.js 24** with `npm` and `pnpm`, on Debian 12.
 - **Python 3** with `pip`, plus `git`, `curl`, `jq`, `ripgrep`, an ssh client and the usual archive tools.
 - **Build tooling**: `build-essential`, for packages with native extensions.

@@ -6,13 +6,13 @@
 # CVEs), and its only benefit is skipping a one-off install at first use.
 
 variable "OPENCLAW_VERSION" {
-  default = "2026.9.4"
+  default = "2026.10.8"
 }
 
 variable "OPENCLAW_DIGEST" {
   # Pinned alongside the version so the tag we publish and the bits we build
   # on can never drift apart.
-  default = "sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101"
+  default = "sha256:82b6ce63048e75ca749dbc250e872ee21f4b1c098fc6bff94636e357bcb64bf5"
 }
 
 group "default" {
