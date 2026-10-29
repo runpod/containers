@@ -49,6 +49,12 @@ Covered families: **pytorch**, **comfyui**, **autoresearch**, **base**,
 - After editing, run `docker buildx bake -f official-templates/shared/versions.hcl
   -f official-templates/<family>/docker-bake.hcl --print` as a syntax check. If it
   errors on the HCL itself, fix it. Build/runtime correctness is proven later by CI.
+- When you finish, write your outcome to `/tmp/scraper-status` with the Write tool:
+  exactly `ok` if you completed this family (opened or updated its PR, or confirmed
+  it is already current with nothing to do), or `failed: <one-line reason>` if
+  anything blocked you (a denied tool, an input you could not verify, a git or PR
+  step that failed, or the family not being present on the base branch). The job
+  reads this file and goes red unless it is exactly `ok`.
 
 ## pytorch
 
@@ -144,11 +150,15 @@ README, so no README change.
 
 Two things to monitor; everything else in base is managed by hand, do not touch it.
 
-**get-pip**, pinned in `official-templates/base/Dockerfile`:
-- `GET_PIP_COMMIT`: latest default-branch commit of `pypa/get-pip`.
+**get-pip**, pinned in `official-templates/base/Dockerfile`. `pypa/get-pip` is
+tagged per pip version (tags like `26.2.2`); pin the commit the latest tag points
+to, not an arbitrary branch tip.
+- `GET_PIP_COMMIT`: the commit at the latest `pypa/get-pip` release tag. Annotate
+  it with that version (`GET_PIP_COMMIT=... # 26.2.2`).
 - `GET_PIP_SHA256`: sha256 of `public/get-pip.py` at that commit.
 - `GET_PIP_39_SHA256`: sha256 of `public/3.9/get-pip.py` at that commit.
-  Fetch both files at the commit and compute the hashes, do not guess.
+  Fetch both files and recompute both hashes, do not guess and do not assume the
+  3.9 hash is unchanged (it often is, but verify).
 
 **nvidia/cuda** — **detection only, do not apply.** Adding a CUDA version is too
 risky for now: `CUDA_VERSIONS` in `official-templates/shared/versions.hcl` is

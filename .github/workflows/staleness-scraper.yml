@@ -83,3 +83,14 @@ jobs:
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
             --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+
+      - name: Require a clean agent outcome
+        if: always()
+        shell: bash
+        run: |
+          status="$(cat /tmp/scraper-status 2>/dev/null || echo 'missing (agent did not report)')"
+          echo "::notice::${{ matrix.family }} scraper status: $status"
+          if [ "$status" != "ok" ]; then
+            echo "::error::scraper did not complete cleanly for ${{ matrix.family }}: $status"
+            exit 1
+          fi
