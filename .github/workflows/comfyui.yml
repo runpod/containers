@@ -24,7 +24,7 @@ permissions:
 jobs:
   # This family's own version series (git tags `comfyui-v1.3.1`).
   versions:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
@@ -172,6 +172,11 @@ jobs:
           min-vram-gb: "80"
           create-timeout: "1200"
           test-jupyter: "true"
+          # The ComfyUI venv is created with --system-site-packages, so
+          # certifi resolves to the system copy and one check covers both.
+          test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
+          test-python-tls: "true"
           test-comfyui: "true"
           test-comfyui-functional: ${{ inputs.run-functional-tests }}
           save-comfyui-images: ${{ inputs.run-functional-tests }}
