@@ -55,15 +55,26 @@ RUN sed -i 's|--web.listen-address=127.0.0.1:9090|& --storage.tsdb.retention.tim
 RUN mv /post_start.sh /post_start.cluster.sh
 COPY --chmod=755 post_start.sh /post_start.sh
 
-#   8265  Ray dashboard: host readiness/liveness poll, and the cluster owner's
-#         browser. Token-authenticated by Ray itself (the entrypoint sets
-#         RAY_AUTH_MODE=token), so it is safe to map through the Runpod proxy.
+# Dashboard front door on 8266 for the console's `?token=` link, served by the
+# base image's nginx (/start.sh starts it). The base nginx.conf has no include
+# directory, so splice one include into its http block.
+COPY config/nginx/ray-dashboard.conf /etc/nginx/ray-dashboard.conf
+RUN sed -i 's|^http {$|&\n    include /etc/nginx/ray-dashboard.conf;|' /etc/nginx/nginx.conf && \
+    grep -q 'include /etc/nginx/ray-dashboard.conf;' /etc/nginx/nginx.conf && \
+    nginx -t
+
+#   8266  Ray dashboard for the cluster owner's browser: nginx turns the
+#         console's `?token=` into Ray's session cookie, then proxies to 8265.
+#         Map this one in the Runpod template.
+#   8265  Ray dashboard: host readiness/liveness poll (host-internal; browsers
+#         and API clients use 8266). Token-authenticated by Ray itself (the
+#         entrypoint sets RAY_AUTH_MODE=token).
 #   20217 Ray metrics: host scrape and the head's Prometheus (host-internal)
 #   52365 Ray dashboard agent: the head's dashboard reaches each node's agent
 #         for jobs and logs (host-internal; not gated)
 #   6379  Ray GCS: workers register here (host-internal; token-gated gRPC)
 # 8889 Grafana (token-authenticated) is inherited from the -cluster base.
-EXPOSE 8265 20217 52365 6379
+EXPOSE 8266 8265 20217 52365 6379
 
 # No HEALTHCHECK: readiness and liveness are the host's (pkg/rayready polls the
 # head dashboard), and nothing acts on Docker's health status.

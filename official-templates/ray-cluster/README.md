@@ -48,12 +48,15 @@ It also logs a warning if the installed Ray differs from the version the image w
 | Port | Service | Who reaches it |
 |---|---|---|
 | 6379 | Ray GCS | workers → head, to register |
-| 8265 | Ray dashboard (head, bound `0.0.0.0`), token-authenticated | host readiness/liveness poll (`/api/gcs_healthz`, the State API's `/api/v0/nodes`); cluster owner's browser, map this in the Runpod template |
+| 8266 | Ray dashboard front door (nginx, head) | cluster owner's browser, from the console's `?token=` link, and API clients (`Authorization: Bearer` passes through); map this in the Runpod template |
+| 8265 | Ray dashboard (head, bound `0.0.0.0`), token-authenticated | host readiness/liveness poll (`/api/gcs_healthz`, the State API's `/api/v0/nodes`); 8266 proxies to it. Leave unmapped |
 | 20217 | Ray metrics (every node) | host scrape; the head's Prometheus |
 | 52365 | Ray dashboard agent (every node) | the head's dashboard, for jobs and logs |
 | 8889 | Grafana, token-authenticated (inherited from `pytorch-cluster`) | cluster owner's browser; map this in the Runpod template |
 
-All except Grafana and the dashboard are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. Unauthenticated, the Ray dashboard's API is job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). Ray's own token authentication closes that, so 8265 is safe to map: the UI asks for the token once and keeps it in an HttpOnly `ray-authentication-token` cookie; API clients send `Authorization: Bearer <token>`. Health checks (`/api/gcs_healthz`), the static UI and the login endpoint stay public. The metrics port (20217) and the agent port (52365) are not gated, so keep them unmapped. **With `RAY_AUTH_MODE=disabled`, never map 8265.**
+All except Grafana and the dashboard front door are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. Unauthenticated, the Ray dashboard's API is job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). Ray's own token authentication closes that: the UI asks for the token once and keeps it in an HttpOnly `ray-authentication-token` cookie; API clients send `Authorization: Bearer <token>`. Health checks (`/api/gcs_healthz`), the static UI and the login endpoint stay public. The metrics port (20217) and the agent port (52365) are not gated, so keep them unmapped. **With `RAY_AUTH_MODE=disabled`, never map 8265 or 8266.**
+
+The front door on 8266 skips the token prompt, the way Jupyter's link does: the console opens `https://<pod>-8266.<proxy-base>/?token=<cluster token>`, and nginx (`config/nginx/ray-dashboard.conf`, started by `/start.sh`) answers with that token as Ray's `ray-authentication-token` cookie and a redirect to the same path without it. nginx holds no secret and checks nothing; every request it passes on is still checked by Ray, so a wrong token gets Ray's usual prompt. Only URL-safe tokens (`A-Z a-z 0-9 . _ ~ -`) are taken from the link; any other token falls back to the prompt. As with Jupyter, anyone holding the link holds the cluster token.
 
 ## Metrics for the cluster owner
 
@@ -81,7 +84,7 @@ Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BAS
 - that a pod without `NODE_RANK` boots without Ray;
 - that a 2-node cluster forms from only `NODE_RANK`, `NUM_NODES` and `/etc/hosts`, with the worker started first, before `node-0` is in its `/etc/hosts`: the worker waits without starting Ray, then joins once `node-0` is added. Then head health (`/api/gcs_healthz`), both nodes `ALIVE` at their addresses in the State API (`/api/v0/nodes`, the query the host makes), metrics on 20217 from both nodes, and the worker's CMD running without the Jupyter env;
 - that after the head restarts, the worker (left running) rejoins the new head by itself;
-- that the dashboard API answers 401 with no token, 403 with a wrong one, and 200 with the bearer token or the cookie `/api/authenticate` sets. The head takes its token from `RAY_DASHBOARD_PASSWORD` and the worker from `JUPYTER_PASSWORD`, so the worker joining proves both resolve to the same cluster token.
+- that the dashboard API answers 401 with no token, 403 with a wrong one, and 200 with the bearer token or the cookie `/api/authenticate` sets; and that the front door on 8266 turns `?token=` into that cookie with a redirect, while Ray still answers 401 there without one. The head takes its token from `RAY_DASHBOARD_PASSWORD` and the worker from `JUPYTER_PASSWORD`, so the worker joining proves both resolve to the same cluster token.
 
 CI runs it before pushing, and uploads the head's node-list and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.
 

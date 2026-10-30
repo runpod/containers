@@ -21,7 +21,8 @@
 #   5. Ray token auth: the dashboard reports token mode; its API answers 401
 #      with no token and 403 with a wrong one (the head's JUPYTER_PASSWORD,
 #      which RAY_DASHBOARD_PASSWORD outranks), and 200 with the bearer token;
-#      /api/authenticate sets the session cookie the UI rides. The worker
+#      /api/authenticate sets the session cookie the UI rides, and so does
+#      nginx's front door on 8266 for a ?token= link, still checked by Ray. The worker
 #      takes its token from JUPYTER_PASSWORD, so its join (step 4) proves both
 #      fallbacks resolve to one cluster token. A boot with no secret is refused
 #      (step 2), and RAY_AUTH_MODE=disabled is the explicit opt-out.
@@ -35,6 +36,8 @@ set -euo pipefail
 
 readonly CONTRACT=v1
 readonly DASHBOARD_PORT=8265
+# nginx's browser front door to the dashboard (config/nginx/ray-dashboard.conf).
+readonly FRONT_PORT=8266
 readonly METRICS_PORT=20217
 # The cluster token: the head gets it as RAY_DASHBOARD_PASSWORD, the worker as
 # JUPYTER_PASSWORD. The head's own JUPYTER_PASSWORD is the wrong token.
@@ -300,6 +303,22 @@ check_image() {
     code=$(dash_code /api/version -H "Cookie: ray-authentication-token=$TOKEN")
     [[ "$code" == 200 ]] || fail "session cookie: want 200, got $code"
     pass "dashboard API: 401 without a token, 403 with a wrong one, 200 with the bearer token or session cookie"
+
+    # The browser front door: nginx on 8266 turns ?token= into that cookie.
+    # The head's CMD is `sleep infinity`, so start nginx as /start.sh would.
+    docker exec "$run_id-head" nginx || fail "nginx did not start on the head"
+    "${in_worker[@]}" curl -sS -o /dev/null -D /tmp/front-headers "http://$HEAD_IP:$FRONT_PORT/?token=$TOKEN" ||
+        fail "the dashboard front door ($FRONT_PORT) is unreachable"
+    "${in_worker[@]}" grep -qi '^HTTP/1.1 302' /tmp/front-headers || fail "?token= was not redirected"
+    "${in_worker[@]}" grep -qi '^location: /\s*$' /tmp/front-headers || fail "?token= did not redirect to a token-free URL"
+    "${in_worker[@]}" grep -qi "^set-cookie: ray-authentication-token=$TOKEN;" /tmp/front-headers ||
+        fail "?token= set no session cookie"
+    code=$("${in_worker[@]}" curl -s -o /dev/null -w '%{http_code}' -H "Cookie: ray-authentication-token=$TOKEN" \
+        "http://$HEAD_IP:$FRONT_PORT/api/version")
+    [[ "$code" == 200 ]] || fail "front door with the cookie: want 200, got $code"
+    code=$("${in_worker[@]}" curl -s -o /dev/null -w '%{http_code}' "http://$HEAD_IP:$FRONT_PORT/api/version")
+    [[ "$code" == 401 ]] || fail "front door without a token: want 401, got $code"
+    pass "dashboard front door: ?token= becomes Ray's session cookie, and Ray still checks it"
 
     if [[ -n "${RAY_CONTRACT_FIXTURE_DIR:-}" ]]; then
         local dir
