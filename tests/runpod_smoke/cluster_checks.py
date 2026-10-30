@@ -29,8 +29,8 @@ from . import config
 
 _UA = "runpod-smoke-test/1.0"
 
-HEAD_PROGRAMS = ("node_exporter", "dcgm-exporter", "prometheus", "grafana", "grafana-proxy")
 HEAD_ONLY_PROGRAMS = ("prometheus", "grafana", "grafana-proxy")
+HEAD_PROGRAMS = ("node_exporter", "dcgm-exporter", *HEAD_ONLY_PROGRAMS)
 
 
 def _exporters(require_dcgm: bool) -> tuple[str, ...]:
@@ -48,7 +48,8 @@ def node_identity_command(idx: int) -> str:
         "echo \"node-* in /etc/hosts: $(awk '{for (i = 2; i <= NF; i++) "
         "if ($i ~ /^node-/) print $i}' /etc/hosts | sort -u | tr '\\n' ' ')\"; "
         f"[ \"$HN\" = {shlex.quote(want)} ] "
-        f"|| {{ echo 'FAIL: expected hostname {want} for cluster rank {idx}'; exit 1; }}"
+        f"|| {{ echo 'FAIL: expected hostname {want} for cluster rank {idx}'; "
+        "exit 1; }"
     )
 
 
@@ -78,22 +79,33 @@ _TARGETS_PROGRAM = r"""
 import json, sys, time, urllib.request
 want, timeout, jobs = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3:]
 deadline = time.time() + timeout
+url = 'http://127.0.0.1:9090/api/v1/targets?state=active'
 targets, err = [], ''
+
+
+def healthy(job):
+    return sum(
+        1 for t in targets
+        if t['labels'].get('job') == job and t.get('health') == 'up'
+    )
+
+
 while True:
     try:
-        with urllib.request.urlopen('http://127.0.0.1:9090/api/v1/targets?state=active', timeout=10) as r:
+        with urllib.request.urlopen(url, timeout=10) as r:
             targets = json.load(r)['data']['activeTargets']
         err = ''
     except Exception as e:
         err = f'{type(e).__name__}: {e}'
-    up = {j: sum(1 for t in targets if t['labels'].get('job') == j and t.get('health') == 'up') for j in jobs}
+    up = {j: healthy(j) for j in jobs}
     if not err and all(up[j] >= want for j in jobs):
         break
     if time.time() >= deadline:
         break
     time.sleep(5)
 print('--- prometheus targets ---')
-for t in sorted(targets, key=lambda t: (t['labels'].get('job', ''), t['labels'].get('instance', ''))):
+order = lambda t: (t['labels'].get('job', ''), t['labels'].get('instance', ''))
+for t in sorted(targets, key=order):
     line = f"{t['labels'].get('job')} {t['labels'].get('instance')} {t.get('health')}"
     if t.get('lastError'):
         line += f" ({t['lastError'][:120]})"
@@ -212,7 +224,9 @@ def run_grafana_proxy_check(pod_id: str) -> tuple[bool, str]:
         code, body = _get(f"{base}/api/health")
         health = _json(body) if code == 200 else None
         if health and health.get("database") == "ok":
-            lines.append(f"GET /api/health: HTTP 200 (attempt #{attempt}) {body.strip()[:160]}")
+            lines.append(
+                f"GET /api/health: HTTP 200 (attempt #{attempt}) {body.strip()[:160]}"
+            )
             break
         if time.monotonic() >= deadline:
             lines.append(
@@ -236,7 +250,9 @@ def run_grafana_proxy_check(pod_id: str) -> tuple[bool, str]:
     code, body = _get(f"{base}/api/user")
     lines.append(f"GET /api/user (no token): HTTP {code}")
     if code == 200:
-        lines.append("FAIL: Grafana answered /api/user without a token — not protected")
+        lines.append(
+            "FAIL: Grafana answered /api/user without a token — not protected"
+        )
         return False, "\n".join(lines)
 
     code, body = _get(

@@ -32,7 +32,8 @@ tests/
     ├── runner.py           ← test_pair / test_image (per-image orchestration)
     ├── cluster.py          ← Instant Cluster create/members/delete (GraphQL), signal-safe cleanup
     ├── cluster_checks.py   ← pytorch-cluster checks: node identity, monitoring stack, Grafana
-    └── cluster_runner.py   ← test_cluster_pair (one cluster per attempt)
+    ├── cluster_runner.py   ← test_cluster_pair (one cluster per attempt)
+    └── cluster_report.py   ← per-cluster check x node table (log, SUMMARY, step summary)
 ```
 
 
@@ -618,6 +619,7 @@ pytorch:
 | `RUNPOD_API_ORIGIN` / `RUNPOD_PROXY_DOMAIN` | per `RUNPOD_ENV` | Override either host directly. REST v2 is `<origin>/v2`, GraphQL `<origin>/graphql`. |
 | `ALLOW_PROD_CLUSTERS` | `0` | `1` lets `cluster: true` groups run on prod. |
 | `CLUSTER_EXCLUDE_DATA_CENTERS` | `K3S-POC` | csv of data centers a cluster must not land in; one that does is deleted at once and the GPU counts as no capacity. K3S-POC is a stopped dev host that placement still picks. |
+| `LOG_ERROR_IGNORE` | `^\s*(?:slurmctld\|slurmd\|slurmdbd):` | Regex; container-log lines matching it are skipped by the error scan. The default drops the Slurm daemons a SLURM-type cluster injects (they log `error:` on every first boot). Empty disables. |
 | `CLUSTER_TYPES` | `""` | csv overriding every group's `cluster_types`, e.g. `SLURM` to skip Standard entirely. |
 | `CLUSTER_DATA_CENTER_IDS` | `""` | Optional csv pinning cluster placement (e.g. `MFS-1`). |
 | `CLUSTER_DEPLOY_COST` | `0` | Per-node $/hr; `createCluster`'s `deployCost` is this × `cluster_nodes` (the API divides it by the pod count). `0` reads the current price (`lowestPrice` with `isCluster`, else `clusterPrice` × GPUs per node); the API rejects anything below its current minimum. |
@@ -788,6 +790,29 @@ attempt checks, failing on the first problem with the node named:
    proxy, no token is refused, and a query through the Prometheus
    datasource returns series.
 6. Opted-in hygiene checks (head only), log scan, dwell, SSH re-probe.
+
+Every attempt that created a cluster gets a table of every check per node,
+printed under `CLUSTER CHECKS` after the SUMMARY. A check that was never reached says `not run`, and `-` marks a
+head-only check on a worker:
+
+```
+PASS  runpod/pytorch-cluster:1.5.0-cu1281-torch280-ubuntu2404
+  cluster krwetbsrhnbc0j  |  SLURM  |  2 nodes x 2x NVIDIA GeForce RTX 4090  |  MFS-1  |  2m13s
+
+  check                         node-0 (head)  node-1
+  ----------------------------  -------------  -----------
+  SSH ready                     ok 0s proxy    ok 0s proxy
+  hostname / rank               ok             ok
+  CUDA / torch                  ok             ok
+  Jupyter via proxy             ok             ok
+  monitoring services           ok             ok
+  Prometheus scrapes all nodes  ok             -
+  Grafana via proxy :8889       ok             -
+  CA trust store                ok             -
+  certifi / python TLS          ok             -
+  log scan                      ok             ok
+  alive after 60s               ok             ok
+```
 
 The cluster is deleted in a `finally` and by the same atexit/signal handler
 as pods. `.github/workflows/reap-clusters.yml` is the backstop: hourly, it

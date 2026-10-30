@@ -17,7 +17,9 @@ import threading
 import unittest
 from unittest import mock
 
-from runpod_smoke import api, cluster, cluster_checks, cluster_runner, config
+from runpod_smoke import (
+    api, checks, cluster, cluster_checks, cluster_report, cluster_runner, config,
+)
 
 
 class EnvTargeting(unittest.TestCase):
@@ -34,7 +36,9 @@ class EnvTargeting(unittest.TestCase):
     def test_prod_is_the_default(self):
         self._reload()
         self.assertEqual(config.REST_URL, "https://api.runpod.io/v2")
-        self.assertEqual(config.proxy_url("abc", 8888), "https://abc-8888.proxy.runpod.net")
+        self.assertEqual(
+            config.proxy_url("abc", 8888), "https://abc-8888.proxy.runpod.net",
+        )
 
     def test_dev_switches_api_graphql_and_proxy(self):
         self._reload(RUNPOD_ENV="dev")
@@ -55,7 +59,8 @@ class EnvTargeting(unittest.TestCase):
 
 class GraphqlErrors(unittest.TestCase):
     def test_errors_in_a_200_are_not_success(self):
-        payload = {"errors": [{"message": "There are no longer any instances available"}]}
+        msg = "There are no longer any instances available"
+        payload = {"errors": [{"message": msg}]}
         with mock.patch.object(api, "_send", return_value=(200, payload)):
             status, data = api.graphql("q")
         self.assertEqual(status, 400)
@@ -94,7 +99,8 @@ class ClusterApi(unittest.TestCase):
     def test_catalog_keeps_cluster_types_cheapest_node_first(self):
         catalog = cluster.parse_cluster_catalog([
             {"id": "NVIDIA A40", "nodeGroupGpuSizes": [10], "clusterPrice": 0.42},
-            {"id": "NVIDIA GeForce RTX 4090", "nodeGroupGpuSizes": [2], "clusterPrice": 0.888},
+            {"id": "NVIDIA GeForce RTX 4090", "nodeGroupGpuSizes": [2],
+             "clusterPrice": 0.888},
             {"id": "NVIDIA L4", "nodeGroupGpuSizes": [1], "clusterPrice": 0.6},
             {"id": "unknown", "nodeGroupGpuSizes": [1], "clusterPrice": 0.1},
             {"id": "NVIDIA H100", "nodeGroupGpuSizes": [], "clusterPrice": 2},
@@ -147,9 +153,9 @@ class ClusterApi(unittest.TestCase):
 
     def test_deploy_cost_is_the_whole_cluster_price(self):
         """The API divides deployCost by podCount before the minimum check."""
+        created = (200, {"createCluster": {"id": "c"}})
         with mock.patch.object(cluster, "node_price", return_value=1.48), \
-             mock.patch.object(api, "graphql",
-                               return_value=(200, {"createCluster": {"id": "c"}})) as gql:
+             mock.patch.object(api, "graphql", return_value=created) as gql:
             cid, _, _ = cluster.create_cluster(
                 "img", "NVIDIA GeForce RTX 4090", "n", node_count=2, gpus_per_node=2,
             )
@@ -166,7 +172,8 @@ class ClusterApi(unittest.TestCase):
         self.assertEqual(kind, "UNAVAILABLE")
 
     def test_delete_of_a_missing_cluster_is_success(self):
-        with mock.patch.object(api, "graphql", return_value=(400, {"detail": "Cluster not found"})):
+        missing = (400, {"detail": "Cluster not found"})
+        with mock.patch.object(api, "graphql", return_value=missing):
             self.assertEqual(cluster.delete_cluster("x"), (True, ""))
 
     def test_cleanup_all_deletes_registered_clusters(self):
@@ -286,21 +293,26 @@ class PrometheusTargetCounter(unittest.TestCase):
     def _t(job, inst, health="up"):
         return {"labels": {"job": job, "instance": inst}, "health": health}
 
+    def _both(self, job, port, node1_health="up"):
+        """One job's target on node-0 and node-1."""
+        return [self._t(job, f"node-0:{port}"),
+                self._t(job, f"node-1:{port}", node1_health)]
+
     def test_every_node_scraped_passes(self):
-        r = self._run([self._t("node", "node-0:9100"), self._t("node", "node-1:9100"),
-                       self._t("dcgm", "node-0:9400"), self._t("dcgm", "node-1:9400")], 2)
+        r = self._run(self._both("node", 9100) + self._both("dcgm", 9400), 2)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("targets OK", r.stdout)
 
     def test_head_scraping_only_itself_fails(self):
         """The /etc/hosts fallback: post_start.sh found no peers."""
-        r = self._run([self._t("node", "node-0:9100"), self._t("dcgm", "node-0:9400")], 2)
+        r = self._run(
+            [self._t("node", "node-0:9100"), self._t("dcgm", "node-0:9400")], 2,
+        )
         self.assertEqual(r.returncode, 1)
         self.assertIn("node 1/2", r.stdout)
 
     def test_down_worker_fails(self):
-        r = self._run([self._t("node", "node-0:9100"), self._t("node", "node-1:9100", "down"),
-                       self._t("dcgm", "node-0:9400"), self._t("dcgm", "node-1:9400")], 2)
+        r = self._run(self._both("node", 9100, "down") + self._both("dcgm", 9400), 2)
         self.assertEqual(r.returncode, 1)
 
 
@@ -318,7 +330,8 @@ class GrafanaProxyCheck(unittest.TestCase):
     def test_healthy_protected_and_querying_passes(self):
         ok, out, urls = self._check([self.HEALTH, self.USER, (401, ""), self.QUERY])
         self.assertTrue(ok, out)
-        self.assertTrue(urls[0].startswith(config.proxy_url("pod1", config.GRAFANA_PORT)))
+        base = config.proxy_url("pod1", config.GRAFANA_PORT)
+        self.assertTrue(urls[0].startswith(base))
         self.assertNotIn(config.JUPYTER_TEST_PASSWORD, out.replace("<redacted>", ""))
 
     def test_open_grafana_fails(self):
@@ -332,8 +345,8 @@ class GrafanaProxyCheck(unittest.TestCase):
         self.assertIn("shared token", out)
 
     def test_empty_datasource_fails(self):
-        ok, out, _ = self._check([self.HEALTH, self.USER, (401, ""),
-                                  (200, '{"status": "success", "data": {"result": []}}')])
+        empty = (200, '{"status": "success", "data": {"result": []}}')
+        ok, out, _ = self._check([self.HEALTH, self.USER, (401, ""), empty])
         self.assertFalse(ok)
         self.assertIn("Prometheus datasource", out)
 
@@ -378,7 +391,9 @@ class Orchestration(unittest.TestCase):
 
     def test_happy_path_checks_every_node_and_tears_down(self):
         m = self._patch()
-        self.assertEqual(cluster_runner.test_cluster_pair("img", "L4", "g"), ("PASS", ""))
+        self.assertEqual(
+            cluster_runner.test_cluster_pair("img", "L4", "g"), ("PASS", ""),
+        )
         self.assertEqual(m["wait_for_running"].call_count, 2)
         # One shared boot deadline, so neither node gets more than the whole.
         for call in m["wait_for_running"].call_args_list:
@@ -406,7 +421,9 @@ class Orchestration(unittest.TestCase):
 
     def test_members_never_appearing_is_stuck(self):
         m = self._patch(wait_for_nodes=mock.Mock(return_value=(None, "only 1 of 2")))
-        self.assertEqual(cluster_runner.test_cluster_pair("img", "L4", "g"), ("STUCK", ""))
+        self.assertEqual(
+            cluster_runner.test_cluster_pair("img", "L4", "g"), ("STUCK", ""),
+        )
         m["cleanup_cluster"].assert_called_once_with("cl1")
 
     def test_gpu_not_offered_for_clusters_is_unavailable(self):
@@ -488,7 +505,9 @@ class ClusterTypes(unittest.TestCase):
         with mock.patch.object(cluster_runner, "create_cluster", side_effect=fake), \
              mock.patch.object(config, "CLUSTER_TYPES_OVERRIDE", ""), \
              mock.patch.object(config, "CREATE_RETRIES", 1):
-            out = cluster_runner._create_cluster_with_retries("img", "NVIDIA L4", "g", 2, 1)
+            out = cluster_runner._create_cluster_with_retries(
+                "img", "NVIDIA L4", "g", 2, 1,
+            )
         return out, calls
 
     def test_refused_standard_falls_back_to_slurm(self):
@@ -531,3 +550,72 @@ class ExcludedDataCenter(unittest.TestCase):
 
     def test_empty_list_disables_the_check(self):
         self.assertEqual(self._dc({"p0": "K3S-POC", "p1": "K3S-POC"}, excluded=""), "")
+
+
+class SlurmPlatformLogNoise(unittest.TestCase):
+    """A SLURM cluster's own daemons log `error:` on first boot; seen on dev."""
+
+    LINES = [
+        "Starting Jupyter Lab...",
+        "slurmctld: error:  mpi/pmix_v5: init: (null) [0]: mpi_pmix.c:193: "
+        "pmi/pmix: can not load PMIx library",
+        "slurmd: error: MPI: Cannot create context for mpi/pmix",
+        "[cluster] post-start complete",
+    ]
+
+    def _scan(self, lines):
+        with mock.patch.object(checks, "fetch_pod_logs_api", return_value=lines), \
+             mock.patch.object(api, "load_api_key", return_value="k"):
+            return checks.scan_pod_logs_for_errors("p")
+
+    def test_slurm_daemon_lines_are_ignored(self):
+        ok, report = self._scan(self.LINES)
+        self.assertTrue(ok, report)
+        self.assertIn("2 platform line(s) ignored", report)
+
+    def test_image_errors_are_still_caught(self):
+        ok, report = self._scan(self.LINES + ["grafana: ERROR failed to bind :3300"])
+        self.assertFalse(ok)
+        self.assertIn("grafana", report)
+        self.assertNotIn("pmix", report)
+
+
+class ReportCard(unittest.TestCase):
+    """The per-cluster table printed after each attempt and under SUMMARY."""
+
+    NODES = Orchestration.NODES
+    _patch = Orchestration._patch
+
+    def _last(self):
+        return cluster_report.REPORTS[-1]
+
+    def setUp(self):
+        saved = list(cluster_report.REPORTS)
+        self.addCleanup(cluster_report.REPORTS.__setitem__, slice(None), saved)
+
+    def _rows(self):
+        return {row[0]: row[1:] for row in self._last()._table()[1]}
+
+    def test_pass_fills_every_node(self):
+        self._patch()
+        cluster_runner.test_cluster_pair("img", "L4", "g")
+        rows = self._rows()
+        self.assertEqual(self._last().verdict, "PASS")
+        self.assertEqual(rows["hostname / rank"], ["ok", "ok"])
+        self.assertEqual(rows["Grafana via proxy :8889"], ["ok", "-"])
+        self.assertEqual(rows["log scan"][0], "ok")
+
+    def test_failure_shows_where_it_stopped(self):
+        self._patch(run_grafana_proxy_check=mock.Mock(return_value=(False, "x")))
+        cluster_runner.test_cluster_pair("img", "L4", "g")
+        rows = self._rows()
+        self.assertEqual(rows["Grafana via proxy :8889"], ["FAIL", "-"])
+        self.assertEqual(rows["log scan"], ["not run", "not run"])
+        text = "\n".join(self._last().render_text())
+        self.assertIn("stopped at: node-0: Grafana", text)
+
+    def test_no_cluster_no_card(self):
+        before = len(cluster_report.REPORTS)
+        self._patch(cluster_gpu_sizes=mock.Mock(return_value=[]))
+        cluster_runner.test_cluster_pair("img", "L4", "g")
+        self.assertEqual(len(cluster_report.REPORTS), before)

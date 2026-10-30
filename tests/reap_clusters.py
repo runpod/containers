@@ -7,7 +7,8 @@ and a leaked cluster bills every node. This only ever touches clusters named
 `smoketest-<epoch>-...` (the naming from cluster_runner), and reads each
 one's age from that name, so it never deletes a human's cluster.
 
-    RUNPOD_ENV=dev RUNPOD_API_KEY=... ./reap_clusters.py [--max-age-minutes 90] [--delete]
+    RUNPOD_ENV=dev RUNPOD_API_KEY=... ./reap_clusters.py
+        [--max-age-minutes 90] [--delete]
 
 Dry run unless --delete is given. Exit 1 if the cluster list cannot be read
 or a delete fails — an empty listing must never pass for a clean account.
@@ -74,7 +75,10 @@ def main() -> int:
         return 1
 
     stale = stale_clusters(clusters, time.time(), args.max_age_minutes * 60)
-    print(f"{len(clusters)} cluster(s) on the account, {len(stale)} stale smoke-test cluster(s)")
+    print(
+        f"{len(clusters)} cluster(s) on the account, "
+        f"{len(stale)} stale smoke-test cluster(s)"
+    )
     failed = 0
     for cluster_id, name, age in stale:
         action = "deleting" if args.delete else "would delete"

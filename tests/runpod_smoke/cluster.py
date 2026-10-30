@@ -354,7 +354,10 @@ def create_cluster(
     per_node = node_price(gpu_id, gpus_per_node)
     deploy_cost = None
     if per_node is None:
-        log("node price unknown — createCluster will likely reject the request", indent=2)
+        log(
+            "node price unknown — createCluster will likely reject the request",
+            indent=2,
+        )
     else:
         deploy_cost = round(per_node * node_count, 4)
         log(

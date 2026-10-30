@@ -222,10 +222,13 @@ def run_ssh(
     rc, out = _pty_result(stdout)
     if rc is None:
         # The session ended without the command finishing: a refused or
-        # dropped connection. Keep ssh's own status and words for the log.
-        return subprocess.CompletedProcess(
-            prefix, ssh_rc or 255, "", (stderr or out).strip(),
+        # dropped connection. Keep ssh's own status and words for the log,
+        # minus the terminal's echo of what we typed.
+        said = "\n".join(
+            line for line in (stderr or out).splitlines()
+            if "__SMOKE_" not in line
         )
+        return subprocess.CompletedProcess(prefix, ssh_rc or 255, "", said.strip())
     return subprocess.CompletedProcess(prefix, rc, out, stderr if rc else "")
 
 
@@ -1409,11 +1412,23 @@ def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
         )
 
     pattern = re.compile(config.LOG_ERROR_PATTERN, re.IGNORECASE)
-    matches = [line for line in lines if pattern.search(line)]
+    ignore = (
+        re.compile(config.LOG_ERROR_IGNORE, re.IGNORECASE)
+        if config.LOG_ERROR_IGNORE else None
+    )
+    ignored = sum(1 for line in lines if ignore and ignore.search(line))
+    matches = [
+        line for line in lines
+        if pattern.search(line) and not (ignore and ignore.search(line))
+    ]
+    skipped = (
+        f" ({ignored} platform line(s) ignored per LOG_ERROR_IGNORE)"
+        if ignored else ""
+    )
     if not matches:
-        return True, f"scanned {len(lines)} log lines — no error markers"
+        return True, f"scanned {len(lines)} log lines — no error markers{skipped}"
     report = [
-        f"scanned {len(lines)} log lines — "
+        f"scanned {len(lines)} log lines{skipped} — "
         f"{len(matches)} matched /{config.LOG_ERROR_PATTERN}/i:"
     ]
     report.extend(f"  {line}" for line in matches[:40])

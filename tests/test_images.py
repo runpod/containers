@@ -29,7 +29,7 @@ from typing import Optional
 # our package imports work regardless of how the script was launched.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from runpod_smoke import api, config
+from runpod_smoke import api, cluster_report, config
 from runpod_smoke.cluster import (
     cluster_catalog, cluster_types_for, parse_cluster_types,
 )
@@ -319,7 +319,9 @@ def _positive_int(raw: object, field: str, group: str, default: int) -> int:
     except ValueError:
         value = 0
     if value < 1:
-        raise ValueError(f"group '{group}': {field} must be a positive integer, got {raw!r}")
+        raise ValueError(
+            f"group '{group}': {field} must be a positive integer, got {raw!r}"
+        )
     return value
 
 
@@ -966,6 +968,18 @@ def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
         log(f"warn: could not write results JSON: {exc}")
 
 
+def _print_cluster_reports() -> None:
+    """One check-by-node table per cluster created, under the result lines."""
+    if not cluster_report.REPORTS:
+        return
+    print()
+    print(" CLUSTER CHECKS ".center(84, "-"))
+    for report in cluster_report.REPORTS:
+        print()
+        for line in report.render_text():
+            print(line)
+
+
 def _print_summary(results: list[Result]) -> int:
     """Print the SUMMARY block and return the exit code.
 
@@ -1013,6 +1027,7 @@ def _print_summary(results: list[Result]) -> int:
             )
             if line is not None:
                 print(line)
+    _print_cluster_reports()
 
     _emit_step_summary(results, counts)
     _write_results_json(results, counts)

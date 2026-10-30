@@ -192,6 +192,15 @@ LOG_ERROR_PATTERN = os.environ.get(
 )
 LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
 
+# Lines dropped before LOG_ERROR_PATTERN is applied: output the platform
+# injects, not the image. A SLURM-type Instant Cluster runs "Runpod SLURM
+# Init" in every container, and its slurmctld/slurmd log `error:` on every
+# first boot (no PMIx library, no saved state yet) — none of it is ours.
+# Empty disables the filter.
+LOG_ERROR_IGNORE = os.environ.get(
+    "LOG_ERROR_IGNORE", r"^\s*(?:slurmctld|slurmd|slurmdbd):"
+)
+
 # System logs contain host-side failures that never reach container stdout:
 # image-pull errors and `runc` container-init aborts, for example.
 SYS_LOG_ERROR_PATTERN = os.environ.get(
