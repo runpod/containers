@@ -18,11 +18,11 @@ series is its own, so it need not match the `runpod/pytorch` it builds on.
 The image reuses the shared `/start.sh`, which invokes the `/post_start.sh` hook
 shipped here. On start, `post_start.sh`:
 
-1. If `hostname` is **`node-0`**, renders `/etc/prometheus/prometheus.yml` with a
+1. On the head (**`NODE_RANK=0`**), renders `/etc/prometheus/prometheus.yml` with a
    `node` (`:9100`) and `dcgm` (`:9400`) scrape target for **every peer found in
    `/etc/hosts` whose name starts with `node-`** (falls back to localhost).
 2. Starts `supervisord`, which brings up the exporters on every node.
-3. If `hostname` is `node-0`, starts Prometheus + Grafana via `supervisorctl`.
+3. On the head (`NODE_RANK=0`), starts Prometheus + Grafana via `supervisorctl`.
 
 Grafana is pre-provisioned with a Prometheus datasource pointing at
 `http://127.0.0.1:9090`, so the query traffic never leaves the head node.
