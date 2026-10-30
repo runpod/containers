@@ -6,9 +6,9 @@ An AI coding agent autonomously runs ML experiments: it modifies `train.py`, tra
 
 ### What's included
 
-- **Zero setup**: Dependencies installed, data prepared, ready to go on launch.
-- **GPU accelerated**: Full CUDA 12.8 support with PyTorch 2.9.1.
-- **Agent ready**: SSH in, connect your coding agent, and start experimenting.
+- **Ready on first boot**: Dependencies are installed and the training data and tokenizer are prepared at build time. On first start the repo is copied to `/workspace/autoresearch`, so your edits persist on the volume.
+- **CUDA 12.8 to 13.2**: Images are published for CUDA 12.8.1, 12.9.0, 13.0.0 and 13.2.0. The tag says which toolkit you get and which host driver it needs. PyTorch is the same in all of them: 2.9.1 from the `cu128` wheel index.
+- **Bring your own agent**: No coding agent is installed in the image. Connect one from your machine over SSH (Claude Code, Cursor, etc.). `runpodctl` is preinstalled for managing pods.
 
 ### Getting started
 
@@ -31,18 +31,6 @@ An AI coding agent autonomously runs ML experiments: it modifies `train.py`, tra
 The 5-minute fixed time budget means cheaper GPUs work fine — you get a different optimal model size. Results are comparable within the same GPU type.
 
 Defaults in `train.py` assume an 80 GB card. On smaller GPUs lower `DEVICE_BATCH_SIZE` first — on a 24 GB card 32 runs at ~11.7 GB peak, while the default 128 runs out of memory.
-
-### Available images
-
-- 12.8.1:
-    - Ubuntu 22.04: `runpod/autoresearch:1.3.2-cuda1281-ubuntu2204`
-    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1281-ubuntu2404`
-- 12.9.0:
-    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1290-ubuntu2404`
-- 13.0.0:
-    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1300-ubuntu2404`
-- 13.2.0:
-    - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1320-ubuntu2404`
 
 ### Links
 

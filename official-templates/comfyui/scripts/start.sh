@@ -66,7 +66,7 @@ export_env_vars() {
     # PIP_EXTRA_INDEX_URL travels with PIP_CONSTRAINT: the constraint pins a
     # +cuXXX build that only the PyTorch index serves, so one without the other
     # makes every install in an SSH session unresolvable.
-    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=' | while read -r line; do
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_BUILD_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=|^PIP_DISABLE_PIP_VERSION_CHECK=' | while read -r line; do
         # Get variable name and value
         name=$(echo "$line" | cut -d= -f1)
         value=$(echo "$line" | cut -d= -f2-)
@@ -444,6 +444,9 @@ PY
 # Setup environment
 if [ -f "$PIP_CONSTRAINT_FILE" ]; then
     export PIP_CONSTRAINT="$PIP_CONSTRAINT_FILE"
+    # Since pip 26.2, PIP_CONSTRAINT no longer reaches isolated build envs, so a
+    # node built from source (e.g. sam2) would resolve its own torch without this.
+    export PIP_BUILD_CONSTRAINT="$PIP_CONSTRAINT_FILE"
     echo "Using runtime pip constraints from $PIP_CONSTRAINT_FILE"
 fi
 

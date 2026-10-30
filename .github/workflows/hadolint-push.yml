@@ -29,6 +29,8 @@ jobs:
             ignore: "DL3008"
           - dockerfile: official-templates/comfyui/Dockerfile
             ignore: "DL3008"
+          - dockerfile: official-templates/filebrowser/Dockerfile
+            ignore: ""
           - dockerfile: official-templates/sandbox-ubuntu/Dockerfile
             ignore: "DL3006,DL3008"
           - dockerfile: official-templates/sandbox-openclaw/Dockerfile
@@ -36,6 +38,8 @@ jobs:
           - dockerfile: official-templates/sandbox-harbor/Dockerfile
             ignore: "DL3006,DL3008"
           - dockerfile: official-templates/sandbox-browser/Dockerfile
+            ignore: "DL3006,DL3008"
+          - dockerfile: official-templates/k3s-node/Dockerfile
             ignore: "DL3006,DL3008"
     steps:
       - name: Checkout

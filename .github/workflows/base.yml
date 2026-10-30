@@ -38,6 +38,8 @@ jobs:
       cluster-build: ${{ steps.cluster.outputs.should-build }}
       autoresearch: ${{ steps.autoresearch.outputs.version }}
       autoresearch-build: ${{ steps.autoresearch.outputs.should-build }}
+      filebrowser: ${{ steps.filebrowser.outputs.version }}
+      filebrowser-build: ${{ steps.filebrowser.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -68,6 +70,12 @@ jobs:
         uses: ./.github/actions/compute-version
         with:
           family: autoresearch
+
+      - name: filebrowser
+        id: filebrowser
+        uses: ./.github/actions/compute-version
+        with:
+          family: filebrowser
 
   build-base:
     needs: versions
@@ -348,6 +356,144 @@ jobs:
             RTX 5090
             RTX PRO *
             PRO 6000 MIG *
+            RTX 2000 Ada
+
+  build-filebrowser:
+    needs: [versions, build-base]
+    # Skipped base means base was not planned, so we layer on the published
+    # one; failed base means we must not build on it at all.
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'filebrowser')
+      && needs.versions.outputs.filebrowser-build == 'true'
+      && (needs.build-base.result == 'success'
+          || needs.build-base.result == 'skipped')
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      id-token: write
+    # Ubuntu 24.04 only: a CPU image plus one CUDA image (FileBrowser does not
+    # use the GPU; the CUDA variant is for pods that want GPU tooling alongside).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/filebrowser
+
+      - name: Build filebrowser images
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.filebrowser }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          # Which published runpod/base to build FROM: the in-run base tag
+          # when base is part of this build, else the last released base.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/filebrowser/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/filebrowser-refs
+          printf '%s\n' "$REFS" > /tmp/filebrowser-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: filebrowser-refs
+          path: /tmp/filebrowser-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+  test-filebrowser:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-filebrowser
+    if: "!cancelled() && needs.build-filebrowser.result == 'success'"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: filebrowser-refs
+          path: /tmp/filebrowser-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/filebrowser-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          # base profile routes the CPU tag to a CPU pod and the CUDA tag to a
+          # GPU pod by tag content; the functional check follows the image ref.
+          profile: base
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # Hit FileBrowser's /health route (HTTP 200) so the probe proves
+          # FileBrowser is up, not just that something answers on :80.
+          test-ports: |
+            80/health
+          exclude-instances: |
             RTX 2000 Ada
 
   build-pytorch:
