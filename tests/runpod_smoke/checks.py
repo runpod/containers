@@ -767,16 +767,16 @@ def run_jupyter_check(endpoint: SshEndpoint) -> tuple[bool, str]:
 # Generic per-port checks (test_ports manifest field)
 # ---------------------------------------------------------------------------
 
-def port_check_command(test_port: int, wait_timeout: int) -> str:
+def port_check_command(test_port: int, wait_timeout: int, path: str = "/") -> str:
     """Wait for localhost HTTP readiness; 4xx is a valid app response."""
     return (
         "set -e; "
-        f"echo 'Probing 127.0.0.1:{test_port} (timeout {wait_timeout}s)...'; "
+        f"echo 'Probing 127.0.0.1:{test_port}{path} (timeout {wait_timeout}s)...'; "
         "CODE=pending; "
         f"for i in $(seq 1 {wait_timeout}); do "
         f"  if (echo > /dev/tcp/127.0.0.1/{test_port}) 2>/dev/null; then "
         f"    CODE=$(curl -sS --max-time 5 -o /dev/null "
-        f"      -w '%{{http_code}}' 'http://127.0.0.1:{test_port}/' "
+        f"      -w '%{{http_code}}' 'http://127.0.0.1:{test_port}{path}' "
         "      || echo 'curl_failed'); "
         "    case \"$CODE\" in "
         f"      [1234]*) echo \"port {test_port} responsive after $i"
@@ -804,11 +804,12 @@ def run_port_check(
     endpoint: SshEndpoint,
     test_port: int,
     on_line: Optional[Callable[[str], None]] = None,
+    path: str = "/",
 ) -> tuple[bool, str]:
     """Run the in-pod fallback probe with live progress and a hard timeout."""
     ssh_cmd = [
         *_ssh_command_prefix(endpoint),
-        port_check_command(test_port, config.PORT_WAIT_TIMEOUT),
+        port_check_command(test_port, config.PORT_WAIT_TIMEOUT, path),
     ]
     outer_timeout = config.PORT_WAIT_TIMEOUT + 60
     try:
@@ -867,9 +868,11 @@ def _proxy_status_ok(code: int) -> bool:
     return code == 200
 
 
-def run_port_proxy_check(pod_id: str, test_port: int) -> tuple[bool, str]:
+def run_port_proxy_check(
+    pod_id: str, test_port: int, path: str = "/"
+) -> tuple[bool, str]:
     """Probe a generic HTTP service through RunPod's public proxy."""
-    url = f"https://{pod_id}-{test_port}.proxy.runpod.net/"
+    url = f"https://{pod_id}-{test_port}.proxy.runpod.net{path}"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
     lines = [f"GET {url}"]
     last_error = ""

@@ -166,7 +166,7 @@ class GraphFile(unittest.TestCase):
     def test_every_family_is_covered_by_a_build_workflow(self):
         """release.yml calls a workflow only if the plan names it."""
         graph = P.load_graph(P.DEFAULT_GRAPH)
-        known = {"base", "nvidia", "rocm", "comfyui", "sandbox"}
+        known = {"base", "nvidia", "rocm", "comfyui", "sandbox", "k3s-node"}
         for name, spec in graph.items():
             self.assertIn(spec["workflow"], known, f"{name} has no build workflow")
 
@@ -196,6 +196,7 @@ class GraphFile(unittest.TestCase):
             [
                 "autoresearch",
                 "base",
+                "filebrowser",
                 "nvidia-pytorch",
                 "pytorch",
                 "pytorch-cluster",

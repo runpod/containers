@@ -2,6 +2,8 @@
 
 Run the latest ComfyUI with all dependencies pre-installed in the image. On first boot, ComfyUI is copied to your workspace — when you see `ComfyUI is READY on port 8188` in the logs, it's ready to use. ComfyUI-Manager keeps refreshing its node list for a few minutes after that; the UI does not wait for it, and neither should you.
 
+pip's "A new release of pip is available" notice is turned off: pip is pinned in the image, so the notice is not something you need to act on.
+
 ## Choosing a tag
 
 The image is published for three CUDA versions, and the tag says which one you get:

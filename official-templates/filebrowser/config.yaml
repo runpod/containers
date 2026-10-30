@@ -1,0 +1,21 @@
+# FileBrowser Quantum config for the Runpod template.
+# In v2.0.0+ the listen port and proxy options live under the top-level `http`
+# key; `server.port` is rejected and stops FileBrowser from starting.
+server:
+  sources:
+    - path: "/workspace"
+      config:
+        defaultEnabled: true
+  database:
+    # Filename must not be "database.db" (reserved for the v1 legacy file).
+    path: "/workspace/.filebrowser/filebrowser.db"
+auth:
+  adminUsername: admin
+  methods:
+    password:
+      enabled: true
+http:
+  port: 80
+  # Scope the session JWT cookie to X-Forwarded-Host, not the pod internal IP,
+  # so login works behind the Runpod proxy.
+  trustProxyHeaders: true

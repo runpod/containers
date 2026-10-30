@@ -55,6 +55,14 @@ families:
     image_repo: runpod/autoresearch
     workflow: base
 
+  filebrowser:
+    paths:
+      - official-templates/filebrowser/**
+      - official-templates/shared/**
+    depends_on: [base]
+    image_repo: runpod/filebrowser
+    workflow: base
+
   rocm:
     paths:
       - official-templates/rocm/**
@@ -114,3 +122,13 @@ families:
     depends_on: [sandbox-ubuntu]
     image_repo: runpod/browser
     workflow: sandbox
+
+  # Not a user template. Every pod of a K8S cluster runs this image as its k3s
+  # agent. It builds for amd64 and arm64.
+  k3s-node:
+    paths:
+      - official-templates/k3s-node/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/k3s-node
+    workflow: k3s-node
