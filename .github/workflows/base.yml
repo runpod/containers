@@ -636,6 +636,7 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          budget-usd-per-hour: "3.0"
           test-jupyter: true
           test-torch-packages: true
           test-ca-certs: true
@@ -671,6 +672,8 @@ jobs:
       && needs.versions.outputs.cluster-build == 'true'
       && (needs.build-pytorch.result == 'success'
           || needs.build-pytorch.result == 'skipped')
+      && (!contains(fromJSON(inputs.families), 'pytorch')
+          || needs.build-pytorch.result == 'success')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -795,6 +798,7 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          budget-usd-per-hour: "3.0"
           test-torch-packages: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"
