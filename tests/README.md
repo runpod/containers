@@ -259,12 +259,11 @@ so you can tell whether a `FAIL` correlates with a specific GPU type:
 
 ```
 ================================== SUMMARY =================================
-totals: 4 PASS, 1 FAIL, 1 SKIP
+totals: 3 PASS, 1 FAIL, 1 SKIP
 
   FAIL   runpod/pytorch:…cu1300-torch260… [RTX 5090] -- CUDA/GPU functional check failed
   SKIP   runpod/rocm:…rocm644-ubuntu2404… -- no capacity on any of 1 candidate instance type(s)
   PASS   runpod/base:…ubuntu2404 [CPU]
-  PASS   runpod/base:…cuda1281-ubuntu2204 [RTX A4000]
   PASS   runpod/base:…cuda1281-ubuntu2404 [RTX A5000]
   PASS   runpod/base:…cuda1300-ubuntu2404 [RTX 4090]
 ```
@@ -534,7 +533,7 @@ you're testing). Annotated example covering every supported pattern:
 # CPU-only base image — no instances:, no budget, just images.
 base_cpu:
     images:
-    - runpod/base:1.0.6-dev-ubuntu2204
+    - runpod/base:1.0.6-dev-ubuntu2404
     - runpod/base:1.0.6-dev-ubuntu2404
     test_jupyter: true              # base CPU image still ships JupyterLab
 
@@ -542,7 +541,7 @@ base_cpu:
 # applied because the tag contains 'cuda1281' / 'cuda1290' / 'cuda1300'.
 base_gpu:
     images:
-    - runpod/base:1.0.6-dev-cuda1281-ubuntu2204
+    - runpod/base:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/base:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/base:1.0.6-dev-cuda1300-ubuntu2404
     max_price_per_hour: 1.0
@@ -556,7 +555,7 @@ base_gpu:
 # we want — we'd never get a clean torch import over SSH otherwise.
 autoresearch:
     images:
-    - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2204
+    - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -578,7 +577,7 @@ nvidia-pytorch:
 # AMD ROCm — explicit instance list because only MI300X carries ROCm.
 rocm:
     images:
-    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2204-py310-pytorch251
+    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch260
     - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch271
     instances:
     - MI300X
@@ -590,7 +589,7 @@ rocm:
 # is available for execution on the device". Filter them out:
 pytorch:
     images:
-    - runpod/pytorch:1.0.6-dev-cu1281-torch260-ubuntu2204
+    - runpod/pytorch:1.0.6-dev-cu1281-torch260-ubuntu2404
     - runpod/pytorch:1.0.6-dev-cu1300-torch260-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -817,7 +816,7 @@ fields.
 | `ssh_probe=FAIL — Permission denied (publickey)` | wrong SSH key | export `RUNPOD_SSH_KEY=/path/to/private/key` whose public half is on the RunPod account |
 | `no kernel image is available for execution on the device` on a Blackwell GPU | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels, and torchvision from the cu129 index has none either | add `exclude_instances: ["B200*", "B300*", "RTX 5090", "RTX PRO *", "PRO 6000 MIG *"]` — the display names never contain the word `Blackwell`, and a bare `B300` misses `B300 MIG 34GB` |
 | `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=X.Y` in pod logs | image needs a newer driver than the host has | set `min_cuda_version: "X.Y"` in the manifest (only needed for tags without a `cuXYZW`/`cudaXYZW` marker) |
-| `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (classic Ubuntu 22.04 `python3` → 3.10 vs `python` → 3.12) | fix `container-template/start.sh` to use `python -m jupyter lab` |
+| `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (the system `python3` can differ from `python` → 3.12, e.g. 3.14 on Ubuntu 26.04) | fix `container-template/start.sh` to use `python -m jupyter lab` |
 | `jupyter check (public proxy) FAILED` but in-pod check passed | port exposed as `8888/tcp` instead of `8888/http`, OR proxy hasn't registered the pod yet | check `pod create --ports` arg; bump `JUPYTER_PROXY_TIMEOUT` if proxy is just slow |
 | script hangs at `Cleaning up N leftover pod(s)…` | RunPod API is slow to respond to delete | wait it out; the `reap-pods.yml` cron sweeps anything we miss (`--terminate-after` is unreliable — dropped for CPU pods, not honored promptly for GPU — so don't count on it) |
 

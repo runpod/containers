@@ -31,7 +31,7 @@ def detect_cuda_version(image: str) -> Optional[str]:
     """Parse a CUDA version like '12.8' from an image tag.
 
     Examples:
-        runpod/base:...-cuda1281-ubuntu2204     -> '12.8'
+        runpod/base:...-cuda1281-ubuntu2404     -> '12.8'
         runpod/pytorch:...-cu1300-torch290-...  -> '13.0'
         runpod/comfyui:cuda13.0                 -> '13.0'
         runpod/base:...-rocm644-...             -> None

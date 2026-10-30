@@ -31,7 +31,7 @@ CATALOG = [
     },
 ]
 
-IMAGE = "runpod/pytorch:1.2.0-cu1281-torch2121-ubuntu2204"
+IMAGE = "runpod/pytorch:1.2.0-cu1281-torch2121-ubuntu2404"
 
 
 class PlanningRecordsTheGap(unittest.TestCase):

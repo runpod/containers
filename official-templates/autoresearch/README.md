@@ -35,7 +35,6 @@ Defaults in `train.py` assume an 80 GB card. On smaller GPUs lower `DEVICE_BATCH
 ### Available images
 
 - 12.8.1:
-    - Ubuntu 22.04: `runpod/autoresearch:1.3.2-cuda1281-ubuntu2204`
     - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1281-ubuntu2404`
 - 12.9.0:
     - Ubuntu 24.04: `runpod/autoresearch:1.3.2-cuda1290-ubuntu2404`

@@ -296,11 +296,11 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
 
     if _image_expects_torch(image):
         # Use `python` (the runpod/base symlink /usr/local/bin/python ->
-        # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 system
-        # `python3` resolves to python3.10 — but pytorch/Dockerfile
-        # installs torch via `python -m pip`, so torch only exists in
-        # python3.12's site-packages. On 24.04 they happen to coincide.
-        # Using `python` is portable.
+        # /usr/bin/python3.12), NOT `python3`. The system `python3` is
+        # whatever the Ubuntu release ships — pytorch/Dockerfile installs
+        # torch via `python -m pip`, so torch only exists in python3.12's
+        # site-packages. On 24.04 they happen to coincide. Using `python`
+        # is portable.
         program = (
             "import sys, torch\n"
             "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"

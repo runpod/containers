@@ -6,7 +6,7 @@ jaraco.context==6.1.0
 jupyter_server==2.21.0
 jupyterlab==4.6.4
 mistune==3.3.3
-msgpack==1.2.1
+msgpack==1.2.3
 nbconvert==7.17.2
 notebook==7.6.3
 onnx==1.21.0

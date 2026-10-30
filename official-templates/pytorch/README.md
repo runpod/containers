@@ -13,7 +13,7 @@ Built on our base images, these containers provide pre-configured PyTorch and CU
 ### Available configurations
 - **PyTorch**: 2.6.0, 2.7.1, 2.8.0, 2.9.0, 2.9.1, 2.12.0, 2.12.1, and 2.13.0
 - **CUDA**: 12.8.1, 12.9.0, 13.0.0, and 13.2.0
-- **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble); CUDA 13.0.0 and 13.2.0 are 24.04 only
+- **Ubuntu**: 24.04 (Noble). 22.04 is no longer built: swap `ubuntu2204` for `ubuntu2404` in a pinned tag, keeping the same `cu`/`torch` parts. NVIDIA ships no Ubuntu 26.04 image for these CUDA versions yet.
 - **Audio**: torchaudio is matched to each PyTorch version (2.11.0, its last release, on 2.12 and 2.13). `torchaudio.load` and `save` are torchcodec wrappers from 2.9 on, so torchcodec ships in every 2.9 and later image. It is the CUDA build, so GPU video decoding through NVDEC works too — the replacement for `torchaudio.io`, which was removed in 2.9. On CUDA 13.2 torchaudio is the CPU build — see below.
 
 ### torchaudio on CUDA 13.2
@@ -50,48 +50,34 @@ Please also see [../base/README.md](../base/README.md)
 
 ### CUDA 12.8.1:
 - Torch 2.6.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch260-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch260-ubuntu2404`
 - Torch 2.7.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch271-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch271-ubuntu2404`
 - Torch 2.8.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch280-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch280-ubuntu2404`
 - Torch 2.9.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch290-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch290-ubuntu2404`
 - Torch 2.9.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch291-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch291-ubuntu2404`
 - Torch 2.12.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch2121-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch2121-ubuntu2404`
 - Torch 2.13.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1281-torch2130-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1281-torch2130-ubuntu2404`
 
 ### CUDA 12.9.0:
 - Torch 2.6.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch260-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch260-ubuntu2404`
 - Torch 2.7.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch271-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch271-ubuntu2404`
 - Torch 2.8.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch280-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch280-ubuntu2404`
 - Torch 2.9.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch290-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch290-ubuntu2404`
 - Torch 2.9.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch291-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch291-ubuntu2404`
 - Torch 2.12.1:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch2121-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch2121-ubuntu2404`
 - Torch 2.13.0:
-  - Ubuntu 22.04: `runpod/pytorch:1.2.0-cu1290-torch2130-ubuntu2204`
   - Ubuntu 24.04: `runpod/pytorch:1.2.0-cu1290-torch2130-ubuntu2404`
 
 ### CUDA 13.0.0:

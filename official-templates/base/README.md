@@ -12,11 +12,13 @@ The Runpod Base images provide a clean, developer friendly environment for every
 - **Performance tuned**: Environment variables and cache strategies optimized for faster builds and execution.
 - **Jupyter ready (optional)**: Notebook and JupyterLab with widgets/extensions. Set `JUPYTER_PASSWORD` and it becomes the login token; omit it and JupyterLab does not start. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD` — the `:8888` proxy URL is public, so anyone with it gets a root shell.
 
-> **Python 3.9 removed.** It reached end-of-life (Oct 2025) and no longer gets a security-patched pip, so runpod/base now ships Python 3.10–3.13. To migrate: recreate any 3.9 virtualenv with a supported interpreter (`python3.12 -m venv .venv`) and reinstall your dependencies. The default `python`, `pip` and `python3` point to 3.12, so plain `python ...` keeps working.
+> **Python 3.9 removed.** It reached end-of-life (Oct 2025) and no longer gets a security-patched pip, so runpod/base now ships Python 3.11–3.13. To migrate: recreate any 3.9 virtualenv with a supported interpreter (`python3.12 -m venv .venv`) and reinstall your dependencies. The default `python`, `pip` and `python3` point to 3.12, so plain `python ...` keeps working.
+
+> **Ubuntu 22.04 and Python 3.10 removed.** `-ubuntu2204` tags are no longer built; the last published ones stay pullable but get no updates. Python 3.10 went with it — it was only shipped as 22.04's system interpreter. To migrate, swap `ubuntu2204` for `ubuntu2404` in your tag (same CUDA version, same default Python 3.12) and recreate any 3.10 virtualenv as above. The CPU-only image is also available on Ubuntu 26.04 (`-ubuntu2604`); CUDA images stay on 24.04 until NVIDIA ships 26.04 builds of these CUDA versions.
 
 ### Available configurations
-- **Ubuntu**: 22.04 (Jammy) and 24.04 (Noble)
-- **CUDA**: 12.8.0, 12.8.1, 12.9.0, 13.0.0, and 13.2.0
+- **Ubuntu**: 24.04 (Noble); CPU-only also on 26.04 (Resolute)
+- **CUDA**: 12.8.1, 12.9.0, 13.0.0, and 13.2.0 (Ubuntu 24.04)
 
 Need something more specialized? Explore the templates in `official-templates` for ROCm, PyTorch, and more.
 
@@ -25,21 +27,15 @@ Need something more specialized? Explore the templates in `official-templates` f
 ## Generated Images
 
 ### Base Images (CPU-Only, No GPU Drivers):
-- Ubuntu 22.04: `runpod/base:<template-tag>-ubuntu2204`
 - Ubuntu 24.04: `runpod/base:<template-tag>-ubuntu2404`
+- Ubuntu 26.04: `runpod/base:<template-tag>-ubuntu2604`
 
 ### CUDA Images (GPU Required) by Version:
-- 12.8.0:
-    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1280-ubuntu2204`
-    - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1280-ubuntu2404`
 - 12.8.1:
-    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1281-ubuntu2204`
     - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1281-ubuntu2404`
 - 12.9.0:
-    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1290-ubuntu2204`
     - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1290-ubuntu2404`
 - 13.0.0:
-    - Ubuntu 22.04: `runpod/base:<template-tag>-cuda1300-ubuntu2204`
     - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1300-ubuntu2404`
 - 13.2.0:
     - Ubuntu 24.04: `runpod/base:<template-tag>-cuda1320-ubuntu2404`

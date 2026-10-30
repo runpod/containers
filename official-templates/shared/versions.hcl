@@ -8,11 +8,11 @@ variable "RELEASE_SUFFIX" {
   default = "" # Set by CI, not used by humans.
 }
 
+# CUDA bases only. nvidia/cuda publishes ubuntu26.04 images from CUDA 13.3
+# on, so none of the versions below has one; add 26.04 here (and to the
+# matching ubuntu lists) together with a CUDA version that ships it. The CPU
+# base targets 26.04 already exist (base/docker-bake.hcl).
 UBUNTU_VERSIONS = [
-  {
-    version = "22.04"
-    name = "ubuntu2204"
-  },
   {
     version = "24.04"
     name = "ubuntu2404"
@@ -22,11 +22,11 @@ UBUNTU_VERSIONS = [
 CUDA_VERSIONS = [
   {
     version = "12.8.1"
-    ubuntu = ["22.04", "24.04"]
+    ubuntu = ["24.04"]
   },
   {
     version = "12.9.0"
-    ubuntu = ["22.04", "24.04"]
+    ubuntu = ["24.04"]
   },
   {
     version = "13.0.0"

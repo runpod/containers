@@ -37,7 +37,7 @@ Use it like this:
 ./bake.sh base
 
 # Build a specific target or group of targets
-./bake.sh base cuda-ubuntu2204-1290
+./bake.sh base cuda-ubuntu2404-1290
 
 # Build the default targets and load them to the local Docker daemon
 ./bake.sh base --load
