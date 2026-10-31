@@ -164,7 +164,7 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/scripts/plan_families.py`               | Turns a diff (or each family's last tag) into the families to build, in dependency order. Also answers which workflows to call and which repos we publish to. |
 | `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, plans the families (`plan` job), calls only the build workflows it needs, and creates one `<family>-vX.Y.Z` tag + Release per family. |
 | `.github/actions/compute-version/action.yml`     | For one family: its next version, suffix, `previous-version`, and the `should-build` / `should-release` flags, from its own tag series + the commit type. |
-| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, autoresearch; builds the ones in the plan. |
+| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch; builds the ones in the plan. |
 | `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml` | **Reusable** (`workflow_call`). One family each. |
 | `.github/scripts/release_notes.py`               | Builds a family's release body from the commits that touched it since its previous tag. |
 | `.github/workflows/manual-release.yml`           | Break-glass: tags one family from an earlier run's commit when its release never happened. |
