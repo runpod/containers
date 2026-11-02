@@ -252,6 +252,21 @@ inputs:
       image/GPU pairings, e.g. PyTorch ≤ 2.6 wheels have no kernels for
       sm_100/sm_120 (Blackwell), so any test landing on a Blackwell host
       fails with 'no kernel image is available for execution on the device'.
+      A pattern here blocks that GPU for EVERY image in the run; to block it
+      only for the images that need it, use exclude-instances-for.
+    required: false
+    default: ""
+  exclude-instances-for:
+    description: |
+      Newline-separated `REF_GLOB: PATTERN, PATTERN` rules that scope an
+      exclude-instances block to the image refs matching REF_GLOB (fnmatch,
+      case-sensitive, against the full ref). Matching refs are tested as
+      their own group with the patterns added to its exclusions; every
+      other ref keeps the full GPU pool. Example:
+        exclude-instances-for: |
+          *-torch260-*: B200*, B300*, RTX 5090
+      Rules matching nothing are fine — matrix shards share one rule list.
+      Empty (default) = no scoped exclusions; the manifest is unchanged.
     required: false
     default: ""
   min-cuda-version:
@@ -432,6 +447,7 @@ runs:
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         INSTANCES: ${{ inputs.instances }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
+        EXCLUDE_INSTANCES_FOR: ${{ inputs.exclude-instances-for }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
       run: |
@@ -542,6 +558,13 @@ runs:
           [[ -z "${line}" || "${line}" == \#* ]] && continue
           EXTRA_ARGS+=(--exclude-instance "${line}")
         done <<< "${EXCLUDE_INSTANCES}"
+        # One rule per line; the generator parses 'GLOB: PAT, PAT' itself.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--exclude-instance-for "${line}")
+        done <<< "${EXCLUDE_INSTANCES_FOR}"
         # Same treatment for INSTANCES. Display names contain spaces
         # ('RTX A4000'), so each line must stay one argv element.
         while IFS= read -r line; do

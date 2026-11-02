@@ -364,7 +364,7 @@ Field reference:
 | `max_price_per_hour` | USD/hr budget — auto-pick any GPU at this price or below, cheapest first. Loses to explicit `instances:` if both are set. |
 | `min_vram_gb` | Extra filter for budget mode (default 0). |
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
-| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group. |
+| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group; to block a GPU for only some images, generate the manifest with `--exclude-instance-for 'REF_GLOB: PATTERN, ...'` (action input `exclude-instances-for`), which moves the matching refs into their own group. |
 | `min_cuda_version` | `X.Y` floor sent as `gpu.minCudaVersion`. Used as a **fallback** when the image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`); tags like `cu1281` / `cuda1281` / `cuda13.0` are parsed and win. Superseded by `cuda_versions` — the API rejects both fields on one request. |
 | `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
@@ -758,7 +758,8 @@ wraps everything in this script needs for a clean CI run:
    `profile`, `budget-usd-per-hour`, `min-vram-gb`, `manufacturer`,
    `test-jupyter`, `test-ports`, `test-comfyui`,
    `test-comfyui-functional`, `check-all-gpu`, `instances`,
-   `cuda-versions`, `min-cuda-version`, and `exclude-instances` inputs.
+   `cuda-versions`, `min-cuda-version`, `exclude-instances`, and
+   `exclude-instances-for` inputs.
    `instances` and `check-all-gpu` are mutually exclusive — passing both
    fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with

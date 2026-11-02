@@ -646,16 +646,19 @@ jobs:
           # python3-gi-cairo, and nothing in our images uses it.
           pip-check-allow: |
             pygobject 3.42.1 requires pycairo
-          # Patterns match catalog DISPLAY names, which never contain the
-          # word "Blackwell" — only the ids do. Enumerate the cards, with a
-          # trailing * so the MIG slices ('B300 MIG 34GB') match too.
           exclude-instances: |
-            B200*
-            B300*
-            RTX 5090
-            RTX PRO *
-            PRO 6000 MIG *
             RTX 2000 Ada
+          # Blackwell is blocked only for the images that can't run there:
+          # torch 2.6.0 has no sm_100/sm_120 kernels in any column, and the
+          # 12.x columns take torch 2.12/2.13's torchvision from cu129, which
+          # upstream builds without Blackwell. Patterns match catalog DISPLAY
+          # names, which never contain the word "Blackwell" — only the ids
+          # do. Enumerate the cards, with a trailing * so the MIG slices
+          # ('B300 MIG 34GB') match too.
+          exclude-instances-for: |
+            *-torch260-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
           max-parallel: "4"
 
   # -cluster layers monitoring + RDMA on top of a PUBLISHED runpod/pytorch.
@@ -799,11 +802,9 @@ jobs:
           test-ca-certs: true
           min-ca-certs-version: "20260816"
           test-python-tls: true
-          # torch 2.12/2.13 here take torchvision from cu129, which upstream
-          # builds without Blackwell.
-          exclude-instances: |
-            B200*
-            B300*
-            RTX 5090
-            RTX PRO *
-            PRO 6000 MIG *
+          # torch 2.12/2.13 in the 12.x columns take torchvision from cu129,
+          # which upstream builds without Blackwell. The 13.x columns use
+          # cu130/cu132 and keep it.
+          exclude-instances-for: |
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
