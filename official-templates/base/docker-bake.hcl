@@ -22,7 +22,7 @@ target "common-base" {
 target "cpu-ubuntu2204" {
   inherits = ["common-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2204",
+    "runpod/base${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2204",
   ]
   args = {
     BASE_IMAGE = "ubuntu:22.04"
@@ -32,7 +32,7 @@ target "cpu-ubuntu2204" {
 target "cpu-ubuntu2404" {
   inherits = ["common-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2404",
+    "runpod/base${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2404",
   ]
   args = {
     BASE_IMAGE = "ubuntu:24.04"
@@ -58,7 +58,7 @@ target "cuda-matrix" {
   }
   
   tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${combo.cuda_code}-${combo.ubuntu_name}",
+    "runpod/base${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${combo.cuda_code}-${combo.ubuntu_name}",
   ]
   
   args = {

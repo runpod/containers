@@ -15,6 +15,7 @@ lives in .github/families.yml.
     plan_families.py --paths comfyui       # pathspecs feeding it, deps included
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
+    plan_families.py --image-repos --include-dev   # ... plus each one's -dev twin
 
 Prints a JSON array in build order on stdout and a human summary on stderr.
 """
@@ -33,6 +34,11 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GRAPH = REPO_ROOT / ".github" / "families.yml"
+
+# The dev env publishes every family to `<image_repo>` + this, a
+# private twin of the public repo (runpod/base -> runpod/base-dev). Must match
+# the compute-version action's repo-suffix.
+DEV_REPO_SUFFIX = "-dev"
 
 
 class GraphError(Exception):
@@ -161,6 +167,13 @@ def paths_with_deps(graph: dict[str, dict], name: str) -> list[str]:
     return seen
 
 
+def image_repos(graph: dict[str, dict], include_dev: bool = False) -> list[str]:
+    """Every repo the families publish to, deduplicated, in graph order; with
+    `include_dev`, each one's private -dev twin follows the public ones."""
+    public = list(dict.fromkeys(s["image_repo"] for s in graph.values()))
+    return public + ([r + DEV_REPO_SUFFIX for r in public] if include_dev else [])
+
+
 def git_pathspecs(paths: list[str]) -> list[str]:
     """Graph patterns as git pathspecs, for `git log -- …`. A trailing /**
     becomes a plain directory, which git already reads as "and below"."""
@@ -235,6 +248,11 @@ def main() -> int:
         help="print every Docker Hub repo the families publish to, one per line",
     )
     ap.add_argument(
+        "--include-dev",
+        action="store_true",
+        help="with --image-repos: also print each repo's private -dev twin",
+    )
+    ap.add_argument(
         "--image-repo",
         metavar="FAMILY",
         help="print the Docker Hub repo this family publishes to, then exit",
@@ -249,7 +267,7 @@ def main() -> int:
     try:
         graph = load_graph(args.graph)
         if args.image_repos:
-            for repo in dict.fromkeys(s["image_repo"] for s in graph.values()):
+            for repo in image_repos(graph, args.include_dev):
                 print(repo)
             return 0
         if args.image_repo:

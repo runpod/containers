@@ -150,6 +150,6 @@ target "comfyui-matrix" {
   }
 
   tags = [
-    "runpod/comfyui:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
+    "runpod/comfyui${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
   ]
 }

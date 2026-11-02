@@ -4,7 +4,8 @@ name: Cleanup RC Tags on PR Close
 # are no longer needed, so remove them promptly instead of waiting for the
 # age-based sweep. This deletes every
 #   runpod/<repo>:<version>-rc.<PR#>-<variant>
-# tag for the closed PR across all image repos, plus the cosign signatures
+# tag for the closed PR across all image repos — public and -dev, since a PR
+# into develop publishes to runpod/<repo>-dev — plus the cosign signatures
 # those images left behind (sha256-<digest>.sig / .att).
 #
 # The scheduled "Docker Hub Tag Cleanup" workflow still runs as the safety net:
@@ -59,7 +60,7 @@ jobs:
           REPOS=()
           while IFS= read -r repo; do
             REPOS+=("${repo#"${NAMESPACE}"/}")
-          done < <(python3 .github/scripts/plan_families.py --image-repos)
+          done < <(python3 .github/scripts/plan_families.py --image-repos --include-dev)
 
           PR="${PR_NUMBER:-}"
           # Must be a positive integer with no leading zero — it's interpolated

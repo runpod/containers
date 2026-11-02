@@ -13,6 +13,12 @@ variable "BASE_VERSION" {
 
 # One entry per FileBrowser Quantum release (gtsteffaniak/filebrowser). version
 # is the GitHub release tag; sha256 is its linux-amd64 binary checksum.
+# Repo suffix of that runpod/base: "-dev" when CI built it in this run on
+# the dev env (runpod/base-dev), else empty.
+variable "BASE_REPO_SUFFIX" {
+  default = ""
+}
+
 variable "FILEBROWSER_VERSIONS" {
   default = [
     { version = "v2.0.1-stable", sha256 = "42df10b6f2fcd4db17a53f64a9449e677a528164002fd13b050d348d7c477517" }
@@ -90,12 +96,12 @@ target "filebrowser-matrix" {
   name = "filebrowser${build.filebrowser_version_code}-${build.variant_name}"
 
   args = {
-    BASE_IMAGE          = "runpod/base:${BASE_VERSION}-${build.base_suffix}"
+    BASE_IMAGE          = "runpod/base${BASE_REPO_SUFFIX}:${BASE_VERSION}-${build.base_suffix}"
     FILEBROWSER_VERSION = build.filebrowser_version
     FILEBROWSER_SHA256  = build.filebrowser_sha256
   }
 
   tags = [
-    "runpod/filebrowser:${RELEASE_VERSION}${RELEASE_SUFFIX}-filebrowser${build.filebrowser_version}-${build.base_suffix}",
+    "runpod/filebrowser${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-filebrowser${build.filebrowser_version}-${build.base_suffix}",
   ]
 }

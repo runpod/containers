@@ -3,6 +3,11 @@ name: Docker Hub Tag Cleanup
 # Prunes ephemeral image tags from Docker Hub once they age out:
 #   * -rc.<PR#>   release-candidate images built for pull requests
 #   * -dev / -dev-* images built by manual (workflow_dispatch) runs
+#   * -dev.<PR#> / -dev.<sha7>  images built by pushes to develop — named
+#                 after the merged PR, or the commit for a direct push
+#                 (runpod/<repo>-dev only)
+# Both the public runpod/<repo> and the private runpod/<repo>-dev repos are
+# swept; the private ones can only be listed with a successful login.
 # Release tags (e.g. 1.2.3-ubuntu2204, 1.2.3-cuda1281-ubuntu2404) and `latest`
 # are never eligible — the delete filter only matches the -rc./-dev markers.
 #
@@ -73,11 +78,11 @@ jobs:
 
           NAMESPACE="runpod"
           # Every repo the families publish to, straight from the graph, so a
-          # new template can't quietly stop being swept.
+          # new template can't quietly stop being swept — -dev twins included.
           REPOS=()
           while IFS= read -r repo; do
             REPOS+=("${repo#"${NAMESPACE}"/}")
-          done < <(python3 .github/scripts/plan_families.py --image-repos)
+          done < <(python3 .github/scripts/plan_families.py --image-repos --include-dev)
 
           RETENTION_DAYS="${INPUT_RETENTION:-14}"
           # Must be a positive integer with no leading zero. Rejecting 0 avoids
@@ -181,7 +186,7 @@ jobs:
                 *.sig|*.att) continue ;; # signatures handled in pass 2
               esac
               eligible=false
-              case "${name}" in *-rc.*|*-dev|*-dev-*) eligible=true ;; esac
+              case "${name}" in *-rc.*|*-dev|*-dev-*|*-dev.*) eligible=true ;; esac
               ts=$(date -u -d "${updated}" +%s 2>/dev/null || echo "")
               if [ -z "${ts}" ]; then
                 # Unparseable/missing last_updated: NEVER treat as age 0 (which

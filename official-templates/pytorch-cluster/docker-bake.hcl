@@ -16,6 +16,13 @@ variable "PYTORCH_BASE_VERSION" {
   default = "1.0.7"
 }
 
+# Repo suffix of that runpod/pytorch: "-dev" when CI built it in this run on
+# the dev env (runpod/pytorch-dev), else empty — a published pytorch
+# is public.
+variable "PYTORCH_BASE_REPO_SUFFIX" {
+  default = ""
+}
+
 variable "CLUSTER_BUILDS" {
   default = [
     { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2204" },
@@ -104,7 +111,7 @@ target "cluster-matrix" {
     # above): the in-run pytorch tag when pytorch was rebuilt in this run, else
     # the last released pytorch. Kept separate from the cluster's OWN tag below
     # so PR builds don't try to layer onto a not-yet-published pytorch version.
-    BASE_IMAGE = "runpod/pytorch:${PYTORCH_BASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
+    BASE_IMAGE = "runpod/pytorch${PYTORCH_BASE_REPO_SUFFIX}:${PYTORCH_BASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
     # CUDA major (first two digits of cuda_code) selects the concrete DCGM
     # provider package: cu1281/cu1290 -> cuda12, cu1300 -> cuda13.
     DCGM_PACKAGE = "datacenter-gpu-manager-4-cuda${substr(build.cuda_code, 0, 2)}"
@@ -113,6 +120,6 @@ target "cluster-matrix" {
   # The cluster image's OWN tag keeps RELEASE_SUFFIX so dev/PR builds don't
   # clobber the released -cluster tag.
   tags = [
-    "runpod/pytorch-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
+    "runpod/pytorch-cluster${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }

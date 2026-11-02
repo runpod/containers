@@ -24,8 +24,15 @@ permissions:
 jobs:
   versions:
     runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
+    # pull-requests: compute-version names a develop push's dev image after
+    # the PR it merged.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       suffix: ${{ steps.k3s-node.outputs.suffix }}
+      env: ${{ steps.k3s-node.outputs.env }}
+      repo-suffix: ${{ steps.k3s-node.outputs.repo-suffix }}
       k3s-node: ${{ steps.k3s-node.outputs.version }}
     steps:
       - name: Checkout
@@ -58,7 +65,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/k3s-node
 
       - name: Build k3s-node image
@@ -68,6 +75,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.k3s-node }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -86,11 +94,14 @@ jobs:
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         run: |
           set -euo pipefail
           say() { printf "  %-14s %s\n" "$1" "$2"; }
 
-          IMAGE=$(jq -er '.[] | select(contains("runpod/k3s-node:"))' <<< "$REFS")
+          # The repo carries a -dev suffix off the release branch.
+          IMAGE=$(jq -er --arg repo "runpod/k3s-node${REPO_SUFFIX}:" \
+            '.[] | select(contains($repo))' <<< "$REFS")
           echo "Verifying $IMAGE"
           # The versions the bake file pins, so a bump needs no edit here.
           bake_default() {

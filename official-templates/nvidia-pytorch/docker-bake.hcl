@@ -38,7 +38,7 @@ target "pytorch-matrix" {
   inherits = ["nvidia-base"]
 
   tags = [
-    "runpod/nvidia-pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-${build.pytorch}",
+    "runpod/nvidia-pytorch${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-${build.pytorch}",
   ]
 
   args = {
