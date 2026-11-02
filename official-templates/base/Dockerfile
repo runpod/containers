@@ -86,6 +86,9 @@ RUN apt-get update --yes && \
         /tmp/slurm-debs/slurm-smd-slurmctld_*.deb \
         /tmp/slurm-debs/slurm-smd-slurmd_*.deb \
         /tmp/slurm-debs/slurm-smd-slurmdbd_*.deb && \
+    groupadd --system --gid 64030 slurm && \
+    useradd --system --uid 64030 --gid slurm --home-dir /nonexistent \
+        --no-create-home --shell /usr/sbin/nologin slurm && \
     apt-get clean && \
     rm -rf /tmp/slurm-debs /var/lib/apt/lists/*
 
