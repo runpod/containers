@@ -4,3 +4,4 @@ ipywidgets==8.1.8
 jupyter-archive==3.4.0
 notebook==7.6.3
 tornado==6.5.10
+certifi==2026.10.19

@@ -60,6 +60,10 @@ setup_ssh() {
             echo "Key: $key"
             ssh-keygen -lf "$key"
         done
+    else
+        echo "PUBLIC_KEY is not set; sshd was not started and port 22 stays"
+        echo "closed. Connecting through ssh.runpod.io is unaffected. For port"
+        echo "22, set PUBLIC_KEY and restart the pod."
     fi
 }
 

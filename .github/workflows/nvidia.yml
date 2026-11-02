@@ -19,7 +19,7 @@ permissions:
 jobs:
   # This family's own version series (git tags `nvidia-pytorch-v1.3.1`).
   versions:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # pull-requests: compute-version names a develop push's dev image after
     # the PR it merged.
     permissions:
@@ -177,3 +177,14 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           min-cuda-version: "13.0"
+          test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
+          test-python-tls: "true"
+          test-uv: "true"
+          test-pip-check: "true"
+          # Conflicts inherited from the NGC base, not ours to fix
+          # here. Narrow on purpose: a new conflict in either package
+          # still fails.
+          pip-check-allow: |
+            datasets 4.4.1 has requirement fsspec
+            nvidia-resiliency-ext 0.4.1+cuda13 requires pynvml

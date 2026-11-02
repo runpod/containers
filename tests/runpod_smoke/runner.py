@@ -19,20 +19,28 @@ from typing import Optional
 
 from . import config
 from .checks import (
+    REVOKED_CA_NAMES,
     SshEndpoint,
+    autoresearch_check_command,
+    ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
     dump_pod_logs,
     fetch_pod_cuda_version,
     host_incompatibility,
+    pip_check_command,
+    python_tls_check_command,
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
     run_jupyter_static_check,
     run_port_check,
     run_port_proxy_check,
+    run_simple_check,
     scan_pod_logs_for_errors,
     ssh_probe,
+    uv_check_command,
+    virtualenv_check_command,
 )
 from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
@@ -142,7 +150,7 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
-        test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
+        test_ports = [port for port, _path in config.GROUP_TEST_PORTS.get(group) or []]
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
         pod_id, kind, raw = create_pod(
@@ -288,6 +296,80 @@ def _run_cuda_step(
     return None
 
 
+_HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
+_AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+
+
+def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
+    """(label, command, timeout) for each hygiene check the group opted into,
+    in the order they run. Cheap, deterministic checks first so a broken pin is
+    reported before anything spends time on the network."""
+    revoked = tuple(
+        config.GROUP_REVOKED_CA_NAMES.get(group) or REVOKED_CA_NAMES
+    )
+    checks: list[tuple[str, str, int]] = []
+    if config.GROUP_TEST_PIP_CHECK.get(group, False):
+        allowed = tuple(config.GROUP_PIP_CHECK_ALLOW.get(group, ()))
+        checks.append(
+            ("pip check", pip_check_command(allowed), _HYGIENE_TIMEOUT)
+        )
+    if config.GROUP_TEST_VIRTUALENV.get(group, False):
+        checks.append(
+            ("virtualenv", virtualenv_check_command(), _HYGIENE_TIMEOUT)
+        )
+    if config.GROUP_TEST_UV.get(group, False):
+        checks.append(("uv", uv_check_command(), _HYGIENE_TIMEOUT))
+    if config.GROUP_TEST_CA_CERTS.get(group, False):
+        checks.append((
+            "CA trust store",
+            ca_certs_check_command(
+                revoked, config.GROUP_MIN_CA_CERTS_VER.get(group, ""),
+            ),
+            _HYGIENE_TIMEOUT,
+        ))
+    if config.GROUP_TEST_PYTHON_TLS.get(group, False):
+        checks.append((
+            "certifi / python TLS",
+            python_tls_check_command(
+                revoked, config.GROUP_PYTHON_TLS_VENV.get(group, ""),
+            ),
+            _HYGIENE_TIMEOUT,
+        ))
+    if config.GROUP_TEST_AUTORESEARCH.get(group, False):
+        checks.append((
+            "autoresearch train.py",
+            autoresearch_check_command(),
+            _AUTORESEARCH_TIMEOUT,
+        ))
+    return checks
+
+
+def _run_hygiene_steps(
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
+    `test_python_tls`, `test_uv`, `test_virtualenv`).
+
+    Runs after the CUDA gate — these answer "is the image put together
+    correctly", which is only worth asking once the image boots and its
+    GPU stack works. All of them are stopped at the first failure so the
+    log ends on the thing that broke."""
+    checks = _hygiene_checks(group)
+    if not (endpoint and checks):
+        return None
+    for label, command, timeout in checks:
+        log(f"running {label} check for group '{group}'...", indent=2)
+        ok, output = run_simple_check(endpoint, command, timeout=timeout)
+        for line in (output or "").splitlines():
+            log(f"  {line}", indent=2)
+        if not ok:
+            log(f"{label} check FAILED", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"{label} check failed"
+        log(f"{label} check passed", indent=2)
+    return None
+
+
 def _run_jupyter_steps(
     endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
@@ -340,13 +422,14 @@ def _run_jupyter_steps(
 
 def _check_port_proxy_first(
     endpoint: SshEndpoint, pod_id: str, test_port: int, label: str,
+    path: str = "/",
 ) -> Optional[_Outcome]:
     """Check public reachability first; use SSH only to diagnose failure."""
     log(
         f"running {label} check (public proxy) for pod {pod_id}...",
         indent=2,
     )
-    ok, output = run_port_proxy_check(pod_id, test_port)
+    ok, output = run_port_proxy_check(pod_id, test_port, path)
     for line in output.splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -359,7 +442,8 @@ def _check_port_proxy_first(
         indent=2,
     )
     ok, detail = run_port_check(
-        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2)
+        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2),
+        path=path,
     )
     if ok:
         failure = f"{label}: reachable in-pod but not via proxy"
@@ -375,9 +459,10 @@ def _run_port_steps(
     endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Run each generic `test_ports` check."""
-    for test_port in config.GROUP_TEST_PORTS.get(group) or []:
+    for test_port, test_path in config.GROUP_TEST_PORTS.get(group) or []:
+        label = f"port {test_port}" + (test_path if test_path != "/" else "")
         outcome = _check_port_proxy_first(
-            endpoint, pod_id, test_port, f"port {test_port}",
+            endpoint, pod_id, test_port, label, path=test_path,
         )
         if outcome is not None:
             dump_pod_logs(pod_id, image)
@@ -565,6 +650,9 @@ def test_pair(
         # (no fancy abstraction) so the failure points stay easy to read
         # in stack traces / logs.
         outcome = _run_cuda_step(endpoint, image, group, pod_id)
+        if outcome is not None:
+            return outcome
+        outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
         outcome = _run_jupyter_steps(endpoint, pod_id, image, group)

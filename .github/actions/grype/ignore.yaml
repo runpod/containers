@@ -39,3 +39,12 @@ ignore:
     package:
       name: coreutils
       type: deb
+
+  # filelock is fixed in 4.2.1, but that requires Python >= 3.11, and base
+  # still ships python3.10 (Ubuntu 22.04's system interpreter), capped at the
+  # 3.x line (3.32.7). No fixed filelock exists for 3.10. Goes away with
+  # CON-1619 (drop Ubuntu 22.04 / python3.10).
+  - vulnerability: GHSA-v4x8-3wr5-3wq8
+    package:
+      name: filelock
+      type: python

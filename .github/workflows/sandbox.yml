@@ -25,7 +25,7 @@ jobs:
   # sandbox-ubuntu, so `ubuntu-published` is what they build FROM when ubuntu
   # is not rebuilt here.
   versions:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # pull-requests: compute-version names a develop push's dev image after
     # the PR it merged.
     permissions:

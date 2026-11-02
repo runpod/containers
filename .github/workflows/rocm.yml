@@ -19,7 +19,7 @@ permissions:
 jobs:
   # This family's own version series (git tags `rocm-v1.3.1`).
   versions:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # pull-requests: compute-version names a develop push's dev image after
     # the PR it merged.
     permissions:
@@ -173,6 +173,9 @@ jobs:
           registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           on-skip: "warn"
           manufacturer: "AMD"
+          test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
+          test-python-tls: "true"
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
           create-timeout: "1200"
