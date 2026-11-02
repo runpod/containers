@@ -40,11 +40,15 @@ ENV RAY_CLUSTER_RAY_VERSION=${RAY_VERSION} \
 COPY --chmod=755 ray/entrypoint.sh /opt/runpod/ray/entrypoint
 
 # Head metrics stack: Ray's generated dashboards next to the inherited ones,
-# plus Runpod's Ray overview, and capped Prometheus retention so the stack
-# can't fill the head's disk.
+# plus Runpod's Ray overview as Grafana's landing page (it links to the
+# inherited GPU home), and capped Prometheus retention so the stack can't fill
+# the head's disk.
 COPY config/provisioning/dashboards/ray.yml /etc/grafana/provisioning/dashboards/ray.yml
 COPY config/dashboards/06-ray-cluster.json /var/lib/grafana/dashboards/06-ray-cluster.json
-RUN sed -i 's|--web.listen-address=127.0.0.1:9090|& --storage.tsdb.retention.time=7d --storage.tsdb.retention.size=10GB|' \
+RUN sed -i 's|^default_home_dashboard_path = .*|default_home_dashboard_path = /var/lib/grafana/dashboards/06-ray-cluster.json|' \
+        /etc/grafana/grafana.ini && \
+    grep -q '^default_home_dashboard_path = /var/lib/grafana/dashboards/06-ray-cluster.json$' /etc/grafana/grafana.ini && \
+    sed -i 's|--web.listen-address=127.0.0.1:9090|& --storage.tsdb.retention.time=7d --storage.tsdb.retention.size=10GB|' \
         /etc/supervisor/conf.d/cluster.conf && \
     grep -q -- '--storage.tsdb.retention.size=10GB' /etc/supervisor/conf.d/cluster.conf
 
