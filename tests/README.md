@@ -346,7 +346,7 @@ groupname:
     check_all_gpu: true       # test every matching GPU independently
     test_jupyter: true        # opt-in JupyterLab in-pod + proxy check
     test_ports:               # optional generic HTTP services
-    - 8080
+    - 8080                    # probes `/`; use `8080/health` to hit a path
     test_pip_check: true      # `pip check` must be clean
     pip_check_allow:          # ...except these inherited conflicts
     - "datasets 4.4.1 has requirement fsspec"

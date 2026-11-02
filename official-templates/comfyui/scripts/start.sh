@@ -15,10 +15,10 @@ BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDire
 #                          Function Definitions                                  #
 # ---------------------------------------------------------------------------- #
 
-# Setup SSH with optional key or random password
+# Setup SSH; login is by key only
 setup_ssh() {
     mkdir -p ~/.ssh
-    
+
     if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
         ssh-keygen -A -q
     fi
@@ -27,15 +27,16 @@ setup_ssh() {
     if [[ $PUBLIC_KEY ]]; then
         echo "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
         chmod 700 -R ~/.ssh
+        if ! printf '%s\n' "$PUBLIC_KEY" | ssh-keygen -lf - > /dev/null 2>&1; then
+            echo "WARNING: PUBLIC_KEY is not a valid SSH public key, so sshd will"
+            echo "ignore it and direct SSH to port 22 will be refused. It must be"
+            echo "the contents of your .pub file, one line, e.g. ssh-ed25519 AAAA..."
+        fi
     else
-        # Generate random password if no public key
-        RANDOM_PASS=$(openssl rand -base64 12)
-        echo "root:${RANDOM_PASS}" | chpasswd
-        echo "Generated random SSH password for root: ${RANDOM_PASS}"
+        echo "PUBLIC_KEY is not set, so no key is authorized here and direct SSH"
+        echo "to port 22 is refused. Connecting through ssh.runpod.io is"
+        echo "unaffected. For port 22, set PUBLIC_KEY and restart the pod."
     fi
-
-    # Configure SSH to preserve environment variables
-    echo "PermitUserEnvironment yes" >> /etc/ssh/sshd_config
 
     # Start SSH service
     /usr/sbin/sshd
@@ -65,7 +66,7 @@ export_env_vars() {
     # PIP_EXTRA_INDEX_URL travels with PIP_CONSTRAINT: the constraint pins a
     # +cuXXX build that only the PyTorch index serves, so one without the other
     # makes every install in an SSH session unresolvable.
-    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=' | while read -r line; do
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^PIP_CONSTRAINT=|^PIP_BUILD_CONSTRAINT=|^PIP_EXTRA_INDEX_URL=|^PIP_DISABLE_PIP_VERSION_CHECK=' | while read -r line; do
         # Get variable name and value
         name=$(echo "$line" | cut -d= -f1)
         value=$(echo "$line" | cut -d= -f2-)
@@ -443,6 +444,9 @@ PY
 # Setup environment
 if [ -f "$PIP_CONSTRAINT_FILE" ]; then
     export PIP_CONSTRAINT="$PIP_CONSTRAINT_FILE"
+    # Since pip 26.2, PIP_CONSTRAINT no longer reaches isolated build envs, so a
+    # node built from source (e.g. sam2) would resolve its own torch without this.
+    export PIP_BUILD_CONSTRAINT="$PIP_CONSTRAINT_FILE"
     echo "Using runtime pip constraints from $PIP_CONSTRAINT_FILE"
 fi
 

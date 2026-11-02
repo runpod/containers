@@ -27,7 +27,7 @@ WORKDIR /opt/autoresearch
 # --frozen: install exactly from uv.lock, no resolver run.
 # --no-build: refuse source distributions — `setup.py` can execute arbitrary code during install, and we want only pre-built, audited wheels.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    export UV_HTTP_TIMEOUT=1000 && \
+    export UV_CACHE_DIR=/root/.cache/uv UV_LINK_MODE=copy UV_HTTP_TIMEOUT=1000 && \
     uv sync --frozen --no-build && \
     uv run --frozen --no-build prepare.py # Download data and train tokenizer (~2 min)
 

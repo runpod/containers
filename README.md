@@ -16,7 +16,7 @@ The following dependencies are required for all images for Runpod platform funct
 - `openssh-server`: Required for SSH access to the container.
 - `jupyterlab`: Required for JupyterLab access to the container.
 
-Sandbox images (`official-templates/sandbox-*`) are the exception: commands reach them through the Sandbox API rather than through a service in the container, so they ship none of the three on purpose.
+Sandbox images (`official-templates/sandbox-*`) are the exception: commands reach them through the Sandbox API rather than through a service in the container, so they ship none of the three on purpose. The k3s node image (`official-templates/k3s-node`) is not a user template either: it runs a k3s agent, and users reach the cluster through `kubectl`.
 
 ### README
 
