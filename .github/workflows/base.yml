@@ -467,7 +467,7 @@ jobs:
 
   test-filebrowser:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-filebrowser
+    needs: [versions, build-filebrowser]
     if: "!cancelled() && needs.build-filebrowser.result == 'success'"
     steps:
       - name: Checkout
@@ -501,6 +501,7 @@ jobs:
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           test-jupyter: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"

@@ -94,11 +94,14 @@ jobs:
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         run: |
           set -euo pipefail
           say() { printf "  %-14s %s\n" "$1" "$2"; }
 
-          IMAGE=$(jq -er '.[] | select(contains("runpod/k3s-node:"))' <<< "$REFS")
+          # The repo carries a -dev suffix off the release branch.
+          IMAGE=$(jq -er --arg repo "runpod/k3s-node${REPO_SUFFIX}:" \
+            '.[] | select(contains($repo))' <<< "$REFS")
           echo "Verifying $IMAGE"
           # The versions the bake file pins, so a bump needs no edit here.
           bake_default() {
