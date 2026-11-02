@@ -115,11 +115,14 @@ RUN . /etc/os-release && \
 
 # Install SchedMD Slurm from the .deb packages built in the slurm-builder stage
 # (replaces Ubuntu's stock slurm-wlm). We install via apt (not raw dpkg) so the
-# runtime dependencies (munge, libmariadb, ...) resolve automatically, as
-# recommended by https://slurm.schedmd.com/quickstart_admin.html.
+# runtime dependencies (libmunge2, libmariadb, ...) resolve automatically, as
+# recommended by https://slurm.schedmd.com/quickstart_admin.html. munge is
+# listed explicitly: the SchedMD packages only depend on libmunge2, not the
+# munge daemon and user that slurm-init.sh needs.
 COPY --from=slurm-builder /slurm-debs /tmp/slurm-debs
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
+        munge \
         /tmp/slurm-debs/slurm-smd_*.deb \
         /tmp/slurm-debs/slurm-smd-client_*.deb \
         /tmp/slurm-debs/slurm-smd-slurmctld_*.deb \
