@@ -1581,92 +1581,93 @@
       "panels": []
     },
     {
-      "type": "timeseries",
-      "id": 32,
-      "title": "GPU Utilization by Node and GPU",
+      "type": "status-history",
+      "title": "GPU Utilization by GPU",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 58
-      },
+      "maxDataPoints": 100,
+      "description": "Per-GPU core utilization — one row per GPU, sorted host->gpu. Cold row = idle/straggler.",
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "custom": {
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          },
           "min": 0,
-          "max": 100
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "max": 100,
+          "color": {
+            "mode": "continuous-plasma",
+            "scheme": "Plasma"
           },
-          "expr": "sum by (instance, GpuIndex) (ray_node_gpus_utilization)",
-          "refId": "A",
-          "legendFormat": "{{instance}} GPU {{GpuIndex}}"
-        }
-      ],
-      "description": "Hardware GPU utilization from Ray's node agent. Per-GPU detail from DCGM is on the GPU dashboards."
-    },
-    {
-      "type": "timeseries",
-      "id": 33,
-      "title": "GPU Memory Used by Node and GPU",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 58
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
           "custom": {
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+            "fillOpacity": 100,
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
             }
           }
         },
         "overrides": []
       },
       "options": {
+        "showValue": "never",
+        "colWidth": 1,
+        "rowHeight": 0.9,
         "legend": {
           "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_GPU_UTIL)",
+          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
+        }
+      ],
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "id": 36
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU Utilization by Node",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true
+          "calcs": [
+            "mean",
+            "max"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -1675,16 +1676,22 @@
       },
       "targets": [
         {
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (instance, GpuIndex) (ray_node_gram_used) * 1048576",
-          "refId": "A",
-          "legendFormat": "{{instance}} GPU {{GpuIndex}}"
+          "expr": "avg by (Hostname) (DCGM_FI_DEV_GPU_UTIL)",
+          "legendFormat": "{{Hostname}}"
         }
       ],
-      "description": "GPU memory in use, from Ray's node agent."
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 74
+      },
+      "id": 37
     },
     {
       "type": "timeseries",
@@ -1697,8 +1704,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 66
+        "x": 12,
+        "y": 74
       },
       "fieldConfig": {
         "defaults": {
@@ -1741,6 +1748,68 @@
       "description": "Node CPU utilization from Ray's node agent."
     },
     {
+      "type": "status-history",
+      "title": "GPU Memory Used by GPU",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "maxDataPoints": 100,
+      "description": "Per-GPU framebuffer utilization — one row per GPU, sorted host->gpu.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "continuous-plasma",
+            "scheme": "Plasma"
+          },
+          "custom": {
+            "fillOpacity": 100,
+            "lineWidth": 0,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "colWidth": 1,
+        "rowHeight": 0.9,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL)",
+          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
+        }
+      ],
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "id": 38
+    },
+    {
       "type": "timeseries",
       "id": 35,
       "title": "Memory Used by Node",
@@ -1750,9 +1819,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 66
+        "w": 24,
+        "x": 0,
+        "y": 98
       },
       "fieldConfig": {
         "defaults": {
