@@ -15,6 +15,7 @@ group "rocm644" {
 }
 
 target "rocm-base" {
+  inherits = ["_oci-labels"]
   context = "official-templates/base"
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64"]
@@ -27,6 +28,10 @@ target "rocm-base" {
   }
   args = {
     RP_SKIP_PYTHON = "1"
+  }
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod ROCm PyTorch"
+    "org.opencontainers.image.description" = "Runpod image built on AMD's ROCm PyTorch container with the Runpod base tooling layered on top."
   }
 }
 

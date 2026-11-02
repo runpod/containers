@@ -7,6 +7,7 @@ group "default" {
 }
 
 target "common-base" {
+  inherits = ["_oci-labels"]
   context = "official-templates/base"
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64"]
@@ -16,6 +17,10 @@ target "common-base" {
     logo    = "container-template"
     requirements = "official-templates/base"
     scrub_stale_metadata = "scripts"
+  }
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod Base"
+    "org.opencontainers.image.description" = "Base image for Runpod official templates: CUDA/Ubuntu runtime with SSH, Jupyter, and the Runpod container tooling."
   }
 }
 

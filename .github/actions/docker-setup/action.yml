@@ -19,9 +19,22 @@ inputs:
       commit into either trusted lineage.
     required: true
 
+outputs:
+  build-date:
+    description: 'RFC3339 UTC build timestamp for the org.opencontainers.image.created OCI label.'
+    value: ${{ steps.oci-meta.outputs.build_date }}
+
 runs:
   using: 'composite'
   steps:
+    - name: Compute OCI build metadata
+      id: oci-meta
+      shell: bash
+      run: |
+        # RFC3339 UTC stamp consumed by docker-bake as the BUILD_DATE variable,
+        # which fills org.opencontainers.image.created (see shared/versions.hcl).
+        echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
     - name: Enable containerd image store
       shell: bash
       run: |

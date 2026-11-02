@@ -6,9 +6,15 @@ group "default" {
 }
 
 target "sandbox-ubuntu" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/sandbox-ubuntu"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod Sandbox Ubuntu"
+    "org.opencontainers.image.description" = "Runpod sandbox base image: a minimal Ubuntu rootfs that runs under gVisor for the sandbox runtime."
+  }
 
   args = {
     # Digest-pinned: the warm pool is keyed on the image, and `ubuntu:26.04`

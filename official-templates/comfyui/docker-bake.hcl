@@ -119,9 +119,14 @@ group "cuda132" {
 
 # Common settings for all targets (defaults to regular CUDA 12.8 / cu128)
 target "common" {
+  inherits   = ["_oci-labels"]
   context    = "official-templates/comfyui"
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+  labels = {
+    "org.opencontainers.image.title"       = "Runpod ComfyUI"
+    "org.opencontainers.image.description" = "Runpod ComfyUI image built on runpod/base with ComfyUI, ComfyUI-Manager, and a curated node set."
+  }
 }
 
 target "comfyui-matrix" {
