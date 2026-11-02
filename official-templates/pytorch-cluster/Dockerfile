@@ -10,8 +10,12 @@ ARG BASE_IMAGE=non-existing
 # counter CSVs from NVIDIA's pinned image; the DCGM runtime it links against
 # (libdcgm) is installed via apt below and must share the same DCGM major
 # version (4.x) as this image.
-# ⚠️ If bumping the tag, re-verify /usr/bin/dcgm-exporter and /etc/dcgm-exporter.
-ARG DCGM_EXPORTER_IMAGE=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+# Since 4.8.2 NVIDIA only publishes the distroless flavour; its binary only
+# needs glibc (verified to run on ubuntu22.04's glibc 2.35).
+# ⚠️ If bumping the tag, re-verify /usr/bin/dcgm-exporter and /etc/dcgm-exporter,
+# and check the release notes for label/metric renames: the dashboards key off
+# the `hostname` and `gpu` labels (exporter 4.8.3 renamed `Hostname` -> `hostname`).
+ARG DCGM_EXPORTER_IMAGE=nvcr.io/nvidia/k8s/dcgm-exporter:4.6.1-4.8.4-distroless
 FROM ${DCGM_EXPORTER_IMAGE} AS dcgm-exporter-src
 
 FROM ${BASE_IMAGE}
