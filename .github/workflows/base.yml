@@ -636,6 +636,7 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          budget-usd-per-hour: "3.0"
           test-jupyter: true
           test-torch-packages: true
           test-ca-certs: true
@@ -793,6 +794,7 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          budget-usd-per-hour: "3.0"
           test-torch-packages: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"
