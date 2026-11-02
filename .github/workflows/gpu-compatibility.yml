@@ -1,0 +1,277 @@
+name: GPU Compatibility Matrix
+
+# Manual sweep for any image: boots it on every NVIDIA GPU in the RunPod
+# catalog independently and reports a per-GPU pass/fail matrix. AMD is out
+# of scope here — the CUDA axis has no meaning for it; use a local manifest.
+#
+# COST: ~45 NVIDIA types x 5-10 min per pod, multiplied by the images and
+# the CUDA axis, far longer with the ComfyUI functional check. Narrow with
+# exclude-instances, or name exact GPUs in instances.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Image refs WITH tags, comma-separated. Every image is tested on every selected GPU, so N images means N times the pods."
+        type: string
+        required: true
+      test-ports:
+        description: "HTTP ports to probe, comma- or space-separated (e.g. 8080, 8888). Empty = none."
+        type: string
+        required: false
+        default: ""
+      cuda-versions:
+        description: "CUDA axis: 'all', or exact versions like '12.8, 13.0'. Empty = one job per GPU, floor from the tag."
+        type: string
+        required: false
+        default: ""
+      test-comfyui:
+        description: "ComfyUI smoke test — is ComfyUI up and reachable on :8188"
+        type: boolean
+        required: false
+        default: false
+      test-comfyui-functional:
+        description: "ComfyUI functional test — download model, run workflow, validate PNG (forces the smoke test first)"
+        type: boolean
+        required: false
+        default: false
+      exclude-instances:
+        description: "GPUs to skip: comma-separated fnmatch patterns (e.g. *Blackwell*, RTX A4000)"
+        type: string
+        required: false
+        default: ""
+      test-jupyter:
+        description: "JupyterLab probe on :8888 — only for images using container-template/start.sh"
+        type: boolean
+        required: false
+        default: false
+      cloud:
+        description: "Cloud tier. ALL sweeps both — needed for full catalog coverage, since the tiers don't overlap."
+        type: choice
+        required: false
+        default: "SECURE"
+        options:
+          - SECURE
+          - COMMUNITY
+          - ALL
+      check-all-gpu:
+        description: "Sweep every GPU in the catalog. Mutually exclusive with 'instances'."
+        type: boolean
+        required: false
+        default: true
+      instances:
+        description: "Exact GPUs, comma-separated (e.g. A100 SXM, RTX 4090) — a fallback chain, so one pod per image lands on the first one with capacity, NOT one pod per GPU. For a matrix over a subset, tick check-all-gpu and exclude the rest. Mutually exclusive with 'check-all-gpu'."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# cancel-in-progress is false on purpose: a cancel SIGKILLs the runner before
+# test_images.py can terminate its pods, so queue rather than leak paid pods.
+concurrency:
+  group: gpu-compat-${{ inputs.image }}
+  cancel-in-progress: false
+
+jobs:
+  compatibility:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      # Not a dispatch input: workflow_dispatch is capped at 10 and the GPU
+      # selection inputs are worth more. Parallelism doesn't change cost
+      # anyway (you pay per pod-minute) — it trades wall-clock against the
+      # risk of throttled concurrent image pulls.
+      MAX_PARALLEL: "4"
+    # A full sweep outlives the 360-minute default.
+    timeout-minutes: 720
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Normalize inputs
+        id: prep
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+          PORTS: ${{ inputs.test-ports }}
+          EXCLUDE: ${{ inputs.exclude-instances }}
+          INSTANCES: ${{ inputs.instances }}
+        run: |
+          set -euo pipefail
+
+          # Dispatch gives single-line strings; smoke-test wants one entry per
+          # line. Ports also accept spaces, exclude patterns must not — GPU
+          # display names contain them ("RTX A4000").
+          to_lines() {
+            printf '%s' "$1" \
+              | tr ',' '\n' \
+              | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+              | grep -v '^$' || true
+          }
+
+          emit_multiline() {
+            {
+              echo "$1<<__GH_EOF__"
+              to_lines "$2"
+              echo "__GH_EOF__"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          # Image refs never contain whitespace, so strip it all and split on
+          # commas. Every ref is validated against a charset before it goes
+          # into the JSON array, which is what keeps the hand-built JSON from
+          # being escapable.
+          IMAGES_CSV=$(printf '%s' "${IMAGE}" | tr -d '[:space:]')
+          if [[ -z "${IMAGES_CSV}" ]]; then
+            echo "::error::image input is empty"
+            exit 1
+          fi
+          refs_json=""
+          refs_human=""
+          image_count=0
+          while IFS= read -r ref; do
+            [[ -z "${ref}" ]] && continue
+            if [[ ! "${ref}" =~ ^[A-Za-z0-9._:/@-]+$ ]]; then
+              echo "::error::image '${ref}' has characters that aren't valid in an image ref"
+              exit 1
+            fi
+            if [[ "${ref}" != *:* ]]; then
+              echo "::error::image '${ref}' has no tag — pass an explicit tag, not a bare repository"
+              exit 1
+            fi
+            refs_json+="${refs_json:+,}\"${ref}\""
+            refs_human+="${refs_human:+, }${ref}"
+            image_count=$((image_count + 1))
+          done <<< "$(printf '%s' "${IMAGES_CSV}" | tr ',' '\n')"
+          printf 'image-refs=[%s]\n' "${refs_json}" >> "$GITHUB_OUTPUT"
+          printf 'images=%s\n' "${refs_human}" >> "$GITHUB_OUTPUT"
+          printf 'image-count=%s\n' "${image_count}" >> "$GITHUB_OUTPUT"
+
+          emit_multiline ports "$(printf '%s' "${PORTS}" | tr ' ' ',')"
+          emit_multiline exclude "${EXCLUDE}"
+          emit_multiline instances "${INSTANCES}"
+
+      - name: Validate inputs
+        shell: bash
+        env:
+          CUDA: ${{ inputs.cuda-versions }}
+          INSTANCES: ${{ inputs.instances }}
+          CHECK_ALL: ${{ inputs.check-all-gpu }}
+        run: |
+          set -euo pipefail
+          # Fail before the catalog fetch, not with a traceback deep in the
+          # harness or, worse, a sweep that silently ignored an input.
+          instances_trimmed=$(printf '%s' "${INSTANCES}" | tr -d '[:space:]')
+          if [[ -n "${instances_trimmed}" && "${CHECK_ALL,,}" == "true" ]]; then
+            echo "::error::choose one: 'instances' lists exact GPUs, 'check-all-gpu' sweeps the catalog. An explicit list wins in the harness, so check-all-gpu would be silently ignored. Clear the instances field, or untick check-all-gpu."
+            exit 1
+          fi
+          if [[ -z "${instances_trimmed}" && "${CHECK_ALL,,}" != "true" ]]; then
+            echo "::error::nothing to test: set 'instances', or tick 'check-all-gpu'."
+            exit 1
+          fi
+          # 'all', or a comma list of X.Y. Rejecting a bare major here saves
+          # a whole sweep that would pin a version nothing reports.
+          if [[ -n "${CUDA}" && "${CUDA,,}" != "all" ]]; then
+            normalized=$(printf '%s' "${CUDA}" | tr -d '[:space:]')
+            [[ "${normalized}" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]] \
+              || { echo "::error::cuda-versions must be 'all' or X.Y[,X.Y...] (e.g. '12.8, 13.0'), got '${CUDA}'"; exit 1; }
+          fi
+
+      - name: Summarize run parameters
+        shell: bash
+        env:
+          # Free-text inputs go through env so shell metacharacters can't
+          # break out of the echo.
+          IMAGES: ${{ steps.prep.outputs.images }}
+          IMAGE_COUNT: ${{ steps.prep.outputs.image-count }}
+          PORTS: ${{ steps.prep.outputs.ports }}
+          EXCLUDE: ${{ steps.prep.outputs.exclude }}
+          INSTANCES: ${{ steps.prep.outputs.instances }}
+          CUDA: ${{ inputs.cuda-versions }}
+          CLOUD: ${{ inputs.cloud }}
+          CHECK_ALL: ${{ inputs.check-all-gpu }}
+          MAX_PARALLEL: ${{ env.MAX_PARALLEL }}
+          JUPYTER: ${{ inputs.test-jupyter }}
+          COMFY_SMOKE: ${{ inputs.test-comfyui || inputs.test-comfyui-functional }}
+          COMFY_FUNC: ${{ inputs.test-comfyui-functional }}
+        run: |
+          set -euo pipefail
+          # Not `paste -sd', '` — -d takes a delimiter LIST and alternates
+          # through it, yielding '8080,8888 9000'.
+          ports_1l=$(printf '%s' "${PORTS}" | paste -sd, - | sed 's/,/, /g')
+          exclude_1l=$(printf '%s' "${EXCLUDE}" | paste -sd, - | sed 's/,/, /g')
+          instances_1l=$(printf '%s' "${INSTANCES}" | paste -sd, - | sed 's/,/, /g')
+          {
+            echo "### GPU compatibility sweep"
+            echo
+            echo "| Setting | Value |"
+            echo "| --- | --- |"
+            echo "| Images (${IMAGE_COUNT}) | \`${IMAGES//, /\`, \`}\` |"
+            echo "| GPUs | ${instances_1l:-whole catalog (check-all-gpu=${CHECK_ALL})} |"
+            echo "| Cloud tier | ${CLOUD} |"
+            echo "| CUDA axis | ${CUDA:-none (floor from tag)} |"
+            echo "| Ports | ${ports_1l:-none} |"
+            echo "| Excluded GPUs | ${exclude_1l:-none} |"
+            echo "| Jupyter | ${JUPYTER} |"
+            echo "| ComfyUI smoke | ${COMFY_SMOKE} |"
+            echo "| ComfyUI functional | ${COMFY_FUNC} |"
+            echo "| Parallel pods | ${MAX_PARALLEL} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run compatibility matrix
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.prep.outputs.image-refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+
+          # Exactly one of these is set — the validate step rejects both and
+          # neither. With check-all-gpu it's one pod per catalog GPU and no
+          # budget filter; with instances it's one pod per named GPU.
+          check-all-gpu: ${{ inputs.check-all-gpu }}
+          instances: ${{ steps.prep.outputs.instances }}
+          exclude-instances: ${{ steps.prep.outputs.exclude }}
+
+          # The action defaults to a 16 GB floor, which would silently drop
+          # RTX 3070 and RTX A2000 from a sweep that claims to cover every
+          # GPU. Vendor stays at the action's Nvidia default: the CUDA axis
+          # is NVIDIA-only, so MI300X belongs in a separate ROCm run.
+          min-vram-gb: "0"
+
+          # ALL sweeps both tiers. Needed for full catalog coverage: they
+          # don't overlap — every GeForce card is community-only, while A40,
+          # L4, H100 SXM, B200 and B300 have no community hosts.
+          cloud-type: ${{ inputs.cloud }}
+
+          # Empty = no axis; one job per GPU with the floor derived from the
+          # image tag by instances.detect_cuda_version.
+          cuda-versions: ${{ inputs.cuda-versions }}
+
+          test-ports: ${{ steps.prep.outputs.ports }}
+          test-jupyter: ${{ inputs.test-jupyter }}
+
+          # test_images.py also forces this, but OR-ing keeps the generated
+          # manifest self-explanatory.
+          test-comfyui: ${{ inputs.test-comfyui || inputs.test-comfyui-functional }}
+          test-comfyui-functional: ${{ inputs.test-comfyui-functional }}
+          save-comfyui-images: ${{ inputs.test-comfyui-functional }}
+          comfyui-images-artifact-name: comfyui-images-gpu-matrix-${{ github.run_id }}
+
+          # The matrix goes to the job's step summary either way; the JSON
+          # artifact is what lets you diff sweeps and spot the fleet moving
+          # to a new CUDA.
+          upload-results-json: "true"
+          results-artifact-name: gpu-matrix-${{ github.run_id }}
+
+          # A catalog-wide sweep always hits GPUs with no free capacity.
+          # Those are SKIPs, not defects; real FAILs stay fatal.
+          on-skip: pass
+
+          # Worst case across images: rocm/* bases are 30-50 GB.
+          create-timeout: "1200"
+          max-parallel: ${{ env.MAX_PARALLEL }}

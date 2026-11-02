@@ -3,18 +3,47 @@ FROM "${BASE_IMAGE}"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 ARG WHEEL_SRC
 ARG TORCH
 
-# TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0 torchvision==0.23.0
-# torchaudio==2.8.0"). `read -ra` splits it into a real bash array so pip receives one
-# argument per package instead of a single mashed-together string.
+# TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0
+# torchvision==0.23.0"). `read -ra` splits it into a real bash array so pip receives
+# one argument per package instead of a single mashed-together string.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     read -ra TORCH_PKGS <<< "${TORCH}" && \
-    python -m pip install \
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install \
         --timeout 1000 \
         --retries 10 \
         --resume-retries 5 \
         --upgrade \
         "${TORCH_PKGS[@]}" \
         --index-url "https://download.pytorch.org/whl/cu${WHEEL_SRC}"
+
+# torchaudio ended at 2.11.0, so newer CUDA indexes never got it (cu132 stops at
+# 2.2.0) and it needs its own index (see audio_index in docker-bake.hcl).
+# --no-deps because the wheel declares none and its torch pin must not move this
+# build's.
+ARG TORCHAUDIO
+ARG AUDIO_INDEX
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ -n "${TORCHAUDIO}" ]; then \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHAUDIO}" \
+            --index-url "https://download.pytorch.org/whl/${AUDIO_INDEX}"; \
+    fi
+
+# torchcodec backs torchaudio.load/save from torch 2.9 on. Its own step because
+# its CUDA builds don't track torch's index cadence (see codec_src in
+# docker-bake.hcl); --no-deps so it can never pull a different torch.
+ARG TORCHCODEC
+ARG CODEC_SRC
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ -n "${TORCHCODEC}" ]; then \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHCODEC}" \
+            --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
+    fi
+
+# Patched pins for packages that Grype reports as HIGH in the layers above.
+COPY --from=requirements requirements.txt /requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install --upgrade -r /requirements.txt

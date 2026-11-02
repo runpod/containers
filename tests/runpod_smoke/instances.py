@@ -12,24 +12,19 @@ tested on" lives here:
 from __future__ import annotations
 
 import fnmatch
-import json
-import os
 import re
-import urllib.error
-import urllib.request
-from pathlib import Path
 from typing import Optional
 
-from . import config
+from . import api, config
 from .log import log
-from .runpodctl import runpodctl_json
+from .manifest import _normalize_bool
 
 
-# Extract CUDA version from image tag. Supports both `cuda1281` and
-# `cu1281` (interpreted as 12.8.1). Returns "X.Y" suitable for
-# --min-cuda-version, or None for images without an embedded CUDA version
-# (CPU images, ROCm, NGC). Anchored with \b so we don't match e.g. 'cudnn'.
-CUDA_TAG_RE = re.compile(r"\bcu(?:da)?(\d{2})(\d)(\d)\b", re.IGNORECASE)
+# Supports `cuda1281` / `cu1300` and the ComfyUI `cuda13.0` convention.
+CUDA_TAG_RE = re.compile(
+    r"\bcu(?:da)?(\d{2})(?:(\d)(\d)|\.(\d))\b",
+    re.IGNORECASE,
+)
 
 
 def detect_cuda_version(image: str) -> Optional[str]:
@@ -38,6 +33,7 @@ def detect_cuda_version(image: str) -> Optional[str]:
     Examples:
         runpod/base:...-cuda1281-ubuntu2204     -> '12.8'
         runpod/pytorch:...-cu1300-torch290-...  -> '13.0'
+        runpod/comfyui:cuda13.0                 -> '13.0'
         runpod/base:...-rocm644-...             -> None
         runpod/base:...-ubuntu2404              -> None
         runpod/nvidia-pytorch:...-25.11         -> None (NGC tag, unknown CUDA)
@@ -50,12 +46,13 @@ def detect_cuda_version(image: str) -> Optional[str]:
     m = CUDA_TAG_RE.search(image)
     if not m:
         return None
-    major, minor, _patch = m.groups()
+    major = m.group(1)
+    minor = m.group(2) or m.group(4)
     return f"{int(major)}.{int(minor)}"
 
 
 def resolve_gpu_id(display_name: str) -> str:
-    """Map a user-supplied GPU display name to its runpodctl gpuId.
+    """Map a user-supplied GPU display name to its RunPod gpu id.
 
     Tries exact match first, then case-insensitive match (so 'RTX 4070 TI'
     in the manifest still finds 'RTX 4070 Ti' in the RunPod catalog).
@@ -79,70 +76,225 @@ def is_known_gpu(display_name: str) -> bool:
     return any(name.lower() == lowered for name in config.GPU_ID_MAP)
 
 
-def discover_gpu_id_map() -> dict[str, str]:
-    """Build {displayName: gpuId} from `runpodctl gpu list`."""
-    data = runpodctl_json(
-        "gpu", "list", "--include-unavailable", timeout=30
+def discover_gpu_catalog() -> list[dict]:
+    """Fetch GPU types from `GET /v2/catalog/gpus`.
+
+    Entries keep the field names the rest of the module already uses
+    (`displayName`, `memoryInGb`, `securePrice`, `communityPrice`) so the
+    budget/vRAM filters didn't have to change; `cudaVersions` is new and
+    carries per-version capacity, which is what makes a GPU x CUDA sweep
+    possible without blind pod-create attempts.
+
+    `include=AVAILABILITY` needs `product`, and scopes availability and
+    lowest-price to that context. Returns [] on any failure — the script
+    still works if the manifest uses explicit `instances:` lists.
+    """
+    status, data = api.request_with_retries(
+        "GET",
+        "/catalog/gpus",
+        params={
+            "include": ["AVAILABILITY"],
+            "product": ["POD"],
+            "cloud": config.CLOUD_TYPE.upper(),
+            "count": 1,
+        },
+        timeout=30,
     )
-    if not isinstance(data, list):
-        return {}
+    if not (200 <= status < 300) or not isinstance(data, dict):
+        api.log_error("warn: could not fetch GPU catalog", status, data, indent=0)
+        return []
+    out: list[dict] = []
+    for gpu in data.get("gpus") or []:
+        if not isinstance(gpu, dict):
+            continue
+        # Present in neither tier means no pod can ever land on it — the
+        # catalog carries such a placeholder entry named 'unknown'.
+        if not (gpu.get("secure") or gpu.get("community")):
+            continue
+        price = gpu.get("price") or {}
+        cuda = [
+            cv.get("version")
+            for cv in (gpu.get("cudaVersions") or [])
+            if isinstance(cv, dict) and cv.get("version")
+        ]
+        cuda_available = [
+            cv.get("version")
+            for cv in (gpu.get("cudaVersions") or [])
+            if isinstance(cv, dict) and cv.get("version") and cv.get("available")
+        ]
+        out.append({
+            "id": gpu.get("id") or "",
+            "displayName": gpu.get("name") or "",
+            "memoryInGb": gpu.get("memory") or 0,
+            "manufacturer": gpu.get("manufacturer") or "",
+            "securePrice": price.get("secure") or 0,
+            "communityPrice": price.get("community") or 0,
+            "availability": gpu.get("availability") or "",
+            "cudaVersions": cuda,
+            "cudaVersionsAvailable": cuda_available,
+            # Which tier the GPU exists in. `cudaVersions` is scoped to the
+            # requested cloud, so these say whether an empty list means
+            # "wrong tier" or "no capacity".
+            "secure": bool(gpu.get("secure")),
+            "community": bool(gpu.get("community")),
+        })
+    return out
+
+
+def discover_gpu_id_map() -> dict[str, str]:
+    """Build {displayName: gpuId} from the already-fetched catalog.
+
+    Falls back to its own request when called before the catalog is loaded,
+    so callers don't have to care about ordering.
+    """
+    catalog = config.GPU_CATALOG or discover_gpu_catalog()
     return {
-        item["displayName"]: item["gpuId"]
-        for item in data
-        if item.get("displayName") and item.get("gpuId")
+        gpu["displayName"]: gpu["id"]
+        for gpu in catalog
+        if gpu.get("displayName") and gpu.get("id")
     }
 
 
-def _load_runpod_api_key() -> Optional[str]:
-    """Read the API key out of ~/.runpod/config.toml. We avoid a tomli
-    dependency by regex'ing the file — the CLI always writes the key on a
-    single line like `apikey = '...'`. Also honours RUNPOD_API_KEY env var
-    so CI / containerized runs can inject it without touching the file."""
-    env = os.environ.get("RUNPOD_API_KEY", "").strip()
-    if env:
-        return env
-    cfg = Path.home() / ".runpod" / "config.toml"
-    if not cfg.is_file():
-        return None
-    try:
-        text = cfg.read_text()
-    except OSError:
-        return None
-    m = re.search(r"apikey\s*=\s*['\"]([^'\"]+)['\"]", text)
-    return m.group(1) if m else None
+def cuda_versions_offered(display_name: str, *, only_available: bool = True) -> list[str]:
+    """CUDA versions the catalog reports for one GPU display name.
+
+    `only_available` keeps just the versions with free capacity right now —
+    the field the API describes as "at least one machine on this CUDA version
+    has free capacity". Pinning a version nobody reports yields a capacity
+    error rather than a fallback, so filtering here is what keeps a GPU x
+    CUDA sweep from being mostly wasted attempts.
+    """
+    key = "cudaVersionsAvailable" if only_available else "cudaVersions"
+    entry = catalog_entry(display_name)
+    return list(entry.get(key) or []) if entry else []
 
 
-def discover_gpu_catalog() -> list[dict]:
-    """Fetch GPU types + per-hour prices from RunPod GraphQL.
+def catalog_entry(display_name: str) -> Optional[dict]:
+    """Catalog row for one GPU display name, or None if unknown."""
+    lowered = display_name.lower()
+    for gpu in config.GPU_CATALOG:
+        if (gpu.get("displayName") or "").lower() == lowered:
+            return gpu
+    return None
 
-    Each entry has: id, displayName, memoryInGb, securePrice,
-    communityPrice, manufacturer. Returns [] on any failure (script will
-    still work if the manifest uses explicit `instances:` lists)."""
-    api_key = _load_runpod_api_key()
-    if not api_key:
+
+def uncovered_reason(display_name: str) -> str:
+    """Why a GPU yielded no (GPU, CUDA) pairing to test.
+
+    `cudaVersions` is scoped to `CLOUD_TYPE`, so an empty list has three
+    different causes needing three different actions: sweep the other tier,
+    accept that the vendor has no CUDA, or retry later.
+    """
+    cloud = config.CLOUD_TYPE.upper()
+    entry = catalog_entry(display_name)
+    if entry is None:
+        return "not in the GPU catalog"
+    offered = list(entry.get("cudaVersions") or [])
+    if offered:
+        return f"offers {', '.join(offered)} but none had capacity"
+    other = "COMMUNITY" if cloud == "SECURE" else "SECURE"
+    if not entry.get(cloud.lower(), True):
+        if other in config.CLOUD_TYPES:
+            return f"not offered in the {cloud} cloud (covered by the {other} pass)"
+        return (
+            f"not offered in the {cloud} cloud — "
+            f"rerun with CLOUD_TYPE={other} to cover it"
+        )
+    manufacturer = (entry.get("manufacturer") or "").upper()
+    if manufacturer and manufacturer != "NVIDIA":
+        return f"no CUDA versions ({entry.get('manufacturer')} GPU)"
+    return f"no CUDA versions in the {cloud} cloud right now"
+
+
+def cuda_axis_for(group: str, display_name: str) -> list[str]:
+    """Versions to test `display_name` on for `group`, newest first.
+
+    [] means "no CUDA axis for this group" — the caller then emits a single
+    unpinned job and the floor is derived from the image tag as before.
+    """
+    all_mode = config.GROUP_CUDA_ALL.get(group, False)
+    requested = config.GROUP_CUDA_VERSIONS.get(group) or []
+    if not (all_mode or requested):
         return []
-    query = ("{ gpuTypes { id displayName memoryInGb "
-             "securePrice communityPrice manufacturer } }")
-    req = urllib.request.Request(
-        "https://api.runpod.io/graphql",
-        data=json.dumps({"query": query}).encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            # api.runpod.io is fronted by Cloudflare, which rejects the
-            # default Python-urllib User-Agent with error code 1010.
-            # Identify as a generic client to get through.
-            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+    offered = cuda_versions_offered(display_name)
+    if all_mode:
+        picked = offered
+    else:
+        picked = [v for v in requested if v in offered]
+    return sorted(picked, key=_version_key, reverse=True)
+
+
+def _version_key(version: str) -> tuple:
+    try:
+        return tuple(int(p) for p in version.split("."))
+    except (TypeError, ValueError):
+        return (0,)
+
+
+def discover_cpu_catalog() -> list[dict]:
+    """Fetch CPU flavors from `GET /v2/catalog/cpus`.
+
+    Needed because v2 requires an explicit `cpu.id` + `vcpuCount` on pod
+    create, where the old CLI let RunPod pick the flavor itself.
+    """
+    status, data = api.request_with_retries(
+        "GET",
+        "/catalog/cpus",
+        params={
+            "include": ["AVAILABILITY"],
+            "product": ["POD"],
         },
-        method="POST",
+        timeout=30,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            payload = json.loads(resp.read())
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
-        log(f"warn: could not fetch GPU prices: {exc}")
+    if not (200 <= status < 300) or not isinstance(data, dict):
+        api.log_error("warn: could not fetch CPU catalog", status, data, indent=0)
         return []
-    return ((payload.get("data") or {}).get("gpuTypes") or [])
+    return [c for c in (data.get("cpus") or []) if isinstance(c, dict)]
+
+
+# Availability is a point-in-time snapshot, so it ORDERS candidates rather
+# than excluding them: at the time of writing every CPU flavor reports NONE,
+# and refusing to try would mean never creating a CPU pod at all. A create
+# against a full pool comes back UNAVAILABLE, which the runner already
+# handles by moving to the next candidate.
+_AVAILABILITY_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "NONE": 3}
+
+
+def pick_cpu_flavor() -> tuple[str, int]:
+    """Choose (flavor_id, vcpuCount) for a CPU pod.
+
+    `CPU_FLAVOR_ID` wins when set. Otherwise the flavor whose `vcpu` range
+    admits `config.CPU_VCPU_COUNT`, preferring better-reported availability
+    and then the lower `price.securePerVcpu`. Returns ("", 0) only when the
+    catalog is unreachable or no flavor supports the requested vCPU count.
+    """
+    catalog = config.CPU_CATALOG or discover_cpu_catalog()
+    if catalog and not config.CPU_CATALOG:
+        config.CPU_CATALOG.extend(catalog)
+    want = config.CPU_VCPU_COUNT
+
+    if config.CPU_FLAVOR_ID:
+        # Trust the override even if it isn't in the catalog — the API is
+        # the authority and a stale catalog shouldn't block an explicit ask.
+        return config.CPU_FLAVOR_ID, want
+
+    def fits(flavor: dict) -> bool:
+        vcpu = flavor.get("vcpu") or {}
+        lo = int(vcpu.get("min") or 0)
+        hi = int(vcpu.get("max") or 0)
+        return bool(flavor.get("id")) and lo <= want <= (hi or want)
+
+    candidates = [f for f in catalog if fits(f)]
+    if not candidates:
+        return "", 0
+    best = min(
+        candidates,
+        key=lambda f: (
+            _AVAILABILITY_RANK.get(f.get("availability") or "", 1),
+            float((f.get("price") or {}).get("securePerVcpu") or 1e9),
+        ),
+    )
+    return best.get("id") or "", want
 
 
 def _apply_exclude_filter(
@@ -248,21 +400,45 @@ def _select_by_budget(group_name: str, group_config: dict) -> list[str]:
     return [name for _, name in candidates]
 
 
+def _select_all_gpus(group_name: str, group_config: dict) -> list[str]:
+    """Return every catalog GPU matching optional vRAM/vendor filters."""
+    if not config.GPU_CATALOG:
+        log(
+            f"warn: group '{group_name}' uses check_all_gpu but the "
+            "GPU catalog is empty — set RUNPOD_API_KEY or use explicit "
+            "instances"
+        )
+        return []
+    min_vram = int(group_config.get("min_vram_gb", 0))
+    manufacturer = (group_config.get("manufacturer") or "").lower()
+    names = [
+        gpu["displayName"]
+        for gpu in config.GPU_CATALOG
+        if gpu.get("displayName")
+        and gpu.get("memoryInGb", 0) >= min_vram
+        and (
+            not manufacturer
+            or (gpu.get("manufacturer") or "").lower() == manufacturer
+        )
+    ]
+    return sorted(set(names))
+
+
 def resolve_instances(group_name: str, group_config: dict) -> list[str]:
     """Decide which GPU display names this group should try, in order.
 
     Priority:
-      0. CPU groups (name in `config.CPU_GROUP_NAMES`) — `runpodctl pod
-         create` doesn't accept a CPU-flavor flag, so we expand to one
-         entry per `config.CPU_CANDIDATES` label. Each label varies the
-         axes that runpodctl DOES accept for CPU (`--cloud-type` SECURE
-         vs COMMUNITY, optional `--data-center-ids`) — see config.py
-         for rationale. The caller's per-instance loop walks them in
-         order on UNAVAILABLE / STUCK, identical to how it cycles
-         through GPU types.
+      0. CPU groups (name in `config.CPU_GROUP_NAMES`) — expand to one
+         entry per `config.CPU_CANDIDATES` label. The flavor comes from
+         `pick_cpu_flavor`; the labels vary only placement (SECURE vs
+         COMMUNITY, optional data centres). The caller's per-instance loop
+         walks them in order on UNAVAILABLE / STUCK, identical to how it
+         cycles through GPU types.
       1. Explicit `instances:` list in the manifest — wins, used as-is.
       2. `max_price_per_hour: X` (+ optional `min_vram_gb`, `manufacturer`)
          — auto-pick from RunPod catalog, sorted cheapest first.
+      3. `check_all_gpu: true` — every catalog GPU matching the optional
+         vRAM/vendor filters, for compatibility-matrix runs.
 
     After candidate selection, an optional `exclude_instances:` list of
     fnmatch-style patterns is subtracted. Use this to block known-bad
@@ -285,6 +461,8 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
         names = list(explicit)
     elif group_config.get("max_price_per_hour") is not None:
         names = _select_by_budget(group_name, group_config)
+    elif _normalize_bool(group_config.get("check_all_gpu")):
+        names = _select_all_gpus(group_name, group_config)
     else:
         return []
 

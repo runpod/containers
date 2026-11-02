@@ -78,12 +78,43 @@ def render_yaml(groups: dict) -> str:
             "manufacturer",
             "min_cuda_version",
             "test_jupyter",
+            "test_torch_packages",
+            "check_all_gpu",
+            "test_comfyui",
+            "test_comfyui_functional",
+            "test_pip_check",
+            "test_ca_certs",
+            "min_ca_certs_version",
+            "test_python_tls",
+            "python_tls_venv",
+            "test_uv",
+            "test_virtualenv",
+            "test_autoresearch",
         ):
             if key in body:
                 val = body[key]
                 if isinstance(val, bool):
                     val = "true" if val else "false"
                 lines.append(f"    {key}: {val}")
+        if body.get("test_ports"):
+            lines.append("    test_ports:")
+            for port in body["test_ports"]:
+                # Quote `<port>/<path>` entries so YAML keeps them as strings.
+                value = f'"{port}"' if "/" in str(port) else port
+                lines.append(f"    - {value}")
+        for list_key in ("pip_check_allow", "revoked_ca_names"):
+            if body.get(list_key):
+                lines.append(f"    {list_key}:")
+                for entry in body[list_key]:
+                    lines.append(f"    - {entry}")
+        # cuda_versions is either the literal `all` or a list of X.Y
+        # versions; the scalar form goes through the key loop above.
+        if isinstance(body.get("cuda_versions"), list):
+            lines.append("    cuda_versions:")
+            for version in body["cuda_versions"]:
+                lines.append(f"    - {version}")
+        elif body.get("cuda_versions"):
+            lines.append(f"    cuda_versions: {body['cuda_versions']}")
         # exclude_instances is a list, emitted at the bottom of the group so
         # it's visually grouped with other "filter" options. Patterns are
         # double-quoted to keep glob-leading characters ('*', '?') safe from
@@ -103,8 +134,26 @@ def build_groups(
     min_vram_gb: int,
     manufacturer: str,
     test_jupyter: bool = False,
+    test_torch_packages: bool = False,
+    test_ports: list[str] | None = None,
+    test_comfyui: bool = False,
+    test_comfyui_functional: bool = False,
+    test_pip_check: bool = False,
+    pip_check_allow: list[str] | None = None,
+    test_ca_certs: bool = False,
+    min_ca_certs_version: str = "",
+    test_python_tls: bool = False,
+    python_tls_venv: str = "",
+    revoked_ca_names: list[str] | None = None,
+    test_uv: bool = False,
+    test_virtualenv: bool = False,
+    test_autoresearch: bool = False,
+    check_all_gpu: bool = False,
+    instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
     min_cuda_version: str | None = None,
+    cuda_versions: list[str] | None = None,
+    explicit_budget: bool = False,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -116,12 +165,24 @@ def build_groups(
     runpod/autoresearch). NGC nvidia-pytorch images have a different
     entrypoint and would fail the probe.
 
+    `test_torch_packages` is likewise opt-in. It extends the CUDA check
+    with torchvision, torchaudio and torchcodec operations, and makes
+    those packages mandatory — enable it only where the image is supposed
+    to carry them (runpod/pytorch and its -cluster layer), not for images
+    that ship torch alone.
+
     `exclude_instances` is a list of fnmatch-style patterns (e.g.
     '*Blackwell*') that test_images.py subtracts from each group's
     candidate pool. Use to block known-bad image/GPU pairings — e.g.
     PyTorch ≤ 2.6 wheels have no kernels for sm_100/sm_120, so any test
     landing on a Blackwell host fails with 'no kernel image is available
     for execution on the device'.
+
+    `cuda_versions` turns on the GPU x CUDA axis: `['all']` tests every
+    version each GPU reports capacity for, an explicit list tests just
+    those. Each version becomes its own job and is pinned with
+    `gpu.allowedCudaVersions`, so it supersedes `min_cuda_version` — the
+    API rejects both fields on one request.
 
     `min_cuda_version` is the floor CUDA driver version (X.Y) the pod's
     host driver must support. test_images.py only consults this for
@@ -131,35 +192,91 @@ def build_groups(
     CUDA 13.0 and refuses to run on hosts with a 12.x driver.
     """
     exclude_instances = list(exclude_instances or [])
+    instances = list(instances or [])
+    test_ports = list(test_ports or [])
+    cuda_versions = list(cuda_versions or [])
+    wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
 
-    def _decorate(body: dict) -> dict:
+    if instances and check_all_gpu:
+        raise ValueError(
+            "instances and check_all_gpu are mutually exclusive: an explicit "
+            "list wins over catalog selection, so passing both silently "
+            "ignores one of them"
+        )
+
+    def _decorate(body: dict, *, gpu_group: bool) -> dict:
+        if gpu_group and instances:
+            # An explicit list wins over catalog selection in
+            # instances.resolve_instances, so the budget / vRAM / vendor
+            # filters would be dead weight in the manifest.
+            body["instances"] = list(instances)
+        elif gpu_group:
+            if check_all_gpu:
+                body["check_all_gpu"] = True
+                # A matrix run means EVERY GPU by default — no price filter.
+                # A budget is honoured only when the caller passed one
+                # explicitly, as a deliberate way to trim an expensive sweep.
+                if explicit_budget:
+                    body["max_price_per_hour"] = budget
+            else:
+                body["max_price_per_hour"] = budget
+            body["min_vram_gb"] = min_vram_gb
+            body["manufacturer"] = manufacturer
         if test_jupyter:
             body["test_jupyter"] = True
+        if test_torch_packages:
+            body["test_torch_packages"] = True
+        if test_ports:
+            body["test_ports"] = list(test_ports)
+        if test_comfyui:
+            body["test_comfyui"] = True
+        if test_comfyui_functional:
+            body["test_comfyui_functional"] = True
+        if test_pip_check:
+            body["test_pip_check"] = True
+            if pip_check_allow:
+                body["pip_check_allow"] = list(pip_check_allow)
+        if test_ca_certs:
+            body["test_ca_certs"] = True
+            if min_ca_certs_version:
+                body["min_ca_certs_version"] = min_ca_certs_version
+        if test_python_tls:
+            body["test_python_tls"] = True
+            if python_tls_venv:
+                body["python_tls_venv"] = python_tls_venv
+        if (test_ca_certs or test_python_tls) and revoked_ca_names:
+            body["revoked_ca_names"] = list(revoked_ca_names)
+        if test_uv:
+            body["test_uv"] = True
+        if test_virtualenv:
+            body["test_virtualenv"] = True
+        if test_autoresearch:
+            body["test_autoresearch"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
-        if min_cuda_version:
+        if gpu_group and wants_all_cuda:
+            body["cuda_versions"] = "all"
+        elif gpu_group and cuda_versions:
+            body["cuda_versions"] = list(cuda_versions)
+        # The floor is meaningless once exact versions are pinned, and
+        # sending both makes the API reject the create outright.
+        if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
             body["min_cuda_version"] = min_cuda_version
         return body
 
     if profile == "base":
         # Split refs into CPU- vs GPU-targeted images by tag content.
-        # CPU images: tested via runpodctl --compute-type CPU. RunPod selects
-        #   the CPU flavor for us — runpodctl 2.3.0 doesn't expose --gpu-id
-        #   for CPU, so we can't (and don't) constrain the manifest with an
-        #   `instances:` or `max_price_per_hour:` field for CPU groups.
+        # CPU images: the harness picks a CPU flavor from
+        #   GET /v2/catalog/cpus, so CPU groups carry no `instances:` or
+        #   `max_price_per_hour:` field.
         # GPU images: tested with the normal --gpu-id flow and budget filter.
         cpu = [r for r in refs if not is_gpu_ref(r)]
         gpu = [r for r in refs if is_gpu_ref(r)]
         groups: dict = {}
         if cpu:
-            groups["base_cpu"] = _decorate({"images": cpu})
+            groups["base_cpu"] = _decorate({"images": cpu}, gpu_group=False)
         if gpu:
-            groups["base_gpu"] = _decorate({
-                "images": gpu,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
+            groups["base_gpu"] = _decorate({"images": gpu}, gpu_group=True)
         return groups
 
     if profile == "gpu":
@@ -168,15 +285,24 @@ def build_groups(
         # is picked from the IMAGE REF by runpod_smoke.checks, so the group
         # name 'base_gpu' is purely conventional here.
         return {
-            "base_gpu": _decorate({
-                "images": refs,
-                "max_price_per_hour": budget,
-                "min_vram_gb": min_vram_gb,
-                "manufacturer": manufacturer,
-            })
+            "base_gpu": _decorate({"images": refs}, gpu_group=True)
         }
 
     raise ValueError(f"unknown profile: {profile!r}")
+
+
+def _port_spec(value: str) -> str:
+    """Validate a `--test-port` arg: `<port>` or `<port>/<path>`."""
+    port_text, sep, _path = value.partition("/")
+    try:
+        port = int(port_text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: port must be an integer, optionally '<port>/<path>'"
+        )
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"{value!r}: port out of range 1-65535")
+    return value if sep else str(port)
 
 
 def main() -> int:
@@ -197,8 +323,12 @@ def main() -> int:
     ap.add_argument(
         "--budget",
         type=float,
-        default=1.0,
-        help="Max USD/hr for GPU instance selection (default: 1.0)",
+        default=None,
+        help=(
+            "Max USD/hr for GPU instance selection (default: 1.0). Ignored "
+            "under --check-all-gpu unless passed explicitly, since a matrix "
+            "run is meant to cover every GPU."
+        ),
     )
     ap.add_argument(
         "--min-vram-gb",
@@ -221,6 +351,131 @@ def main() -> int:
             "Off by default — enable per CI step."
         ),
     )
+    ap.add_argument(
+        "--test-torch-packages",
+        action="store_true",
+        help=(
+            "Emit `test_torch_packages: true` for every produced group so "
+            "the CUDA check also exercises torchvision, torchaudio and "
+            "torchcodec. Only for images that ship them — a missing "
+            "package fails the check. Off by default."
+        ),
+    )
+    ap.add_argument(
+        "--test-port",
+        action="append",
+        default=[],
+        type=_port_spec,
+        metavar="PORT[/PATH]",
+        help=(
+            "HTTP port to expose and probe, optionally with a path to hit, "
+            "e.g. 80 or 80/health. Repeat for multiple ports."
+        ),
+    )
+    ap.add_argument("--test-comfyui", action="store_true")
+    ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument(
+        "--test-pip-check",
+        action="store_true",
+        help=(
+            "Emit `test_pip_check: true` so the pod runs `pip check` and "
+            "fails on any dependency conflict not listed in "
+            "--pip-check-allow. Catches a bumped pin that no longer "
+            "satisfies something else already in the image."
+        ),
+    )
+    ap.add_argument(
+        "--pip-check-allow",
+        action="append",
+        default=[],
+        metavar="SUBSTRING",
+        help=(
+            "Substring of a `pip check` line to accept rather than fail on. "
+            "For conflicts inherited from a vendor base image. Repeat per "
+            "accepted conflict; keep each one narrow enough that a new "
+            "conflict in the same package still fails."
+        ),
+    )
+    ap.add_argument(
+        "--test-ca-certs",
+        action="store_true",
+        help=(
+            "Emit `test_ca_certs: true` so the pod proves no revoked CA "
+            "root is still trusted in the SYSTEM store, and that HTTPS "
+            "still validates against it. Shell-only, so it is safe for "
+            "images without Python."
+        ),
+    )
+    ap.add_argument(
+        "--min-ca-certs-version",
+        default="",
+        metavar="VERSION",
+        help=(
+            "dpkg version floor for the installed ca-certificates package, "
+            "e.g. '20260816'. Asserts the patched package actually reached "
+            "the image — an --only-upgrade that found nothing exits 0 and "
+            "otherwise looks like success. Requires --test-ca-certs."
+        ),
+    )
+    ap.add_argument(
+        "--test-python-tls",
+        action="store_true",
+        help=(
+            "Emit `test_python_tls: true` for the same check against the "
+            "certifi bundle, which is the store pip and requests use. "
+            "Separate flag because upgrading the system store does not "
+            "touch certifi, and not every image ships Python."
+        ),
+    )
+    ap.add_argument(
+        "--python-tls-venv",
+        default="",
+        metavar="PATH",
+        help=(
+            "Path to an `activate` script sourced before the certifi "
+            "check, for images whose application runs in its own "
+            "virtualenv (ComfyUI). Empty = system interpreter."
+        ),
+    )
+    ap.add_argument(
+        "--revoked-ca-name",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "CA subject substring that must NOT be trusted, matched "
+            "case-insensitively. Repeat per root family. Empty = the "
+            "default list in tests/runpod_smoke/checks.py."
+        ),
+    )
+    ap.add_argument(
+        "--test-uv",
+        action="store_true",
+        help=(
+            "Emit `test_uv: true`: exactly one uv on PATH, no pip-installed "
+            "copy shadowing it, and a real resolve. Guards the removal of "
+            "the uv that the NGC bases ship."
+        ),
+    )
+    ap.add_argument(
+        "--test-virtualenv",
+        action="store_true",
+        help=(
+            "Emit `test_virtualenv: true`: create a virtualenv with every "
+            "python3.X the image ships. For runpod/base, which pins one "
+            "virtualenv version across four interpreters."
+        ),
+    )
+    ap.add_argument(
+        "--test-autoresearch",
+        action="store_true",
+        help=(
+            "Emit `test_autoresearch: true`: run autoresearch's train.py end "
+            "to end on a short time budget, so a broken image or dep bump is "
+            "caught. For runpod/autoresearch only."
+        ),
+    )
+    ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
         action="append",
@@ -245,6 +500,33 @@ def main() -> int:
             "Empty (default) = no floor."
         ),
     )
+    ap.add_argument(
+        "--cuda-version",
+        action="append",
+        default=[],
+        dest="cuda_versions",
+        metavar="X.Y|all",
+        help=(
+            "Turn on the GPU x CUDA axis: test each candidate GPU once per "
+            "CUDA version instead of once overall. Repeat for several "
+            "versions, or pass 'all' to use every version each GPU reports "
+            "capacity for. Versions are pinned exactly via "
+            "gpu.allowedCudaVersions, so this supersedes --min-cuda-version."
+        ),
+    )
+    ap.add_argument(
+        "--instance",
+        action="append",
+        default=[],
+        dest="instances",
+        metavar="DISPLAY_NAME",
+        help=(
+            "Test exactly this GPU display name (repeat for several). "
+            "Emitted as `instances:`, which wins over catalog selection — so "
+            "it cannot be combined with --check-all-gpu, and the budget / "
+            "vRAM / vendor filters no longer apply."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -258,15 +540,41 @@ def main() -> int:
         print("--refs must be a non-empty JSON array", file=sys.stderr)
         return 1
 
+    if args.instances and args.check_all_gpu:
+        print(
+            "--instance and --check-all-gpu are mutually exclusive: an "
+            "explicit instance list wins over catalog selection",
+            file=sys.stderr,
+        )
+        return 1
+
     groups = build_groups(
         args.profile,
         refs,
-        budget=args.budget,
+        budget=1.0 if args.budget is None else args.budget,
+        explicit_budget=args.budget is not None,
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
+        test_torch_packages=args.test_torch_packages,
+        test_ports=args.test_port,
+        test_comfyui=args.test_comfyui,
+        test_comfyui_functional=args.test_comfyui_functional,
+        test_pip_check=args.test_pip_check,
+        pip_check_allow=args.pip_check_allow,
+        test_ca_certs=args.test_ca_certs,
+        min_ca_certs_version=args.min_ca_certs_version,
+        test_python_tls=args.test_python_tls,
+        python_tls_venv=args.python_tls_venv,
+        revoked_ca_names=args.revoked_ca_name,
+        test_uv=args.test_uv,
+        test_virtualenv=args.test_virtualenv,
+        test_autoresearch=args.test_autoresearch,
+        check_all_gpu=args.check_all_gpu,
+        instances=args.instances,
         exclude_instances=args.exclude_instance,
         min_cuda_version=(args.min_cuda_version or None),
+        cuda_versions=args.cuda_versions,
     )
 
     if not groups:
