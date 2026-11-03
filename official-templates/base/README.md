@@ -16,6 +16,8 @@ The Runpod Base images provide a clean, developer friendly environment for every
 
 > **Ubuntu 22.04 and Python 3.10 removed.** `-ubuntu2204` tags are no longer built; the last published ones stay pullable but get no updates. Python 3.10 went with it — it was only shipped as 22.04's system interpreter. To migrate, swap `ubuntu2204` for `ubuntu2404` in your tag (same CUDA version, same default Python 3.12) and recreate any 3.10 virtualenv as above. The CPU-only image is also available on Ubuntu 26.04 (`-ubuntu2604`); CUDA images stay on 24.04 until NVIDIA ships 26.04 builds of these CUDA versions.
 
+> **`python3` and apt packages.** `python`, `python3` and `pip` all point to 3.12. Packages installed with `apt install python3-*` are built for the Ubuntu release's own interpreter and are only importable from `/usr/bin/python3` — 3.14 on 26.04 (on 24.04 that is 3.12 itself). Python 3.11–3.13 don't see them, so for those use `pip install`. The same goes for scripts starting with `#!/usr/bin/env python3` that need an apt-installed module: run them with `/usr/bin/python3`. On 26.04 the image has no `add-apt-repository`; add a PPA by hand, or `apt-get install software-properties-common`.
+
 ### Available configurations
 - **Ubuntu**: 24.04 (Noble); CPU-only also on 26.04 (Resolute)
 - **CUDA**: 12.8.1, 12.9.0, 13.0.0, and 13.2.0 (Ubuntu 24.04)

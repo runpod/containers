@@ -37,10 +37,15 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Install.
 # 26.04 dropped ATLAS (libopenblas-dev is the BLAS that replaces it) and
-# libpostproc, which FFmpeg 8 removed. 24.04 keeps its existing set.
+# libpostproc, which FFmpeg 8 removed. software-properties-common stays on 24.04
+# only, as a user-facing tool: on 26.04 it pulls in python3-setuptools, whose
+# vendored jaraco.context and wheel carry HIGH advisories with no fixed Ubuntu
+# build. The build itself does not need it (deadsnakes is added by hand below).
+# release_pkgs is split on purpose: it is a list of package names.
+# hadolint ignore=SC2086
 RUN . /etc/os-release && \
     case "${VERSION_ID}" in \
-      24.04) release_pkgs="libatlas-base-dev libpostproc-dev" ;; \
+      24.04) release_pkgs="libatlas-base-dev libpostproc-dev software-properties-common" ;; \
       *) release_pkgs="libopenblas-dev" ;; \
     esac && \
     apt-get update --yes && \
@@ -48,11 +53,11 @@ RUN . /etc/os-release && \
     apt-get install --yes --no-install-recommends \
     build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
     file gfortran git gpg gpg-agent inetutils-traceroute inotify-tools iputils-ping jq \
-    libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
+    libcap2-bin lsb-release libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev ${release_pkgs} \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
-    software-properties-common sudo tmux unzip vim wget zip zstd && \
+    sudo tmux unzip vim wget zip zstd && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
 
@@ -82,8 +87,8 @@ RUN . /etc/os-release && \
 # archive over https, checksum, and install only when newer.
 RUN . /etc/os-release && \
     case "${VERSION_ID}" in \
-      22.04) ver="1.0.9-2ubuntu0.1"; sha=908295e77a65219a62114c3c79690a3c99712274d1317c3ba47ffa2f8ea52ca5 ;; \
       24.04) ver="1.1.0-2ubuntu0.1"; sha=70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de ;; \
+      26.04) ver="1.2.0-3ubuntu0.1"; sha=bedeef1cf3268f90338c411cdb0a45b224d0660fd2240f310f380316c8244606 ;; \
       *) echo "no pinned brotli for ${VERSION_ID}" && exit 1 ;; \
     esac && \
     deb="libbrotli1_${ver}_amd64.deb" && \
@@ -100,32 +105,40 @@ RUN . /etc/os-release && \
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
-# Install Python versions. Each Ubuntu release gets its system interpreter from
-# the archive and the rest from deadsnakes (24.04: 3.12, 26.04: 3.14), so the
-# same list resolves on both.
+# Install Python 3.11-3.13. Whichever of them is the release's own system
+# python3 comes from the Ubuntu archive (3.12 on 24.04; 26.04's system python3
+# is 3.14, which is not in this list), the rest from deadsnakes. The PPA is
+# added by hand, so the build needs no add-apt-repository; the key is checked
+# against the fingerprint Launchpad publishes for ~deadsnakes/ppa.
+ARG DEADSNAKES_KEY=F23C5A6CF475977595C89F51BA6932366A755776
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    add-apt-repository ppa:deadsnakes/ppa -y && \
+    . /etc/os-release && \
+    GNUPGHOME="$(mktemp -d)" && export GNUPGHOME && \
+    curl -fsSL --proto '=https' --tlsv1.2 \
+        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${DEADSNAKES_KEY}" \
+      | gpg --dearmor -o /usr/share/keyrings/deadsnakes.gpg && \
+    gpg --show-keys --with-colons /usr/share/keyrings/deadsnakes.gpg \
+      | grep -q "^fpr:::::::::${DEADSNAKES_KEY}:" && \
+    rm -rf "${GNUPGHOME}" && \
+    echo "deb [signed-by=/usr/share/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu ${VERSION_CODENAME} main" \
+      > /etc/apt/sources.list.d/deadsnakes.list && \
+    apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
         python3.13-dev python3.13-venv && \
-    . /etc/os-release && \
-    if [[ "${VERSION_ID}" != "24.04" ]]; then \
-      apt-mark manual lsb-release libcap2-bin && \
-      apt-get purge --yes software-properties-common && \
-      apt-get autoremove --purge --yes; \
-    fi && \
-    apt-get autoremove -y && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*;
 
-# /usr/lib/python3/dist-packages holds apt's modules, built for the system
-# python3 only, yet every Debian-built interpreter puts it on sys.path. On 26.04
-# that includes the default 3.12: pip counts apt's cryptography as installed and
-# it then fails to import. Hide it from all but the system interpreter.
+# apt's python3-* modules land in /usr/lib/python3/dist-packages, built for the
+# system python3 only, but every Debian-built interpreter has that dir on
+# sys.path. Hide it from the non-system ones so a later `apt install python3-*`
+# can't shadow or break pip packages for them (e.g. the default 3.12 on 26.04).
+# Every installed interpreter is covered (one /etc/python3.X each), so adding a
+# version needs no change here. No system python3 means nothing to skip.
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
-    sys_ver="$(/usr/bin/python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" && \
-    for v in 3.11 3.12 3.13; do \
+    sys_ver="$(/usr/bin/python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)" && \
+    for d in /etc/python3.*/; do \
+      v="${d#/etc/python}"; v="${v%/}"; \
       [[ "$v" == "$sys_ver" ]] && continue; \
       printf '%s\n' \
         'import sys' \

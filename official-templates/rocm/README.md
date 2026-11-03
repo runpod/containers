@@ -12,7 +12,7 @@ Built on our base images, these containers provide AMD GPU acceleration through 
 ### Available configurations
 - **ROCm**: 6.4.4
 - **PyTorch**: 2.6.0 and 2.7.1
-- **Ubuntu**: 24.04 (Noble). 22.04 is no longer built; move to the `ubuntu2404-py312` tag for the same PyTorch, and use the `py_3.12` conda env in place of `py_3.10`. AMD ships no ROCm 6.4.4 image for Ubuntu 26.04.
+- **Ubuntu**: 24.04 (Noble). 22.04 is no longer built: for PyTorch 2.6.0 move to the `ubuntu2404-py312-pytorch260` tag, and use the `py_3.12` conda env in place of `py_3.10`. PyTorch 2.5.1 has no 24.04 build, so its last image is `runpod/rocm:1.4.0-rocm644-ubuntu2204-py310-pytorch251` (no further updates); upgrading to 2.6.0 or 2.7.1 is the supported path. AMD ships no ROCm 6.4.4 image for Ubuntu 26.04.
 
 Perfect for AMD GPU workloads with zero setup time.
 

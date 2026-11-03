@@ -199,6 +199,7 @@ jobs:
           test-python-tls: true
           test-uv: true
           test-virtualenv: true
+          test-python-path: true
           on-skip: "warn"
           exclude-instances: |
             RTX 2000 Ada

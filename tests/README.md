@@ -352,6 +352,7 @@ groupname:
     - emSign
     test_uv: true             # exactly one uv, and it resolves
     test_virtualenv: true     # virtualenv works on every python3.X
+    test_python_path: true    # only the system python3 sees apt's modules
 ```
 
 Field reference:
@@ -380,7 +381,8 @@ Field reference:
 | `python_tls_venv` | Path to an `activate` script sourced before the certifi check, for images whose application runs in its own virtualenv rather than the system interpreter (ComfyUI). Default: system `python`. |
 | `revoked_ca_names` | CA subject substrings that must not be trusted, matched case-insensitively against certificate subjects, so a family prefix (`emSign`) covers every root in it. Applies to both CA checks. Default: the list in `tests/runpod_smoke/checks.py` — extend that when a root is revoked, and use this field only for a one-off run. |
 | `test_uv` | `true` / `false` — exactly one `uv` on `$PATH`, no pip-installed copy shadowing it, and a real `uv venv` + `uv pip install`. The duplicate test is the point: the NGC bases ship a pip-installed uv that shadows the pinned binary, the Dockerfiles remove it, and this fails if a base image brings it back. Default: `false`. |
-| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across four interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across three interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_python_path` | `true` / `false` — `/usr/lib/python3/dist-packages` (apt's `python3-*` modules) must be on `sys.path` for the system `/usr/bin/python3` and for no other `python3.X` in the image, and `python3` must resolve to the same version as `python`. Interpreters are enumerated, not listed. For `runpod/base`. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
 list for that group — no `instances:` / `max_price_per_hour:` /
@@ -534,14 +536,13 @@ you're testing). Annotated example covering every supported pattern:
 base_cpu:
     images:
     - runpod/base:1.0.6-dev-ubuntu2404
-    - runpod/base:1.0.6-dev-ubuntu2404
+    - runpod/base:1.0.6-dev-ubuntu2604
     test_jupyter: true              # base CPU image still ships JupyterLab
 
 # GPU base image, budget-selected. The CUDA functional check is auto-
 # applied because the tag contains 'cuda1281' / 'cuda1290' / 'cuda1300'.
 base_gpu:
     images:
-    - runpod/base:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/base:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/base:1.0.6-dev-cuda1300-ubuntu2404
     max_price_per_hour: 1.0
@@ -555,7 +556,6 @@ base_gpu:
 # we want — we'd never get a clean torch import over SSH otherwise.
 autoresearch:
     images:
-    - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -678,7 +678,7 @@ groups don't silently skip the check:
 
 <a id="hygiene-checks"></a>
 
-Five opt-in checks that look at how an image is **assembled** rather than at
+Six opt-in checks that look at how an image is **assembled** rather than at
 whether it boots. They exist because the failures they catch are invisible to
 every other step: the pod starts, the GPU works, and the defect only surfaces
 for a user weeks later, or in the next scan.
@@ -687,6 +687,7 @@ for a user weeks later, or in the next scan.
 |---|---|---|
 | `pip check` | `test_pip_check` (+ `pip_check_allow`) | a bumped pin that no longer satisfies something already in the image |
 | virtualenv | `test_virtualenv` | a pinned virtualenv that stopped supporting one of the shipped interpreters |
+| python path | `test_python_path` | an interpreter added without the sitecustomize filter, so apt's `python3-*` modules shadow its pip packages; or `python3` no longer pointing at the same interpreter as `python` |
 | uv | `test_uv` | a vendor base re-introducing a pip-installed uv that shadows the pinned binary |
 | system CA store | `test_ca_certs` (+ `revoked_ca_names`) | a `--only-upgrade ca-certificates` that exited 0 without upgrading anything |
 | certifi bundle | `test_python_tls` (+ `python_tls_venv`) | the same revoked root still trusted by `pip` and `requests`, which never read the system store |

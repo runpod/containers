@@ -89,6 +89,7 @@ def render_yaml(groups: dict) -> str:
             "python_tls_venv",
             "test_uv",
             "test_virtualenv",
+            "test_python_path",
             "test_autoresearch",
         ):
             if key in body:
@@ -147,6 +148,7 @@ def build_groups(
     revoked_ca_names: list[str] | None = None,
     test_uv: bool = False,
     test_virtualenv: bool = False,
+    test_python_path: bool = False,
     test_autoresearch: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
@@ -250,6 +252,8 @@ def build_groups(
             body["test_uv"] = True
         if test_virtualenv:
             body["test_virtualenv"] = True
+        if test_python_path:
+            body["test_python_path"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
         if exclude_instances:
@@ -463,7 +467,16 @@ def main() -> int:
         help=(
             "Emit `test_virtualenv: true`: create a virtualenv with every "
             "python3.X the image ships. For runpod/base, which pins one "
-            "virtualenv version across four interpreters."
+            "virtualenv version across three interpreters."
+        ),
+    )
+    ap.add_argument(
+        "--test-python-path",
+        action="store_true",
+        help=(
+            "Emit `test_python_path: true`: apt's dist-packages is on sys.path "
+            "for the system python3 only, and python3 is the same interpreter "
+            "as python. For runpod/base."
         ),
     )
     ap.add_argument(
@@ -569,6 +582,7 @@ def main() -> int:
         revoked_ca_names=args.revoked_ca_name,
         test_uv=args.test_uv,
         test_virtualenv=args.test_virtualenv,
+        test_python_path=args.test_python_path,
         test_autoresearch=args.test_autoresearch,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
