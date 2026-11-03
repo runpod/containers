@@ -11,10 +11,12 @@
 #      address from its node-<NODE_RANK> entry in /etc/hosts;
 #   3. on a worker, wait with no deadline for the head GCS at node-0;
 #   4. `ray start` with the contract ports, plus $RAY_START_EXTRA_ARGS;
-#   5. on a worker, keep rejoining in the background: its raylet exits with
-#      the head, and a restarted head is a new cluster nothing else rejoins;
-#   6. exec "$@" (the customer CMD, /start.sh by default); on a worker, with
-#      the Jupyter env cleared so /start.sh leaves Jupyter to the head.
+#   5. on a worker, do 3 and 4 in the background and keep rejoining there:
+#      its raylet exits with the head, and a restarted head is a new cluster
+#      nothing else rejoins;
+#   6. exec "$@" (the customer CMD, /start.sh by default); on a worker, at
+#      once, with the Jupyter env cleared so /start.sh leaves Jupyter to the
+#      head.
 #
 # The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
 # and the cluster membership in /etc/hosts (node-0 ... node-N). The other
@@ -201,6 +203,10 @@ if [[ "$role" == head ]]; then
 fi
 
 # --- 3. Worker: wait for the head GCS ----------------------------------- #
+# Everything from here on runs in the background (step 5), so the CMD starts
+# at once: /start.sh is what brings up sshd, so a worker whose head never
+# comes up is still reachable to debug.
+#
 # wait_for_head returns once the head GCS accepts a connection, with head_ip
 # set. No deadline: a missing head is a reason to wait, not to exit. node-0 is
 # re-resolved on every attempt, because it is absent from /etc/hosts while the
@@ -226,21 +232,18 @@ wait_for_head() {
         sleep 5
     done
 }
-wait_for_head
 
 # --- 4. Start the worker ---------------------------------------------------- #
 join_head() {
     log "joining Ray head at node-0 ($head_ip:$gcs_port)"
     ray start --address="$head_ip:$gcs_port" "${common_args[@]}" "${extra_args[@]}"
 }
-join_head || die "ray start failed to join $head_ip:$gcs_port; see /tmp/ray/session_latest/logs"
-wait_listening "$CONTRACT_METRICS_PORT" "Ray metrics endpoint"
-log "Ray worker joined"
 
-# --- 5. Worker: rejoin ------------------------------------------------------ #
+# --- 5. Worker: join, then keep rejoining ----------------------------------- #
 # The raylet exits when it loses the head, and a restarted head is a new GCS
-# with no members, so without this the worker stays out of the cluster until
-# its pod is restarted. Never exits: a failed join is retried on the next pass.
+# with no members, so without the rejoin the worker stays out of the cluster
+# until its pod is restarted. Never exits: a failed join is retried on the
+# next pass.
 # A dead raylet can linger as a zombie: it is reparented to PID 1, which a CMD
 # like `sleep infinity` never reaps. So match the state field, not just the name.
 raylet_running() {
@@ -251,7 +254,13 @@ raylet_running() {
     done
     return 1
 }
-rejoin_forever() {
+join_forever() {
+    wait_for_head
+    if join_head; then
+        log "Ray worker joined"
+    else
+        log "warn: ray start failed to join $head_ip:$gcs_port; retrying (see /tmp/ray/session_latest/logs)"
+    fi
     while :; do
         sleep 10
         raylet_running && continue
@@ -261,11 +270,12 @@ rejoin_forever() {
         join_head || log "warn: ray start failed to join $head_ip:$gcs_port; retrying"
     done
 }
-rejoin_forever &
+join_forever &
 
 # --- 6. Hand off to the CMD ------------------------------------------------- #
 # Jupyter runs on the head only: the driver belongs there, and a notebook
 # server per worker is one more JUPYTER_PASSWORD login exposed for nothing
 # (any node can still ray.init() into the cluster). /start.sh starts Jupyter
-# only when one of these is set.
+# only when one of these is set. Ray itself keeps the secret, as
+# RAY_AUTH_TOKEN, when it came from JUPYTER_PASSWORD.
 exec env -u JUPYTER_PASSWORD -u JUPYTER_DISABLE_AUTH "$@"

@@ -12,10 +12,10 @@
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
 #      passed-through PRIMARY_ADDR/NODE_ADDR/NODE_ROLE). The worker starts
 #      first, while node-0 is missing from its /etc/hosts (head not running),
-#      and must join once node-0 is added, as the host's sync does. Then: the
-#      head dashboard's /api/gcs_healthz reports success and its
-#      State API node list ($NODES_PATH) has both nodes ALIVE at their
-#      addresses (what pkg/rayready polls and parses), and both nodes serve
+#      must run its CMD meanwhile, and must join once node-0 is added, as the
+#      host's sync does. Then: the head dashboard's /api/gcs_healthz reports
+#      success and its State API node list ($NODES_PATH) has both nodes ALIVE
+#      at their addresses (what pkg/rayready polls and parses), and both serve
 #      Ray metrics on 20217. The dashboard and metrics checks run from the
 #      worker, over the docker bridge, as the host does.
 #   5. Ray token auth: the dashboard reports token mode; its API answers 401
@@ -79,13 +79,14 @@ expect_boot_error() {
 
 # expect_boot_log <image> <description> <log line> <docker run args...>: the
 # boot is accepted and logs <log line>. It runs as rank 1 with no node-0 in
-# /etc/hosts, so it stops at the head wait with its input parsed and no Ray
-# started, and the timeout ends it there.
+# /etc/hosts, so its background join stops at the head wait with its input
+# parsed and no Ray started; the CMD sleeps long enough for that wait to log,
+# and the timeout ends it.
 expect_boot_log() {
     local image=$1 what=$2 want=$3 out
     shift 3
     out=$(docker run --rm -e NODE_RANK=1 --add-host node-1:127.0.0.1 "$@" \
-        --entrypoint timeout "$image" 10 /opt/runpod/ray/entrypoint true 2>&1) || true
+        --entrypoint timeout "$image" 10 /opt/runpod/ray/entrypoint sleep 5 2>&1) || true
     grep -qF "$want" <<< "$out" || fail "$what: boot with [$*] did not log '$want'; got: $out"
     pass "accepted: $what"
 }
@@ -244,7 +245,8 @@ check_image() {
     local topo=(-e NUM_NODES=2 --shm-size=1g --network "$run_id")
 
     # The worker starts while the head isn't running: node-0 is not in its
-    # /etc/hosts yet. It must wait, not exit or start Ray.
+    # /etc/hosts yet. It must wait, not exit or start Ray, and run its CMD
+    # meanwhile (on Runpod that is /start.sh, which brings up sshd).
     docker run -d --name "$run_id-worker" --hostname node-1 --ip "$WORKER_IP" "${topo[@]}" \
         --add-host "node-1:$WORKER_IP" -e NODE_RANK=1 -e JUPYTER_PASSWORD="$TOKEN" \
         -e JUPYTER_DISABLE_AUTH=true "$image" sleep infinity > /dev/null
@@ -254,7 +256,14 @@ check_image() {
     running=$(docker inspect -f '{{.State.Running}}' "$run_id-worker")
     [[ "$running" == true ]] || fail "the worker exited while node-0 was missing"
     ! "${in_worker[@]}" test -e /tmp/ray/session_latest || fail "the worker started Ray with no head to join"
-    pass "worker waits while node-0 is missing from /etc/hosts"
+    worker_pid1_is_cmd || fail "the worker's CMD is not running while it waits for the head"
+    pass "worker waits while node-0 is missing from /etc/hosts, with its CMD running"
+
+    # Jupyter is head-only: the worker's CMD (PID 1 after the entrypoint's
+    # exec) must not inherit the Jupyter env, or /start.sh would start it.
+    ! "${in_worker[@]}" grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' /proc/1/environ ||
+        fail "the worker's CMD inherited the Jupyter env"
+    pass "worker CMD runs without the Jupyter env"
 
     docker run -d --name "$run_id-head" --hostname node-0 --ip "$HEAD_IP" "${topo[@]}" \
         --add-host "node-0:$HEAD_IP" --add-host "node-1:$WORKER_IP" -e NODE_RANK=0 \
@@ -274,16 +283,6 @@ check_image() {
         wait_for "ray_* metrics on $ip:$METRICS_PORT" 60 serves_ray_metrics "$ip"
     done
     pass "both nodes serve Ray metrics on $METRICS_PORT"
-
-    # Jupyter is head-only: the worker's CMD (PID 1 after the entrypoint's
-    # exec) must not inherit the Jupyter env, or /start.sh would start it.
-    # The metrics port comes up before the entrypoint notices and execs, so
-    # wait for PID 1 to be the CMD first: until then it is the entrypoint,
-    # which still has the env.
-    wait_for "worker entrypoint to exec its CMD" 30 worker_pid1_is_cmd
-    ! "${in_worker[@]}" grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' /proc/1/environ ||
-        fail "the worker's CMD inherited the Jupyter env"
-    pass "worker CMD runs without the Jupyter env"
 
     # 5. Token auth on the dashboard API (/api/version is not a public path).
     local code
