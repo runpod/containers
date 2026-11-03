@@ -30,7 +30,6 @@ variable "RAY_VERSION" {
 
 variable "RAY_CLUSTER_BUILDS" {
   default = [
-    { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2204" },
     { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1281", torch_code = "2130", ubuntu_name = "ubuntu2404" },
 
@@ -38,6 +37,8 @@ variable "RAY_CLUSTER_BUILDS" {
     { cuda_code = "1290", torch_code = "2130", ubuntu_name = "ubuntu2404" },
 
     { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
+    { cuda_code = "1320", torch_code = "2130", ubuntu_name = "ubuntu2404" },
   ]
 }
 
@@ -71,6 +72,14 @@ group "cu1300" {
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1300"
+  ]
+}
+
+group "cu1320" {
+  targets = [
+    for b in RAY_CLUSTER_BUILDS :
+    "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
+    if b.cuda_code == "1320"
   ]
 }
 
