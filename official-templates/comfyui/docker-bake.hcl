@@ -1,9 +1,13 @@
 # === Version Pins (single source of truth) ===
-variable "COMFYUI_VERSION" {
-  default = "v0.35.0"
-}
-variable "MANAGER_SHA" {
-  default = "9d4cceea1351"
+
+# Each release is built for every CUDA variant and tagged with its version, so
+# they ship side by side. manager_version must match the release's own
+# manager_requirements.txt; the build checks it.
+variable "COMFYUI_VERSIONS" {
+  default = [
+    { version = "v0.35.0", manager_version = "4.2.2" },
+    { version = "v0.41.0", manager_version = "4.2.2" }
+  ]
 }
 variable "KJNODES_SHA" {
   default = "57105374f47d"
@@ -65,55 +69,62 @@ variable "CUDA_TORCH_COMBINATIONS" {
   ]
 }
 
+# No ComfyUI release pins torch, so the stack and venv_name follow the CUDA
+# variant alone — a pod moving between ComfyUI versions keeps its venv.
 variable "COMPATIBLE_BUILDS" {
   default = flatten([
-    for combination in CUDA_TORCH_COMBINATIONS:
+    for comfyui in COMFYUI_VERSIONS:
       [
-        { cuda_version = combination.cuda_version, 
-          cuda_version_code = replace(combination.cuda_version, ".", ""),
-          cuda_version_dash = replace(combination.cuda_version, ".", "-"),
-          torch_index_suffix = combination.torch_index_suffix,
-          torchaudio_index_suffix = combination.torchaudio_index_suffix,
-          venv_name = combination.venv_name,
-          torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
-          torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
-          torchaudio_version = combination.torchaudio_version,
-         },
+        for combination in CUDA_TORCH_COMBINATIONS:
+          { comfyui_version = comfyui.version,
+            # v0.35.0 -> 0350, for target and group names
+            comfyui_version_code = replace(replace(comfyui.version, "v", ""), ".", ""),
+            manager_version = comfyui.manager_version,
+            cuda_version = combination.cuda_version,
+            cuda_version_code = replace(combination.cuda_version, ".", ""),
+            cuda_version_dash = replace(combination.cuda_version, ".", "-"),
+            torch_index_suffix = combination.torch_index_suffix,
+            torchaudio_index_suffix = combination.torchaudio_index_suffix,
+            venv_name = combination.venv_name,
+            torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
+            torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
+            torchaudio_version = combination.torchaudio_version,
+          }
       ]
     ]
   )
 }
 
+# One group per CUDA variant — how CI shards the build. No per-release group:
+# adding a version stays one line in COMFYUI_VERSIONS.
 group "default" {
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
   ]
 }
 
 group "cuda128" {
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
-      if combination.cuda_version == "12.8"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
+      if build.cuda_version == "12.8"
   ]
 }
 
-group "cuda13" {
-
+group "cuda130" {
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
-      if combination.cuda_version == "13.0"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
+      if build.cuda_version == "13.0"
   ]
 }
 
 group "cuda132" {
-
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
-      if combination.cuda_version == "13.2"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
+      if build.cuda_version == "13.2"
   ]
 }
 
@@ -130,11 +141,11 @@ target "comfyui-matrix" {
     build = COMPATIBLE_BUILDS
   }
 
-  name = "cuda${build.cuda_version_code}"
+  name = "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
 
   args = {
-    COMFYUI_VERSION     = COMFYUI_VERSION
-    MANAGER_SHA         = MANAGER_SHA
+    COMFYUI_VERSION     = build.comfyui_version
+    MANAGER_VERSION     = build.manager_version
     KJNODES_SHA         = KJNODES_SHA
     CIVICOMFY_SHA       = CIVICOMFY_SHA
     RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
@@ -150,6 +161,6 @@ target "comfyui-matrix" {
   }
 
   tags = [
-    "runpod/comfyui${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
+    "runpod/comfyui${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${build.comfyui_version}-cuda${build.cuda_version}"
   ]
 }
