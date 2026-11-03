@@ -20,10 +20,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Pinned Ray: head and workers share this image, so versions always match, and
 # the host's version-sensitive parsers (pkg/rayready, pkg/raymetrics) are
-# validated against it. >= 2.52 for token authentication (RAY_AUTH_MODE).
-ARG RAY_VERSION=2.53.0
-# hf_transfer comes pinned from the base image.
-RUN python -m pip install --no-cache-dir "ray[default]==${RAY_VERSION}"
+# validated against it. >= 2.54 so token authentication (RAY_AUTH_MODE) also
+# covers the dashboard agent's HTTP server (52365), which serves job submission.
+ARG RAY_VERSION=2.59.0
+# Ray's own dependencies are pinned in requirements.txt; hf_transfer comes
+# pinned from the base image. The wheel's bundled Java runtime (ray/jars) is
+# removed: Java and cross-language workers are unsupported here, and its
+# shaded jackson/guava/httpcore5 carry advisories. Ray falls back to
+# Python-only when the directory is missing.
+COPY requirements.txt /tmp/ray-requirements.txt
+RUN python -m pip install --no-cache-dir "ray[default]==${RAY_VERSION}" -r /tmp/ray-requirements.txt && \
+    rm /tmp/ray-requirements.txt && \
+    jars=$(python -c 'import os, ray; print(os.path.join(os.path.dirname(ray.__file__), "jars"))') && \
+    rm -rf "$jars" && \
+    [[ ! -e "$jars" ]]
 
 # Static defaults. The two ports are fixed by contract v1 and the entrypoint
 # refuses overrides; they are exported so customer code can read them.
@@ -75,7 +85,8 @@ RUN sed -i 's|^http {$|&\n    include /etc/nginx/ray-dashboard.conf;|' /etc/ngin
 #         entrypoint sets RAY_AUTH_MODE=token).
 #   20217 Ray metrics: host scrape and the head's Prometheus (host-internal)
 #   52365 Ray dashboard agent: the head's dashboard reaches each node's agent
-#         for jobs and logs (host-internal; not gated)
+#         for jobs and logs (host-internal; token-authenticated by Ray, except
+#         its /api/healthz and /api/local_raylet_healthz)
 #   6379  Ray GCS: workers register here (host-internal; token-gated gRPC)
 # 8889 Grafana (token-authenticated) is inherited from the -cluster base.
 EXPOSE 8266 8265 20217 52365 6379

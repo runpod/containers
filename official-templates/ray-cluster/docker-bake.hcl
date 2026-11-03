@@ -22,10 +22,11 @@ variable "CLUSTER_BASE_VERSION" {
 }
 
 variable "RAY_VERSION" {
-  # Ray >= 2.52 for token authentication; 2.53 is the version the host's
-  # parsers (pkg/rayready, pkg/raymetrics) are validated against. Keep in sync
-  # with the Dockerfile's RAY_VERSION default.
-  default = "2.53.0"
+  # Ray >= 2.54 so token authentication covers the dashboard agent too. The
+  # host's parsers (pkg/rayready, pkg/raymetrics) are validated against this
+  # version: bump it together with their fixtures. Keep in sync with the
+  # Dockerfile's RAY_VERSION default and re-resolve requirements.txt.
+  default = "2.59.0"
 }
 
 variable "RAY_CLUSTER_BUILDS" {

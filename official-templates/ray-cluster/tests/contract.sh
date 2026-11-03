@@ -21,6 +21,7 @@
 #   5. Ray token auth: the dashboard reports token mode; its API answers 401
 #      with no token and 403 with a wrong one (the head's JUPYTER_PASSWORD,
 #      which RAY_DASHBOARD_PASSWORD outranks), and 200 with the bearer token;
+#      the dashboard agent (52365) refuses a job submission with no token;
 #      /api/authenticate sets the session cookie the UI rides, and so does
 #      nginx's front door on 8266 for a ?token= link, still checked by Ray. The worker
 #      takes its token from JUPYTER_PASSWORD, so its join (step 4) proves both
@@ -39,6 +40,7 @@ readonly DASHBOARD_PORT=8265
 # nginx's browser front door to the dashboard (config/nginx/ray-dashboard.conf).
 readonly FRONT_PORT=8266
 readonly METRICS_PORT=20217
+readonly AGENT_PORT=52365
 # The cluster token: the head gets it as RAY_DASHBOARD_PASSWORD, the worker as
 # JUPYTER_PASSWORD. The head's own JUPYTER_PASSWORD is the wrong token.
 readonly TOKEN=contract-test-token
@@ -302,6 +304,16 @@ check_image() {
     code=$(dash_code /api/version -H "Cookie: ray-authentication-token=$TOKEN")
     [[ "$code" == 200 ]] || fail "session cookie: want 200, got $code"
     pass "dashboard API: 401 without a token, 403 with a wrong one, 200 with the bearer token or session cookie"
+
+    # The dashboard agent serves job submission on every node, so it must
+    # refuse an unauthenticated submit too (Ray >= 2.54). Never a 2xx: a
+    # wrong answer here would run the entrypoint as a job.
+    code=$("${in_worker[@]}" curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+        -d '{"entrypoint": "true"}' "http://$HEAD_IP:$AGENT_PORT/api/job_agent/jobs/")
+    [[ "$code" == 401 ]] || fail "agent job submission without a token: want 401, got $code"
+    code=$("${in_worker[@]}" curl -s -o /dev/null -w '%{http_code}' "http://$HEAD_IP:$AGENT_PORT/api/healthz")
+    [[ "$code" == 200 ]] || fail "agent /api/healthz: want 200 (public), got $code"
+    pass "dashboard agent ($AGENT_PORT): job submission needs the token, health stays public"
 
     # The browser front door: nginx on 8266 turns ?token= into that cookie.
     # The head's CMD is `sleep infinity`, so start nginx as /start.sh would.

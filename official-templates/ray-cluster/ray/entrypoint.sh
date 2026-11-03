@@ -87,7 +87,8 @@ done
 # --- 1b. Token authentication ---------------------------------------------- #
 # Unauthenticated, the dashboard's API is job submission, i.e. remote code
 # execution (ShadowRay, CVE-2023-48022). Ray's own token auth (RAY_AUTH_MODE=
-# token, Ray >= 2.52) gates the dashboard HTTP API and the GCS/raylet gRPC, so
+# token) gates the dashboard HTTP API, each node's dashboard agent (52365,
+# which serves job submission and logs; Ray >= 2.54) and the GCS/raylet gRPC, so
 # every node, driver and `ray` CLI call must carry the same token. Ray reads it
 # from RAY_AUTH_TOKEN (or RAY_AUTH_TOKEN_PATH); a customer-set value wins,
 # else it is the cluster's shared secret: RAY_DASHBOARD_PASSWORD, else

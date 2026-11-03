@@ -22,7 +22,9 @@ set +e
 log() { echo "[ray-cluster] $*"; }
 
 PROM_CONFIG=/etc/prometheus/prometheus.yml
-RAY_SD_FILE=/tmp/ray/prom_metrics_service_discovery.json
+# Ray (>= 2.59) writes the file into the session directory; the copy at
+# /tmp/ray/ is only a symlink to it, which Prometheus' directory watch misses.
+RAY_SD_FILE=/tmp/ray/session_latest/prom_metrics_service_discovery.json
 
 if [[ -x /post_start.cluster.sh ]]; then
     log "running inherited cluster monitoring bringup"
