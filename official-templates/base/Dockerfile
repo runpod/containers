@@ -110,15 +110,15 @@ RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
 # is 3.14, which is not in this list), the rest from deadsnakes. The PPA is
 # added by hand, so the build needs no add-apt-repository; the key is checked
 # against the fingerprint Launchpad publishes for ~deadsnakes/ppa.
-ARG DEADSNAKES_KEY=F23C5A6CF475977595C89F51BA6932366A755776
+ARG DEADSNAKES_FINGERPRINT=F23C5A6CF475977595C89F51BA6932366A755776
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     . /etc/os-release && \
     GNUPGHOME="$(mktemp -d)" && export GNUPGHOME && \
     curl -fsSL --proto '=https' --tlsv1.2 \
-        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${DEADSNAKES_KEY}" \
+        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${DEADSNAKES_FINGERPRINT}" \
       | gpg --dearmor -o /usr/share/keyrings/deadsnakes.gpg && \
     gpg --show-keys --with-colons /usr/share/keyrings/deadsnakes.gpg \
-      | grep -q "^fpr:::::::::${DEADSNAKES_KEY}:" && \
+      | grep -q "^fpr:::::::::${DEADSNAKES_FINGERPRINT}:" && \
     rm -rf "${GNUPGHOME}" && \
     echo "deb [signed-by=/usr/share/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu ${VERSION_CODENAME} main" \
       > /etc/apt/sources.list.d/deadsnakes.list && \
