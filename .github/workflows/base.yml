@@ -827,7 +827,9 @@ jobs:
       !cancelled() && contains(fromJSON(inputs.families), 'ray-cluster')
       && needs.versions.outputs.ray-cluster-build == 'true'
       && (needs.build-pytorch-cluster.result == 'success'
-          || needs.build-pytorch-cluster.result == 'skipped')
+          || (needs.build-pytorch-cluster.result == 'skipped'
+              && !(contains(fromJSON(inputs.families), 'pytorch-cluster')
+                   && needs.versions.outputs.cluster-build == 'true')))
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -835,7 +837,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -937,8 +939,9 @@ jobs:
           if-no-files-found: error
 
   # Single-pod GPU smoke test: with no NODE_RANK the entrypoint boots the CMD
-  # without Ray, so this covers SSH/Jupyter on the image. Multi-node formation
-  # is covered by the contract test above.
+  # without Ray, so this covers SSH/Jupyter on the image, and test-ray starts
+  # a one-node Ray head by hand to run a GPU task. Multi-node formation is
+  # covered by the contract test above.
   test-ray-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-ray-cluster
@@ -946,7 +949,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -977,3 +980,19 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-ray: true
+          test-pip-check: true
+          test-torch-packages: true
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          on-skip: "fail"
+          # As test-pytorch-cluster: torch 2.12/2.13 here take torchvision
+          # from cu129, which upstream builds without Blackwell.
+          exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *

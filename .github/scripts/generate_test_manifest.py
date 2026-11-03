@@ -90,6 +90,7 @@ def render_yaml(groups: dict) -> str:
             "test_uv",
             "test_virtualenv",
             "test_autoresearch",
+            "test_ray",
         ):
             if key in body:
                 val = body[key]
@@ -148,6 +149,7 @@ def build_groups(
     test_uv: bool = False,
     test_virtualenv: bool = False,
     test_autoresearch: bool = False,
+    test_ray: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
@@ -252,6 +254,8 @@ def build_groups(
             body["test_virtualenv"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
+        if test_ray:
+            body["test_ray"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if gpu_group and wants_all_cuda:
@@ -475,6 +479,15 @@ def main() -> int:
             "caught. For runpod/autoresearch only."
         ),
     )
+    ap.add_argument(
+        "--test-ray",
+        action="store_true",
+        help=(
+            "Emit `test_ray: true`: start a one-node Ray head in the pod, run "
+            "a num_gpus=1 torch CUDA task through it and check Ray's metrics "
+            "port. For runpod/ray-cluster only."
+        ),
+    )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
@@ -570,6 +583,7 @@ def main() -> int:
         test_uv=args.test_uv,
         test_virtualenv=args.test_virtualenv,
         test_autoresearch=args.test_autoresearch,
+        test_ray=args.test_ray,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,
