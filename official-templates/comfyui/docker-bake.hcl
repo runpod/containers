@@ -41,7 +41,6 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.8",
       torch_index_suffix = "cu128",
       torchaudio_index_suffix = "cu128",
-      venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
       torchaudio_version = "2.10.0+cu128"
@@ -49,7 +48,6 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.0",
       torch_index_suffix = "cu130",
       torchaudio_index_suffix = "cu130",
-      venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
       torchaudio_version = "2.10.0+cu130"
@@ -57,7 +55,6 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.2",
       torch_index_suffix = "cu132",
       torchaudio_index_suffix = "cpu",
-      venv_name = ".venv-cu132",
       torch_version = "2.13.0",
       torchvision_version = "0.28.0",
       torchaudio_version = "2.11.0+cpu"
@@ -74,7 +71,7 @@ variable "COMPATIBLE_BUILDS" {
           cuda_version_dash = replace(combination.cuda_version, ".", "-"),
           torch_index_suffix = combination.torch_index_suffix,
           torchaudio_index_suffix = combination.torchaudio_index_suffix,
-          venv_name = combination.venv_name,
+          venv_name = ".venv-${combination.torch_index_suffix}",
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
