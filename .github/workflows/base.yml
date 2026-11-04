@@ -156,7 +156,7 @@ jobs:
         with:
           name: base-refs
           path: /tmp/base-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-base:
@@ -296,7 +296,7 @@ jobs:
         with:
           name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-autoresearch:
@@ -446,7 +446,7 @@ jobs:
         with:
           name: filebrowser-refs
           path: /tmp/filebrowser-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-filebrowser:
@@ -595,7 +595,7 @@ jobs:
         with:
           name: pytorch-refs-${{ matrix.cuda }}
           path: /tmp/pytorch-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-pytorch:
@@ -764,7 +764,7 @@ jobs:
         with:
           name: cluster-refs-${{ matrix.cuda }}
           path: /tmp/cluster-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-pytorch-cluster:
