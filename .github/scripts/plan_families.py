@@ -12,7 +12,8 @@ lives in .github/families.yml.
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
     plan_families.py --workflow comfyui    # which workflow builds this family
-    plan_families.py --paths comfyui       # pathspecs feeding it, deps included
+    plan_families.py --paths comfyui       # pathspecs feeding it, deps included,
+                                           # ignored files excluded
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
 
@@ -201,6 +202,25 @@ def git_pathspecs(paths: list[str]) -> list[str]:
     return [p[:-2] if p.endswith("/**") else p for p in paths]
 
 
+def exclude_pathspecs(
+    paths: list[str], ignore: list[str], files: list[str],
+) -> list[str]:
+    """`:(exclude)` pathspecs for every ignored file under `paths`.
+
+    The bump and the release notes find a family's commits with
+    `git log -- <pathspecs>`, so an ignored file has to be excluded there too,
+    or a README-only commit that built nothing would still set the version
+    and show up in the changelog. Git can't re-include an excluded file, so
+    `!` exceptions are resolved here, against concrete files, rather than
+    handed to git as patterns.
+    """
+    return [
+        f":(exclude,literal){f}"
+        for f in files
+        if any(_matches(p, f) for p in paths) and is_ignored(f, ignore)
+    ]
+
+
 def _git(*args: str) -> str:
     return subprocess.run(
         ("git",) + args, check=True, capture_output=True, text=True
@@ -300,7 +320,11 @@ def main() -> int:
         if args.paths:
             if args.paths not in graph:
                 raise GraphError(f"unknown family '{args.paths}'")
-            for spec in git_pathspecs(paths_with_deps(graph, args.paths)):
+            paths = paths_with_deps(graph, args.paths)
+            tracked = _git("-C", str(REPO_ROOT), "ls-files").splitlines()
+            for spec in git_pathspecs(paths) + exclude_pathspecs(
+                paths, load_ignore(args.graph), tracked
+            ):
                 print(spec)
             return 0
         if args.since_release:

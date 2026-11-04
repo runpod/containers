@@ -127,6 +127,26 @@ class Pathspecs(unittest.TestCase):
     def test_a_plain_path_is_left_alone(self):
         self.assertEqual(P.git_pathspecs(["bake.sh"]), ["bake.sh"])
 
+    IGNORE = ["t/*/README.md", "!t/base/README.md"]
+    FILES = ["t/base/README.md", "t/base/Dockerfile", "t/pytorch/README.md",
+             "t/pytorch/Dockerfile", "t/comfyui/README.md"]
+
+    def test_ignored_files_are_excluded_from_the_log(self):
+        """A README-only commit must not set the bump or reach the notes."""
+        self.assertEqual(
+            P.exclude_pathspecs(["t/pytorch/**", "t/base/**"], self.IGNORE, self.FILES),
+            [":(exclude,literal)t/pytorch/README.md"],
+        )
+
+    def test_an_exception_is_never_excluded(self):
+        self.assertEqual(P.exclude_pathspecs(["t/base/**"], self.IGNORE, self.FILES), [])
+
+    def test_only_files_under_the_family_are_listed(self):
+        self.assertEqual(
+            P.exclude_pathspecs(["t/comfyui/**"], self.IGNORE, self.FILES),
+            [":(exclude,literal)t/comfyui/README.md"],
+        )
+
 
 class GraphFile(unittest.TestCase):
     def _write(self, text: str) -> Path:
