@@ -41,6 +41,7 @@ target "rocm-matrix" {
 
   args = {
     BASE_IMAGE = "rocm/pytorch:rocm${build.rocm}_ubuntu${build.ubuntu}_py${build.python}_pytorch_release_${build.torch}"
+    UBUNTU_VERSION = build.ubuntu
   }
 
   tags = [

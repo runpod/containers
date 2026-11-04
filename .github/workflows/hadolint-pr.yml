@@ -30,7 +30,7 @@ jobs:
             ignore: ""
           - dockerfile: official-templates/sandbox-ubuntu/Dockerfile
             ignore: "DL3006,DL3008"
-          - dockerfile: official-templatesandbox-openclaw/Dockerfile
+          - dockerfile: official-templates/sandbox-openclaw/Dockerfile
             ignore: "DL3006,DL3008"
           - dockerfile: official-templates/sandbox-harbor/Dockerfile
             ignore: "DL3006,DL3008"
