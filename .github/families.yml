@@ -21,6 +21,9 @@
 # `paths`), but neither builds FROM runpod/base — they start from an upstream
 # image.
 
+ignore:
+  - official-templates/*/README.md
+
 families:
   base:
     paths:
