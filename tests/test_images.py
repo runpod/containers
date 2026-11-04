@@ -255,6 +255,13 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
         config.GROUP_TEST_AUTORESEARCH[grp] = True
         log(f"group '{grp}': test_autoresearch=true (train.py runs end to end)")
 
+    if _normalize_bool(contents.get("test_dcgm_exporter")):
+        config.GROUP_TEST_DCGM_EXPORTER[grp] = True
+        log(
+            f"group '{grp}': test_dcgm_exporter=true "
+            "(:9400 serves the dashboard series with a hostname label)"
+        )
+
 
 def _apply_cuda_axis(group: str, raw: object) -> None:
     """Read the `cuda_versions:` manifest field for one group.

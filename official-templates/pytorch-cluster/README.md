@@ -51,6 +51,13 @@ monitoring role) rather than the default. Note this set uses
 `DCGM_FI_PROF_GR_ENGINE_ACTIVE` (compute-engine active ratio) as the utilization
 signal instead of the coarse `DCGM_FI_DEV_GPU_UTIL`.
 
+> **Upgrading from an image with dcgm-exporter 4.8.1 or older:** the exporter
+> (4.8.3+) renamed the per-node label on DCGM metrics from `Hostname` to
+> `hostname`. The pre-baked dashboards are updated, but your own Grafana panels,
+> alerts or recording rules that use `Hostname` (e.g. `{Hostname="node-0"}`,
+> `by (Hostname)`, `{{Hostname}}`) return nothing until you switch them to
+> `hostname`.
+
 Inspect running services with `supervisorctl status`; logs live under
 `/var/log/supervisor/`.
 

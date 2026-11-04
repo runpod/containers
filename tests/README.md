@@ -353,6 +353,7 @@ groupname:
     - emSign
     test_uv: true             # exactly one uv, and it resolves
     test_virtualenv: true     # virtualenv works on every python3.X
+    test_dcgm_exporter: true  # dcgm-exporter serves the dashboard labels
 ```
 
 Field reference:
@@ -382,6 +383,7 @@ Field reference:
 | `revoked_ca_names` | CA subject substrings that must not be trusted, matched case-insensitively against certificate subjects, so a family prefix (`emSign`) covers every root in it. Applies to both CA checks. Default: the list in `tests/runpod_smoke/checks.py` — extend that when a root is revoked, and use this field only for a one-off run. |
 | `test_uv` | `true` / `false` — exactly one `uv` on `$PATH`, no pip-installed copy shadowing it, and a real `uv venv` + `uv pip install`. The duplicate test is the point: the NGC bases ship a pip-installed uv that shadows the pinned binary, the Dockerfiles remove it, and this fails if a base image brings it back. Default: `false`. |
 | `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across four interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_dcgm_exporter` | `true` / `false` — scrapes the in-pod dcgm-exporter on `:9400` (retrying for up to ~2 minutes while DCGM starts) and requires `DCGM_FI_DEV_GPU_UTIL` and `DCGM_FI_DEV_FB_USED` with a non-empty `hostname` label, the series the Grafana dashboards build their Node dropdowns from. For `runpod/pytorch-cluster`, which runs the exporter on every pod. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
 list for that group — no `instances:` / `max_price_per_hour:` /
@@ -679,7 +681,7 @@ groups don't silently skip the check:
 
 <a id="hygiene-checks"></a>
 
-Five opt-in checks that look at how an image is **assembled** rather than at
+Six opt-in checks that look at how an image is **assembled** rather than at
 whether it boots. They exist because the failures they catch are invisible to
 every other step: the pod starts, the GPU works, and the defect only surfaces
 for a user weeks later, or in the next scan.
@@ -691,6 +693,7 @@ for a user weeks later, or in the next scan.
 | uv | `test_uv` | a vendor base re-introducing a pip-installed uv that shadows the pinned binary |
 | system CA store | `test_ca_certs` (+ `revoked_ca_names`) | a `--only-upgrade ca-certificates` that exited 0 without upgrading anything |
 | certifi bundle | `test_python_tls` (+ `python_tls_venv`) | the same revoked root still trusted by `pip` and `requests`, which never read the system store |
+| dcgm-exporter | `test_dcgm_exporter` | the exporter binary failing against the image's libdcgm, or a label renamed upstream, either of which leaves the Grafana dashboards empty |
 
 Two things are deliberate about this design.
 

@@ -31,6 +31,7 @@ def _reset_groups() -> None:
         config.GROUP_PYTHON_TLS_VENV,
         config.GROUP_TEST_UV,
         config.GROUP_TEST_VIRTUALENV,
+        config.GROUP_TEST_DCGM_EXPORTER,
     ):
         d.clear()
 
@@ -71,6 +72,11 @@ class HygieneSelectionTests(unittest.TestCase):
 
     def test_no_flags_means_no_checks(self):
         self.assertEqual(_hygiene_checks("grp"), [])
+
+    def test_dcgm_exporter_is_opt_in(self):
+        config.GROUP_TEST_DCGM_EXPORTER["grp"] = True
+        labels = [label for label, _, _ in _hygiene_checks("grp")]
+        self.assertEqual(labels, ["dcgm-exporter"])
 
     def test_only_opted_in_checks_appear(self):
         config.GROUP_TEST_UV["grp"] = True
@@ -185,6 +191,7 @@ class CommandShapeTests(unittest.TestCase):
             "uv": checks.uv_check_command(),
             "virtualenv": checks.virtualenv_check_command(),
             "autoresearch": checks.autoresearch_check_command(),
+            "dcgm_exporter": checks.dcgm_exporter_check_command(),
         }
         for name, command in commands.items():
             with self.subTest(command=name):
@@ -214,6 +221,22 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("prepare.TIME_BUDGET = 5", command)
         # Sequence length is shrunk so the check fits a cheap GPU.
         self.assertIn("prepare.MAX_SEQ_LEN = 256", command)
+
+    def test_dcgm_check_requires_the_dashboard_labels(self):
+        command = checks.dcgm_exporter_check_command()
+        self.assertIn("http://localhost:9400/metrics", command)
+        # The dashboards' variables read these; both must carry the label.
+        for series in checks.DCGM_DASHBOARD_SERIES:
+            self.assertIn(series, command)
+        # Lower-case and non-empty: 4.8.3 renamed `Hostname` -> `hostname`.
+        self.assertIn('hostname=\\\"[^\\\"]', command)
+
+    def test_dcgm_check_retries_within_the_ssh_timeout(self):
+        from runpod_smoke.runner import _HYGIENE_TIMEOUT
+        attempts, interval, curl_cap = 20, 5, 3
+        command = checks.dcgm_exporter_check_command(attempts, interval)
+        self.assertIn(f"seq 1 {attempts}", command)
+        self.assertLess(attempts * (interval + curl_cap), _HYGIENE_TIMEOUT)
 
     def test_ca_check_proves_tls_still_works(self):
         # Over-pruning a trust store is as broken as not pruning it, so a

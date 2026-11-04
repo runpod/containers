@@ -90,6 +90,7 @@ def render_yaml(groups: dict) -> str:
             "test_uv",
             "test_virtualenv",
             "test_autoresearch",
+            "test_dcgm_exporter",
         ):
             if key in body:
                 val = body[key]
@@ -148,6 +149,7 @@ def build_groups(
     test_uv: bool = False,
     test_virtualenv: bool = False,
     test_autoresearch: bool = False,
+    test_dcgm_exporter: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
@@ -252,6 +254,8 @@ def build_groups(
             body["test_virtualenv"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
+        if test_dcgm_exporter:
+            body["test_dcgm_exporter"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if gpu_group and wants_all_cuda:
@@ -475,6 +479,15 @@ def main() -> int:
             "caught. For runpod/autoresearch only."
         ),
     )
+    ap.add_argument(
+        "--test-dcgm-exporter",
+        action="store_true",
+        help=(
+            "Emit `test_dcgm_exporter: true`: scrape the in-pod dcgm-exporter "
+            "on :9400 and require the series the Grafana dashboards read, "
+            "with a hostname label. For runpod/pytorch-cluster only."
+        ),
+    )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
@@ -570,6 +583,7 @@ def main() -> int:
         test_uv=args.test_uv,
         test_virtualenv=args.test_virtualenv,
         test_autoresearch=args.test_autoresearch,
+        test_dcgm_exporter=args.test_dcgm_exporter,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,
