@@ -666,7 +666,7 @@ jobs:
             *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
             *-cu1300-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
             *-cu1320-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
-          max-parallel: "4"
+          max-parallel: "2"
 
   # -cluster layers monitoring + RDMA on top of a PUBLISHED runpod/pytorch.
   # It lives here (not a separate workflow) so it runs AFTER build-pytorch in
