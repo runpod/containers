@@ -682,6 +682,30 @@ if [ -s "$ARGS_FILE" ]; then
     done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
 fi
 
+# ComfyUI exits at import when --use-sage-attention is set and the package is
+# missing — which it is on -cuda13.2, so switching a volume to that tag would
+# otherwise leave ComfyUI dead. find_spec only locates it: importing needs CUDA.
+if [[ " ${COMFY_ARGS[*]} " == *" --use-sage-attention "* ]]; then
+    if python -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("sageattention") is None)'; then
+        # Kernels exist for SM 8.0-9.0 and 12.0; elsewhere ComfyUI falls back
+        # to PyTorch attention but logs an error on every call.
+        compute_caps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | sort -u | tr '\n' ' ')
+        for cap in $compute_caps; do
+            case "$cap" in
+                8.0|8.6|8.9|9.0|12.0) ;;
+                *) echo "WARNING: SageAttention has no kernels for this GPU (compute capability $cap); ComfyUI will fall back to PyTorch attention." ;;
+            esac
+        done
+    else
+        echo "WARNING: --use-sage-attention is set but SageAttention is not installed in this image; starting ComfyUI without it."
+        filtered_args=()
+        for arg in "${COMFY_ARGS[@]}"; do
+            [ "$arg" = "--use-sage-attention" ] || filtered_args+=("$arg")
+        done
+        COMFY_ARGS=("${filtered_args[@]}")
+    fi
+fi
+
 # Startup is over: from here the crash banner below owns failures, and a live
 # ERR trap would also fire on the shutdown path and hold the pod open.
 trap - ERR

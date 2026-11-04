@@ -36,6 +36,11 @@ variable "FILEBROWSER_SHA256" {
 #
 # Hence a separate index per row. The version is spelled out rather than built
 # from the suffix so the post-install check compares against what pip resolved.
+#
+# SageAttention is compiled against one exact torch + CUDA pair, so each row
+# pins its own prebuilt wheel (https://github.com/kodxana/runpod-sageattention).
+# Empty means the variant ships without it: there is no wheel for torch 2.13.0
+# + cu132 yet.
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8",
@@ -44,7 +49,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
       venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
-      torchaudio_version = "2.10.0+cu128"
+      torchaudio_version = "2.10.0+cu128",
+      sageattention_version = "2.2.0+torch2.10.0.cu128.sm90fix1",
+      sageattention_wheel_url = "https://github.com/kodxana/runpod-sageattention/releases/download/0.1.1/sageattention-2.2.0%2Btorch2.10.0.cu128.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "0b20e939401a087a9a72d1393701cc65614ac0c7742a80e29dc80c826a924df0"
     },
     { cuda_version = "13.0",
       torch_index_suffix = "cu130",
@@ -52,7 +60,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
       venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
-      torchaudio_version = "2.10.0+cu130"
+      torchaudio_version = "2.10.0+cu130",
+      sageattention_version = "2.2.0+torch2.10.0.cu130.sm90fix1",
+      sageattention_wheel_url = "https://github.com/kodxana/runpod-sageattention/releases/download/0.1.1/sageattention-2.2.0%2Btorch2.10.0.cu130.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "dbd550f7a8330c3667d516a4b636497d7372471ff248a81800a6144a395019e1"
     },
     { cuda_version = "13.2",
       torch_index_suffix = "cu132",
@@ -60,7 +71,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
       venv_name = ".venv-cu132",
       torch_version = "2.13.0",
       torchvision_version = "0.28.0",
-      torchaudio_version = "2.11.0+cpu"
+      torchaudio_version = "2.11.0+cpu",
+      sageattention_version = "",
+      sageattention_wheel_url = "",
+      sageattention_sha256 = ""
     }
   ]
 }
@@ -78,6 +92,9 @@ variable "COMPATIBLE_BUILDS" {
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
+          sageattention_version = combination.sageattention_version,
+          sageattention_wheel_url = combination.sageattention_wheel_url,
+          sageattention_sha256 = combination.sageattention_sha256,
          },
       ]
     ]
@@ -147,6 +164,9 @@ target "comfyui-matrix" {
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
     COMFYUI_VENV_NAME   = build.venv_name
+    SAGEATTENTION_VERSION   = build.sageattention_version
+    SAGEATTENTION_WHEEL_URL = build.sageattention_wheel_url
+    SAGEATTENTION_SHA256    = build.sageattention_sha256
   }
 
   tags = [
