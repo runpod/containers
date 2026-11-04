@@ -53,6 +53,28 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 --preview-method auto
 ```
 
+## SageAttention
+
+The `-cuda12.8` and `-cuda13.0` images ship [SageAttention](https://github.com/thu-ml/SageAttention) 2.2.0, prebuilt for their exact PyTorch and CUDA, so there is nothing to compile. It is off by default; to turn it on, add this line to `comfyui_args.txt` and restart the pod:
+
+```
+--use-sage-attention
+```
+
+It has kernels for these GPUs:
+
+| compute capability | GPUs |
+|---|---|
+| 8.0 | A100 |
+| 8.6 | A40, RTX A6000, RTX 3090 |
+| 8.9 | L40S, L4, RTX 4090, RTX 6000 Ada |
+| 9.0 | H100, H200 |
+| 12.0 | RTX 5090, RTX PRO 6000 Blackwell |
+
+On any other GPU (B200, B300, V100, T4…) ComfyUI falls back to PyTorch attention, and the startup log warns about it. `-cuda13.2` does not include SageAttention yet; if the flag is set there, startup drops it with a warning rather than letting ComfyUI exit.
+
+Do not `pip install sageattention` on top: the PyPI package is the older 1.x release, and it would shadow the prebuilt one.
+
 ## Directory Structure
 
 - `/workspace/runpod-slim/ComfyUI`: ComfyUI install
