@@ -125,7 +125,7 @@ jobs:
         with:
           name: comfyui-refs-${{ matrix.comfyui }}
           path: /tmp/comfyui-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
           
   test-comfyui:

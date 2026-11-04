@@ -38,7 +38,9 @@ PyTorch 2.6.0 does not run on Blackwell in any image: it is built against CUDA 1
 
 On CUDA 12.8 and 12.9, PyTorch 2.12.1 and 2.13.0 themselves work, but torchvision's CUDA operators do not. Those versions take their wheels from the cu129 index, whose torchvision is built without Blackwell, and no other CUDA 12 index can replace it: cu128 has no 2.12 or later build at all, and cu126 predates the architecture. The cu130 and cu132 wheels do support Blackwell, but they need a CUDA 13 driver — the hosts these images exist for do not have one.
 
-On Blackwell, use a CUDA 13.0 or 13.2 image. Every PyTorch version there from 2.7.1 on is fully supported.
+PyTorch 2.8.0 has the same torchvision gap on CUDA 12.9, 13.0 and 13.2: there it also takes its wheels from the cu129 index. Only the CUDA 12.8 image uses cu128 for 2.8.0.
+
+On Blackwell, use a CUDA 13.0 or 13.2 image with PyTorch 2.7.1, or 2.9.0 and later.
 
 Focus on your models, not your environment setup.
 

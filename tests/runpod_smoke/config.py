@@ -89,6 +89,15 @@ ON_SKIP: str = _coerce_on_skip(os.environ.get("ON_SKIP", "fail"))
 CREATE_RETRIES = int(os.environ.get("CREATE_RETRIES", "3"))
 CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 
+# Whole-job retries for SKIP / UNVERIFIED (every candidate had no capacity,
+# or the host never answered). After the first pass, those jobs — and only
+# those — are re-run up to SKIP_RETRIES more times, waiting
+# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15 min by
+# default). FAIL is never retried. Disabled under ON_SKIP=pass. Set
+# SKIP_RETRIES=0 to turn it off.
+SKIP_RETRIES = max(0, int(os.environ.get("SKIP_RETRIES") or "3"))
+SKIP_RETRY_DELAY = max(0, int(os.environ.get("SKIP_RETRY_DELAY") or "300"))
+
 # How long a pod can sit in "no SSH endpoint yet" before we surface a hint
 # about slow pulls / possible Docker Hub rate limit. Doesn't fail the pod
 # — just an informational note in the logs.
