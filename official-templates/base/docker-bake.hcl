@@ -26,6 +26,7 @@ target "cpu-ubuntu2204" {
   ]
   args = {
     BASE_IMAGE = "ubuntu:22.04"
+    UBUNTU_VERSION = "22.04"
   }
 }
 
@@ -36,6 +37,7 @@ target "cpu-ubuntu2404" {
   ]
   args = {
     BASE_IMAGE = "ubuntu:24.04"
+    UBUNTU_VERSION = "24.04"
   }
 }
 
@@ -63,5 +65,6 @@ target "cuda-matrix" {
   
   args = {
     BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-devel-ubuntu${combo.ubuntu_version}"
+    UBUNTU_VERSION = combo.ubuntu_version
   }
 }

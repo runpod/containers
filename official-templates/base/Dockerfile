@@ -1,9 +1,14 @@
 ARG BASE_IMAGE=non-existing
+ARG UBUNTU_VERSION=non-existing
 
 # ── Slurm builder ───
+# Built on plain Ubuntu, not BASE_IMAGE: Slurm only depends on the Ubuntu
+# release, so all CUDA variants of one release share a single cached build.
+# This leaves out the NVML GPU plugin (AutoDetect=nvml), which the cluster's
+# gres.conf does not use.
 ARG SLURM_VERSION=26.05.2
 ARG SLURM_SHA256=01151f233dde64d95cc4ca96931aea3d4a2cad372ed9ad86a8b9f6b674600c3b
-FROM ${BASE_IMAGE} AS slurm-builder
+FROM ubuntu:${UBUNTU_VERSION} AS slurm-builder
 ARG SLURM_VERSION
 ARG SLURM_SHA256
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
