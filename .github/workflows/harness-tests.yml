@@ -15,6 +15,12 @@ on:
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
   push:
     branches: [main]
     paths:
@@ -22,6 +28,12 @@ on:
       - '.github/scripts/generate_test_manifest.py'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
   workflow_dispatch:
 
 permissions:
