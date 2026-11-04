@@ -118,6 +118,19 @@ assert_eq "a dependency's commit bumps the dependent" patch \
 assert_eq "without it the dependent would stall" none \
   "$(bump_for_range pytorch-v1.0.0 pytorch/)"
 
+# plan_families.py --paths appends `:(exclude,literal)` specs for ignored
+# files (READMEs that never reach an image). A commit touching only those
+# built nothing, so it must not set the bump either.
+new_repo
+git tag pytorch-v1.4.0
+mkdir -p pytorch
+echo x > pytorch/README.md && git add pytorch/README.md && commit "feat!: rewrite the docs"
+echo x > pytorch/Dockerfile && git add pytorch/Dockerfile && commit "fix: the image"
+assert_eq "an excluded README-only commit does not count" patch \
+  "$(bump_for_range pytorch-v1.4.0 pytorch/ ':(exclude,literal)pytorch/README.md')"
+assert_eq "without the exclude it would bump major" major \
+  "$(bump_for_range pytorch-v1.4.0 pytorch/)"
+
 if [ "$FAILS" -ne 0 ]; then
   echo
   echo "${FAILS} test(s) failed"

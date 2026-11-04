@@ -21,6 +21,12 @@
 # `paths`), but neither builds FROM runpod/base — they start from an upstream
 # image.
 
+ignore:
+  - official-templates/*/README.md
+  # base COPYs its README into the image (nginx serves it on :80), and rocm /
+  # nvidia-pytorch build from the base context too.
+  - "!official-templates/base/README.md"
+
 families:
   base:
     paths:
