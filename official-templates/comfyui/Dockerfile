@@ -139,12 +139,14 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
 # hash-locked torch; the wheel's own torch==<exact> pin is checked instead.
 # Not imported here: _qattn_sm90 links libcuda.so.1, which only a GPU host has.
 RUN if [ -n "${SAGEATTENTION_WHEEL_URL}" ]; then \
-        wheel="/tmp/$(basename "${SAGEATTENTION_WHEEL_URL}" | sed 's/%2B/+/g')" && \
+        mkdir -p /tmp/sageattention && \
+        wheel="/tmp/sageattention/sageattention-${SAGEATTENTION_VERSION}-cp312-cp312-linux_x86_64.whl" && \
         curl -fSL "${SAGEATTENTION_WHEEL_URL}" -o "${wheel}" && \
-        printf '%s  %s\n' "${SAGEATTENTION_SHA256}" "${wheel}" | sha256sum -c - && \
-        python3.12 -m pip install --no-cache-dir --no-deps "${wheel}" && \
-        rm "${wheel}" && \
-        test "$(python3.12 -c 'import importlib.metadata as m; print(m.version("sageattention"))')" = "${SAGEATTENTION_VERSION}" && \
+        printf '%s  %s\n' "${SAGEATTENTION_SHA256}" "${wheel}" > /tmp/sageattention/wheel.sha256 && \
+        sha256sum -c /tmp/sageattention/wheel.sha256 && \
+        python3.12 -m pip install --no-cache-dir --no-deps --no-index --find-links /tmp/sageattention \
+            "sageattention==${SAGEATTENTION_VERSION}" && \
+        rm -rf /tmp/sageattention && \
         TORCH_VERSION="${TORCH_VERSION}" python3.12 -c 'import importlib.metadata as m, os, sys; pin = "torch==" + os.environ["TORCH_VERSION"]; requires = m.requires("sageattention") or []; sys.exit(0 if pin in requires else f"sageattention requires {requires}, image has {pin}")'; \
     else \
         echo "No SageAttention wheel for this CUDA variant; skipping."; \
