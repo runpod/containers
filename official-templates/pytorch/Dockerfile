@@ -12,7 +12,7 @@ ARG TORCH
 # one argument per package instead of a single mashed-together string.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     read -ra TORCH_PKGS <<< "${TORCH}" && \
-    python -m pip install \
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install \
         --timeout 1000 \
         --retries 10 \
         --resume-retries 5 \
@@ -28,7 +28,7 @@ ARG TORCHAUDIO
 ARG AUDIO_INDEX
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     if [ -n "${TORCHAUDIO}" ]; then \
-        python -m pip install --no-deps "${TORCHAUDIO}" \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHAUDIO}" \
             --index-url "https://download.pytorch.org/whl/${AUDIO_INDEX}"; \
     fi
 
@@ -39,11 +39,11 @@ ARG TORCHCODEC
 ARG CODEC_SRC
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     if [ -n "${TORCHCODEC}" ]; then \
-        python -m pip install --no-deps "${TORCHCODEC}" \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHCODEC}" \
             --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
     fi
 
 # Patched pins for packages that Grype reports as HIGH in the layers above.
 COPY --from=requirements requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    python -m pip install --upgrade -r /requirements.txt
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install --upgrade -r /requirements.txt
