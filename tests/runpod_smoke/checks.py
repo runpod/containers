@@ -173,6 +173,11 @@ _TORCH_TAG_RE = re.compile(
     re.IGNORECASE,
 )
 
+# runpod/comfyui variants that bake a prebuilt SageAttention wheel (see the
+# template's docker-bake.hcl). -cuda13.2 has no wheel yet; add it here when
+# it gets one so a missing install fails instead of passing unnoticed.
+_SAGEATTENTION_IMAGE_RE = re.compile(r"\bcomfyui:\S*-cuda(?:12\.8|13\.0)$")
+
 # Image-tag markers for AMD ROCm runtimes. Matched BEFORE the torch regex
 # so that ROCm-pytorch images (which inherit from rocm/pytorch:* and keep
 # torch in a conda env not visible to the system `python`) take the
@@ -212,6 +217,55 @@ _TORCH_PACKAGES_PROGRAM = (
     "    assert samples.data.shape == (1, 16000), f'decoded {tuple(samples.data.shape)}'\n"
     "    print(f'torchcodec={torchcodec.__version__} wav round trip ok')\n"
 )
+
+
+# Run on the ComfyUI images that ship SageAttention. The import is required on
+# every GPU — it is what breaks when the wheel and torch drift apart. The kernel
+# only runs where the wheel has one; elsewhere ComfyUI falls back by design.
+# Its quantisation step is a Triton kernel compiled on first call, hence the
+# longer timeout in run_cuda_check.
+_SAGEATTENTION_PROGRAM = (
+    "import torch, torch.nn.functional as F\n"
+    "import importlib.metadata, sageattention\n"
+    "from sageattention import sageattn\n"
+    "print(f'sageattention={importlib.metadata.version(\"sageattention\")}')\n"
+    "cap = torch.cuda.get_device_capability(0)\n"
+    "if cap not in {(8, 0), (8, 6), (8, 9), (9, 0), (12, 0)}:\n"
+    "    print(f'sageattn: no kernel for compute {cap[0]}.{cap[1]}, import only')\n"
+    "else:\n"
+    "    torch.manual_seed(0)\n"
+    "    q, k, v = (torch.randn(1, 8, 512, 64, device='cuda', dtype=torch.float16)\n"
+    "               for _ in range(3))\n"
+    "    out = sageattn(q, k, v, tensor_layout='HND', is_causal=False)\n"
+    "    ref = F.scaled_dot_product_attention(q, k, v)\n"
+    "    cos = F.cosine_similarity(out.flatten().float(), ref.flatten().float(), dim=0).item()\n"
+    "    assert cos > 0.99, f'sageattn vs SDPA cosine {cos:.4f}'\n"
+    "    print(f'sageattn ok (cosine vs SDPA {cos:.4f})')\n"
+)
+
+
+# Shared by the torch-image and ComfyUI paths of cuda_check_command.
+_TORCH_PROGRAM = (
+    "import sys, torch\n"
+    "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
+    "n = torch.cuda.device_count()\n"
+    "assert n > 0, 'torch.cuda.device_count() == 0'\n"
+    "name = torch.cuda.get_device_name(0)\n"
+    "cap = torch.cuda.get_device_capability(0)\n"
+    "print(f'torch={torch.__version__} cuda={torch.version.cuda} '\n"
+    "      f'gpus={n} dev0={name!r} compute={cap[0]}.{cap[1]}')\n"
+    "# Tiny tensor-on-GPU sanity check: catches driver bugs that pass\n"
+    "# is_available() but fail on actual memory ops.\n"
+    "x = torch.ones(64, 64, device='cuda')\n"
+    "y = (x @ x).sum().item()\n"
+    "assert y == 64*64*64, f'matmul gave {y}, expected {64*64*64}'\n"
+    "print('matmul ok')\n"
+)
+
+
+def _image_ships_sageattention(image: str) -> bool:
+    """True if the image ref is a ComfyUI variant with SageAttention baked in."""
+    return bool(_SAGEATTENTION_IMAGE_RE.search(image))
 
 
 def _image_expects_gpu(image: str) -> bool:
@@ -266,6 +320,9 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
           rocm/pytorch:* where torch lives in a conda env not visible to
           the system `python`, so the torch.cuda path would falsely fail
           with ModuleNotFoundError)
+        - runpod/comfyui -cuda12.8 / -cuda13.0       -> torch.cuda check plus
+          SageAttention import, and a sageattn-vs-SDPA comparison on GPUs
+          the wheel has kernels for
         - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
           (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack),
           plus torchvision, torchaudio and torchcodec when
@@ -294,6 +351,11 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
             "fi"
         )
 
+    if _image_ships_sageattention(image):
+        # ComfyUI's torch is in the system python3.12. start.sh exports PATH to
+        # SSH sessions before activating its venv, so there is no `python`.
+        return f"python3.12 - <<'PY'\n{_TORCH_PROGRAM}{_SAGEATTENTION_PROGRAM}PY"
+
     if _image_expects_torch(image):
         # Use `python` (the runpod/base symlink /usr/local/bin/python ->
         # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 system
@@ -301,22 +363,7 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
         # installs torch via `python -m pip`, so torch only exists in
         # python3.12's site-packages. On 24.04 they happen to coincide.
         # Using `python` is portable.
-        program = (
-            "import sys, torch\n"
-            "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
-            "n = torch.cuda.device_count()\n"
-            "assert n > 0, 'torch.cuda.device_count() == 0'\n"
-            "name = torch.cuda.get_device_name(0)\n"
-            "cap = torch.cuda.get_device_capability(0)\n"
-            "print(f'torch={torch.__version__} cuda={torch.version.cuda} '\n"
-            "      f'gpus={n} dev0={name!r} compute={cap[0]}.{cap[1]}')\n"
-            "# Tiny tensor-on-GPU sanity check: catches driver bugs that pass\n"
-            "# is_available() but fail on actual memory ops.\n"
-            "x = torch.ones(64, 64, device='cuda')\n"
-            "y = (x @ x).sum().item()\n"
-            "assert y == 64*64*64, f'matmul gave {y}, expected {64*64*64}'\n"
-            "print('matmul ok')\n"
-        )
+        program = _TORCH_PROGRAM
         if torch_packages:
             program += _TORCH_PACKAGES_PROGRAM
         return f"python - <<'PY'\n{program}PY"
@@ -353,11 +400,13 @@ def run_cuda_check(
     cmd = cuda_check_command(image, torch_packages)
     if not cmd:
         return True, "(no GPU check for this image)"
+    # First sageattn call JIT-compiles its Triton quantisation kernel.
+    timeout = 180 if _image_ships_sageattention(image) else 90
     ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=90)
+        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return False, "cuda check timed out after 90s"
+        return False, f"cuda check timed out after {timeout}s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
     combined = _strip_cr(r.stdout + r.stderr).strip()
