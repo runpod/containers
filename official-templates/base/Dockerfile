@@ -69,7 +69,25 @@ RUN . /etc/os-release && \
       dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
     fi && \
     update-ca-certificates
-    
+
+# Same stale-snapshot problem for brotli (CVE-2026-111497, KEV): `apt-get
+# upgrade` can't reach the patched libbrotli1. Pull it from the security
+# archive over https, checksum, and install only when newer.
+RUN . /etc/os-release && \
+    case "${VERSION_ID}" in \
+      22.04) ver="1.0.9-2ubuntu0.1"; sha=908295e77a65219a62114c3c79690a3c99712274d1317c3ba47ffa2f8ea52ca5 ;; \
+      24.04) ver="1.1.0-2ubuntu0.1"; sha=70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de ;; \
+      *) echo "no pinned brotli for ${VERSION_ID}" && exit 1 ;; \
+    esac && \
+    deb="libbrotli1_${ver}_amd64.deb" && \
+    cur="$(dpkg-query -W -f='${Version}' libbrotli1 2>/dev/null || echo 0)" && \
+    if dpkg --compare-versions "$cur" lt "$ver"; then \
+      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://security.ubuntu.com/ubuntu/pool/main/b/brotli/${deb}" && \
+      echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
+      dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
+    fi
+
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
 # Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
