@@ -136,6 +136,8 @@ RUN . /etc/os-release && \
 # recommended by https://slurm.schedmd.com/quickstart_admin.html. munge is
 # listed explicitly: the SchedMD packages only depend on libmunge2, not the
 # munge daemon and user that slurm-init.sh needs.
+# The slurm user/group get Debian's fixed UID/GID 64030, unless the parent
+# image already defines them (the NGC and ROCm bases ship a slurm group).
 COPY --from=slurm-builder /slurm-debs /tmp/slurm-debs
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
@@ -145,9 +147,9 @@ RUN apt-get update --yes && \
         /tmp/slurm-debs/slurm-smd-slurmctld_*.deb \
         /tmp/slurm-debs/slurm-smd-slurmd_*.deb \
         /tmp/slurm-debs/slurm-smd-slurmdbd_*.deb && \
-    groupadd --system --gid 64030 slurm && \
-    useradd --system --uid 64030 --gid slurm --home-dir /nonexistent \
-        --no-create-home --shell /usr/sbin/nologin slurm && \
+    { getent group slurm >/dev/null || groupadd --system --gid 64030 slurm; } && \
+    { id -u slurm >/dev/null 2>&1 || useradd --system --uid 64030 --gid slurm \
+        --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin slurm; } && \
     apt-get clean && \
     rm -rf /tmp/slurm-debs /var/lib/apt/lists/*
 

@@ -37,6 +37,7 @@ target "cpu-ubuntu2604" {
   ]
   args = {
     BASE_IMAGE = "ubuntu:26.04"
+    UBUNTU_VERSION = "26.04"
   }
 }
 
