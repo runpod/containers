@@ -22,6 +22,14 @@ CPU build, since torchaudio was never published for CUDA 13.2.
 Pick `-cuda12.8` unless you have a reason to want CUDA 13; a CUDA 13 pod will
 not start on a host whose driver is older than the tag.
 
+The exception is datacenter GPUs (e.g. A40, A100, H100, L40S): if a CUDA 13 pod
+lands on one whose driver is older than the tag, the image switches on NVIDIA's
+CUDA forward-compatibility layer by itself, and ComfyUI starts anyway. NVIDIA
+does not support this on consumer GPUs (e.g. RTX 3090, RTX 5090). The startup
+log says which case you are in on a `CUDA forward compat:` line; if it says
+`UNAVAILABLE`, redeploy on a host with a newer driver. Set
+`DISABLE_CUDA_COMPAT=1` to turn the layer off.
+
 ## Upgrading from a previous version
 
 If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration is performed automatically on the next boot. ComfyUI and the bundled custom nodes are updated to the versions pinned by the image, while models, inputs, outputs, user settings, and user-installed custom nodes are preserved. The virtual environment is also migrated to match the CUDA version of the tag you are now running. This may take a few extra minutes on the first start after the update.
