@@ -385,32 +385,63 @@ PY
 # 12.8/12.9 host). The compat libcuda only works on datacenter-class GPUs and
 # supported driver branches, and it breaks CUDA if the host driver is newer, so
 # it is enabled only after a real cuInit() succeeds with it. Fails open.
+# Undo compat that the NVIDIA Container Toolkit (>= 1.17.5) enabled on its own:
+# its enable-cuda-compat hook finds /usr/local/cuda/compat in the image and puts
+# it in the loader cache. Some host toolkits do this even when the host driver
+# is on the same branch, which on a GeForce card turns a working host driver
+# into cuInit error 804. Seen on Runpod hosts in two forms, both handled here:
+# an /etc/ld.so.conf.d/00-compat-*.conf entry, or an ldconfig run with the
+# compat dir on its command line (cache only, no conf file). Rebuilding the
+# cache from the remaining conf files drops both. Fails open.
+drop_runtime_cuda_compat() {
+    local conf
+    for conf in /etc/ld.so.conf.d/*.conf; do
+        [ -f "$conf" ] || continue
+        if grep -qE '^[[:space:]]*/usr/local/cuda[^/]*/compat/?[[:space:]]*$' "$conf"; then
+            mv "$conf" "$conf.disabled-by-start-sh" 2>/dev/null || true
+        fi
+    done
+    ldconfig 2>/dev/null || true
+}
+
 setup_cuda_compat() {
     if [ ! -e "$CUDA_COMPAT_DIR/libcuda.so.1" ]; then
         return
     fi
+
+    local host_ver host_rc host_path compat_ver compat_rc compat_path runtime_note=""
+    read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
+
+    # The container runtime already put compat in the loader cache. Keep it only
+    # if CUDA actually works with it and the user has not opted out; otherwise
+    # fall back to the host driver and decide below like any other host.
+    if [[ "$host_path" == */compat/* ]] && \
+        { [ "${DISABLE_CUDA_COMPAT:-}" = "1" ] || [ "${host_rc:--1}" != "0" ]; }; then
+        drop_runtime_cuda_compat
+        runtime_note="; removed compat enabled by the container runtime (cuInit returned $host_rc)"
+        read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
+    fi
+
     if [ "${DISABLE_CUDA_COMPAT:-}" = "1" ]; then
-        CUDA_COMPAT_STATUS="disabled (DISABLE_CUDA_COMPAT=1)"
+        CUDA_COMPAT_STATUS="disabled (DISABLE_CUDA_COMPAT=1)$runtime_note"
         echo "CUDA forward compat: $CUDA_COMPAT_STATUS"
         return
     fi
 
-    local host_ver host_rc host_path compat_ver compat_rc compat_path
-    read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
     read -r compat_ver compat_rc compat_path <<< "$(LD_LIBRARY_PATH="$CUDA_COMPAT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" probe_libcuda || echo '0 -1 none')"
 
     if [ "${host_path:-none}" = "none" ]; then
-        CUDA_COMPAT_STATUS="skipped (no host NVIDIA driver visible)"
+        CUDA_COMPAT_STATUS="skipped (no host NVIDIA driver visible)$runtime_note"
     elif [[ "$host_path" == */compat/* ]]; then
-        # NVIDIA Container Toolkit >= 1.17.5 can enable /usr/local/cuda/compat
-        # itself via ldconfig; don't misreport that as "not needed".
+        # Runtime-enabled compat that is still active: either it works (kept on
+        # purpose above) or the rollback could not remove it.
         if [ "${host_rc:--1}" = "0" ]; then
             CUDA_COMPAT_STATUS="ENABLED by container runtime (CUDA $host_ver via $host_path)"
         else
-            CUDA_COMPAT_STATUS="UNAVAILABLE (container runtime enabled $host_path but cuInit returned $host_rc)"
+            CUDA_COMPAT_STATUS="UNAVAILABLE (container runtime enabled $host_path, cuInit returned $host_rc, and it could not be removed)"
         fi
     elif [ "${host_ver:-0}" -ge "${compat_ver:-0}" ]; then
-        CUDA_COMPAT_STATUS="not needed (host driver supports CUDA $host_ver)"
+        CUDA_COMPAT_STATUS="not needed (host driver supports CUDA $host_ver)$runtime_note"
     elif [ "${compat_rc:--1}" = "0" ] && [ "$compat_path" != "$host_path" ]; then
         export LD_LIBRARY_PATH="$CUDA_COMPAT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         CUDA_COMPAT_STATUS="ENABLED (host driver CUDA $host_ver -> CUDA $compat_ver via $compat_path)"
@@ -420,7 +451,7 @@ setup_cuda_compat() {
             804) reason="this GPU does not support CUDA forward compatibility (consumer/GeForce cards are not supported)" ;;
             803) reason="the host driver branch is not supported by the bundled compat driver" ;;
         esac
-        CUDA_COMPAT_STATUS="UNAVAILABLE (host driver CUDA $host_ver < image CUDA $compat_ver; $reason)"
+        CUDA_COMPAT_STATUS="UNAVAILABLE (host driver CUDA $host_ver < image CUDA $compat_ver; $reason)$runtime_note"
     fi
 
     echo "============================================="
