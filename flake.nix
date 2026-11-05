@@ -44,6 +44,24 @@
         default = import ./nix/devshell { inherit pkgs repoLib; };
       });
 
-      apps = forAllSystems (pkgs: (import ./nix/lints { inherit pkgs lib; }).apps);
+      apps = forAllSystems (
+        pkgs:
+        (import ./nix/lints { inherit pkgs lib; }).apps
+        // {
+          image-size = {
+            type = "app";
+            program = lib.getExe (import ./nix/images/size.nix { inherit pkgs; });
+            meta.description = "Build the Nix images and compare their size with the published ones.";
+          };
+          image-smoke = {
+            type = "app";
+            program = lib.getExe (import ./nix/images/smoke.nix { inherit pkgs; });
+            meta.description = "Run a Nix image in Docker and check SSH, Jupyter, nginx, pip and nix-ld.";
+          };
+        }
+      );
+
+      # Nix-built container images (build-only). x86_64-linux only.
+      packages = lib.genAttrs systems (system: import ./nix/images { inherit nixpkgs system; });
     };
 }

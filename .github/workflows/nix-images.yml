@@ -1,0 +1,66 @@
+name: Nix images
+
+# Build-only: measures the Nix images against the published ones and smoke
+# tests the CPU image. Nothing is pushed.
+on:
+  pull_request:
+    paths: &paths
+      - nix/**
+      - flake.nix
+      - flake.lock
+      - container-template/**
+      - official-templates/base/README.md
+      - .github/workflows/nix-images.yml
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+    inputs:
+      gpu:
+        description: "Also measure the CUDA and ROCm images (~15 GB of downloads)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Size vs published images
+        run: nix run .#image-size -- nix-base-cpu nix-base-cpu-runtime | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test
+        run: nix run .#image-smoke -- nix-base-cpu
+
+  gpu:
+    if: github.event_name == 'workflow_dispatch' && inputs.gpu
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      # nixpkgs' CUDA packages are unfree, so cache.nixos.org doesn't carry
+      # them; the NixOS CUDA team's cache does.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://cache.nixos-cuda.org
+            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M=
+
+      - name: Size vs published images
+        run: |
+          nix run .#image-size -- nix-base-cuda nix-pytorch-cuda nix-pytorch-rocm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
