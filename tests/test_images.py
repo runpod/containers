@@ -252,6 +252,13 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
             "(every shipped python3.X interpreter)"
         )
 
+    if _normalize_bool(contents.get("test_python_path")):
+        config.GROUP_TEST_PYTHON_PATH[grp] = True
+        log(
+            f"group '{grp}': test_python_path=true "
+            "(apt's dist-packages only on the system python3)"
+        )
+
     if _normalize_bool(contents.get("test_autoresearch")):
         config.GROUP_TEST_AUTORESEARCH[grp] = True
         log(f"group '{grp}': test_autoresearch=true (train.py runs end to end)")
