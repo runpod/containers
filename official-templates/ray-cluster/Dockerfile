@@ -29,7 +29,7 @@ ARG RAY_VERSION=2.59.0
 # shaded jackson/guava/httpcore5 carry advisories. Ray falls back to
 # Python-only when the directory is missing.
 COPY requirements.txt /tmp/ray-requirements.txt
-RUN python -m pip install --no-cache-dir "ray[default]==${RAY_VERSION}" -r /tmp/ray-requirements.txt && \
+RUN python -m pip install --no-cache-dir "ray[default,serve]==${RAY_VERSION}" -r /tmp/ray-requirements.txt && \
     rm /tmp/ray-requirements.txt && \
     jars=$(python -c 'import os, ray; print(os.path.join(os.path.dirname(ray.__file__), "jars"))') && \
     rm -rf "$jars" && \
