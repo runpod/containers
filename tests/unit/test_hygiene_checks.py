@@ -32,6 +32,7 @@ def _reset_groups() -> None:
         config.GROUP_TEST_UV,
         config.GROUP_TEST_VIRTUALENV,
         config.GROUP_TEST_DCGM_EXPORTER,
+        config.GROUP_TEST_PYTHON_PATH,
     ):
         d.clear()
 
@@ -90,6 +91,7 @@ class HygieneSelectionTests(unittest.TestCase):
             config.GROUP_TEST_PYTHON_TLS,
             config.GROUP_TEST_UV,
             config.GROUP_TEST_VIRTUALENV,
+            config.GROUP_TEST_PYTHON_PATH,
         ):
             d["grp"] = True
         labels = [label for label, _, _ in _hygiene_checks("grp")]
@@ -98,6 +100,7 @@ class HygieneSelectionTests(unittest.TestCase):
             [
                 "pip check",
                 "virtualenv",
+                "python path",
                 "uv",
                 "CA trust store",
                 "certifi / python TLS",
@@ -190,6 +193,7 @@ class CommandShapeTests(unittest.TestCase):
             ),
             "uv": checks.uv_check_command(),
             "virtualenv": checks.virtualenv_check_command(),
+            "python_path": checks.python_path_check_command(),
             "autoresearch": checks.autoresearch_check_command(),
             "dcgm_exporter": checks.dcgm_exporter_check_command(),
         }
@@ -213,6 +217,16 @@ class CommandShapeTests(unittest.TestCase):
         command = checks.uv_check_command()
         self.assertIn("expected one uv on PATH", command)
         self.assertIn("uv is also installed as a pip package", command)
+
+    def test_python_path_check_enumerates_and_compares(self):
+        command = checks.python_path_check_command()
+        # Every python3.X in the image, not a fixed list, so a newly added
+        # interpreter without the sitecustomize filter fails.
+        self.assertIn("ls /usr/local/bin/python3.* /usr/bin/python3.*", command)
+        self.assertIn("/usr/lib/python3/dist-packages", command)
+        self.assertIn("still has /usr/lib/python3/dist-packages", command)
+        self.assertIn("lost /usr/lib/python3/dist-packages", command)
+        self.assertIn("python3 is $P3V but python is $PYV", command)
 
     def test_autoresearch_runs_train_in_the_venv(self):
         command = checks.autoresearch_check_command()
@@ -350,8 +364,8 @@ class CaCertsVersionFloorTests(unittest.TestCase):
     so what we assert is that its patched package actually arrived."""
 
     FLOOR = "20260816"
-    # Both pod versions seen in CI, plus the pre-fix one they replaced.
-    PATCHED = ("20260816ubuntu0.22.04.1", "20260816ubuntu0.24.04.1")
+    # The patched builds the base Dockerfile pins, plus the pre-fix ones.
+    PATCHED = ("20260816ubuntu0.24.04.1", "20260816ubuntu0.26.04.1")
     STALE = ("20240203", "20250419ubuntu0.24.04.1")
 
     def _compare(self, installed: str) -> int:
