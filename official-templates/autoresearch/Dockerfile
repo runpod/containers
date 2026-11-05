@@ -15,11 +15,11 @@ RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
 
 # Clone autoresearch to /opt (safe from volume mounts). Pinned to a commit so
 # a rebuild reproduces the image instead of picking up new upstream work.
-ARG AUTORESEARCH_REF=bfa1d2a65cb86341af86dadbadd336443b95e040
-RUN git init -q -b master /opt/autoresearch && \
+ARG AUTORESEARCH_REF=ca6c3ee0dc91f164e8305256d2b7f9525df11c33
+RUN git init -q -b fix/CON-1476-vuln-bumps /opt/autoresearch && \
     git -C /opt/autoresearch remote add origin https://github.com/runpod/autoresearch.git && \
     git -C /opt/autoresearch fetch -q --depth 1 origin "${AUTORESEARCH_REF}" && \
-    git -C /opt/autoresearch checkout -q -B master FETCH_HEAD
+    git -C /opt/autoresearch checkout -q -B fix/CON-1476-vuln-bumps FETCH_HEAD
 
 WORKDIR /opt/autoresearch
 
