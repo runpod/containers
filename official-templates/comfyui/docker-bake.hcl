@@ -36,9 +36,16 @@ variable "FILEBROWSER_SHA256" {
 #
 # Hence a separate index per row. The version is spelled out rather than built
 # from the suffix so the post-install check compares against what pip resolved.
+# install_cuda_compat bakes NVIDIA's forward-compat libcuda (cuda-compat-X-Y)
+# into the image so it can run on hosts whose driver is older than its CUDA
+# (e.g. a cu130 image on a 12.8/12.9 host). start.sh enables it only after a
+# cuInit() probe succeeds, so it is a no-op on newer drivers and on GPUs NVIDIA
+# does not support for forward compat (GeForce). 12.8 is off: no evidence of
+# sub-570 hosts, and it would add ~200 MB.
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8",
+      install_cuda_compat = false,
       torch_index_suffix = "cu128",
       torchaudio_index_suffix = "cu128",
       venv_name = ".venv-cu128",
@@ -47,6 +54,7 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchaudio_version = "2.10.0+cu128"
     },
     { cuda_version = "13.0",
+      install_cuda_compat = true,
       torch_index_suffix = "cu130",
       torchaudio_index_suffix = "cu130",
       venv_name = ".venv-cu128",
@@ -55,6 +63,7 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchaudio_version = "2.10.0+cu130"
     },
     { cuda_version = "13.2",
+      install_cuda_compat = true,
       torch_index_suffix = "cu132",
       torchaudio_index_suffix = "cpu",
       venv_name = ".venv-cu132",
@@ -75,6 +84,7 @@ variable "COMPATIBLE_BUILDS" {
           torch_index_suffix = combination.torch_index_suffix,
           torchaudio_index_suffix = combination.torchaudio_index_suffix,
           venv_name = combination.venv_name,
+          install_cuda_compat = combination.install_cuda_compat,
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
@@ -147,6 +157,7 @@ target "comfyui-matrix" {
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
     COMFYUI_VENV_NAME   = build.venv_name
+    INSTALL_CUDA_COMPAT = build.install_cuda_compat ? "true" : "false"
   }
 
   tags = [
