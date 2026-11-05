@@ -40,11 +40,13 @@ ignore:
       name: coreutils
       type: deb
 
-  # filelock is fixed in 4.2.1, but that requires Python >= 3.11, and base
-  # still ships python3.10 (Ubuntu 22.04's system interpreter), capped at the
-  # 3.x line (3.32.7). No fixed filelock exists for 3.10. Goes away with
-  # CON-1619 (drop Ubuntu 22.04 / python3.10).
-  - vulnerability: GHSA-v4x8-3wr5-3wq8
+  # torch < 2.10.0: torch.load(weights_only=True) can be made to corrupt memory
+  # by a crafted checkpoint (CVE-2026-24747). The only fix is 2.10.0, and the
+  # pytorch template's 2.6.0-2.9.1 images exist to ship exactly those versions,
+  # so there is nothing to upgrade within them. Only reached by loading an
+  # untrusted .pth file; images on 2.12+ are not affected. Review when the
+  # torch < 2.10 images are retired.
+  - vulnerability: GHSA-63cw-57p8-fm3p
     package:
-      name: filelock
+      name: torch
       type: python
