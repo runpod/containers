@@ -14,14 +14,16 @@ pkgs.writeShellApplication {
   ];
   text = ''
     # Nix image -> the published image it replaces. Bump with new releases.
+    # Empty: Runpod publishes no counterpart (every runpod/rocm ships torch).
     declare -A published=(
       [nix-base-cpu]=base:1.6.0-ubuntu2404
       [nix-base-cpu-runtime]=base:1.6.0-ubuntu2404
       [nix-base-cuda]=base:1.6.0-cuda1320-ubuntu2404
+      [nix-base-rocm]=""
       [nix-pytorch-cuda]=pytorch:1.6.0-cu1320-torch2130-ubuntu2404
       [nix-pytorch-rocm]=rocm:1.6.0-rocm644-ubuntu2404-py312-pytorch271
     )
-    order=(nix-base-cpu nix-base-cpu-runtime nix-base-cuda nix-pytorch-cuda nix-pytorch-rocm)
+    order=(nix-base-cpu nix-base-cpu-runtime nix-base-cuda nix-base-rocm nix-pytorch-cuda nix-pytorch-rocm)
     if [ "$#" -gt 0 ]; then order=("$@"); fi
 
     # nixpkgs' CUDA packages are unfree, so cache.nixos.org doesn't have them;
@@ -37,9 +39,14 @@ pkgs.writeShellApplication {
     echo "| Nix image | Nix (gzip) | published image | published | change |"
     echo "| --- | ---: | --- | ---: | ---: |"
     for image in "''${order[@]}"; do
-      ref=''${published[$image]:?unknown image: $image}
+      [[ -v published[$image] ]] || { echo "unknown image: $image" >&2; exit 1; }
+      ref=''${published[$image]}
       stream=$(nix build --no-link --print-out-paths "''${cuda_cache[@]}" ".#$image")
       nix_bytes=$("$stream" 2>/dev/null | pigz -6 | wc -c)
+      if [ -z "$ref" ]; then
+        echo "| $image | $(mb "$nix_bytes") MB | — | — | — |"
+        continue
+      fi
       pub_bytes=$(curl -fsS "https://hub.docker.com/v2/repositories/runpod/''${ref%%:*}/tags/''${ref#*:}" |
         jq '[.images[] | select(.architecture == "amd64")][0].size')
       change=$(( (nix_bytes - pub_bytes) * 100 / pub_bytes ))

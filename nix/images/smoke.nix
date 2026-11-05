@@ -52,6 +52,12 @@ pkgs.writeShellApplication {
     sftp_ls() { echo "ls $1" | sftp "''${auth[@]}" -P "$(port 22)" -b - root@127.0.0.1; }
     http() { curl -s -o /dev/null -w '%{http_code} %{content_type}' "http://127.0.0.1:$(port "$1")$2"; }
 
+    # start.sh reports ready before Jupyter is listening.
+    for _ in $(seq 60); do
+      [[ $(http 8888 /static/favicons/favicon.ico) == 200* ]] && break
+      sleep 1
+    done
+
     failed=0
     # check <description> <command> <expected: grep -E pattern on the output>
     check() {

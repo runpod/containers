@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       gpu:
-        description: "Also measure the CUDA and ROCm images (~15 GB of downloads)"
+        description: "Also measure the CUDA and ROCm images (~20 GB of downloads)"
         type: boolean
         default: false
 
@@ -62,5 +62,5 @@ jobs:
 
       - name: Size vs published images
         run: |
-          nix run .#image-size -- nix-base-cuda nix-pytorch-cuda nix-pytorch-rocm \
+          nix run .#image-size -- nix-base-cuda nix-base-rocm nix-pytorch-cuda nix-pytorch-rocm \
             | tee -a "$GITHUB_STEP_SUMMARY"

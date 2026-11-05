@@ -27,11 +27,17 @@ Compressed (≈ what a pod pulls), against the latest published release:
 | `nix-base-cpu` | 689 MB | `base:1.6.0-ubuntu2404` | 701 MB | -1% |
 | `nix-base-cpu-runtime` | 345 MB | `base:1.6.0-ubuntu2404` | 701 MB | -50% |
 | `nix-base-cuda` | 2374 MB | `base:1.6.0-cuda1320-ubuntu2404` | 6714 MB | -64% |
+| `nix-base-rocm` | 5144 MB | none (every `runpod/rocm` ships torch) | | |
 | `nix-pytorch-cuda` | 5155 MB | `pytorch:1.6.0-cu1320-torch2130-ubuntu2404` | 9525 MB | -45% |
 | `nix-pytorch-rocm` | 7885 MB | `rocm:1.6.0-rocm644-ubuntu2404-py312-pytorch271` | 27607 MB | -71% |
 
 - **GPU images:** the savings come from shipping only the CUDA/ROCm libraries
   the stack uses, instead of a vendor `-devel` base image.
+- **ROCm:** most of `nix-base-rocm` is prebuilt kernels for every AMD GPU
+  generation. MIOpen's kernel databases alone are 2.4 GB (uncompressed), all
+  for gfx900–gfx1030, which Runpod doesn't host. Building the ROCm libraries for
+  just gfx942/gfx950 (`gpuTargets`) would cut that, but nothing in the
+  binary cache is built that way, so it means building ROCm from source.
 - **CPU:** the build toolchain (gcc, gfortran, cmake) is most of the image.
   With it, Nix matches apt; `nix-base-cpu-runtime` drops it.
 
@@ -63,6 +69,8 @@ One version of each, nixpkgs' current: Python 3.14, torch 2.14.1, CUDA 13.4
 - **`nix-pytorch-cuda`**, by hand on an RTX 3070 with the host driver mounted
   where the toolkit puts it: CUDA, cuDNN and `torch.compile` (GPU and CPU)
   work.
+- **`nix-base-rocm`**: passes `image-smoke`, and `hipcc` compiles a kernel
+  for gfx942. Not run on an AMD GPU.
 - **`nix-pytorch-rocm`**: imports, reports HIP 7.2, and targets gfx942/gfx950
   (MI300X/MI355X). Not run on an AMD GPU.
 

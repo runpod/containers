@@ -1,5 +1,6 @@
-# Nix-built counterparts of runpod/base and runpod/pytorch, from nixpkgs alone:
-# no Ubuntu base, no apt, no pip. Build-only; nothing is published.
+# Nix-built counterparts of runpod/base, runpod/pytorch and runpod/rocm, from
+# nixpkgs alone: no Ubuntu base, no apt, no pip. Build-only; nothing is
+# published.
 # See ./README.md for the comparison against the published images.
 
 { nixpkgs, system }:
@@ -74,6 +75,37 @@ let
     ];
   };
 
+  # The ROCm counterpart: hipcc, the HIP runtime and math libraries, and
+  # MIOpen (cuDNN's counterpart). The amdgpu kernel driver is the host's;
+  # the pod only needs /dev/kfd and /dev/dri.
+  rocm = pkgsRocm.rocmPackages;
+  rocmToolkit = pkgsRocm.symlinkJoin {
+    name = "rocm-toolkit-${rocm.clr.version}";
+    paths = with rocm; [
+      amdsmi
+      clr
+      hipblas
+      hipblaslt
+      hipcc
+      hipcub
+      hipfft
+      hiprand
+      hipsolver
+      hipsparse
+      miopen
+      rocblas
+      rocfft
+      rocm-device-libs
+      rocm-smi
+      rocminfo
+      rocprim
+      rocrand
+      rocsolver
+      rocsparse
+      rocthrust
+    ];
+  };
+
   torch =
     ps: with ps; [
       torch
@@ -108,6 +140,18 @@ lib.optionalAttrs (system == "x86_64-linux") {
     extraPyPackages = torch;
     extraRootCommands = nvidiaDriverLink;
     env = nvidiaEnv;
+  };
+
+  nix-base-rocm = mkImage {
+    name = "runpod-nix-base-rocm";
+    pkgs' = pkgsRocm;
+    extraContents = [ rocmToolkit ];
+    # hipcc finds the device libraries through HIP_DEVICE_LIB_PATH, which
+    # nixpkgs otherwise only sets in its build environment.
+    env = [
+      "ROCM_PATH=${rocmToolkit}"
+      "HIP_DEVICE_LIB_PATH=${rocm.rocm-device-libs}/amdgcn/bitcode"
+    ];
   };
 
   nix-pytorch-rocm = mkImage {
