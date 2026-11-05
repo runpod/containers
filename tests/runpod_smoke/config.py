@@ -92,10 +92,10 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # Whole-job retries for SKIP / UNVERIFIED (every candidate had no capacity,
 # or the host never answered). After the first pass, those jobs — and only
 # those — are re-run up to SKIP_RETRIES more times, waiting
-# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15 min by
+# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15, 20, 25 min by
 # default). FAIL is never retried. Disabled under ON_SKIP=pass. Set
 # SKIP_RETRIES=0 to turn it off.
-SKIP_RETRIES = max(0, int(os.environ.get("SKIP_RETRIES") or "3"))
+SKIP_RETRIES = max(0, int(os.environ.get("SKIP_RETRIES") or "5"))
 SKIP_RETRY_DELAY = max(0, int(os.environ.get("SKIP_RETRY_DELAY") or "300"))
 
 # How long a pod can sit in "no SSH endpoint yet" before we surface a hint

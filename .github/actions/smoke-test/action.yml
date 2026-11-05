@@ -338,11 +338,11 @@ inputs:
       images are re-run, inside this same job; FAIL is never retried.
       Ignored under on-skip=pass. '0' disables retries.
     required: false
-    default: "3"
+    default: "5"
   skip-retry-delay:
     description: |
       Base wait in seconds before a retry round; round N waits N times this
-      (default 300 → 5, 10, 15 min) to give RunPod capacity time to free up.
+      (default 300 → 5, 10, 15, 20, 25 min) to give RunPod capacity time to free up.
     required: false
     default: "300"
   registry-auth-name:

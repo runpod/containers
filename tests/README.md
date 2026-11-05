@@ -249,8 +249,8 @@ in its own bucket regardless, so it is never mistaken for a capacity gap.
 Before `ON_SKIP` gets a say, `SKIP` and `UNVERIFIED` jobs are **retried
 automatically**: once every job has run, the ones that ended SKIP or
 UNVERIFIED (and only those) are run again, up to `SKIP_RETRIES` rounds (CI:
-`skip-retries`, default `3`), waiting `SKIP_RETRY_DELAY × round` seconds first
-(CI: `skip-retry-delay`, default `300` → 5, 10, 15 min). This takes the place
+`skip-retries`, default `5`), waiting `SKIP_RETRY_DELAY × round` seconds first
+(CI: `skip-retry-delay`, default `300` → 5, 10, 15, 20, 25 min). This takes the place
 of the manual "Re-run failed jobs" click when capacity is tight. `FAIL` is
 never retried. A retry that comes back SKIP does not downgrade an earlier
 `UNVERIFIED`. Retries are off under `ON_SKIP=pass`.
@@ -631,7 +631,7 @@ pytorch:
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
 | `CREATE_RETRY_BACKOFF` | `10` | Seconds between retries (linear backoff). |
-| `SKIP_RETRIES` | `3` | Extra rounds for jobs that ended SKIP / UNVERIFIED. `0` disables. Ignored under `ON_SKIP=pass`. |
+| `SKIP_RETRIES` | `5` | Extra rounds for jobs that ended SKIP / UNVERIFIED. `0` disables. Ignored under `ON_SKIP=pass`. |
 | `SKIP_RETRY_DELAY` | `300` | Base wait before a retry round; round N waits N × this. |
 | `STALL_HINT_AFTER` | `180` | Seconds without an SSH endpoint before the script prints a hint about slow pulls / possible Docker Hub rate limit. |
 | `LOG_ERROR_SCAN` | `1` | `1`/`0` — scan REST API v2 container logs for error markers after the functional checks. |
