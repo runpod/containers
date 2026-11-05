@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -263,6 +264,13 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
         log(
             f"group '{grp}': test_virtualenv=true "
             "(every shipped python3.X interpreter)"
+        )
+
+    if _normalize_bool(contents.get("test_python_path")):
+        config.GROUP_TEST_PYTHON_PATH[grp] = True
+        log(
+            f"group '{grp}': test_python_path=true "
+            "(apt's dist-packages only on the system python3)"
         )
 
     if _normalize_bool(contents.get("test_autoresearch")):
@@ -718,9 +726,10 @@ def _cap_jobs(jobs: list[Job]) -> list[Job]:
 # ---------------------------------------------------------------------------
 
 
-def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
+def _run_jobs_serial(jobs: list[Job]) -> list[Result]:
     """Single-threaded run — no worker tags, simpler logs, group-header
     banner each time the group changes."""
+    out: list[Result] = []
     current_group: Optional[str] = None
     for img, group, instances, cuda_pin, cloud in jobs:
         if group != current_group:
@@ -730,7 +739,8 @@ def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
         status, note, instance, host_cuda = test_image(
             img, instances, group, cuda_pin, cloud
         )
-        results.append((img, status, note, instance, host_cuda, cuda_pin, cloud))
+        out.append((img, status, note, instance, host_cuda, cuda_pin, cloud))
+    return out
 
 
 def _job_note(cuda_pin: str, cloud: str) -> str:
@@ -758,28 +768,75 @@ def _run_one_tagged_job(job: Job) -> Result:
     return img, status, note, instance, host_cuda, cuda_pin, cloud
 
 
-def _run_jobs_parallel(jobs: list[Job], results: list[Result]) -> None:
+def _run_jobs_parallel(jobs: list[Job]) -> list[Result]:
     """ThreadPool fan-out capped at MAX_PARALLEL. Each worker holds at
-    most one pod at a time."""
+    most one pod at a time. Results come back in job order."""
     with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL) as pool:
         futures = [pool.submit(_run_one_tagged_job, job) for job in jobs]
-        for fut in as_completed(futures):
-            results.append(fut.result())
+        return [fut.result() for fut in futures]
 
 
-def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
-    if not jobs:
-        log("no jobs to run after filtering")
-        return
+def _run_jobs_once(jobs: list[Job], label: str = "running") -> list[Result]:
+    """Run every job once; one Result per job, in job order."""
     print()
     log(
-        f"==================== running {len(jobs)} job(s) "
+        f"==================== {label} {len(jobs)} job(s) "
         f"with MAX_PARALLEL={config.MAX_PARALLEL} ===================="
     )
     if config.MAX_PARALLEL <= 1:
-        _run_jobs_serial(jobs, results)
-    else:
-        _run_jobs_parallel(jobs, results)
+        return _run_jobs_serial(jobs)
+    return _run_jobs_parallel(jobs)
+
+
+# Outcomes that say nothing about the image — RunPod had no capacity, or the
+# host never answered — so running the job again later can change them. FAIL
+# is a verdict on the image and is never retried.
+_RETRYABLE = ("SKIP", "UNVERIFIED")
+
+
+def _merge_retry(old: Result, new: Result) -> Result:
+    """Keep the strongest honest outcome across attempts.
+
+    A retry that lands on no capacity must not downgrade an earlier
+    UNVERIFIED to SKIP: under ON_SKIP=warn that would turn "we could not
+    tell whether this image works" into a green job."""
+    if new[1] == "SKIP" and old[1] == "UNVERIFIED":
+        return old
+    return new
+
+
+def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
+    """Run all jobs, then re-run the ones that ended SKIP / UNVERIFIED.
+
+    Capacity comes and goes within minutes, so waiting and trying the same
+    candidates again usually lands a pod — this is the manual "re-run failed
+    jobs" click, done in-process and only for the jobs that need it. Retries
+    are off under ON_SKIP=pass: those runs already accept SKIPs, and the
+    catalog sweep that uses it would multiply its pod count for nothing.
+    """
+    if not jobs:
+        log("no jobs to run after filtering")
+        return
+    final = _run_jobs_once(jobs)
+    rounds = config.SKIP_RETRIES if config.ON_SKIP != "pass" else 0
+    for attempt in range(1, rounds + 1):
+        pending = [i for i, r in enumerate(final) if r[1] in _RETRYABLE]
+        if not pending:
+            break
+        delay = config.SKIP_RETRY_DELAY * attempt
+        print()
+        log(
+            f"::notice::{len(pending)} job(s) ended SKIP/UNVERIFIED (no "
+            f"capacity or unresponsive host) — retry {attempt}/{rounds} "
+            f"in {delay}s"
+        )
+        time.sleep(delay)
+        retried = _run_jobs_once(
+            [jobs[i] for i in pending], label=f"retry {attempt}/{rounds}:"
+        )
+        for i, new in zip(pending, retried):
+            final[i] = _merge_retry(final[i], new)
+    results.extend(final)
 
 
 # ---------------------------------------------------------------------------
@@ -1070,7 +1127,8 @@ def _print_summary(results: list[Result]) -> int:
     msg = (
         f"{counts['SKIP']} image(s) SKIPped — no real validation "
         "happened. RunPod had no capacity on every candidate instance "
-        "type, or every candidate landed on a stuck host. "
+        "type, or every candidate landed on a stuck host, even after "
+        f"{config.SKIP_RETRIES} retry round(s) (SKIP_RETRIES). "
         "Set ON_SKIP=pass to silence this, ON_SKIP=warn to keep the "
         "job green with a warning, or ON_SKIP=fail (default) to make "
         "it fatal."

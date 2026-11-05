@@ -251,6 +251,15 @@ many flaky hosts per run, while every release gate uses `warn` or `fail`
 where an unverified image must not ship. `UNVERIFIED` is counted and printed
 in its own bucket regardless, so it is never mistaken for a capacity gap.
 
+Before `ON_SKIP` gets a say, `SKIP` and `UNVERIFIED` jobs are **retried
+automatically**: once every job has run, the ones that ended SKIP or
+UNVERIFIED (and only those) are run again, up to `SKIP_RETRIES` rounds (CI:
+`skip-retries`, default `5`), waiting `SKIP_RETRY_DELAY × round` seconds first
+(CI: `skip-retry-delay`, default `300` → 5, 10, 15, 20, 25 min). This takes the place
+of the manual "Re-run failed jobs" click when capacity is tight. `FAIL` is
+never retried. A retry that comes back SKIP does not downgrade an earlier
+`UNVERIFIED`. Retries are off under `ON_SKIP=pass`.
+
 `SKIP` is governed by `ON_SKIP` (env-var) / `on-skip` (CI input), one of:
 
 * `fail` (default) — exit `1` + `::error::` annotation. Job goes red.
@@ -264,12 +273,11 @@ so you can tell whether a `FAIL` correlates with a specific GPU type:
 
 ```
 ================================== SUMMARY =================================
-totals: 4 PASS, 1 FAIL, 1 SKIP
+totals: 3 PASS, 1 FAIL, 1 SKIP
 
   FAIL   runpod/pytorch:…cu1300-torch260… [RTX 5090] -- CUDA/GPU functional check failed
   SKIP   runpod/rocm:…rocm644-ubuntu2404… -- no capacity on any of 1 candidate instance type(s)
   PASS   runpod/base:…ubuntu2404 [CPU]
-  PASS   runpod/base:…cuda1281-ubuntu2204 [RTX A4000]
   PASS   runpod/base:…cuda1281-ubuntu2404 [RTX A5000]
   PASS   runpod/base:…cuda1300-ubuntu2404 [RTX 4090]
 ```
@@ -358,6 +366,7 @@ groupname:
     - emSign
     test_uv: true             # exactly one uv, and it resolves
     test_virtualenv: true     # virtualenv works on every python3.X
+    test_python_path: true    # only the system python3 sees apt's modules
 ```
 
 Field reference:
@@ -369,7 +378,7 @@ Field reference:
 | `max_price_per_hour` | USD/hr budget — auto-pick any GPU at this price or below, cheapest first. Loses to explicit `instances:` if both are set. |
 | `min_vram_gb` | Extra filter for budget mode (default 0). |
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
-| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group. |
+| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group; to block a GPU for only some images, generate the manifest with `--exclude-instance-for 'REF_GLOB: PATTERN, ...'` (action input `exclude-instances-for`), which moves the matching refs into their own group. |
 | `min_cuda_version` | `X.Y` floor sent as `gpu.minCudaVersion`. Used as a **fallback** when the image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`); tags like `cu1281` / `cuda1281` / `cuda13.0` are parsed and win. Superseded by `cuda_versions` — the API rejects both fields on one request. |
 | `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
@@ -390,7 +399,8 @@ Field reference:
 | `python_tls_venv` | Path to an `activate` script sourced before the certifi check, for images whose application runs in its own virtualenv rather than the system interpreter (ComfyUI). Default: system `python`. |
 | `revoked_ca_names` | CA subject substrings that must not be trusted, matched case-insensitively against certificate subjects, so a family prefix (`emSign`) covers every root in it. Applies to both CA checks. Default: the list in `tests/runpod_smoke/checks.py` — extend that when a root is revoked, and use this field only for a one-off run. |
 | `test_uv` | `true` / `false` — exactly one `uv` on `$PATH`, no pip-installed copy shadowing it, and a real `uv venv` + `uv pip install`. The duplicate test is the point: the NGC bases ship a pip-installed uv that shadows the pinned binary, the Dockerfiles remove it, and this fails if a base image brings it back. Default: `false`. |
-| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across four interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across three interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_python_path` | `true` / `false` — `/usr/lib/python3/dist-packages` (apt's `python3-*` modules) must be on `sys.path` for the system `/usr/bin/python3` and for no other `python3.X` in the image, and `python3` must resolve to the same version as `python`. Interpreters are enumerated, not listed. For `runpod/base`. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
 list for that group — no `instances:` / `max_price_per_hour:` /
@@ -543,15 +553,14 @@ you're testing). Annotated example covering every supported pattern:
 # CPU-only base image — no instances:, no budget, just images.
 base_cpu:
     images:
-    - runpod/base:1.0.6-dev-ubuntu2204
     - runpod/base:1.0.6-dev-ubuntu2404
+    - runpod/base:1.0.6-dev-ubuntu2604
     test_jupyter: true              # base CPU image still ships JupyterLab
 
 # GPU base image, budget-selected. The CUDA functional check is auto-
 # applied because the tag contains 'cuda1281' / 'cuda1290' / 'cuda1300'.
 base_gpu:
     images:
-    - runpod/base:1.0.6-dev-cuda1281-ubuntu2204
     - runpod/base:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/base:1.0.6-dev-cuda1300-ubuntu2404
     max_price_per_hour: 1.0
@@ -565,7 +574,6 @@ base_gpu:
 # we want — we'd never get a clean torch import over SSH otherwise.
 autoresearch:
     images:
-    - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2204
     - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -587,7 +595,7 @@ nvidia-pytorch:
 # AMD ROCm — explicit instance list because only MI300X carries ROCm.
 rocm:
     images:
-    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2204-py310-pytorch251
+    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch260
     - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch271
     instances:
     - MI300X
@@ -599,7 +607,7 @@ rocm:
 # is available for execution on the device". Filter them out:
 pytorch:
     images:
-    - runpod/pytorch:1.0.6-dev-cu1281-torch260-ubuntu2204
+    - runpod/pytorch:1.0.6-dev-cu1281-torch260-ubuntu2404
     - runpod/pytorch:1.0.6-dev-cu1300-torch260-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -646,6 +654,8 @@ pytorch:
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
 | `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
 | `CREATE_RETRY_BACKOFF` | `10` | Seconds between retries (linear backoff). |
+| `SKIP_RETRIES` | `5` | Extra rounds for jobs that ended SKIP / UNVERIFIED. `0` disables. Ignored under `ON_SKIP=pass`. |
+| `SKIP_RETRY_DELAY` | `300` | Base wait before a retry round; round N waits N × this. |
 | `STALL_HINT_AFTER` | `180` | Seconds without an SSH endpoint before the script prints a hint about slow pulls / possible Docker Hub rate limit. |
 | `LOG_ERROR_SCAN` | `1` | `1`/`0` — scan REST API v2 container logs for error markers after the functional checks. |
 | `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex used by the container-log scan. |
@@ -702,7 +712,7 @@ groups don't silently skip the check:
 
 <a id="hygiene-checks"></a>
 
-Five opt-in checks that look at how an image is **assembled** rather than at
+Six opt-in checks that look at how an image is **assembled** rather than at
 whether it boots. They exist because the failures they catch are invisible to
 every other step: the pod starts, the GPU works, and the defect only surfaces
 for a user weeks later, or in the next scan.
@@ -711,6 +721,7 @@ for a user weeks later, or in the next scan.
 |---|---|---|
 | `pip check` | `test_pip_check` (+ `pip_check_allow`) | a bumped pin that no longer satisfies something already in the image |
 | virtualenv | `test_virtualenv` | a pinned virtualenv that stopped supporting one of the shipped interpreters |
+| python path | `test_python_path` | an interpreter added without the sitecustomize filter, so apt's `python3-*` modules shadow its pip packages; or `python3` no longer pointing at the same interpreter as `python` |
 | uv | `test_uv` | a vendor base re-introducing a pip-installed uv that shadows the pinned binary |
 | system CA store | `test_ca_certs` (+ `revoked_ca_names`) | a `--only-upgrade ca-certificates` that exited 0 without upgrading anything |
 | certifi bundle | `test_python_tls` (+ `python_tls_venv`) | the same revoked root still trusted by `pip` and `requests`, which never read the system store |
@@ -855,12 +866,14 @@ wraps everything in this script needs for a clean CI run:
    `profile`, `budget-usd-per-hour`, `min-vram-gb`, `manufacturer`,
    `test-jupyter`, `test-ports`, `test-comfyui`,
    `test-comfyui-functional`, `check-all-gpu`, `instances`,
-   `cuda-versions`, `min-cuda-version`, and `exclude-instances` inputs.
+   `cuda-versions`, `min-cuda-version`, `exclude-instances`, and
+   `exclude-instances-for` inputs.
    `instances` and `check-all-gpu` are mutually exclusive — passing both
    fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with
    `MAX_PARALLEL=<max-parallel>`, `CLOUD_TYPE=<cloud-type>`,
-   `ON_SKIP=<on-skip>`, `CREATE_TIMEOUT=<create-timeout>` and
+   `ON_SKIP=<on-skip>`, `SKIP_RETRIES=<skip-retries>`,
+   `SKIP_RETRY_DELAY=<skip-retry-delay>`, `CREATE_TIMEOUT=<create-timeout>` and
    `REGISTRY_AUTH_NAME=<registry-auth-name>` (empty by default, i.e.
    anonymous pulls). A failed
    image makes the smoke-test action fail, which prevents a release from
@@ -914,7 +927,7 @@ fields.
 | `ssh_probe=FAIL — Permission denied (publickey)` | wrong SSH key | export `RUNPOD_SSH_KEY=/path/to/private/key` whose public half is on the RunPod account |
 | `no kernel image is available for execution on the device` on a Blackwell GPU | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels, and torchvision from the cu129 index has none either | add `exclude_instances: ["B200*", "B300*", "RTX 5090", "RTX PRO *", "PRO 6000 MIG *"]` — the display names never contain the word `Blackwell`, and a bare `B300` misses `B300 MIG 34GB` |
 | `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=X.Y` in pod logs | image needs a newer driver than the host has | set `min_cuda_version: "X.Y"` in the manifest (only needed for tags without a `cuXYZW`/`cudaXYZW` marker) |
-| `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (classic Ubuntu 22.04 `python3` → 3.10 vs `python` → 3.12) | fix `container-template/start.sh` to use `python -m jupyter lab` |
+| `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (the system `python3` can differ from `python` → 3.12, e.g. 3.14 on Ubuntu 26.04) | fix `container-template/start.sh` to use `python -m jupyter lab` |
 | `jupyter check (public proxy) FAILED` but in-pod check passed | port exposed as `8888/tcp` instead of `8888/http`, OR proxy hasn't registered the pod yet | check `pod create --ports` arg; bump `JUPYTER_PROXY_TIMEOUT` if proxy is just slow |
 | script hangs at `Cleaning up N leftover pod(s)…` | RunPod API is slow to respond to delete | wait it out; the `reap-pods.yml` cron sweeps anything we miss (`--terminate-after` is unreliable — dropped for CPU pods, not honored promptly for GPU — so don't count on it) |
 

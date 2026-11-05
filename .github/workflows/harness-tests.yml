@@ -15,6 +15,12 @@ on:
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
   push:
     branches: [main]
     paths:
@@ -22,6 +28,12 @@ on:
       - '.github/scripts/generate_test_manifest.py'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
   workflow_dispatch:
 
 permissions:
@@ -76,3 +88,28 @@ jobs:
           grep -q 'cluster_nodes: 3' "${RUNNER_TEMP}/m-cluster.yaml"
           ! grep -q 'max_price_per_hour' "${RUNNER_TEMP}/m-cluster.yaml"
           echo "OK: cluster profile"
+          # A scoped block must split the refs, not fall back to blocking
+          # the GPU for all of them: the matching ref goes to its own group
+          # carrying both patterns, the other keeps base_gpu and only the
+          # global one.
+          gen --profile gpu \
+            --refs '["runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404","runpod/pytorch:1.0.0-cu1300-torch2130-ubuntu2404"]' \
+            --exclude-instance "RTX 2000 Ada" \
+            --exclude-instance-for '*-torch260-*: B200*, B300*' \
+            --output "${RUNNER_TEMP}/m-scoped.yaml" >/dev/null
+          python3 - "${RUNNER_TEMP}/m-scoped.yaml" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "tests")
+          from runpod_smoke.manifest import parse_manifest
+          m = parse_manifest(Path(sys.argv[1]))
+          assert set(m) == {"base_gpu", "base_gpu_scoped1"}, m
+          assert m["base_gpu"]["images"] == [
+              "runpod/pytorch:1.0.0-cu1300-torch2130-ubuntu2404"], m
+          assert m["base_gpu"]["exclude_instances"] == ["RTX 2000 Ada"], m
+          assert m["base_gpu_scoped1"]["images"] == [
+              "runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404"], m
+          assert m["base_gpu_scoped1"]["exclude_instances"] == [
+              "RTX 2000 Ada", "B200*", "B300*"], m
+          PY
+          echo "OK: exclude-instance-for scopes the block to matching refs"

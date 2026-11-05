@@ -163,7 +163,14 @@ inputs:
     description: |
       'true' to emit `test_virtualenv: true`: create a virtualenv with
       every python3.X the image ships. For runpod/base, which pins one
-      virtualenv version across four interpreters.
+      virtualenv version across three interpreters.
+    required: false
+    default: "false"
+  test-python-path:
+    description: |
+      'true' to emit `test_python_path: true`: apt's dist-packages is on
+      sys.path for the system python3 only, and python3 is the same
+      interpreter as python. For runpod/base.
     required: false
     default: "false"
   test-autoresearch:
@@ -274,6 +281,21 @@ inputs:
       image/GPU pairings, e.g. PyTorch ≤ 2.6 wheels have no kernels for
       sm_100/sm_120 (Blackwell), so any test landing on a Blackwell host
       fails with 'no kernel image is available for execution on the device'.
+      A pattern here blocks that GPU for EVERY image in the run; to block it
+      only for the images that need it, use exclude-instances-for.
+    required: false
+    default: ""
+  exclude-instances-for:
+    description: |
+      Newline-separated `REF_GLOB: PATTERN, PATTERN` rules that scope an
+      exclude-instances block to the image refs matching REF_GLOB (fnmatch,
+      case-sensitive, against the full ref). Matching refs are tested as
+      their own group with the patterns added to its exclusions; every
+      other ref keeps the full GPU pool. Example:
+        exclude-instances-for: |
+          *-torch260-*: B200*, B300*, RTX 5090
+      Rules matching nothing are fine — matrix shards share one rule list.
+      Empty (default) = no scoped exclusions; the manifest is unchanged.
     required: false
     default: ""
   min-cuda-version:
@@ -331,6 +353,20 @@ inputs:
       flips the safer default off.
     required: false
     default: "fail"
+  skip-retries:
+    description: |
+      How many extra rounds to run for images that ended SKIP (no capacity
+      on any candidate) or UNVERIFIED (host never answered). Only those
+      images are re-run, inside this same job; FAIL is never retried.
+      Ignored under on-skip=pass. '0' disables retries.
+    required: false
+    default: "5"
+  skip-retry-delay:
+    description: |
+      Base wait in seconds before a retry round; round N waits N times this
+      (default 300 → 5, 10, 15, 20, 25 min) to give RunPod capacity time to free up.
+    required: false
+    default: "300"
   registry-auth-name:
     description: |
       Display name of the registry credential in the RunPod account
@@ -450,10 +486,12 @@ runs:
         REVOKED_CA_NAMES: ${{ inputs.revoked-ca-names }}
         TEST_UV: ${{ inputs.test-uv }}
         TEST_VIRTUALENV: ${{ inputs.test-virtualenv }}
+        TEST_PYTHON_PATH: ${{ inputs.test-python-path }}
         TEST_AUTORESEARCH: ${{ inputs.test-autoresearch }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         INSTANCES: ${{ inputs.instances }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
+        EXCLUDE_INSTANCES_FOR: ${{ inputs.exclude-instances-for }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
         CLUSTER_NODES: ${{ inputs.cluster-nodes }}
@@ -499,6 +537,9 @@ runs:
         fi
         if [[ "${TEST_VIRTUALENV,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-virtualenv)
+        fi
+        if [[ "${TEST_PYTHON_PATH,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-python-path)
         fi
         if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-autoresearch)
@@ -572,6 +613,13 @@ runs:
           [[ -z "${line}" || "${line}" == \#* ]] && continue
           EXTRA_ARGS+=(--exclude-instance "${line}")
         done <<< "${EXCLUDE_INSTANCES}"
+        # One rule per line; the generator parses 'GLOB: PAT, PAT' itself.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--exclude-instance-for "${line}")
+        done <<< "${EXCLUDE_INSTANCES_FOR}"
         # Same treatment for INSTANCES. Display names contain spaces
         # ('RTX A4000'), so each line must stay one argv element.
         while IFS= read -r line; do
@@ -604,6 +652,10 @@ runs:
         # ON_SKIP is validated by config._coerce_on_skip (unknown values
         # collapse to 'fail') so we just propagate the raw input.
         ON_SKIP: ${{ inputs.on-skip }}
+        # Re-runs SKIP / UNVERIFIED images in-process before ON_SKIP decides
+        # the exit code — replaces the manual "re-run failed jobs".
+        SKIP_RETRIES: ${{ inputs.skip-retries }}
+        SKIP_RETRY_DELAY: ${{ inputs.skip-retry-delay }}
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
