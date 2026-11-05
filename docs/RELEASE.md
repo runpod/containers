@@ -147,9 +147,9 @@ For the version `1.1.0` as an example:
 
 | Context            | Suffix        | Example tag                                  |
 | ------------------ | ------------- | -------------------------------------------- |
-| Release (`main`)   | none          | `runpod/base:1.1.0-ubuntu2204`               |
-| Pull request       | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2204`         |
-| Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2204`           |
+| Release (`main`)   | none          | `runpod/base:1.1.0-ubuntu2404`               |
+| Pull request       | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2404`         |
+| Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2404`           |
 
 Image repositories: one per template family, listed in `.github/families.yml`
 (`python3 .github/scripts/plan_families.py --image-repos`).

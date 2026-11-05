@@ -1,6 +1,5 @@
 variable "ROCM_TORCH_COMBINATIONS" {
   default = [
-    { rocm = "6.4.4", ubuntu = "22.04", python = "3.10", torch = "2.6.0" },
     { rocm = "6.4.4", ubuntu = "24.04", python = "3.12", torch = "2.6.0" },
     { rocm = "6.4.4", ubuntu = "24.04", python = "3.12", torch = "2.7.1" },
   ]
