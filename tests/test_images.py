@@ -263,6 +263,10 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
         config.GROUP_TEST_AUTORESEARCH[grp] = True
         log(f"group '{grp}': test_autoresearch=true (train.py runs end to end)")
 
+    if _normalize_bool(contents.get("test_ray")):
+        config.GROUP_TEST_RAY[grp] = True
+        log(f"group '{grp}': test_ray=true (one-node Ray head, GPU task, metrics)")
+
 
 def _apply_cuda_axis(group: str, raw: object) -> None:
     """Read the `cuda_versions:` manifest field for one group.
