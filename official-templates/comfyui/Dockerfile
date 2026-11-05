@@ -220,7 +220,7 @@ RUN apt-get update && \
     && apt-get install -y --no-install-recommends cuda-minimal-build-${CUDA_VERSION_DASH} \
     && if [ "${INSTALL_CUDA_COMPAT}" = "true" ]; then \
         apt-get install -y --no-install-recommends cuda-compat-${CUDA_VERSION_DASH} && \
-        ln -sfn "/usr/local/cuda-$(echo "${CUDA_VERSION_DASH}" | tr - .)/compat" /opt/cuda-compat && \
+        ln -sfn /usr/local/cuda/compat /opt/cuda-compat && \
         test -e /opt/cuda-compat/libcuda.so.1; \
     fi \
     && apt-get clean \
