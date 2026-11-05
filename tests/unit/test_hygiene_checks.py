@@ -231,6 +231,16 @@ class CommandShapeTests(unittest.TestCase):
         # Lower-case and non-empty: 4.8.3 renamed `Hostname` -> `hostname`.
         self.assertIn('hostname=\\\"[^\\\"]', command)
 
+    def test_dcgm_check_tolerates_mig_slices(self):
+        # Embedded DCGM can't start on MIG; post_start.sh leaves it stopped
+        # and the check must accept that instead of scraping :9400.
+        command = checks.dcgm_exporter_check_command()
+        self.assertIn("nvidia-smi -L", command)
+        self.assertIn("*MIG-*", command)
+        self.assertIn("*STOPPED*", command)
+        mig_branch = command.index("if [ -n \"$MIG\" ]")
+        self.assertLess(mig_branch, command.index("localhost:9400"))
+
     def test_dcgm_check_retries_within_the_ssh_timeout(self):
         from runpod_smoke.runner import _HYGIENE_TIMEOUT
         attempts, interval, curl_cap = 20, 5, 3

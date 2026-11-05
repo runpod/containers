@@ -7,6 +7,9 @@ It layers two things on top of `runpod/pytorch`:
    `rdma-core`, `ibverbs-utils`, `infiniband-diags`, `perftest`.
 2. **A self-contained monitoring stack**, managed by `supervisord`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
+     Exception: on a **MIG slice** dcgm-exporter is not started — embedded DCGM
+     can't initialise inside a MIG instance without `CAP_SYS_ADMIN` — so that
+     node has no GPU metrics.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
 
 Published to its own repository, with the pytorch tag scheme, e.g.

@@ -695,6 +695,11 @@ def dcgm_exporter_check_command(
     up, so the scrape is retried for up to `attempts * interval` seconds
     (plus curl's own 3s cap per try); keep that under the SSH timeout. On
     failure it prints the supervisor state and the exporter's stderr.
+
+    On a MIG slice embedded DCGM can't initialise (no CAP_SYS_ADMIN), so
+    /post_start.sh deliberately leaves the exporter stopped. There the check
+    only asserts it is not crash-looping; detection mirrors `is_mig_gpu` in
+    official-templates/pytorch-cluster/post_start.sh.
     """
     series = _sh_quote_list(DCGM_DASHBOARD_SERIES)
     return (
@@ -704,6 +709,22 @@ def dcgm_exporter_check_command(
         "dpkg-query -W -f '${Status} ${Package} ${Version}\\n' "
         "  'datacenter-gpu-manager-4-*' 2>/dev/null "
         "  | awk '$3 == \"installed\" {print $4, $5}' || true; "
+        "case \"${NVIDIA_VISIBLE_DEVICES:-}\" in *MIG-*) MIG=1;; *) MIG=;; esac; "
+        "if [ -z \"$MIG\" ] && nvidia-smi -L 2>/dev/null | grep -q 'MIG'; then "
+        "  MIG=1; "
+        "fi; "
+        "if [ -n \"$MIG\" ]; then "
+        "  STATUS=$(supervisorctl status dcgm-exporter 2>&1 || true); "
+        "  echo \"$STATUS\"; "
+        "  case \"$STATUS\" in "
+        "    *STOPPED*) echo 'dcgm-exporter skipped on MIG slice "
+        "(embedded DCGM unsupported); not crash-looping'; exit 0;; "
+        "  esac; "
+        "  echo 'FAIL: MIG slice but dcgm-exporter was started "
+        "(expected STOPPED)'; "
+        "  tail -n 20 /var/log/supervisor/dcgm-exporter.err 2>&1 || true; "
+        "  exit 1; "
+        "fi; "
         "OK=; MISSING=; "
         f"for i in $(seq 1 {attempts}); do "
         # Reset per attempt so the final message describes the last try.
