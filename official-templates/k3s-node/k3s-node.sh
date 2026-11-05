@@ -99,13 +99,15 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
     echo "k3s-node: NODE_RANK $NODE_RANK: the server admits ranks 0 to $((WG_MAX_NODES - 1))" >&2; exit 1
   fi
   WG_ADDRESS="${WG_SERVER_ADDRESS%.*}.$(( ${WG_SERVER_ADDRESS##*.} + NODE_RANK + 1 ))"
-  ( umask 077; printf 'wireguard-node-%s' "$NODE_RANK" \
-      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 > /run/wg.key )
+  # The key lives in /etc/wireguard: Ubuntu 26.04 hosts confine /usr/bin/wg with an AppArmor
+  # profile that, under sysbox, also applies in this container, and allows only that directory.
+  ( umask 077; mkdir -p /etc/wireguard && printf 'wireguard-node-%s' "$NODE_RANK" \
+      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 > /etc/wireguard/wg0.key )
   WG_SERVER_PUBLIC_KEY="$(printf 'wireguard-server' \
       | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 | wg pubkey)"
   ip link del wg0 2>/dev/null || true
   ip link add wg0 type wireguard
-  wg set wg0 private-key /run/wg.key
+  wg set wg0 private-key /etc/wireguard/wg0.key
   ip addr add "$WG_ADDRESS/32" dev wg0
   ip link set wg0 up
   ip route replace "$WG_SERVER_ADDRESS/32" dev wg0
