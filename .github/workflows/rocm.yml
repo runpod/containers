@@ -121,7 +121,7 @@ jobs:
         with:
           name: rocm-refs-${{ matrix.rocm }}
           path: /tmp/rocm-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
           
   test-rocm:
