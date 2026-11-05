@@ -107,12 +107,10 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
   # profile that, under sysbox, also applies in this container, and allows only that directory.
   ( umask 077; mkdir -p /etc/wireguard && printf 'wireguard-node-%s' "$NODE_RANK" \
       | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 > /etc/wireguard/wg0.key )
-  slot=0
-  while [ "$slot" -lt "$WG_SERVERS" ]; do
+  for slot in $(seq 0 $((WG_SERVERS - 1))); do
     printf 'wireguard-server-%s' "$slot" \
       | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 | wg pubkey \
       > "/etc/wireguard/server-$slot.pub"
-    slot=$((slot + 1))
   done
   ip link del wg0 2>/dev/null || true
   ip link add wg0 type wireguard
@@ -122,27 +120,23 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
   ip route replace 10.200.100.0/24 dev wg0
   peers() {  # one peer per slot whose record points at a live task; 0 once any peer is set
     any=1
-    slot=0
-    while [ "$slot" -lt "$WG_SERVERS" ]; do
+    for slot in $(seq 0 $((WG_SERVERS - 1))); do
       name="s$slot.$WG_HOST"
       addr=$(getent hosts "$name" | awk '{print $1; exit}') || addr=
       if [ -n "$addr" ] && [ "$addr" != 127.0.0.1 ]; then
         wg set wg0 peer "$(cat "/etc/wireguard/server-$slot.pub")" endpoint "$name:$WG_PORT" \
           allowed-ips "10.200.100.$((1 + slot))/32" persistent-keepalive 25 && any=0
       fi
-      slot=$((slot + 1))
     done
     return "$any"
   }
   live_server() {  # the tunnel address of the first server with a handshake
     hs=$(wg show wg0 latest-handshakes) || return 1
-    slot=0
-    while [ "$slot" -lt "$WG_SERVERS" ]; do
+    for slot in $(seq 0 $((WG_SERVERS - 1))); do
       ts=$(printf '%s\n' "$hs" | awk -v p="$(cat "/etc/wireguard/server-$slot.pub")" '$1 == p {print $2}')
       if [ "${ts:-0}" -gt 0 ]; then
         echo "10.200.100.$((1 + slot))"; return 0
       fi
-      slot=$((slot + 1))
     done
     return 1
   }
