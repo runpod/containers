@@ -82,7 +82,7 @@ jobs:
       # selection inputs are worth more. Parallelism doesn't change cost
       # anyway (you pay per pod-minute) — it trades wall-clock against the
       # risk of throttled concurrent image pulls.
-      MAX_PARALLEL: "4"
+      MAX_PARALLEL: "2"
     # A full sweep outlives the 360-minute default.
     timeout-minutes: 720
     steps:

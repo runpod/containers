@@ -156,7 +156,7 @@ jobs:
         with:
           name: base-refs
           path: /tmp/base-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-base:
@@ -296,7 +296,7 @@ jobs:
         with:
           name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-autoresearch:
@@ -446,7 +446,7 @@ jobs:
         with:
           name: filebrowser-refs
           path: /tmp/filebrowser-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-filebrowser:
@@ -595,7 +595,7 @@ jobs:
         with:
           name: pytorch-refs-${{ matrix.cuda }}
           path: /tmp/pytorch-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-pytorch:
@@ -647,17 +647,27 @@ jobs:
           # python3-gi-cairo, and nothing in our images uses it.
           pip-check-allow: |
             pygobject 3.42.1 requires pycairo
-          # Patterns match catalog DISPLAY names, which never contain the
-          # word "Blackwell" — only the ids do. Enumerate the cards, with a
-          # trailing * so the MIG slices ('B300 MIG 34GB') match too.
           exclude-instances: |
-            B200*
-            B300*
-            RTX 5090
-            RTX PRO *
-            PRO 6000 MIG *
             RTX 2000 Ada
-          max-parallel: "4"
+          # Blackwell is blocked only for the images that can't run there:
+          # torch 2.6.0 (cu126 wheels) has no sm_100/sm_120 kernels in any
+          # column, and every cu129 wheel takes a torchvision that upstream
+          # builds without Blackwell: 2.12/2.13 in the 12.x columns and 2.8.0
+          # outside cu1281. Keep in sync with whl_src in
+          # official-templates/pytorch/docker-bake.hcl — the unit test
+          # test_pytorch_blackwell_rules fails if a cu126/cu129 build slips
+          # through. Patterns match catalog DISPLAY
+          # names, which never contain the word "Blackwell" — only the ids
+          # do. Enumerate the cards, with a trailing * so the MIG slices
+          # ('B300 MIG 34GB') match too.
+          exclude-instances-for: |
+            *-torch260-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1300-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1320-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+          max-parallel: "2"
 
   # -cluster layers monitoring + RDMA on top of a PUBLISHED runpod/pytorch.
   # It lives here (not a separate workflow) so it runs AFTER build-pytorch in
@@ -757,7 +767,7 @@ jobs:
         with:
           name: cluster-refs-${{ matrix.cuda }}
           path: /tmp/cluster-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-pytorch-cluster:
@@ -803,11 +813,10 @@ jobs:
           test-ca-certs: true
           min-ca-certs-version: "20260816"
           test-python-tls: true
-          # torch 2.12/2.13 here take torchvision from cu129, which upstream
-          # builds without Blackwell.
-          exclude-instances: |
-            B200*
-            B300*
-            RTX 5090
-            RTX PRO *
-            PRO 6000 MIG *
+          # torch 2.12/2.13 in the 12.x columns and 2.8.0 on cu1290 take
+          # torchvision from cu129, which upstream builds without Blackwell.
+          # The 13.x columns here use cu130/cu132 and keep it.
+          exclude-instances-for: |
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
