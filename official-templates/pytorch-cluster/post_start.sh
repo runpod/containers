@@ -15,7 +15,10 @@ log() { echo "[cluster] $*"; }
 PROM_CONFIG=/etc/prometheus/prometheus.yml
 SUPERVISOR_CONF=/etc/supervisor/supervisord.conf
 
-is_head_node() { [[ "$(hostname -s)" == "node-0" ]]; }
+# The control plane gives rank 0 the head role, so the rank decides it (not the
+# node-0 hostname), the rule ray-cluster's Ray entrypoint shares. A pod with no
+# NODE_RANK (not a cluster pod) is not a head.
+is_head_node() { [[ "${NODE_RANK:-}" == "0" ]]; }
 
 # True when the container was handed a MIG slice rather than a whole GPU.
 # `nvidia-smi -L` lists MIG devices as "  MIG 1g.24gb Device 0: (UUID: MIG-...)".
@@ -56,7 +59,7 @@ render_prometheus_config() {
 
 # Render the scrape config before supervisord starts so Prometheus has it ready.
 if is_head_node; then
-    log "hostname is node-0 (head node): rendering Prometheus config"
+    log "NODE_RANK=0 (head node): rendering Prometheus config"
     render_prometheus_config
 
     # Behind the Runpod proxy the browser origin is

@@ -196,6 +196,7 @@ class CommandShapeTests(unittest.TestCase):
             "python_path": checks.python_path_check_command(),
             "autoresearch": checks.autoresearch_check_command(),
             "dcgm_exporter": checks.dcgm_exporter_check_command(),
+            "ray": checks.ray_check_command(),
         }
         for name, command in commands.items():
             with self.subTest(command=name):
@@ -261,6 +262,14 @@ class CommandShapeTests(unittest.TestCase):
         command = checks.dcgm_exporter_check_command(attempts, interval)
         self.assertIn(f"seq 1 {attempts}", command)
         self.assertLess(attempts * (interval + curl_cap), _HYGIENE_TIMEOUT)
+    def test_ray_check_uses_the_gpu_and_metrics_port(self):
+        command = checks.ray_check_command()
+        self.assertIn("ray start --head --metrics-export-port=20217", command)
+        self.assertIn("ray.remote(num_gpus=1)", command)
+        self.assertIn("device='cuda'", command)
+        self.assertIn("127.0.0.1:20217/metrics", command)
+        # Ray is stopped even when an assertion fails.
+        self.assertIn("trap 'ray stop --force", command)
 
     def test_ca_check_proves_tls_still_works(self):
         # Over-pruning a trust store is as broken as not pruning it, so a

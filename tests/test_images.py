@@ -269,6 +269,9 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
             f"group '{grp}': test_dcgm_exporter=true "
             "(:9400 serves the dashboard series with a hostname label)"
         )
+    if _normalize_bool(contents.get("test_ray")):
+        config.GROUP_TEST_RAY[grp] = True
+        log(f"group '{grp}': test_ray=true (one-node Ray head, GPU task, metrics)")
 
 
 def _apply_cuda_axis(group: str, raw: object) -> None:
