@@ -220,6 +220,7 @@ class GraphFile(unittest.TestCase):
                 "nvidia-pytorch",
                 "pytorch",
                 "pytorch-cluster",
+                "ray-cluster",
                 "rocm",
             ],
         )

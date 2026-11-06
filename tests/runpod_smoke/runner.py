@@ -22,6 +22,7 @@ from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
     autoresearch_check_command,
+    ray_check_command,
     ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
@@ -299,6 +300,7 @@ def _run_cuda_step(
 
 _HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
 _AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+_RAY_TIMEOUT = 300                # ray start + a GPU task + the metrics agent
 
 
 def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
@@ -346,6 +348,8 @@ def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
             autoresearch_check_command(),
             _AUTORESEARCH_TIMEOUT,
         ))
+    if config.GROUP_TEST_RAY.get(group, False):
+        checks.append(("Ray GPU", ray_check_command(), _RAY_TIMEOUT))
     return checks
 
 

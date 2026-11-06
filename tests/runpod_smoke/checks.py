@@ -832,6 +832,41 @@ def autoresearch_check_command(
     )
 
 
+def ray_check_command(metrics_port: int = 20217) -> str:
+    """Start a single-node Ray head in the pod and use the GPU through it.
+
+    The image's own multi-node launch needs a cluster (NODE_RANK and the
+    host's /etc/hosts), so this exercises the same Ray install by hand: Ray
+    must see the pod's GPU, schedule a `num_gpus=1` task that runs a torch
+    CUDA op, and serve `ray_` metrics on the contract metrics port. Ray is
+    stopped on the way out either way, so later checks see a clean pod."""
+    return (
+        "set -e; "
+        "trap 'ray stop --force >/dev/null 2>&1 || true' EXIT; "
+        f"ray start --head --metrics-export-port={metrics_port} "
+        "  --disable-usage-stats >/dev/null; "
+        "python -c \""
+        "import ray, torch; "
+        "ray.init(address='auto'); "
+        "res = ray.cluster_resources(); "
+        "assert res.get('GPU', 0) >= 1, f'Ray sees no GPU: {res}'; "
+        "ones = lambda: torch.ones(1024, 1024, device='cuda'); "
+        "f = ray.remote(num_gpus=1)(lambda: (ones() @ ones()).sum().item()); "
+        "total = ray.get(f.remote(), timeout=180); "
+        "assert total == 1024.0 ** 3, total; "
+        "print('ray GPU task ok, cluster GPUs:', res['GPU'])\"; "
+        # The metrics agent comes up asynchronously after `ray start`.
+        "for _ in $(seq 1 30); do "
+        f"  BODY=$(curl -fsS http://127.0.0.1:{metrics_port}/metrics || true); "
+        "  if printf '%s\\n' \"$BODY\" | grep -q '^ray_'; then break; fi; "
+        "  sleep 2; "
+        "done; "
+        "printf '%s\\n' \"$BODY\" | grep -q '^ray_' "
+        f"  || {{ echo 'FAIL: no ray_ metrics on :{metrics_port}/metrics'; exit 1; }}; "
+        f"echo 'ray_ metrics served on :{metrics_port}'"
+    )
+
+
 def run_simple_check(
     endpoint: SshEndpoint, command: str, timeout: int = 180,
 ) -> tuple[bool, str]:

@@ -560,6 +560,7 @@ GROUP_CLUSTER_TYPES: dict[str, tuple[str, ...]] = {}
 #   GROUP_TEST_PYTHON_PATH  — only the system python3 sees apt's modules;
 #                             python3 is the same interpreter as python
 #   GROUP_TEST_AUTORESEARCH — autoresearch train.py runs end to end
+#   GROUP_TEST_RAY          — a one-node Ray head runs a GPU task, serves metrics
 GROUP_TEST_PIP_CHECK: dict[str, bool] = {}
 GROUP_PIP_CHECK_ALLOW: dict[str, list[str]] = {}
 GROUP_TEST_CA_CERTS: dict[str, bool] = {}
@@ -571,3 +572,4 @@ GROUP_TEST_UV: dict[str, bool] = {}
 GROUP_TEST_VIRTUALENV: dict[str, bool] = {}
 GROUP_TEST_PYTHON_PATH: dict[str, bool] = {}
 GROUP_TEST_AUTORESEARCH: dict[str, bool] = {}
+GROUP_TEST_RAY: dict[str, bool] = {}
