@@ -66,7 +66,8 @@ jobs:
             [[ "${INPUT_RUN_ID}" =~ ^[0-9]+$ ]] \
               || { echo "::error::release-run-id must be a numeric run id"; exit 1; }
             RUN_ID="${INPUT_RUN_ID}"
-            read -r SHA WF EV < <(gh api "repos/${GH_REPO}/actions/runs/${RUN_ID}" \
+            # Tab-split: the workflow name itself contains spaces.
+            IFS=$'\t' read -r SHA WF EV < <(gh api "repos/${GH_REPO}/actions/runs/${RUN_ID}" \
               --jq '[.head_sha, .name, .event] | @tsv')
             if [[ "${WF}" != "Build and Release" || "${EV}" != "push" ]]; then
               echo "::error::run ${RUN_ID} is '${WF}' (${EV}), not a 'Build and Release' push run"
