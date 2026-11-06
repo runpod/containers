@@ -81,41 +81,72 @@ if [ "${1:-}" = agent ] && { [ -z "${K3S_TOKEN:-}" ] || [ -z "${K3S_URL:-}${WG_E
   exec sleep infinity
 fi
 
-# WireGuard to the server: the agent joins https://<WG_SERVER_ADDRESS>:6443 (K3S_URL) through the
-# tunnel. Every key follows from K3S_TOKEN, as in the server's wg sidecar (images/k3s-wireguard):
-# the server's from "wireguard-server", the node's (and its tunnel address) from NODE_RANK. So every
-# node pod has the same env, and nothing hands out keys.
-# WireGuard resolves the endpoint name once, and a restarted server task has a new public IP:
-# re-resolve every 5 s.
+# WireGuard to the servers: the cluster has three (slots 0-2), and the agent tunnels to each.
+# Server slot lives at s<slot>.<cluster host> (from WG_ENDPOINT, the API name), with the tunnel
+# address 10.200.100.1+slot and the key "wireguard-server-<slot>". Every key follows from
+# K3S_TOKEN, as in the servers' wg sidecar (runpod/k3s-controlplane images/k3s-wireguard): the
+# node's (and its tunnel address 10.200.0.2+rank) from NODE_RANK. So every node pod has the same
+# env, and nothing hands out keys.
+# A slot record at 127.0.0.1 means its task has not registered yet: no peer. A restarted server
+# task has a new public IP, and a slot's record comes alive later: re-resolve every 5 s.
+# The agent joins through the first server with a handshake (K3S_URL); it then learns every
+# server's tunnel address from the kubernetes endpoints and balances over them.
 if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
-  WG_SERVER_ADDRESS="${WG_SERVER_ADDRESS:-10.200.0.1}"
-  # The server's tunnel address: the same for every cluster, so the pod env may leave it out.
-  export K3S_URL="${K3S_URL:-https://$WG_SERVER_ADDRESS:6443}"
+  WG_SERVERS="${WG_SERVERS:-3}"
+  WG_HOST="${WG_ENDPOINT%:*}"
+  WG_PORT="${WG_ENDPOINT##*:}"
   WG_MAX_NODES="${WG_MAX_NODES:-200}"
   case "${NODE_RANK:-}" in
     ''|*[!0-9]*) echo "k3s-node: NODE_RANK is not set" >&2; exit 1 ;;
   esac
   if [ "$NODE_RANK" -ge "$WG_MAX_NODES" ]; then
-    echo "k3s-node: NODE_RANK $NODE_RANK: the server admits ranks 0 to $((WG_MAX_NODES - 1))" >&2; exit 1
+    echo "k3s-node: NODE_RANK $NODE_RANK: the servers admit ranks 0 to $((WG_MAX_NODES - 1))" >&2; exit 1
   fi
-  WG_ADDRESS="${WG_SERVER_ADDRESS%.*}.$(( ${WG_SERVER_ADDRESS##*.} + NODE_RANK + 1 ))"
-  ( umask 077; printf 'wireguard-node-%s' "$NODE_RANK" \
-      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 > /run/wg.key )
-  WG_SERVER_PUBLIC_KEY="$(printf 'wireguard-server' \
-      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 | wg pubkey)"
+  WG_ADDRESS="10.200.0.$((2 + NODE_RANK))"
+  # The keys live in /etc/wireguard: Ubuntu 26.04 hosts confine /usr/bin/wg with an AppArmor
+  # profile that, under sysbox, also applies in this container, and allows only that directory.
+  ( umask 077; mkdir -p /etc/wireguard && printf 'wireguard-node-%s' "$NODE_RANK" \
+      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 > /etc/wireguard/wg0.key )
+  for slot in $(seq 0 $((WG_SERVERS - 1))); do
+    printf 'wireguard-server-%s' "$slot" \
+      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 | wg pubkey \
+      > "/etc/wireguard/server-$slot.pub"
+  done
   ip link del wg0 2>/dev/null || true
   ip link add wg0 type wireguard
-  wg set wg0 private-key /run/wg.key
+  wg set wg0 private-key /etc/wireguard/wg0.key
   ip addr add "$WG_ADDRESS/32" dev wg0
   ip link set wg0 up
-  ip route replace "$WG_SERVER_ADDRESS/32" dev wg0
-  peer() {
-    wg set wg0 peer "$WG_SERVER_PUBLIC_KEY" endpoint "$WG_ENDPOINT" \
-      allowed-ips "$WG_SERVER_ADDRESS/32" persistent-keepalive 25
+  ip route replace 10.200.100.0/24 dev wg0
+  peers() {  # one peer per slot whose record points at a live task; 0 once any peer is set
+    any=1
+    for slot in $(seq 0 $((WG_SERVERS - 1))); do
+      name="s$slot.$WG_HOST"
+      addr=$(getent hosts "$name" | awk '{print $1; exit}') || addr=
+      if [ -n "$addr" ] && [ "$addr" != 127.0.0.1 ]; then
+        wg set wg0 peer "$(cat "/etc/wireguard/server-$slot.pub")" endpoint "$name:$WG_PORT" \
+          allowed-ips "10.200.100.$((1 + slot))/32" persistent-keepalive 25 && any=0
+      fi
+    done
+    return "$any"
   }
-  until peer; do echo "k3s-node: waiting to resolve $WG_ENDPOINT" >&2; sleep 2; done
-  echo "k3s-node: wg0 $WG_ADDRESS -> $WG_SERVER_ADDRESS via $WG_ENDPOINT" >&2
-  ( while sleep 5; do peer 2>/dev/null || echo "k3s-node: cannot resolve $WG_ENDPOINT" >&2; done ) &
+  live_server() {  # the tunnel address of the first server with a handshake
+    hs=$(wg show wg0 latest-handshakes) || return 1
+    for slot in $(seq 0 $((WG_SERVERS - 1))); do
+      ts=$(printf '%s\n' "$hs" | awk -v p="$(cat "/etc/wireguard/server-$slot.pub")" '$1 == p {print $2}')
+      if [ "${ts:-0}" -gt 0 ]; then
+        echo "10.200.100.$((1 + slot))"; return 0
+      fi
+    done
+    return 1
+  }
+  until peers; do echo "k3s-node: waiting for a server in DNS ($WG_HOST)" >&2; sleep 2; done
+  until SERVER=$(live_server) && [ -n "$SERVER" ]; do
+    echo "k3s-node: waiting for a server handshake" >&2; sleep 2
+  done
+  export K3S_URL="${K3S_URL:-https://$SERVER:6443}"
+  echo "k3s-node: wg0 $WG_ADDRESS -> $K3S_URL via s*.$WG_HOST:$WG_PORT" >&2
+  ( while sleep 5; do peers 2>/dev/null || echo "k3s-node: no server in DNS ($WG_HOST)" >&2; done ) &
 fi
 
 # The node password: k3s stores a random one in /etc/rancher/node/password on the first join, and
