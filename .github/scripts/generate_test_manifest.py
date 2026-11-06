@@ -231,7 +231,10 @@ def build_groups(
     instances = list(instances or [])
     test_ports = list(test_ports or [])
     cuda_versions = list(cuda_versions or [])
-    wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
+    wants_allowed_cuda = any(v.strip().lower() == "allowed" for v in cuda_versions)
+    wants_all_cuda = wants_allowed_cuda or any(
+        v.strip().lower() == "all" for v in cuda_versions
+    )
 
     if instances and check_all_gpu:
         raise ValueError(
@@ -294,13 +297,20 @@ def build_groups(
             body["test_ray"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
-        if gpu_group and wants_all_cuda:
+        if gpu_group and wants_allowed_cuda:
+            body["cuda_versions"] = "allowed"
+        elif gpu_group and wants_all_cuda:
             body["cuda_versions"] = "all"
         elif gpu_group and cuda_versions:
             body["cuda_versions"] = list(cuda_versions)
         # The floor is meaningless once exact versions are pinned, and
-        # sending both makes the API reject the create outright.
-        if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
+        # sending both makes the API reject the create outright. `allowed`
+        # is the exception: the harness reads it as the axis floor for
+        # tags without a CUDA marker and never sends it to the API.
+        if min_cuda_version and (
+            wants_allowed_cuda
+            or not (gpu_group and (wants_all_cuda or cuda_versions))
+        ):
             body["min_cuda_version"] = min_cuda_version
         return body
 

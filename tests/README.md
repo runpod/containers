@@ -375,7 +375,7 @@ Field reference:
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
 | `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group; to block a GPU for only some images, generate the manifest with `--exclude-instance-for 'REF_GLOB: PATTERN, ...'` (action input `exclude-instances-for`), which moves the matching refs into their own group. |
 | `min_cuda_version` | `X.Y` floor sent as `gpu.minCudaVersion`. Used as a **fallback** when the image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`); tags like `cu1281` / `cuda1281` / `cuda13.0` are parsed and win. Superseded by `cuda_versions` — the API rejects both fields on one request. |
-| `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
+| `cuda_versions` | `all`, `allowed`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. `allowed` is `all` minus versions below the image's floor (tag marker, else `min_cuda_version`, which `allowed` keeps for that purpose). Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening. Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
 | `test_torch_packages` | `true` / `false` — extends the CUDA check with a torchvision `nms` and a torchaudio `resample` on the GPU, plus a torchcodec WAV round trip on torch 2.9+ (the version from which the images ship it). All three become **required** where they are expected: an image in the group that doesn't have one fails. Use for `runpod/pytorch` and its `-cluster` layer; skip for images that ship torch alone (NGC `nvidia-pytorch`, `runpod/base` `-pytorch251` tags). Default: `false`. |
@@ -443,6 +443,17 @@ Two expansion modes, depending on `check_all_gpu`:
 
 The second mode exists so that adding an axis to a budget-filtered group
 doesn't silently turn one pod into a product of ~20 cards × N versions.
+
+`cuda_versions: allowed` is `all` limited to the versions the image can
+actually be scheduled on: at or above the tag's CUDA marker (`cu1290` →
+12.9 and up), or `min_cuda_version` for tags without one. A GPU whose free
+versions are all below that floor is recorded as SKIP with that reason.
+The release sweep (`.github/workflows/gpu-sweep-release.yml`) uses it.
+
+`instances:` together with `check_all_gpu: true` is a matrix over exactly
+those GPUs — one job each — rather than a fallback chain. The CI generator
+refuses the combination to keep its inputs unambiguous; hand-written or
+sweep manifests may use it.
 
 **Only pairings the catalog reports capacity for are attempted.**
 `GET /v2/catalog/gpus?include=AVAILABILITY&product=POD` returns, per GPU,
@@ -621,6 +632,10 @@ pytorch:
 | `CPU_CANDIDATES` | `""` (uses `cpu-secure,cpu-community`) | CPU "instance candidates". The flavor comes from `pick_cpu_flavor()`; what varies between candidates is placement — cloud (SECURE vs COMMUNITY) and optional data centres. Each label becomes one candidate iterated by the same per-instance retry loop GPU groups use, so when SECURE is saturated COMMUNITY almost always has free CPU capacity. Format: `label:CLOUD[:DC1+DC2+…],label:CLOUD[:DC_CSV],…` (use `+` not `,` to separate DC ids inside one candidate so the outer csv stays unambiguous). CLOUD must be SECURE or COMMUNITY. Malformed entries are silently dropped; an empty/all-broken value falls back to the default 2-candidate list. |
 | `RUNPOD_API_KEY` | _(from `~/.runpod/config.toml`)_ | Bearer token for every REST API v2 call. Set this in CI / containers without a config file. |
 | `MAX_CUDA_COMBOS` | `120` | Cap on the (GPU, CUDA) fan-out. Jobs past it are dropped with a warning so a stray `cuda_versions: all` can't run for a day. |
+| `SPEND_CAP_USD` | `0` (off) | Total USD the run may spend on GPU pods, from catalog $/hr × pod lifetime. Each pod reserves `SPEND_RESERVE_MINUTES` of its price before it is created; a pod that doesn't fit is never created and its job is SKIP (`spend cap reached`). With a cap, jobs are reordered so every (image, GPU) gets its newest CUDA version before any gets a second. Spend is printed in the summary and written to the results JSON. |
+| `SPEND_RESERVE_MINUTES` | `30` | Minutes of a GPU's price held per pod under `SPEND_CAP_USD`. Size it to the longest a pod lives (`CREATE_TIMEOUT` plus the checks), or a slow pod can overrun its hold. |
+| `DEDUPE_CLOUD_TIERS` | _(off)_ | With several tiers, plan each (image, GPU, CUDA) job once, in the first tier that offers it (SECURE before COMMUNITY). For compatibility sweeps, where the tier says nothing about the image. |
+| `POD_NAME_SUFFIX` | _(empty)_ | Alphanumeric suffix appended to every pod name, so a CI run can find and delete exactly its own leftovers. `reap-pods.yml` still reads the epoch from field 2. |
 | `CPU_VCPU_COUNT` | `4` | vCPUs requested for CPU pods. Must be a power of two inside the chosen flavor's `vcpu.min..max`. |
 | `CPU_FLAVOR_ID` | _(empty)_ | Pin a CPU flavor (e.g. `cpu3c`) instead of auto-picking the cheapest fitting one from `GET /v2/catalog/cpus`. |
 | `SMOKE_RESULTS_JSON` | _(empty)_ | Path to write the machine-readable result report to. Empty = don't write it. The markdown step summary is written regardless. |
