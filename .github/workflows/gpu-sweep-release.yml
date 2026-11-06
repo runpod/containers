@@ -154,9 +154,14 @@ jobs:
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           cloud-type: ${{ steps.plan.outputs.cloud }}
           max-parallel: ${{ steps.plan.outputs.max-parallel }}
-          # No capacity is a result here (untested), not something to wait
-          # out; retries are off under 'pass' and pods are not re-tried.
-          on-skip: pass
+          # 'warn', not 'pass': 'pass' turns retries off, and parallel jobs
+          # racing for the same scarce GPU lose capacity to each other. Two
+          # rounds re-run only SKIP / UNVERIFIED jobs; the spend cap still
+          # holds, and what's left after them is reported untested. The exit
+          # code doesn't matter here (continue-on-error).
+          on-skip: warn
+          skip-retries: "2"
+          skip-retry-delay: "300"
           create-timeout: "1200"
           upload-results-json: "true"
           results-artifact-name: gpu-sweep-raw-${{ github.run_id }}

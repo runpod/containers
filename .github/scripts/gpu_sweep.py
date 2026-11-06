@@ -291,7 +291,18 @@ def build_report(
             prev = cells.get(key)
             # Tiers are deduplicated, so a cell has one verdict at most; if
             # two still meet, the stronger claim wins and FAIL outranks PASS.
-            if prev is None or STATE_RANK[state] > STATE_RANK[prev["state"]]:
+            # Between two untested rows, "not offered in this tier" loses to
+            # whatever the other tier said: the GPU exists there, so its
+            # reason (usually no capacity) is the one worth reporting.
+            if (
+                prev is None
+                or STATE_RANK[state] > STATE_RANK[prev["state"]]
+                or (
+                    state == prev["state"] == "untested"
+                    and prev["untested_reason"] == "not_offered"
+                    and cell["untested_reason"] != "not_offered"
+                )
+            ):
                 cells[key] = cell
 
         # A GPU with any per-version cell doesn't need its "no version

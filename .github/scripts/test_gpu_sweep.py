@@ -171,6 +171,15 @@ class Report(unittest.TestCase):
         cells = [c for c in rep["images"][0]["results"] if c["gpu_name"] == "RTX 5080"]
         self.assertEqual([(c["cuda_version"], c["state"]) for c in cells], [("13.0", "pass")])
 
+    def test_not_offered_loses_to_the_other_tiers_reason(self):
+        rep = self._report([
+            _row(PT, "SKIP", "RTX 5080", "", "GPU not covered: not offered in the SECURE cloud (covered by the COMMUNITY pass)"),
+            _row(PT, "SKIP", "RTX 5080", "", "GPU not covered: offers 13.0 but none had capacity", cloud="COMMUNITY"),
+        ])
+        cell = [c for c in rep["images"][0]["results"] if c["gpu_name"] == "RTX 5080"][0]
+        self.assertEqual(cell["untested_reason"], "no_capacity")
+        self.assertEqual(cell["cloud"], "COMMUNITY")
+
     def test_mixed_verdicts_are_partial(self):
         rep = self._report([
             _row(PT, "PASS", "B200", "13.0", gpu_id="NVIDIA B200"),
