@@ -15,7 +15,7 @@ RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
 
 # Clone autoresearch to /opt (safe from volume mounts). Pinned to a commit so
 # a rebuild reproduces the image instead of picking up new upstream work.
-ARG AUTORESEARCH_REF=ca6c3ee0dc91f164e8305256d2b7f9525df11c33
+ARG AUTORESEARCH_REF=ad96a7767a70de8d79b84c97963aa80aa8b03df3
 RUN git init -q -b master /opt/autoresearch && \
     git -C /opt/autoresearch remote add origin https://github.com/runpod/autoresearch.git && \
     git -C /opt/autoresearch fetch -q --depth 1 origin "${AUTORESEARCH_REF}" && \
