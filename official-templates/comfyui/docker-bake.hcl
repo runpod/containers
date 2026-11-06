@@ -71,7 +71,6 @@ variable "COMPATIBLE_BUILDS" {
           cuda_version_dash = replace(combination.cuda_version, ".", "-"),
           torch_index_suffix = combination.torch_index_suffix,
           torchaudio_index_suffix = combination.torchaudio_index_suffix,
-          venv_name = ".venv-${combination.torch_index_suffix}",
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
@@ -143,7 +142,6 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
-    COMFYUI_VENV_NAME   = build.venv_name
   }
 
   tags = [

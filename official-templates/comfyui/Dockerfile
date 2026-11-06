@@ -165,8 +165,7 @@ ARG TORCHAUDIO_VERSION
 # since packages users install there (xformers, triton, sageattention,
 # onnxruntime-gpu, nunchaku) are compiled against it. 13.0 used to share
 # .venv-cu128; start.sh treats that as a move and reinstalls node deps.
-ARG COMFYUI_VENV_NAME=.venv-${TORCH_INDEX_SUFFIX}
-ENV COMFYUI_VENV_NAME=${COMFYUI_VENV_NAME}
+ENV COMFYUI_VENV_NAME=.venv-${TORCH_INDEX_SUFFIX}
 
 # ---- FileBrowser version pin (set in docker-bake.hcl) ----
 ARG FILEBROWSER_VERSION
