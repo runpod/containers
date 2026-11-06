@@ -570,6 +570,9 @@ def main() -> int:
             "Emit `test_dcgm_exporter: true`: scrape the in-pod dcgm-exporter "
             "on :9400 and require the series the Grafana dashboards read, "
             "with a hostname label. For runpod/pytorch-cluster only."
+        ),
+    )
+    ap.add_argument(
         "--test-ray",
         action="store_true",
         help=(

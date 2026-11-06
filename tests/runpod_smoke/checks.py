@@ -811,6 +811,9 @@ def dcgm_exporter_check_command(
         "fi; "
         "printf '%s\\n' \"$BODY\" | grep -m 1 '^DCGM_FI_DEV_GPU_UTIL{'; "
         "echo 'dcgm-exporter ok: dashboard series carry a hostname label'"
+    )
+
+
 def ray_check_command(metrics_port: int = 20217) -> str:
     """Start a single-node Ray head in the pod and use the GPU through it.
 
