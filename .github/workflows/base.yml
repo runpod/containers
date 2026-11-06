@@ -823,6 +823,10 @@ jobs:
           test-ca-certs: true
           min-ca-certs-version: "20260816"
           test-python-tls: true
+          # dcgm-exporter autostarts on every pod of this image, so a single
+          # pod is enough to prove it runs against our libdcgm and still
+          # emits the labels the dashboards query.
+          test-dcgm-exporter: true
           # torch 2.12/2.13 in the 12.x columns and 2.8.0 on cu1290 take
           # torchvision from cu129, which upstream builds without Blackwell.
           # The 13.x columns here use cu130/cu132 and keep it.
