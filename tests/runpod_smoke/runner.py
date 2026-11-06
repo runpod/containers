@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Optional
 
-from . import config
+from . import config, spend
 from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
@@ -152,6 +152,8 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
+        if config.POD_NAME_SUFFIX:
+            name += f"-{config.POD_NAME_SUFFIX}"
         test_ports = [port for port, _path in config.GROUP_TEST_PORTS.get(group) or []]
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
@@ -609,6 +611,8 @@ def test_pair(
                          endpoint within CREATE_TIMEOUT. Almost always a bad
                          host in the scheduler pool, not an image bug — caller
                          should try a different instance type.
+        'BUDGET'       — SPEND_CAP_USD has no room for this pod, so none was
+                         created. Says nothing about the image.
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and
     is used to select the appropriate GPU/CUDA functional check."""
@@ -617,10 +621,18 @@ def test_pair(
     _set_host_cuda("")
     is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin, cloud)
 
+    # CPU pods aren't priced from the GPU catalog and no sweep uses them.
+    token, why = (0, "") if is_cpu else spend.reserve(instance, cloud)
+    if token is None:
+        log(f"not creating a pod: {why}", indent=2)
+        return "BUDGET", why
+    started = time.monotonic()
+
     pod_id, early, early_detail = _create_pod_with_retries(
         image, instance, gpu_id, is_cpu, group, cuda_pin, cloud,
     )
     if early:
+        spend.release(token)
         return early, early_detail
     # _create_pod_with_retries' contract: when `early` is empty, pod_id is
     # guaranteed non-None. Assert so the type checker can narrow.
@@ -688,6 +700,7 @@ def test_pair(
     finally:
         # Always clean up this specific pod, even on exception.
         cleanup_pod(pod_id)
+        spend.settle(token, time.monotonic() - started)
 
 
 def test_image(
@@ -721,6 +734,8 @@ def test_image(
     unverified: list[tuple[str, str]] = []
     last_create_error = ""
     last_create_inst = ""
+    budget_detail = ""
+    budget_inst = ""
     for inst in instances:
         set_worker_context(inst)
         try:
@@ -745,6 +760,11 @@ def test_image(
             last_create_error = detail
             last_create_inst = inst
             continue
+        if result == "BUDGET":
+            # Holds only grow until pods finish, and candidates are tried in
+            # order, so the rest of the list wouldn't fit either.
+            budget_detail, budget_inst = detail, inst
+            break
         if result == "STUCK":
             stuck_instances.append(inst)
         if result == "UNVERIFIED":
@@ -774,6 +794,9 @@ def test_image(
             ", ".join(insts),
             "",
         )
+    if budget_detail:
+        log(f"not tested: {budget_detail}", indent=1)
+        return "SKIP", budget_detail, budget_inst, ""
     if stuck_instances:
         # We tried every instance and RunPod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at

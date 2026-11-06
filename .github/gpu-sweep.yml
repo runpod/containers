@@ -1,0 +1,60 @@
+# Release GPU compatibility sweep — what .github/workflows/gpu-sweep-release.yml
+# tests after every release, read by .github/scripts/gpu_sweep.py.
+#
+# Each image a release built is booted on every GPU below, once per host
+# CUDA version at or above the image's floor (`cuda_versions: allowed`). It
+# reports and never gates: the one-GPU smoke test in the build workflows is
+# still the release gate. The full ~45-GPU sweep stays manual
+# (gpu-compatibility.yml).
+#
+# PENDING DECISION (Mariia): the GPU subset and spend_cap_usd below are a
+# starting point — one or two GPUs per architecture — not an agreed list.
+
+# Display names exactly as GET /v2/catalog/gpus reports them. A name the
+# catalog doesn't know is warned about at plan time and recorded untested.
+# Order is priority: when the spend cap bites, later GPUs lose their deeper
+# CUDA versions first.
+gpus:
+  - RTX 5080        # Blackwell consumer (sm_120) — every cu1300 image failed here in #162
+  - RTX 5090        # Blackwell consumer (sm_120)
+  - B200            # Blackwell datacenter (sm_100)
+  - H100 SXM        # Hopper (sm_90)
+  - RTX 4090        # Ada consumer (sm_89)
+  - L40S            # Ada datacenter (sm_89)
+  - A100 SXM        # Ampere datacenter (sm_80)
+  - RTX A5000       # Ampere workstation (sm_86)
+
+# Both tiers, because they don't nest: GeForce cards are community-only,
+# B200 / H100 SXM are secure-only. A GPU offered in both is tested once, in
+# SECURE (DEDUPE_CLOUD_TIERS).
+cloud: ALL
+
+# Hard ceiling on pod spend per release, from catalog $/hr. Every pod holds
+# reserve_minutes of its price before it is created; pods that no longer fit
+# are recorded as untested (spend cap), never as failed.
+spend_cap_usd: 50
+# Longest a sweep pod lives: create-timeout (20 min for the biggest pulls)
+# plus the checks. Too low and a slow pod can overrun its hold.
+reserve_minutes: 30
+
+# Parallel pods. Doesn't change cost, only wall-clock vs. pull throttling.
+max_parallel: 4
+
+# Families to sweep. Images from any other family, and images without a CUDA
+# floor (CPU, ROCm tags), are skipped. Per family:
+#   min_cuda  floor for tags with no CUDA marker (NGC nvidia-pytorch)
+#   checks    extra GPU-relevant manifest checks; GPU-independent hygiene
+#             (pip check, CA certs, uv) stays in the one-GPU smoke test.
+families:
+  base: {}
+  pytorch:
+    checks: [test_torch_packages]
+  pytorch-cluster:
+    checks: [test_torch_packages]
+  ray-cluster:
+    checks: [test_ray]
+  autoresearch: {}
+  comfyui:
+    checks: [test_comfyui]
+  nvidia-pytorch:
+    min_cuda: "13.0"
