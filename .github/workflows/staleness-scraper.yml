@@ -1,0 +1,96 @@
+name: Template Staleness Scraper
+
+# Weekly check for upstream releases we do not yet ship (pytorch, comfyui,
+# autoresearch, base, pytorch-cluster, and the sandbox-* families).
+# Opens a draft PR per stale family; the matrix is verified by the build CI on
+# that PR. Rules live in .github/scraper/staleness-playbook.md.
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
+  workflow_dispatch:
+  # Test trigger until this lands on main and the cron can fire. Label a PR
+  # `test-staleness-scraper` to run it; pushes to that PR re-run it.
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+concurrency:
+  group: staleness-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: blacksmith-4vcpu-ubuntu-2404 # On the org IP allow list; ubuntu-latest is not.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false # One stale family should not block the other.
+      matrix:
+        include:
+          # pytorch needs more turns: it verifies wheels across many CUDA x
+          # python combos plus companion versions. comfyui is lighter.
+          - family: pytorch
+            turns: 120
+          - family: comfyui
+            turns: 60
+          - family: autoresearch
+            turns: 60
+          - family: base
+            turns: 60
+          - family: pytorch-cluster
+            turns: 90
+          - family: sandbox-ubuntu
+            turns: 70
+          - family: sandbox-browser
+            turns: 50
+          - family: sandbox-harbor
+            turns: 50
+          - family: sandbox-openclaw
+            turns: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Test runs use the PR branch so the PR's own playbook is exercised;
+          # otherwise branch work off develop.
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          fetch-depth: 0
+
+      - name: Scan ${{ matrix.family }}
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
+        env:
+          # PAT/app token so Claude's PR triggers the build CI. The default
+          # GITHUB_TOKEN cannot trigger other workflows, so the matrix would
+          # never get verified. Falls back to GITHUB_TOKEN if the PAT is unset.
+          GH_TOKEN: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Authenticate with our own token instead of the Claude GitHub App, so
+          # the job runs on a PR branch before this workflow is on main. A PAT or
+          # app token in SCRAPER_PR_TOKEN also lets Claude's PRs trigger build CI.
+          github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
+          show_full_output: true
+          prompt: |
+            Read .github/scraper/staleness-playbook.md and follow it exactly, but
+            only for the `${{ matrix.family }}` family; ignore the others.
+            Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
+            If ${{ matrix.family }} is already current, make no changes and exit.
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns ${{ matrix.turns }}
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+
+      - name: Require a clean agent outcome
+        if: always()
+        shell: bash
+        run: |
+          status="$(cat /tmp/scraper-status 2>/dev/null || echo 'missing (agent did not report)')"
+          echo "::notice::${{ matrix.family }} scraper status: $status"
+          if [ "$status" != "ok" ]; then
+            echo "::error::scraper did not complete cleanly for ${{ matrix.family }}: $status"
+            exit 1
+          fi
