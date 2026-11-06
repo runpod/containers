@@ -13,8 +13,10 @@ name: GPU Sweep (release)
 # multi-hour sweep inside it would hold the next merge's release hostage.
 # workflow_run starts once the release run has finished, with its own queue.
 #
-# Only push runs on main trigger it, so no PR code ever runs here with
-# secrets: the checkout is the release commit itself.
+# Only push runs on main trigger it, and the code that runs is this
+# workflow's own commit (main), never PR code. The release commit is only
+# read for its tags: it can predate the sweep scripts, and an old release
+# should be swept with today's harness anyway.
 
 on:
   workflow_run:
@@ -78,10 +80,11 @@ jobs:
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "Sweeping release run ${RUN_ID} at ${SHA}"
 
-      - name: Checkout release commit
+      # Full history and tags, so the release commit's tags can be read
+      # below without checking it out.
+      - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          ref: ${{ steps.run.outputs.sha }}
           fetch-depth: 0
           fetch-tags: true
 
