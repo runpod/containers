@@ -69,6 +69,7 @@ nix run .#everything
 | `checks.nix` | Sandbox-safe derivations for `nix flake check`. |
 | `lints/*.nix` | One file per tool + `default.nix` registry + domain composites + `everything.nix`. |
 | `devshell/*.nix` | `nix develop` shell carrying every tool. |
+| `images/` | Nix-built counterparts of the base/pytorch/rocm images; see [images/README.md](images/README.md). |
 
 ## Two execution surfaces
 
