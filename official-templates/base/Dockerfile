@@ -42,6 +42,8 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # vendored jaraco.context and wheel carry HIGH advisories with no fixed Ubuntu
 # build. The build itself does not need it (deadsnakes is added by hand below).
 # release_pkgs is split on purpose: it is a list of package names.
+# apt and apt-utils are named explicitly so a security bump to them edits this
+# line: `apt-get upgrade` alone is served from the cached layer (CVE-2026-109518).
 # hadolint ignore=SC2086
 RUN . /etc/os-release && \
     case "${VERSION_ID}" in \
@@ -51,7 +53,7 @@ RUN . /etc/os-release && \
     apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
-    build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
+    apt apt-utils build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
     file gfortran git gpg gpg-agent inetutils-traceroute inotify-tools iputils-ping jq \
     libcap2-bin lsb-release libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev ${release_pkgs} \

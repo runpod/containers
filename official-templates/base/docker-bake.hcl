@@ -32,7 +32,7 @@ target "cpu-ubuntu2404" {
 target "cpu-ubuntu2604" {
   inherits = ["common-base"]
   tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2604",
+    "runpod/base${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-ubuntu2604",
   ]
   args = {
     BASE_IMAGE = "ubuntu:26.04"
