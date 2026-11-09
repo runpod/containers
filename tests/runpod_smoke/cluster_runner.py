@@ -42,6 +42,7 @@ from .cluster_checks import (
     head_monitoring_command,
     node_identity_command,
     run_grafana_proxy_check,
+    slurm_check_command,
     worker_monitoring_command,
 )
 from .cluster_report import FAIL, OK, ClusterReport
@@ -307,6 +308,14 @@ def _run_cluster_checks(
     if outcome is not None:
         return outcome
     head = nodes[0]
+    if _created_type() == "SLURM":
+        wait = config.MONITORING_WAIT_TIMEOUT
+        outcome = _run_check(
+            head, endpoints[head.pod_id], "Slurm",
+            slurm_check_command(len(nodes), wait), wait + 180, image, "slurm",
+        )
+        if outcome is not None:
+            return outcome
     outcome = _run_hygiene_steps(endpoints[head.pod_id], head.pod_id, image, group)
     _mark_hygiene(group, head, outcome)
     if outcome is not None:
@@ -318,6 +327,12 @@ def _run_cluster_checks(
     if outcome is not None:
         return outcome
     return "PASS", ""
+
+
+def _created_type() -> str:
+    """The createCluster type that succeeded for the attempt in progress."""
+    report = cluster_report.current()
+    return report.cluster_type if report is not None else ""
 
 
 def _excluded_data_center(nodes: list[ClusterNode]) -> str:
@@ -383,6 +398,10 @@ def _test_cluster_pair(
         return early, early_detail
     assert cluster_id is not None
     report.cluster_id = cluster_id
+    if report.cluster_type == "SLURM":
+        report.add_rows(
+            [("slurm", "Slurm: nodes idle, srun on all", True)], after="grafana",
+        )
     register_cluster(cluster_id)
     log(f"cluster {cluster_id} created, waiting for {node_count} member pods", indent=2)
     try:

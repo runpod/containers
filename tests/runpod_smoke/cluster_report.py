@@ -56,10 +56,16 @@ class ClusterReport:
 
     # -- declaring and filling -------------------------------------------
 
-    def add_rows(self, rows: list[tuple[str, str, bool]]) -> None:
-        """Append rows (key, label, head_only) the attempt will also run."""
+    def add_rows(
+        self, rows: list[tuple[str, str, bool]], after: str = "",
+    ) -> None:
+        """Add rows (key, label, head_only) the attempt will also run: at the
+        end, or right after row `after` when it exists."""
         known = {key for key, _, _ in self._rows}
-        self._rows.extend(r for r in rows if r[0] not in known)
+        new = [r for r in rows if r[0] not in known]
+        keys = [key for key, _, _ in self._rows]
+        at = keys.index(after) + 1 if after in keys else len(self._rows)
+        self._rows[at:at] = new
 
     def mark(self, key: str, hostname: str, status: str, note: str = "") -> None:
         """Record a result. A FAIL is never overwritten by a later ok."""

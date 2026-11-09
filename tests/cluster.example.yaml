@@ -9,18 +9,19 @@
 # (some GeForce cards), and DWELL_SEC=0 for a faster debugging loop.
 pytorch_cluster:
     images:
-    - runpod/pytorch-cluster:1.5.0-cu1281-torch280-ubuntu2404
+    - runpod/pytorch-cluster:2.2.0-cu1281-torch2130-ubuntu2404
     # Head (node-0, runs Prometheus + Grafana) plus one worker — the smallest
     # shape that proves Prometheus scrapes across nodes.
     cluster: true
     cluster_nodes: 2
-    # createCluster types, tried in order per GPU. TRAINING is the console's
-    # "Standard cluster"; SLURM is the fallback because dev has refused
-    # Standard clusters it deploys fine as Slurm. CLUSTER_TYPES=SLURM (env)
-    # skips Standard for a whole run.
+    # createCluster types, tried in order per GPU. pytorch-cluster ships the
+    # Slurm a SLURM cluster runs, so that is the type it is tested on (with
+    # the Slurm check on node-0). TRAINING (console: "Standard cluster") is
+    # only a capacity fallback: it boots the image on several nodes but runs
+    # no Slurm, so the Slurm check is left out, not passed.
     cluster_types:
-    # - TRAINING
     - SLURM
+    - TRAINING
     # GPU ids from the dev cluster catalog, tried in order until one has
     # capacity. Cheapest node first; A40 is left out because its only node
     # size is 10 GPUs, and GB10 because it is arm64.

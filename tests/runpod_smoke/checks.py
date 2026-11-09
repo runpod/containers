@@ -1085,7 +1085,7 @@ def run_port_check(
     path: str = "/",
 ) -> tuple[bool, str]:
     """Run the in-pod fallback probe with live progress and a hard timeout."""
-    remote_cmd = port_check_command(test_port, config.PORT_WAIT_TIMEOUT)
+    remote_cmd = port_check_command(test_port, config.PORT_WAIT_TIMEOUT, path)
     ssh_cmd = _ssh_command_prefix(endpoint)
     if not endpoint.pty:
         ssh_cmd.append(remote_cmd)
@@ -1176,7 +1176,7 @@ def run_port_proxy_check(
     pod_id: str, test_port: int, path: str = "/"
 ) -> tuple[bool, str]:
     """Probe a generic HTTP service through RunPod's public proxy."""
-    url = f"{config.proxy_url(pod_id, test_port)}/"
+    url = f"{config.proxy_url(pod_id, test_port)}{path}"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
     lines = [f"GET {url}"]
     last_error = ""
@@ -1604,7 +1604,7 @@ def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
         if pattern.search(line) and not (ignore and ignore.search(line))
     ]
     skipped = (
-        f" ({ignored} platform line(s) ignored per LOG_ERROR_IGNORE)"
+        f" ({ignored} expected line(s) ignored per LOG_ERROR_IGNORE)"
         if ignored else ""
     )
     if not matches:

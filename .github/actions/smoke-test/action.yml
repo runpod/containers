@@ -45,6 +45,14 @@ inputs:
       node size each GPU type offers.
     required: false
     default: ""
+  cluster-types:
+    description: |
+      createCluster types to try, in order, for each GPU (profile: cluster),
+      csv: TRAINING, SLURM, APPLICATION, RAY. Set it to the type the image
+      is built for, e.g. "SLURM,TRAINING" for runpod/pytorch-cluster. Empty
+      keeps the harness default (TRAINING,SLURM).
+    required: false
+    default: ""
   runpod-api-key:
     description: "RunPod API key (pod-management permissions required)"
     required: true
@@ -510,6 +518,7 @@ runs:
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
         CLUSTER_NODES: ${{ inputs.cluster-nodes }}
         CLUSTER_GPUS_PER_NODE: ${{ inputs.cluster-gpus-per-node }}
+        CLUSTER_TYPES: ${{ inputs.cluster-types }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -563,6 +572,10 @@ runs:
           if [[ -n "${CLUSTER_GPUS_PER_NODE}" ]]; then
             EXTRA_ARGS+=(--cluster-gpus-per-node "${CLUSTER_GPUS_PER_NODE}")
           fi
+          if [[ -n "${CLUSTER_TYPES}" ]]; then
+            EXTRA_ARGS+=(--cluster-types "${CLUSTER_TYPES}")
+          fi
+        fi
         if [[ "${TEST_DCGM_EXPORTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-dcgm-exporter)
         fi

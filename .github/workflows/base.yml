@@ -963,6 +963,49 @@ jobs:
 
       - name: Checkout
         if: steps.creds.outputs.ok == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for cu1281
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cluster-refs-cu1281
+          path: /tmp/cluster-refs
+
+      - name: Read refs
+        if: steps.creds.outputs.ok == 'true'
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Instant Cluster smoke test (dev)
+        if: steps.creds.outputs.ok == 'true'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: cluster
+          runpod-env: dev
+          runpod-api-key: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          cluster-nodes: "2"
+          # The image ships the Slurm that slurm-init.sh runs, and only a
+          # SLURM cluster starts it; TRAINING is the fallback when dev has no
+          # SLURM capacity (the Slurm check is then skipped, not passed).
+          cluster-types: "SLURM,TRAINING"
+          # dev cluster capacity comes and goes; don't block on it.
+          on-skip: "warn"
+          # GB10 nodes are arm64; the image is amd64-only.
+          exclude-instances: |
+            *GB10*
+
   # ray-cluster layers Ray onto a PUBLISHED runpod/pytorch-cluster, so it runs
   # after build-pytorch-cluster in the same run, with the same base-selection
   # rule: the in-run cluster tag when that family is part of this build, else
@@ -990,19 +1033,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download refs for cu1281
-        if: steps.creds.outputs.ok == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: cluster-refs-cu1281
-          path: /tmp/cluster-refs
-
-      - name: Read refs
-        if: steps.creds.outputs.ok == 'true'
-        id: refs
-        shell: bash
-        run: |
-          REFS=$(cat /tmp/cluster-refs/refs.json)
       - name: Setup Docker
         uses: ./.github/actions/docker-setup
         id: setup
@@ -1158,21 +1188,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Instant Cluster smoke test (dev)
-        if: steps.creds.outputs.ok == 'true'
-        uses: ./.github/actions/smoke-test
-        with:
-          image-refs: ${{ steps.refs.outputs.refs }}
-          profile: cluster
-          runpod-env: dev
-          runpod-api-key: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
-          ssh-private-key: ${{ secrets.DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY }}
-          cluster-nodes: "2"
-          # dev cluster capacity comes and goes; don't block on it.
-          on-skip: "warn"
-          # GB10 nodes are arm64; the image is amd64-only.
-          exclude-instances: |
-            *GB10*
       - name: Smoke test (${{ matrix.cuda }})
         uses: ./.github/actions/smoke-test
         with:

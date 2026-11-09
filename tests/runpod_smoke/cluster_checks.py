@@ -53,6 +53,40 @@ def node_identity_command(idx: int) -> str:
     )
 
 
+def slurm_check_command(node_count: int, timeout: int) -> str:
+    """On the head of a SLURM cluster: every node registers with slurmctld
+    and goes `idle`, then one job step runs on all of them. The image ships
+    the Slurm that the platform's slurm-init.sh starts, so this is what
+    proves that build works, not just that the pods boot.
+
+    `idle*` (not responding) and `down` do not count, and `srun` must print
+    every `node-<i>` once: a node that registered but cannot run a step is
+    exactly the failure a bare sinfo would miss.
+    """
+    want = " ".join(f"node-{i}" for i in range(node_count))
+    return (
+        "IDLE=0; "
+        f"for i in $(seq 1 {timeout}); do "
+        "  IDLE=$(sinfo -h -N -o '%N %t' 2>/dev/null | sort -u "
+        "    | awk '$2 == \"idle\"' | wc -l); "
+        f"  [ \"$IDLE\" -ge {node_count} ] && break; "
+        "  sleep 1; "
+        "done; "
+        "echo '--- sinfo -N ---'; sinfo -N 2>&1; "
+        f"[ \"$IDLE\" -ge {node_count} ] || {{ echo \"FAIL: $IDLE of "
+        f"{node_count} Slurm nodes idle after {timeout}s\"; exit 1; }}; "
+        f"echo '--- srun -N{node_count} hostname -s ---'; "
+        f"OUT=$(timeout 120 srun -N{node_count} --ntasks-per-node=1 hostname -s 2>&1); "
+        "RC=$?; echo \"$OUT\"; "
+        "[ $RC -eq 0 ] || { echo \"FAIL: srun exited $RC\"; exit 1; }; "
+        f"for n in {want}; do "
+        "  echo \"$OUT\" | grep -qx \"$n\" "
+        "    || { echo \"FAIL: srun did not run on $n\"; exit 1; }; "
+        "done; "
+        f"echo 'slurm OK: {node_count} nodes idle, srun ran on every node'"
+    )
+
+
 def _supervisor_wait_snippet(programs: tuple[str, ...], timeout: int) -> str:
     """Wait for each program to reach RUNNING; print status either way."""
     names = " ".join(programs)

@@ -388,8 +388,8 @@ Field reference:
 | `cluster` | `true` / `false` — run the group as an **Instant Cluster** instead of a pod. See [Instant Cluster tests](#instant-cluster-tests-pytorch-cluster). Refused unless `RUNPOD_ENV=dev` (or `ALLOW_PROD_CLUSTERS=1`). Implies `test_jupyter`; ignores `check_all_gpu` and `cuda_versions`. Default: `false`. |
 | `cluster_nodes` | Pods per cluster, ≥ 1. Default: `2` (head + one worker — the smallest shape that exercises cross-node scraping). |
 | `cluster_gpus_per_node` | GPUs per node. Must be a size the GPU type offers for clusters (`nodeGroupGpuSizes`); unset picks the smallest. |
-| `cluster_types` | createCluster types to try, in order, for each GPU before moving to the next GPU: `TRAINING` (console: Standard cluster), `SLURM`, `APPLICATION`, `RAY`. Any refusal of one type moves on to the next. Default: `[TRAINING, SLURM]`. |
-| `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
+| `cluster_types` | createCluster types to try, in order, for each GPU before moving to the next GPU: `TRAINING` (console: Standard cluster), `SLURM`, `APPLICATION`, `RAY`. Any refusal of one type moves on to the next. Default: `[TRAINING, SLURM]`; set it to the type the image is built for (`[SLURM, TRAINING]` for pytorch-cluster). |
+| `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. An entry may be `<port>/<path>` (e.g. `80/health`) to probe a specific route instead of `/`. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
 | `test_pip_check` | `true` / `false` — runs `pip check` in the pod and fails on any conflict not matched by `pip_check_allow`. Catches a bumped pin that no longer satisfies something already in the image, which a boot check cannot see. Default: `false`. |
@@ -630,7 +630,7 @@ pytorch:
 | `RUNPOD_API_ORIGIN` / `RUNPOD_PROXY_DOMAIN` | per `RUNPOD_ENV` | Override either host directly. REST v2 is `<origin>/v2`, GraphQL `<origin>/graphql`. |
 | `ALLOW_PROD_CLUSTERS` | `0` | `1` lets `cluster: true` groups run on prod. |
 | `CLUSTER_EXCLUDE_DATA_CENTERS` | `K3S-POC` | csv of data centers a cluster must not land in; one that does is deleted at once and the GPU counts as no capacity. K3S-POC is a stopped dev host that placement still picks. |
-| `LOG_ERROR_IGNORE` | `^\s*(?:slurmctld\|slurmd\|slurmdbd):` | Regex; container-log lines matching it are skipped by the error scan. The default drops the Slurm daemons a SLURM-type cluster injects (they log `error:` on every first boot). Empty disables. |
+| `LOG_ERROR_IGNORE` | first-boot slurmctld state-file lines | Regex; container-log lines matching it are skipped by the error scan. The default only drops the "Could not open … state file" / "Trying backup state save file" lines a brand-new slurmctld always logs; every other Slurm error, PMIx included, still fails the scan. Empty disables. |
 | `CLUSTER_TYPES` | `""` | csv overriding every group's `cluster_types`, e.g. `SLURM` to skip Standard entirely. |
 | `CLUSTER_DATA_CENTER_IDS` | `""` | Optional csv pinning cluster placement (e.g. `MFS-1`). |
 | `CLUSTER_DEPLOY_COST` | `0` | Per-node $/hr; `createCluster`'s `deployCost` is this × `cluster_nodes` (the API divides it by the pod count). `0` reads the current price (`lowestPrice` with `isCluster`, else `clusterPrice` × GPUs per node); the API rejects anything below its current minimum. |
@@ -804,29 +804,35 @@ attempt checks, failing on the first problem with the node named:
    `/api/health` ok, `?token=<JUPYTER_PASSWORD>` logs in through the auth
    proxy, no token is refused, and a query through the Prometheus
    datasource returns series.
-6. Opted-in hygiene checks (head only), log scan, dwell, SSH re-probe.
+6. **Slurm**, on SLURM clusters only (head): every node registers and goes
+   `idle` in `sinfo`, and `srun -N<nodes> hostname -s` runs on each one.
+   The image ships the Slurm the platform's `slurm-init.sh` starts, so this
+   is what tests that build. A TRAINING cluster has no Slurm and no Slurm
+   row in the table.
+7. Opted-in hygiene checks (head only), log scan, dwell, SSH re-probe.
 
 Every attempt that created a cluster gets a table of every check per node,
-printed under `CLUSTER CHECKS` after the SUMMARY. A check that was never reached says `not run`, and `-` marks a
-head-only check on a worker:
+printed under `CLUSTER CHECKS` after the SUMMARY. A check that was never
+reached says `not run`, and `-` marks a head-only check on a worker:
 
 ```
 PASS  runpod/pytorch-cluster:1.5.0-cu1281-torch280-ubuntu2404
   cluster krwetbsrhnbc0j  |  SLURM  |  2 nodes x 2x NVIDIA GeForce RTX 4090  |  MFS-1  |  2m13s
 
-  check                         node-0 (head)  node-1
-  ----------------------------  -------------  -----------
-  SSH ready                     ok 0s proxy    ok 0s proxy
-  hostname / rank               ok             ok
-  CUDA / torch                  ok             ok
-  Jupyter via proxy             ok             ok
-  monitoring services           ok             ok
-  Prometheus scrapes all nodes  ok             -
-  Grafana via proxy :8889       ok             -
-  CA trust store                ok             -
-  certifi / python TLS          ok             -
-  log scan                      ok             ok
-  alive after 60s               ok             ok
+  check                           node-0 (head)  node-1
+  ------------------------------  -------------  -----------
+  SSH ready                       ok 0s proxy    ok 0s proxy
+  hostname / rank                 ok             ok
+  CUDA / torch                    ok             ok
+  Jupyter via proxy               ok             ok
+  monitoring services             ok             ok
+  Prometheus scrapes all nodes    ok             -
+  Grafana via proxy :8889         ok             -
+  Slurm: nodes idle, srun on all  ok             -
+  CA trust store                  ok             -
+  certifi / python TLS            ok             -
+  log scan                        ok             ok
+  alive after 60s                 ok             ok
 ```
 
 The cluster is deleted in a `finally` and by the same atexit/signal handler
@@ -835,7 +841,8 @@ runs `reap_clusters.py --delete` against dev for `smoketest-*` clusters
 older than 90 minutes.
 
 In CI, `base.yml`'s `test-pytorch-cluster-instant` job runs this on dev for
-the cu1281 build with `profile: cluster`. It needs the
+the cu1281 build with `profile: cluster` and `cluster-types: SLURM,TRAINING`
+(the smoke-test action's input for `cluster_types`). It needs the
 `DEV_TESTING_RUNPOD_API_KEY` and `DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY`
 secrets and skips with a warning until they exist.
 

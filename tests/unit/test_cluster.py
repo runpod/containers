@@ -10,9 +10,11 @@ import http.server
 import importlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -552,14 +554,50 @@ class ExcludedDataCenter(unittest.TestCase):
         self.assertEqual(self._dc({"p0": "K3S-POC", "p1": "K3S-POC"}, excluded=""), "")
 
 
-class SlurmPlatformLogNoise(unittest.TestCase):
-    """A SLURM cluster's own daemons log `error:` on first boot; seen on dev."""
+class SlurmOnlyOnSlurmClusters(unittest.TestCase):
+    """The Slurm check runs when the cluster was created as SLURM, and a
+    TRAINING fallback must not show it as passed."""
 
-    LINES = [
+    NODES = Orchestration.NODES
+    _patch = Orchestration._patch
+
+    def _attempt(self, types):
+        m = self._patch()
+        with mock.patch.object(config, "CLUSTER_TYPES_OVERRIDE", types):
+            status = cluster_runner.test_cluster_pair("img", "L4", "g")
+        labels = [c.args[1] for c in m["run_simple_check"].call_args_list]
+        rows = {row[0]: row[1:] for row in cluster_report.REPORTS[-1]._table()[1]}
+        return status, labels, rows
+
+    def setUp(self):
+        saved = list(cluster_report.REPORTS)
+        self.addCleanup(cluster_report.REPORTS.__setitem__, slice(None), saved)
+
+    def test_slurm_cluster_runs_the_slurm_check_on_the_head(self):
+        status, cmds, rows = self._attempt("SLURM")
+        self.assertEqual(status, ("PASS", ""))
+        self.assertEqual(sum("srun -N2" in c for c in cmds), 1)
+        self.assertEqual(rows["Slurm: nodes idle, srun on all"], ["ok", "-"])
+        keys = list(rows)
+        self.assertEqual(keys.index("Slurm: nodes idle, srun on all"),
+                         keys.index("Grafana via proxy :8889") + 1)
+
+    def test_training_fallback_has_no_slurm_row(self):
+        _, cmds, rows = self._attempt("TRAINING")
+        self.assertFalse(any("srun" in c for c in cmds))
+        self.assertNotIn("Slurm: nodes idle, srun on all", rows)
+
+
+class SlurmLogScan(unittest.TestCase):
+    """Only a new slurmctld's missing-state lines are expected; the image
+    ships the Slurm a SLURM cluster runs, so its other errors are findings."""
+
+    FIRST_BOOT = [
         "Starting Jupyter Lab...",
-        "slurmctld: error:  mpi/pmix_v5: init: (null) [0]: mpi_pmix.c:193: "
-        "pmi/pmix: can not load PMIx library",
-        "slurmd: error: MPI: Cannot create context for mpi/pmix",
+        "slurmctld: error: Could not open node state file "
+        "/var/spool/slurmctld/node_state: No such file or directory",
+        "slurmctld: error: NOTE: Trying backup state save file. "
+        "Information may be lost!",
         "[cluster] post-start complete",
     ]
 
@@ -568,16 +606,59 @@ class SlurmPlatformLogNoise(unittest.TestCase):
              mock.patch.object(api, "load_api_key", return_value="k"):
             return checks.scan_pod_logs_for_errors("p")
 
-    def test_slurm_daemon_lines_are_ignored(self):
-        ok, report = self._scan(self.LINES)
+    def test_first_boot_state_lines_are_ignored(self):
+        ok, report = self._scan(self.FIRST_BOOT)
         self.assertTrue(ok, report)
-        self.assertIn("2 platform line(s) ignored", report)
+        self.assertIn("2 expected line(s) ignored", report)
 
-    def test_image_errors_are_still_caught(self):
-        ok, report = self._scan(self.LINES + ["grafana: ERROR failed to bind :3300"])
+    def test_other_slurm_errors_fail(self):
+        pmix = ("slurmctld: error:  mpi/pmix_v5: init: (null) [0]: "
+                "mpi_pmix.c:193: pmi/pmix: can not load PMIx library")
+        ok, report = self._scan(self.FIRST_BOOT + [pmix])
         self.assertFalse(ok)
-        self.assertIn("grafana", report)
-        self.assertNotIn("pmix", report)
+        self.assertIn("PMIx", report)
+        self.assertNotIn("node_state", report)
+
+
+@unittest.skipUnless(shutil.which("bash"), "needs bash")
+class SlurmCheck(unittest.TestCase):
+    """slurm_check_command against fake sinfo / srun on PATH."""
+
+    def _run(self, sinfo_out, srun_out, srun_rc=0):
+        bindir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, bindir)
+        fakes = (("sinfo", sinfo_out, 0), ("srun", srun_out, srun_rc))
+        for name, lines, rc in fakes:
+            path = os.path.join(bindir, name)
+            echoes = "".join(f"echo {shlex.quote(line)}\n" for line in lines)
+            with open(path, "w") as fh:
+                fh.write(f"#!/bin/bash\n{echoes}exit {rc}\n")
+            os.chmod(path, 0o755)
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+        return subprocess.run(
+            ["bash", "-c", cluster_checks.slurm_check_command(2, 1)],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+
+    def test_all_idle_and_srun_everywhere_passes(self):
+        r = self._run(["node-0 idle", "node-1 idle"], ["node-0", "node-1"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("slurm OK", r.stdout)
+
+    def test_unresponsive_node_fails(self):
+        r = self._run(["node-0 idle", "node-1 idle*"], ["node-0", "node-1"])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("1 of 2 Slurm nodes idle", r.stdout)
+
+    def test_srun_missing_a_node_fails(self):
+        r = self._run(["node-0 idle", "node-1 idle"], ["node-0"])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("did not run on node-1", r.stdout)
+
+    def test_srun_error_fails(self):
+        r = self._run(["node-0 idle", "node-1 idle"], ["srun: error: x"], srun_rc=1)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("srun exited 1", r.stdout)
 
 
 class ReportCard(unittest.TestCase):

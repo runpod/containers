@@ -201,13 +201,16 @@ LOG_ERROR_PATTERN = os.environ.get(
 )
 LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
 
-# Lines dropped before LOG_ERROR_PATTERN is applied: output the platform
-# injects, not the image. A SLURM-type Instant Cluster runs "Runpod SLURM
-# Init" in every container, and its slurmctld/slurmd log `error:` on every
-# first boot (no PMIx library, no saved state yet) — none of it is ours.
-# Empty disables the filter.
+# Lines dropped before LOG_ERROR_PATTERN is applied. Kept to messages that
+# are expected by construction, never to a whole daemon: the image ships the
+# Slurm a SLURM cluster runs, so every other slurmctld/slurmd error (PMIx
+# included) is a finding. A brand-new slurmctld has no saved state, so it
+# always logs "Could not open <x> state file" and "NOTE: Trying backup state
+# save file" once per state file. Empty disables the filter.
 LOG_ERROR_IGNORE = os.environ.get(
-    "LOG_ERROR_IGNORE", r"^\s*(?:slurmctld|slurmd|slurmdbd):"
+    "LOG_ERROR_IGNORE",
+    r"^\s*slurmctld: error: (?:Could not open \w+ state file"
+    r"|NOTE: Trying backup state save file)",
 )
 
 # System logs contain host-side failures that never reach container stdout:

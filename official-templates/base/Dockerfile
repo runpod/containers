@@ -171,13 +171,17 @@ RUN . /etc/os-release && \
 # runtime dependencies (libmunge2, libmariadb, ...) resolve automatically, as
 # recommended by https://slurm.schedmd.com/quickstart_admin.html. munge is
 # listed explicitly: the SchedMD packages only depend on libmunge2, not the
-# munge daemon and user that slurm-init.sh needs.
+# munge daemon and user that slurm-init.sh needs. libpmix2t64 is listed for
+# the same reason: the mpi/pmix plugin (built against libpmix-dev) dlopens
+# libpmix.so.2 at runtime, so no package depends on it, and without it
+# slurmctld/slurmd log "can not load PMIx library" and `srun --mpi=pmix` fails.
 # The slurm user/group get Debian's fixed UID/GID 64030, unless the parent
 # image already defines them (the NGC and ROCm bases ship a slurm group).
 COPY --from=slurm-builder /slurm-debs /tmp/slurm-debs
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         munge \
+        libpmix2t64 \
         /tmp/slurm-debs/slurm-smd_*.deb \
         /tmp/slurm-debs/slurm-smd-client_*.deb \
         /tmp/slurm-debs/slurm-smd-slurmctld_*.deb \

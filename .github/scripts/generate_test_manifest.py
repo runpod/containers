@@ -109,7 +109,7 @@ def render_yaml(groups: dict) -> str:
                 # Quote `<port>/<path>` entries so YAML keeps them as strings.
                 value = f'"{port}"' if "/" in str(port) else port
                 lines.append(f"    - {value}")
-        for list_key in ("pip_check_allow", "revoked_ca_names"):
+        for list_key in ("pip_check_allow", "revoked_ca_names", "cluster_types"):
             if body.get(list_key):
                 lines.append(f"    {list_key}:")
                 for entry in body[list_key]:
@@ -188,6 +188,7 @@ def build_groups(
     explicit_budget: bool = False,
     cluster_nodes: int = 2,
     cluster_gpus_per_node: int = 0,
+    cluster_types: list[str] | None = None,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -363,6 +364,8 @@ def build_groups(
         body: dict = {"images": refs, "cluster": True, "cluster_nodes": cluster_nodes}
         if cluster_gpus_per_node:
             body["cluster_gpus_per_node"] = cluster_gpus_per_node
+        if cluster_types:
+            body["cluster_types"] = list(cluster_types)
         if instances:
             body["instances"] = list(instances)
         return {"pytorch_cluster": _decorate(body, gpu_group=False)}
@@ -681,6 +684,15 @@ def main() -> int:
             "the smallest node size the GPU type offers."
         ),
     )
+    ap.add_argument(
+        "--cluster-types",
+        type=lambda raw: [t.strip().upper() for t in raw.split(",") if t.strip()],
+        default=None,
+        help=(
+            "createCluster types to try in order for --profile cluster, csv "
+            "(e.g. SLURM,TRAINING). Empty keeps tests/runpod_smoke's default."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -739,6 +751,7 @@ def main() -> int:
         cuda_versions=args.cuda_versions,
         cluster_nodes=args.cluster_nodes,
         cluster_gpus_per_node=args.cluster_gpus_per_node,
+        cluster_types=args.cluster_types,
     )
 
     if not groups:
