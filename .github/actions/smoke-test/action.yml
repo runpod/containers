@@ -536,6 +536,7 @@ runs:
         fi
         if [[ "${TEST_DCGM_EXPORTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-dcgm-exporter)
+        fi
         if [[ "${TEST_RAY,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-ray)
         fi
