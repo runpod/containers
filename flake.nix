@@ -1,5 +1,17 @@
+# runpod/containers: pinned static analysis, built with Nix.
+#
+# Quick start (see nix/README.md):
+#   nix develop                   # shell with every tool on PATH
+#   nix flake check               # the gated checks CI runs
+#   nix run .#lint-py             # one domain: lint-shell, lint-docker, lint-yaml, ...
+#   nix run .#lint-trivy          # one tool (nix flake show lists them all)
+#   nix run .#everything          # every tool
+#   nix fmt                       # format the Nix files
+#
+# Every tool is pinned by flake.lock; nothing is installed globally.
+
 {
-  description = "runpod/containers static analysis (Python, shell, Dockerfiles, YAML/GitHub Actions, JSON/TOML, Markdown, Nix, secrets, SAST, supply chain)";
+  description = "runpod/containers static analysis (Python, shell, Dockerfiles, YAML/GitHub Actions, JSON/TOML, Markdown, Nix, secrets, supply chain)";
 
   inputs = {
     # Channel tarball, as `nix flake init` now emits: no GitHub API calls, and
