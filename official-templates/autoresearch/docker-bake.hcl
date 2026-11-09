@@ -5,7 +5,7 @@
 # Which published runpod/base to build FROM — in-run base tag when base was
 # rebuilt in this run, else the last released base (see base.yml).
 variable "BASE_VERSION" {
-  default = "1.0.7"
+  default = "2.0.0"
 }
 
 variable "AUTORESEARCH_BUILDS" {
