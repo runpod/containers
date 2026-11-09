@@ -95,6 +95,7 @@ def render_yaml(groups: dict) -> str:
             "cluster",
             "cluster_nodes",
             "cluster_gpus_per_node",
+            "test_dcgm_exporter",
             "test_ray",
         ):
             if key in body:
@@ -176,6 +177,7 @@ def build_groups(
     test_virtualenv: bool = False,
     test_python_path: bool = False,
     test_autoresearch: bool = False,
+    test_dcgm_exporter: bool = False,
     test_ray: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
@@ -295,6 +297,8 @@ def build_groups(
             body["test_python_path"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
+        if test_dcgm_exporter:
+            body["test_dcgm_exporter"] = True
         if test_ray:
             body["test_ray"] = True
         if exclude_instances:
@@ -577,6 +581,15 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--test-dcgm-exporter",
+        action="store_true",
+        help=(
+            "Emit `test_dcgm_exporter: true`: scrape the in-pod dcgm-exporter "
+            "on :9400 and require the series the Grafana dashboards read, "
+            "with a hostname label. For runpod/pytorch-cluster only."
+        ),
+    )
+    ap.add_argument(
         "--test-ray",
         action="store_true",
         help=(
@@ -716,6 +729,7 @@ def main() -> int:
         test_virtualenv=args.test_virtualenv,
         test_python_path=args.test_python_path,
         test_autoresearch=args.test_autoresearch,
+        test_dcgm_exporter=args.test_dcgm_exporter,
         test_ray=args.test_ray,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,

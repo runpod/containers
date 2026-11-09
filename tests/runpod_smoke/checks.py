@@ -4,8 +4,8 @@
   * cuda_check_command / run_cuda_check — torch.cuda or nvidia-smi assertion
   * jupyter_check_command / run_jupyter_check — in-pod Jupyter probe over SSH
   * run_jupyter_proxy_check — public proxy probe from the test machine
-  * pip_check / ca_certs / python_tls / uv / virtualenv command builders —
-    opt-in image hygiene checks, all run through `run_simple_check`
+  * pip_check / ca_certs / python_tls / uv / virtualenv / dcgm_exporter
+    command builders — opt-in image checks, all run through `run_simple_check`
  * REST API v2 log helpers / dump_pod_logs — diagnose failures before termination
 
 Selection of the CUDA check is driven by the IMAGE REF, not the manifest
@@ -829,6 +829,93 @@ def autoresearch_check_command(
         f"prepare.MAX_SEQ_LEN = {seq_len}; prepare.EVAL_TOKENS = {eval_tokens}; "
         "import runpy; runpy.run_path('train.py', run_name='__main__')\"; "
         "echo 'autoresearch train.py ok'"
+    )
+
+
+# Series the Grafana dashboards resolve their template variables from
+# (`label_values(<series>, hostname)` in official-templates/pytorch-cluster/
+# config/dashboards). If one of these stops carrying a `hostname` label, the
+# Node dropdowns come up empty and every DCGM panel goes blank.
+DCGM_DASHBOARD_SERIES: tuple[str, ...] = (
+    "DCGM_FI_DEV_GPU_UTIL",
+    "DCGM_FI_DEV_FB_USED",
+)
+
+
+def dcgm_exporter_check_command(
+    attempts: int = 20, interval: int = 5,
+) -> str:
+    """Scrape the in-pod dcgm-exporter and require the dashboard labels.
+
+    The exporter is a binary lifted from NVIDIA's distroless image and run
+    against the libdcgm installed from apt, so the failures this catches —
+    the binary not starting against our libdcgm, or a label coming out
+    renamed (4.8.3 turned `Hostname` into `hostname`) — leave the pod booting
+    fine and the dashboards silently empty.
+
+    supervisord starts the exporter at boot and DCGM takes a while to come
+    up, so the scrape is retried for up to `attempts * interval` seconds
+    (plus curl's own 3s cap per try); keep that under the SSH timeout. On
+    failure it prints the supervisor state and the exporter's stderr.
+
+    On a MIG slice embedded DCGM can't initialise (no CAP_SYS_ADMIN), so
+    /post_start.sh deliberately leaves the exporter stopped. There the check
+    only asserts it is not crash-looping; detection mirrors `is_mig_gpu` in
+    official-templates/pytorch-cluster/post_start.sh.
+    """
+    series = _sh_quote_list(DCGM_DASHBOARD_SERIES)
+    return (
+        "set -e; "
+        "dcgm-exporter --version 2>&1 | head -n 1 || true; "
+        # Installed DCGM packages only (dpkg also lists known-but-absent ones).
+        "dpkg-query -W -f '${Status} ${Package} ${Version}\\n' "
+        "  'datacenter-gpu-manager-4-*' 2>/dev/null "
+        "  | awk '$3 == \"installed\" {print $4, $5}' || true; "
+        "case \"${NVIDIA_VISIBLE_DEVICES:-}\" in *MIG-*) MIG=1;; *) MIG=;; esac; "
+        "if [ -z \"$MIG\" ] && nvidia-smi -L 2>/dev/null | grep -q 'MIG'; then "
+        "  MIG=1; "
+        "fi; "
+        "if [ -n \"$MIG\" ]; then "
+        "  STATUS=$(supervisorctl status dcgm-exporter 2>&1 || true); "
+        "  echo \"$STATUS\"; "
+        "  case \"$STATUS\" in "
+        "    *STOPPED*) echo 'dcgm-exporter skipped on MIG slice "
+        "(embedded DCGM unsupported); not crash-looping'; exit 0;; "
+        "  esac; "
+        "  echo 'FAIL: MIG slice but dcgm-exporter was started "
+        "(expected STOPPED)'; "
+        "  tail -n 20 /var/log/supervisor/dcgm-exporter.err 2>&1 || true; "
+        "  exit 1; "
+        "fi; "
+        "OK=; MISSING=; "
+        f"for i in $(seq 1 {attempts}); do "
+        # Reset per attempt so the final message describes the last try.
+        "  MISSING=; "
+        # `if` so a failed scrape is a retry, not a `set -e` exit.
+        "  if BODY=$(curl -fsS --max-time 3 http://localhost:9400/metrics 2>&1); then "
+        f"    for s in {series}; do "
+        "      if ! printf '%s\\n' \"$BODY\" "
+        "          | grep -q \"^$s{.*hostname=\\\"[^\\\"]\"; then "
+        "        MISSING=\"$MISSING $s\"; "
+        "      fi; "
+        "    done; "
+        "    if [ -z \"$MISSING\" ]; then OK=1; break; fi; "
+        "  fi; "
+        f"  sleep {interval}; "
+        "done; "
+        "if [ -z \"$OK\" ]; then "
+        "  if [ -n \"$MISSING\" ]; then "
+        "    echo \"FAIL: no series with a hostname label for:$MISSING\"; "
+        "    printf '%s\\n' \"$BODY\" | grep -m 3 '^DCGM_FI_DEV_GPU_UTIL' || true; "
+        "  else "
+        "    echo \"FAIL: dcgm-exporter not answering on :9400: $BODY\"; "
+        "  fi; "
+        "  supervisorctl status dcgm-exporter 2>&1 || true; "
+        "  tail -n 20 /var/log/supervisor/dcgm-exporter.err 2>&1 || true; "
+        "  exit 1; "
+        "fi; "
+        "printf '%s\\n' \"$BODY\" | grep -m 1 '^DCGM_FI_DEV_GPU_UTIL{'; "
+        "echo 'dcgm-exporter ok: dashboard series carry a hostname label'"
     )
 
 

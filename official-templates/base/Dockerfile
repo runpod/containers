@@ -1,4 +1,34 @@
 ARG BASE_IMAGE=non-existing
+ARG UBUNTU_VERSION=non-existing
+
+# ── Slurm builder ───
+# Built on plain Ubuntu, not BASE_IMAGE: Slurm only depends on the Ubuntu
+# release, so all CUDA variants of one release share a single cached build.
+# This leaves out the NVML GPU plugin (AutoDetect=nvml), which the cluster's
+# gres.conf does not use.
+ARG SLURM_VERSION=26.05.2
+ARG SLURM_SHA256=01151f233dde64d95cc4ca96931aea3d4a2cad372ed9ad86a8b9f6b674600c3b
+FROM ubuntu:${UBUNTU_VERSION} AS slurm-builder
+ARG SLURM_VERSION
+ARG SLURM_SHA256
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+# mk-build-deps installs the build deps from debian/control; debuild --no-lintian builds the .debs into /usr/src.
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+        build-essential ca-certificates curl bzip2 fakeroot devscripts equivs && \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/slurm.tar.bz2 \
+        "https://download.schedmd.com/slurm/slurm-${SLURM_VERSION}.tar.bz2" && \
+    echo "${SLURM_SHA256}  /tmp/slurm.tar.bz2" | sha256sum -c - && \
+    tar -xaf /tmp/slurm.tar.bz2 -C /usr/src
+WORKDIR /usr/src/slurm-${SLURM_VERSION}
+RUN mk-build-deps --install \
+        --tool='apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes' \
+        debian/control && \
+    debuild --no-lintian -b -uc -us && \
+    mkdir /slurm-debs && \
+    cp /usr/src/*.deb /slurm-debs/
+
 FROM ${BASE_IMAGE}
 
 ARG RP_SKIP_PYTHON
@@ -99,6 +129,65 @@ RUN . /etc/os-release && \
       echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
       dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
     fi
+
+# Same stale-snapshot problem for apt (CVE-2026-109518, HIGH), fixed in the
+# security pocket on 2026-11-04. apt, libapt-pkg and apt-utils pin each other's
+# exact version, so they are installed together; apt-utils only when the parent
+# image ships it (the NGC base does). Checksummed, and only when newer.
+# debs is split on purpose: it is a list of file paths.
+# hadolint ignore=SC2086
+RUN . /etc/os-release && \
+    case "${VERSION_ID}" in \
+      24.04) ver="2.8.4ubuntu0.1"; lib="libapt-pkg6.0t64"; \
+             sha_apt=ad2ea7f107f250ba88b0bfdba31812a341e3247589647aa2b03b9dc4e8abf8ed; \
+             sha_lib=a50f3e68a793f90b05f44a4b5f2f59f3ec7687e39b5d8bbd1da44c84671fa3d6; \
+             sha_utils=244d4203093e4e47c40e7810bdecaace97501998487fc5fcd6c0a5fab6d223a3 ;; \
+      26.04) ver="3.2.1ubuntu0.1"; lib="libapt-pkg7.0"; \
+             sha_apt=0de729b8fe0e1c67c04e8e8d5bd6e0420dbd47f75b93f0b71c8e740edc2d5ffc; \
+             sha_lib=94e5d41303265b66af0f8c70ade18bfb77260ad286edee6c8045faddef82b94c; \
+             sha_utils=b84558a96657c2c6e9f612f4ac4d4da46536003cca06d3f9120037419b414176 ;; \
+      *) echo "no pinned apt for ${VERSION_ID}" && exit 1 ;; \
+    esac && \
+    cur="$(dpkg-query -W -f='${Version}' apt 2>/dev/null || echo 0)" && \
+    if dpkg --compare-versions "$cur" lt "$ver"; then \
+      pkgs="apt:${sha_apt} ${lib}:${sha_lib}" && \
+      if dpkg-query -W -f='${Status}' apt-utils 2>/dev/null | grep -q '^install ok installed$'; then \
+        pkgs="${pkgs} apt-utils:${sha_utils}"; \
+      fi && \
+      debs="" && \
+      for p in ${pkgs}; do \
+        deb="${p%%:*}_${ver}_amd64.deb" && \
+        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://security.ubuntu.com/ubuntu/pool/main/a/apt/${deb}" && \
+        echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
+        debs="${debs} /tmp/${deb}"; \
+      done && \
+      dpkg -i ${debs} && rm -f ${debs}; \
+    fi && \
+    dpkg-query -W -f='${Package} ${Version}\n' apt "${lib}"
+
+# Install SchedMD Slurm from the .deb packages built in the slurm-builder stage
+# (replaces Ubuntu's stock slurm-wlm). We install via apt (not raw dpkg) so the
+# runtime dependencies (libmunge2, libmariadb, ...) resolve automatically, as
+# recommended by https://slurm.schedmd.com/quickstart_admin.html. munge is
+# listed explicitly: the SchedMD packages only depend on libmunge2, not the
+# munge daemon and user that slurm-init.sh needs.
+# The slurm user/group get Debian's fixed UID/GID 64030, unless the parent
+# image already defines them (the NGC and ROCm bases ship a slurm group).
+COPY --from=slurm-builder /slurm-debs /tmp/slurm-debs
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+        munge \
+        /tmp/slurm-debs/slurm-smd_*.deb \
+        /tmp/slurm-debs/slurm-smd-client_*.deb \
+        /tmp/slurm-debs/slurm-smd-slurmctld_*.deb \
+        /tmp/slurm-debs/slurm-smd-slurmd_*.deb \
+        /tmp/slurm-debs/slurm-smd-slurmdbd_*.deb && \
+    { getent group slurm >/dev/null || groupadd --system --gid 64030 slurm; } && \
+    { id -u slurm >/dev/null 2>&1 || useradd --system --uid 64030 --gid slurm \
+        --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin slurm; } && \
+    apt-get clean && \
+    rm -rf /tmp/slurm-debs /var/lib/apt/lists/*
 
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
 # Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
