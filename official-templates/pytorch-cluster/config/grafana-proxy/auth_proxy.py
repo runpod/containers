@@ -67,6 +67,11 @@ def token_ok(token):
     return bool(SECRET) and bool(token) and hmac.compare_digest(token, SECRET)
 
 
+# Set only after token_ok, so it carries SECRET, which a valid token equals,
+# never bytes from the request.
+SESSION_COOKIE = f"{COOKIE}={SECRET}; Path=/; HttpOnly; Secure; SameSite=Lax"
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -76,10 +81,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(302)
         self.send_header("Location", LOGIN_RETURN_URL)
         if token_ok(token):
-            self.send_header(
-                "Set-Cookie",
-                f"{COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax",
-            )
+            self.send_header("Set-Cookie", SESSION_COOKIE)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -122,10 +124,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header(k, v)
         if ok and from_url:
             # Fresh valid token in the URL -> (re)establish the session cookie.
-            self.send_header(
-                "Set-Cookie",
-                f"{COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax",
-            )
+            self.send_header("Set-Cookie", SESSION_COOKIE)
         elif not ok and (had_cookie or resp.status == 401):
             # Stale/invalid token cookie (e.g. secret rotated on redeploy) -> purge
             # it so the browser stops looping and the ?token= flow can recover.
