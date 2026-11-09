@@ -24,6 +24,12 @@ Env (all optional):
   GRAFANA_UPSTREAM    default 127.0.0.1:3300
   GRAFANA_PROXY_USER  Grafana username to log in as (default: runpod)
   AUTH_COOKIE         cookie name (default: cluster_auth)
+  LOGIN_RETURN_URL    when set, GET /runpod-login?token= sets the session
+                      cookie (on a valid token) and redirects here, so another
+                      service's login can sign Grafana in on the way (the
+                      ray-cluster dashboard does, for its embedded panels).
+                      Fixed by the image, never taken from the request, so it
+                      can't be an open redirect.
 """
 import hmac
 import http.client
@@ -38,6 +44,8 @@ UPSTREAM = os.environ.get("GRAFANA_UPSTREAM", "127.0.0.1:3300")
 SECRET = os.environ.get("GRAFANA_PASSWORD") or os.environ.get("JUPYTER_PASSWORD", "")
 USER = os.environ.get("GRAFANA_PROXY_USER", "runpod")
 COOKIE = os.environ.get("AUTH_COOKIE", "cluster_auth")
+LOGIN_PATH = "/runpod-login"
+LOGIN_RETURN_URL = os.environ.get("LOGIN_RETURN_URL", "")
 
 # Hop-by-hop headers plus ones we set/strip ourselves.
 DROP = {
@@ -62,9 +70,26 @@ def token_ok(token):
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    def _login(self, token):
+        # Back to LOGIN_RETURN_URL even on a bad token: that service shows its
+        # own prompt, and Grafana its login wall when next opened.
+        self.send_response(302)
+        self.send_header("Location", LOGIN_RETURN_URL)
+        if token_ok(token):
+            self.send_header(
+                "Set-Cookie",
+                f"{COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax",
+            )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _proxy(self):
-        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        url = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(url.query)
         url_token = params.get("token", [None])[0]
+        if LOGIN_RETURN_URL and self.command == "GET" and url.path == LOGIN_PATH:
+            self._login(url_token)
+            return
         from_url = url_token is not None
         cookie_token = cookie_value(self.headers.get("Cookie"), COOKIE)
         had_cookie = cookie_token is not None

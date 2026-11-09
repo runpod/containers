@@ -184,8 +184,21 @@ if [[ "$role" == head ]]; then
     if [[ "${RAY_CLUSTER_METRICS:-1}" != "0" ]]; then
         export RAY_PROMETHEUS_HOST=${RAY_PROMETHEUS_HOST:-http://127.0.0.1:9090}
         export RAY_GRAFANA_HOST=${RAY_GRAFANA_HOST:-http://127.0.0.1:3300}
-        if [[ -n "${RUNPOD_POD_ID:-}" ]]; then
-            export RAY_GRAFANA_IFRAME_HOST=${RAY_GRAFANA_IFRAME_HOST:-https://${RUNPOD_POD_ID}-8889.${RUNPOD_PROXY_BASE:-proxy.runpod.net}}
+        # Grafana's token proxy checks the cluster token, so one ?token= link
+        # signs in both.
+        if [[ "$RAY_AUTH_MODE" == token && -z "${GRAFANA_PASSWORD:-}" ]]; then
+            GRAFANA_PASSWORD=${RAY_AUTH_TOKEN:-$(< "$RAY_AUTH_TOKEN_PATH")}
+            export GRAFANA_PASSWORD
+        fi
+        if [[ -n "${RUNPOD_POD_ID:-}" && -z "${RAY_GRAFANA_IFRAME_HOST:-}" ]]; then
+            proxy_base=${RUNPOD_PROXY_BASE:-proxy.runpod.net}
+            export RAY_GRAFANA_IFRAME_HOST=https://${RUNPOD_POD_ID}-8889.$proxy_base
+            # The panels are on Grafana's origin, so they need its cookie too:
+            # the front door's ?token= login bounces through the proxy's
+            # /runpod-login, which sets it and returns to the dashboard.
+            export LOGIN_RETURN_URL=https://${RUNPOD_POD_ID}-8266.$proxy_base/
+            printf 'set $after_login "%s/runpod-login?token=$arg_token";\n' "$RAY_GRAFANA_IFRAME_HOST" \
+                > /etc/nginx/ray-dashboard-login.conf
         fi
     fi
 
