@@ -18,10 +18,11 @@ import ../lib/maybe-tool.nix { inherit pkgs lib; } {
       header = "dotenv-linter";
       globs = [
         "*.env"
-        ".env*"
+        ".env"
+        ".env.*"
         "**/*.env"
       ];
       emptyMessage = "(no .env files tracked)";
-      command = ''dotenv-linter "''${files[@]}"'';
+      command = ''dotenv-linter check "''${files[@]}"'';
     };
 }

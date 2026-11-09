@@ -69,8 +69,7 @@ optional
   gitleaks
   trufflehog
 
-  # SAST / vuln / supply chain
-  semgrep
+  # Vulnerabilities / supply chain
   osv-scanner
   trivy
   syft

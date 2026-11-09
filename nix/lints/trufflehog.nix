@@ -11,5 +11,6 @@ import ../lib/mk-lint.nix { inherit pkgs lib; } {
     pkgs.git
   ];
   header = "trufflehog filesystem";
-  command = "trufflehog filesystem . --no-update --fail";
+  # nixpkgs' wrapper already passes --no-update, and repeating it is an error.
+  command = "trufflehog filesystem . --fail";
 }

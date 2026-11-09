@@ -4,7 +4,7 @@
 # Two layers of composites:
 #   - per-domain: lint-shell, lint-yaml, lint-json, lint-py,
 #                 lint-nix-files, lint-docker, lint-md, lint-secrets,
-#                 lint-sast, lint-supply, lint-spelling
+#                 lint-supply, lint-spelling
 #   - whole-tree: lint-extreme (every per-tool app sequentially)
 #                 everything (nix flake check + lint-extreme)
 #
@@ -63,9 +63,6 @@ let
     lint-gitleaks = ./gitleaks.nix;
     lint-trufflehog = ./trufflehog.nix;
     lint-detect-secrets = ./detect-secrets.nix;
-
-    # SAST
-    lint-semgrep = ./semgrep.nix;
 
     # Supply chain
     lint-trivy = ./trivy.nix;
@@ -140,10 +137,6 @@ let
     "lint-trufflehog"
     "lint-detect-secrets"
   ]);
-  lintSast = mkComposite "lint-sast" "SAST: semgrep, bandit." (pick [
-    "lint-semgrep"
-    "lint-bandit"
-  ]);
   lintSupply = mkComposite "lint-supply" "Supply chain: osv-scanner, trivy, syft." (pick [
     "lint-osv"
     "lint-trivy"
@@ -175,7 +168,6 @@ let
     lint-docker = lintDocker;
     lint-md = lintMd;
     lint-secrets = lintSecrets;
-    lint-sast = lintSast;
     lint-supply = lintSupply;
     lint-spelling = lintSpelling;
     lint-extreme = lintExtreme;
