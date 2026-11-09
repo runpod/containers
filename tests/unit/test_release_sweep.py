@@ -170,8 +170,24 @@ class PlanShaping(_ConfigReset):
         ]
         order = [(j[0], j[2][0], j[3]) for j in T._spread_cuda_versions(jobs)]
         self.assertEqual(order, [
-            ("a", "B200", "13.0"), ("a", "L4", "12.8"), ("b", "B200", "13.0"),
+            # depth 0: first-listed GPU for every image, then the next GPU
+            ("a", "B200", "13.0"), ("b", "B200", "13.0"), ("a", "L4", "12.8"),
+            # depth 1
             ("a", "B200", "12.9"), ("b", "B200", "12.9"),
+        ])
+
+    def test_last_family_is_not_starved(self):
+        # Manifest order puts every 'early' job before any 'late' one; under
+        # a cap that only fits the first few, 'late' must still get its
+        # top-priority GPU.
+        jobs = [
+            (img, "g", [gpu], "13.0", "SECURE")
+            for img in ("early1", "early2", "late")
+            for gpu in ("RTX 5080", "B200", "L4")
+        ]
+        first_three = [(j[0], j[2][0]) for j in T._spread_cuda_versions(jobs)[:3]]
+        self.assertEqual(first_three, [
+            ("early1", "RTX 5080"), ("early2", "RTX 5080"), ("late", "RTX 5080"),
         ])
 
     def test_gpu_id_for_results(self):

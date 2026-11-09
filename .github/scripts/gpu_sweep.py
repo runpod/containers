@@ -52,6 +52,16 @@ ALLOWED_CHECKS = {
 
 STATE_RANK = {"fail": 2, "pass": 1, "untested": 0}
 
+# Per-family image sampling (`sample:` in gpu-sweep.yml).
+#   all          every image the release built (default)
+#   torch-range  per CUDA build, only the oldest and newest torch variant.
+#                The ends are where GPU breakage lives: old torch lacks
+#                kernels for new architectures (torch 2.6 has no sm_120),
+#                new torch is where regressions land. The variants between
+#                them share the CUDA stack and are reported as represented.
+SAMPLE_MODES = {"all", "torch-range"}
+TORCH_TAG_RE = re.compile(r"-torch(?P<code>\d{3,})(?=-|$)")
+
 
 # ---------------------------------------------------------------------------
 # plan
@@ -79,6 +89,10 @@ def load_config(path: Path) -> dict:
             raise ValueError(f"{path}: family {fam!r} has unknown checks {sorted(bad)}")
         if body.get("min_cuda") and not re.fullmatch(r"\d+\.\d+", str(body["min_cuda"])):
             raise ValueError(f"{path}: family {fam!r} min_cuda must be X.Y")
+        if str(body.get("sample") or "all") not in SAMPLE_MODES:
+            raise ValueError(
+                f"{path}: family {fam!r} sample must be one of {sorted(SAMPLE_MODES)}"
+            )
     return {
         "gpus": gpus,
         "cloud": str(cfg.get("cloud") or "ALL").upper(),
@@ -122,6 +136,45 @@ def repo_of(ref: str) -> str:
     return name
 
 
+def torch_version(ref: str) -> tuple[int, ...] | None:
+    """'...-cu1300-torch2121-...' -> (2, 12, 1); None without a torch tag.
+    The code is major, minor, patch with the minor taking the middle digits:
+    torch280 is 2.8.0, torch2130 is 2.13.0."""
+    m = TORCH_TAG_RE.search(ref)
+    if not m:
+        return None
+    code = m.group("code")
+    return (int(code[0]), int(code[1:-1]), int(code[-1]))
+
+
+def sample_torch_range(items: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Keep the oldest and newest torch variant of each image that differs
+    only in its torch version (same family, CUDA build, OS). Returns
+    (kept, dropped); each dropped entry names the images representing it."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    kept: list[dict] = []
+    for item in items:
+        if torch_version(item["image"]) is None:
+            kept.append(item)
+            continue
+        key = (item["family"], TORCH_TAG_RE.sub("-torch*", item["image"]))
+        groups.setdefault(key, []).append(item)
+    dropped: list[dict] = []
+    for members in groups.values():
+        members.sort(key=lambda i: torch_version(i["image"]))
+        ends = [members[0]] if len(members) == 1 else [members[0], members[-1]]
+        kept.extend(ends)
+        for item in members[1:-1]:
+            dropped.append({
+                "image": item["image"],
+                "reason": "sampled out (torch-range): same CUDA build as the oldest and newest torch variants, which were tested",
+                "represented_by": [e["image"] for e in ends],
+            })
+    order = {item["image"]: n for n, item in enumerate(items)}
+    kept.sort(key=lambda i: order[i["image"]])
+    return kept, dropped
+
+
 def plan(cfg: dict, graph: dict, released: dict[str, str], refs: list[str]) -> dict:
     """Pick the images to sweep and say why the rest were left out."""
     repo_to_family = {
@@ -151,6 +204,12 @@ def plan(cfg: dict, graph: dict, released: dict[str, str], refs: list[str]) -> d
             "release_tag": released[family],
             "cuda_floor": str(floor),
         })
+    sampled = [i for i in images if cfg["families"][i["family"]].get("sample") == "torch-range"]
+    if sampled:
+        kept, dropped = sample_torch_range(sampled)
+        keep = {i["image"] for i in kept}
+        images = [i for i in images if i["image"] in keep or i not in sampled]
+        skipped.extend(dropped)
     return {"images": images, "skipped": skipped}
 
 

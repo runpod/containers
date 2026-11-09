@@ -45,14 +45,24 @@ max_parallel: 4
 #   min_cuda  floor for tags with no CUDA marker (NGC nvidia-pytorch)
 #   checks    extra GPU-relevant manifest checks; GPU-independent hygiene
 #             (pip check, CA certs, uv) stays in the one-GPU smoke test.
+#   sample    `torch-range`: per CUDA build, sweep only the oldest and newest
+#             torch variant. Old torch is where new architectures lack
+#             kernels, new torch is where regressions land; the variants in
+#             between share the CUDA stack. A pytorch release drops from ~28
+#             images to 8, which is what lets the cap cover the matrix.
+#             Dropped images are listed in the result with the images that
+#             represent them. Default `all`.
 families:
   base: {}
   pytorch:
     checks: [test_torch_packages]
+    sample: torch-range
   pytorch-cluster:
     checks: [test_torch_packages]
+    sample: torch-range
   ray-cluster:
     checks: [test_ray]
+    sample: torch-range
   autoresearch: {}
   comfyui:
     checks: [test_comfyui]

@@ -85,6 +85,43 @@ class Plan(unittest.TestCase):
         self.assertIs(manifest["sweep_pytorch"]["test_torch_packages"], True)
         self.assertEqual(manifest["sweep_nvidia_pytorch"]["min_cuda_version"], "13.0")
 
+    def test_torch_version_parsing(self):
+        self.assertEqual(S.torch_version("runpod/pytorch:2.0.0-cu1300-torch2121-ubuntu2404"), (2, 12, 1))
+        self.assertEqual(S.torch_version("runpod/pytorch:2.0.0-cu1300-torch280-ubuntu2404"), (2, 8, 0))
+        self.assertEqual(S.torch_version("runpod/pytorch:2.0.0-cu1300-torch2130-ubuntu2404"), (2, 13, 0))
+        self.assertIsNone(S.torch_version(BASE_GPU))
+
+    def test_torch_range_keeps_oldest_and_newest_per_cuda(self):
+        cfg = {**CFG, "families": {**CFG["families"], "pytorch": {"sample": "torch-range"}}}
+        refs = [
+            f"runpod/pytorch:2.0.0-cu{cu}-torch{t}-ubuntu2404"
+            for cu in ("1281", "1300")
+            for t in ("260", "280", "2121", "291")
+        ] + ["runpod/pytorch:2.0.0-cu1320-torch2130-ubuntu2404", BASE_GPU]
+        out = S.plan(cfg, GRAPH, {"pytorch": "pytorch-v2.0.0", "base": "base-v2.0.0"}, refs)
+        picked = sorted(i["image"].split(":")[1] for i in out["images"])
+        self.assertEqual(picked, sorted([
+            "2.0.0-cu1281-torch260-ubuntu2404", "2.0.0-cu1281-torch2121-ubuntu2404",
+            "2.0.0-cu1300-torch260-ubuntu2404", "2.0.0-cu1300-torch2121-ubuntu2404",
+            # a lone variant is its own range
+            "2.0.0-cu1320-torch2130-ubuntu2404",
+            # families without `sample` are untouched
+            "1.2.0-cuda1281-ubuntu2404",
+        ]))
+        dropped = {s["image"]: s for s in out["skipped"] if "represented_by" in s}
+        self.assertEqual(len(dropped), 4)
+        rep = dropped["runpod/pytorch:2.0.0-cu1300-torch280-ubuntu2404"]["represented_by"]
+        self.assertEqual(rep, [
+            "runpod/pytorch:2.0.0-cu1300-torch260-ubuntu2404",
+            "runpod/pytorch:2.0.0-cu1300-torch2121-ubuntu2404",
+        ])
+
+    def test_config_rejects_unknown_sample_mode(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as fh:
+            fh.write("gpus: [B200]\nspend_cap_usd: 5\nfamilies:\n  pytorch:\n    sample: newest\n")
+        with self.assertRaisesRegex(ValueError, "sample must be one of"):
+            S.load_config(Path(fh.name))
+
     def test_config_requires_a_cap(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as fh:
             fh.write("gpus: [B200]\nfamilies: {}\n")

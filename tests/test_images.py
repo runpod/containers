@@ -1187,17 +1187,23 @@ def _spread_cuda_versions(jobs: list[Job]) -> list[Job]:
     """Order jobs so a spend cap cuts the least informative ones.
 
     Each (image, GPU) gets its newest CUDA version first, then every pair
-    gets its second version, and so on. Jobs run in this order and a pod
-    that doesn't fit the cap is never created, so the cap trims depth on
-    the CUDA axis before it drops an image x GPU pair entirely.
+    gets its second version, and so on. Within one depth, GPUs go in the
+    order they were listed (the sweep config's priority order) and every
+    image gets that GPU before any image gets the next one. Jobs run in this
+    order and a pod that doesn't fit the cap is never created, so the cap
+    trims CUDA depth first, then the lowest-priority GPUs — never whole
+    families that happened to come last in the manifest.
     """
-    seen: dict[tuple, int] = defaultdict(int)
+    depth: dict[tuple, int] = defaultdict(int)
+    gpu_rank: dict[tuple, int] = {}
     ranked = []
     for index, job in enumerate(jobs):
-        key = (job[0], tuple(job[2]))
-        ranked.append((seen[key], index, job))
-        seen[key] += 1
-    return [job for _rank, _index, job in sorted(ranked, key=lambda r: r[:2])]
+        gpus = tuple(job[2])
+        gpu_rank.setdefault(gpus, len(gpu_rank))
+        key = (job[0], gpus)
+        ranked.append((depth[key], gpu_rank[gpus], index, job))
+        depth[key] += 1
+    return [r[-1] for r in sorted(ranked, key=lambda r: r[:3])]
 
 
 def _log_spend_plan(jobs: list[Job]) -> None:
