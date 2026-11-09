@@ -7,6 +7,41 @@ JSON / TOML, Markdown, and the flake's own Nix.
 
 No global installs are needed — every tool is pinned by `flake.lock`.
 
+## Install Nix on macOS
+
+Tested on Apple Silicon (macOS 27.2) with Determinate Nix 2.35.
+
+1. Install [Determinate Nix](https://docs.determinate.systems/getting-started):
+   either the signed graphical installer, `Determinate.pkg` from
+   [install.determinate.systems](https://install.determinate.systems), or:
+
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+     | sh -s -- install --determinate
+   ```
+
+   It puts `/nix` on its own APFS volume, which survives macOS updates,
+   and turns flakes on. Open a new terminal and check with `nix --version`.
+   To remove it: `/nix/nix-installer uninstall`.
+2. Optional: load the dev shell automatically on `cd` with direnv.
+
+   ```sh
+   brew install direnv
+   echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
+   # then, in a new terminal, at the repo root:
+   direnv allow
+   ```
+
+3. Run the [quick start](#quick-start) below.
+
+On macOS, everything in this harness works: the checks, `nix develop` and
+the `lint-*` apps. The container images are Linux-only (`x86_64-linux`),
+so build them on Linux or through a Linux remote builder.
+
+With the upstream installer from nixos.org instead, enable flakes first:
+add `experimental-features = nix-command flakes` to
+`~/.config/nix/nix.conf`.
+
 ## Quick start
 
 ```sh
