@@ -26,10 +26,25 @@ runs:
           cosign sign --yes "${ref}"
           echo "::endgroup::"
 
+          # Docker Hub is eventually consistent: right after `cosign sign`
+          # pushes the .sig tag, a read can still miss it ("no signatures
+          # found"). Retry with backoff; a real signature or identity problem
+          # still fails after the last attempt.
           echo "::group::Verify ${ref}"
-          cosign verify \
-            --certificate-identity-regexp "${IDENTITY_REGEX}" \
-            --certificate-oidc-issuer "${OIDC_ISSUER}" \
-            "${ref}"
+          attempt=1
+          max_attempts=5
+          until cosign verify \
+              --certificate-identity-regexp "${IDENTITY_REGEX}" \
+              --certificate-oidc-issuer "${OIDC_ISSUER}" \
+              "${ref}"; do
+            if (( attempt >= max_attempts )); then
+              echo "::error::cosign verify failed for ${ref} after ${attempt} attempts"
+              exit 1
+            fi
+            delay=$(( 5 * 2 ** (attempt - 1) ))
+            echo "verify attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s"
+            sleep "${delay}"
+            attempt=$(( attempt + 1 ))
+          done
           echo "::endgroup::"
         done
