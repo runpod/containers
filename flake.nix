@@ -1,4 +1,4 @@
-# runpod/containers: pinned static analysis, built with Nix.
+# runpod/containers: pinned static analysis and Nix-built images.
 #
 # Quick start (see nix/README.md):
 #   nix develop                   # shell with every tool on PATH
@@ -8,10 +8,15 @@
 #   nix run .#everything          # every tool
 #   nix fmt                       # format the Nix files
 #
+# Images (x86_64-linux; see nix/images/README.md):
+#   nix build .#nix-pytorch-cuda && ./result | docker load
+#   nix run .#image-size          # build them all, compare with Docker Hub
+#   nix run .#image-smoke -- nix-base-cpu   # SSH, Jupyter, nginx checks in Docker
+#
 # Every tool is pinned by flake.lock; nothing is installed globally.
 
 {
-  description = "runpod/containers static analysis (Python, shell, Dockerfiles, YAML/GitHub Actions, JSON/TOML, Markdown, Nix, secrets, supply chain)";
+  description = "runpod/containers static analysis (Python, shell, Dockerfiles, YAML/GitHub Actions, JSON/TOML, Markdown, Nix, secrets, supply chain) and Nix-built images";
 
   inputs = {
     # Channel tarball, as `nix flake init` now emits: no GitHub API calls, and
