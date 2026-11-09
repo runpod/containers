@@ -197,6 +197,7 @@ if [[ "$role" == head ]]; then
             # the front door's ?token= login bounces through the proxy's
             # /runpod-login, which sets it and returns to the dashboard.
             export LOGIN_RETURN_URL=https://${RUNPOD_POD_ID}-8266.$proxy_base/
+            # shellcheck disable=SC2016 # $after_login and $arg_token are nginx's
             printf 'set $after_login "%s/runpod-login?token=$arg_token";\n' "$RAY_GRAFANA_IFRAME_HOST" \
                 > /etc/nginx/ray-dashboard-login.conf
         fi
