@@ -23,7 +23,6 @@ pkgs.mkShell {
     echo "    nix run .#lint-docker      # hadolint"
     echo "    nix run .#lint-md          # markdownlint, mdformat, vale, lychee"
     echo "    nix run .#lint-secrets     # gitleaks, trufflehog, detect-secrets"
-    echo "    nix run .#lint-sast        # semgrep, bandit"
     echo "    nix run .#lint-supply      # osv-scanner, trivy, syft"
     echo "    nix run .#lint-spelling    # cspell, typos, codespell"
     echo "    nix run .#lint-extreme     # every lint sequentially"

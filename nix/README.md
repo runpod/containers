@@ -45,7 +45,7 @@ nix run .#everything
   yet because the tree has pre-existing findings; run them with
   `nix run .#lint-yaml` and `nix run .#lint-md`.
 - **`nix run .#lint-*`** — manual apps, including tools that need the
-  network (trivy, osv-scanner, lychee, trufflehog, semgrep) or the
+  network (trivy, osv-scanner, lychee, trufflehog) or the
   project's own dependencies to resolve imports (pyright, pylint).
 
 ## Posture
