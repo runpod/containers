@@ -1,5 +1,6 @@
-# `lint-editorconfig` — whitespace / EOL / charset hygiene. Honors a
-# `.editorconfig` if present; otherwise applies its built-in defaults.
+# `lint-editorconfig` — whitespace / EOL / charset hygiene, as set by a
+# `.editorconfig`. The repo has none yet, so this checks nothing until one is
+# added (a minimal one flags 65 existing files).
 
 { pkgs, lib }:
 

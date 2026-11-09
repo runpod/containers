@@ -94,7 +94,8 @@ in
         echo "no shell scripts found, skipping"
         exit 0
       fi
-      shellcheck -x "''${shfiles[@]}"
+      # Match the repo's Shellcheck workflow (fail_level: warning).
+      shellcheck -x --severity=warning "''${shfiles[@]}"
     '';
   };
 
@@ -130,7 +131,8 @@ in
         -path './.git' -prune -o \
         -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) -print)
       if [ ''${#df[@]} -eq 0 ]; then exit 0; fi
-      hadolint "''${df[@]}"
+      # Match the Hadolint workflows (failure-threshold: warning).
+      hadolint -c nix/hadolint.yaml --failure-threshold warning "''${df[@]}"
     '';
   };
 
@@ -148,13 +150,6 @@ in
       if [ ''${#tf[@]} -eq 0 ]; then exit 0; fi
       taplo check "''${tf[@]}"
     '';
-  };
-
-  # --- Hygiene ---
-  editorconfig-checker = mkCheck {
-    name = "editorconfig-checker";
-    buildInputs = [ pkgs.editorconfig-checker ];
-    script = "editorconfig-checker";
   };
 
   # --- Secrets (no-git working-tree scan; sandbox has no .git) ---
