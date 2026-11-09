@@ -23,7 +23,7 @@ jobs:
             experimental-features = nix-command flakes
 
       # Runs the sandbox-safe gated checks (nixfmt/statix/deadnix/nil,
-      # shellcheck, actionlint, hadolint, taplo, editorconfig, gitleaks).
+      # shellcheck, actionlint, hadolint, taplo, gitleaks).
       # --keep-going so every check's findings surface in one run instead of
       # stopping at the first failure.
       - name: nix flake check

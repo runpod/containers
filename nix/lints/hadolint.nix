@@ -1,4 +1,5 @@
-# `lint-hadolint` — Dockerfile linter (default failure threshold).
+# `lint-hadolint` — Dockerfile linter (default failure threshold), with the
+# ignores in ../hadolint.yaml.
 
 { pkgs, lib }:
 
@@ -18,5 +19,5 @@ import ../lib/mk-lint.nix { inherit pkgs lib; } {
     "**/Dockerfile.*"
   ];
   emptyMessage = "(no Dockerfile tracked)";
-  command = ''hadolint "''${files[@]}"'';
+  command = ''hadolint -c nix/hadolint.yaml "''${files[@]}"'';
 }

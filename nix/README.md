@@ -74,10 +74,12 @@ nix run .#everything
 
 - **`nix flake check`** — gated derivations that run in the Nix sandbox
   (no network, no language runtime with third-party imports): nixfmt,
-  statix, deadnix, nil, shellcheck, actionlint, hadolint, taplo,
-  editorconfig-checker, gitleaks. yamllint and markdownlint aren't gated
-  yet because the tree has pre-existing findings; run them with
-  `nix run .#lint-yaml` and `nix run .#lint-md`.
+  statix, deadnix, nil, shellcheck, actionlint, hadolint, taplo, gitleaks.
+  shellcheck and hadolint fail at `warning`, as the repo's workflows do;
+  hadolint reads `nix/hadolint.yaml`. yamllint and markdownlint aren't
+  gated yet because the tree has pre-existing findings; run them with
+  `nix run .#lint-yaml` and `nix run .#lint-md`. editorconfig-checker
+  isn't gated because the repo has no `.editorconfig` for it to check.
 - **`nix run .#lint-*`** — manual apps, including tools that need the
   network (trivy, osv-scanner, lychee, trufflehog) or the
   project's own dependencies to resolve imports (pyright, pylint).
@@ -95,9 +97,9 @@ left to manual review:
 
 - **HCL** (`docker-bake.hcl`, `versions.hcl`) — no HCL linter is wired
   in; review by hand (or `docker buildx bake --print` to validate).
-- **INI** (`grafana.ini`) — only `editorconfig-checker` hygiene applies.
-- **CSV** (`extended-counters.csv`) — only `editorconfig-checker`
-  hygiene applies.
+- **INI** (`grafana.ini`) and **CSV** (`extended-counters.csv`) — none;
+  `editorconfig-checker` would cover whitespace once there's an
+  `.editorconfig`.
 
 Large generated JSON (e.g. Grafana dashboards) is validated for
 well-formedness by `lint-jsonlint`; deep semantic review is manual.
