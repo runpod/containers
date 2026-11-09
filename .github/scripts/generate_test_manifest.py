@@ -21,7 +21,7 @@ rocm-smi vs skip) from the **image ref itself**, not from the group name.
 
 Usage:
     generate_test_manifest.py --profile base \\
-        --refs '["docker.io/runpod/base:1.0.6-...-ubuntu2204", ...]' \\
+        --refs '["docker.io/runpod/base:1.0.6-...-ubuntu2404", ...]' \\
         --budget 1.0 \\
         --output manifest.yaml
 """
@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
@@ -36,8 +37,8 @@ from pathlib import Path
 
 # A tag is treated as GPU iff it contains any of these (case-insensitive)
 # substrings. Matches our actual tag conventions:
-#   runpod/base:...-cuda1281-ubuntu2204                  -> cuda
-#   runpod/base:...-rocm644-ubuntu2204-py310-pytorch251  -> rocm, py, pytorch
+#   runpod/base:...-cuda1281-ubuntu2404                  -> cuda
+#   runpod/base:...-rocm644-ubuntu2404-py312-pytorch260  -> rocm, py, pytorch
 #   runpod/pytorch:...-cuda1281-py3.10-pytorch251-...    -> cuda, py, pytorch
 # CPU base images carry only ubuntu+suffix, none of these substrings.
 GPU_TAG_PATTERN = re.compile(r"(cuda|pytorch|py|rocm)", re.IGNORECASE)
@@ -89,7 +90,9 @@ def render_yaml(groups: dict) -> str:
             "python_tls_venv",
             "test_uv",
             "test_virtualenv",
+            "test_python_path",
             "test_autoresearch",
+            "test_ray",
         ):
             if key in body:
                 val = body[key]
@@ -126,6 +129,27 @@ def render_yaml(groups: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def split_by_scoped_excludes(
+    refs: list[str],
+    scoped_excludes: list[tuple[str, list[str]]],
+) -> list[tuple[list[str], list[str]]]:
+    """Partition `refs` by the extra exclude patterns each one picks up.
+
+    Every (ref_glob, patterns) rule whose glob matches a ref contributes
+    its patterns to that ref; refs that end up with the same pattern list
+    share a partition. Returns (extra_patterns, refs) pairs in order of
+    first appearance, so the output is stable for a given input.
+    """
+    partitions: dict[tuple[str, ...], list[str]] = {}
+    for ref in refs:
+        extra: list[str] = []
+        for ref_glob, patterns in scoped_excludes:
+            if fnmatch.fnmatchcase(ref, ref_glob):
+                extra.extend(p for p in patterns if p not in extra)
+        partitions.setdefault(tuple(extra), []).append(ref)
+    return [(list(extra), group) for extra, group in partitions.items()]
+
+
 def build_groups(
     profile: str,
     refs: list[str],
@@ -147,10 +171,13 @@ def build_groups(
     revoked_ca_names: list[str] | None = None,
     test_uv: bool = False,
     test_virtualenv: bool = False,
+    test_python_path: bool = False,
     test_autoresearch: bool = False,
+    test_ray: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
+    scoped_excludes: list[tuple[str, list[str]]] | None = None,
     min_cuda_version: str | None = None,
     cuda_versions: list[str] | None = None,
     explicit_budget: bool = False,
@@ -177,6 +204,15 @@ def build_groups(
     PyTorch ≤ 2.6 wheels have no kernels for sm_100/sm_120, so any test
     landing on a Blackwell host fails with 'no kernel image is available
     for execution on the device'.
+
+    `scoped_excludes` is a list of (ref_glob, patterns) rules that narrow
+    such a block to the refs it is actually needed for. A block in
+    `exclude_instances` covers the whole group, so one bad image/GPU
+    pairing would otherwise cost that GPU for every image in the run.
+    GPU refs matching a rule's glob move into their own group with the
+    rule's patterns appended to its exclusions; refs matching no rule stay
+    in the usual group under the usual name. CPU refs are never split —
+    they don't select GPUs, and 'base_cpu' is a name the harness keys on.
 
     `cuda_versions` turns on the GPU x CUDA axis: `['all']` tests every
     version each GPU reports capacity for, an explicit list tests just
@@ -250,8 +286,12 @@ def build_groups(
             body["test_uv"] = True
         if test_virtualenv:
             body["test_virtualenv"] = True
+        if test_python_path:
+            body["test_python_path"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
+        if test_ray:
+            body["test_ray"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
         if gpu_group and wants_all_cuda:
@@ -263,6 +303,26 @@ def build_groups(
         if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
             body["min_cuda_version"] = min_cuda_version
         return body
+
+    def _gpu_groups(gpu_refs: list[str]) -> dict:
+        # Refs that picked up no scoped patterns keep the plain 'base_gpu'
+        # name, so callers without scoped rules see the manifest unchanged.
+        # The name is informational; the scoped ones are just numbered.
+        groups: dict = {}
+        scoped_n = 0
+        for extra, group_refs in split_by_scoped_excludes(
+            gpu_refs, scoped_excludes or []
+        ):
+            body = _decorate({"images": group_refs}, gpu_group=True)
+            if not extra:
+                groups["base_gpu"] = body
+                continue
+            merged = list(body.get("exclude_instances", []))
+            merged.extend(p for p in extra if p not in merged)
+            body["exclude_instances"] = merged
+            scoped_n += 1
+            groups[f"base_gpu_scoped{scoped_n}"] = body
+        return groups
 
     if profile == "base":
         # Split refs into CPU- vs GPU-targeted images by tag content.
@@ -276,7 +336,7 @@ def build_groups(
         if cpu:
             groups["base_cpu"] = _decorate({"images": cpu}, gpu_group=False)
         if gpu:
-            groups["base_gpu"] = _decorate({"images": gpu}, gpu_group=True)
+            groups.update(_gpu_groups(gpu))
         return groups
 
     if profile == "gpu":
@@ -284,11 +344,26 @@ def build_groups(
         # filter. The functional check (nvidia-smi vs torch.cuda vs rocm-smi)
         # is picked from the IMAGE REF by runpod_smoke.checks, so the group
         # name 'base_gpu' is purely conventional here.
-        return {
-            "base_gpu": _decorate({"images": refs}, gpu_group=True)
-        }
+        return _gpu_groups(refs)
 
     raise ValueError(f"unknown profile: {profile!r}")
+
+
+def _scoped_exclude_spec(value: str) -> tuple[str, list[str]]:
+    """Parse a `--exclude-instance-for` arg: 'REF_GLOB: PATTERN, PATTERN'.
+
+    Split on the LAST colon, since a ref glob may carry the image's own
+    colon ('runpod/pytorch:*-torch260-*') while GPU display names never
+    contain one.
+    """
+    ref_glob, sep, rest = value.rpartition(":")
+    ref_glob = ref_glob.strip()
+    patterns = [p.strip() for p in rest.split(",") if p.strip()]
+    if not sep or not ref_glob or not patterns:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: expected 'REF_GLOB: PATTERN[, PATTERN...]'"
+        )
+    return ref_glob, patterns
 
 
 def _port_spec(value: str) -> str:
@@ -463,7 +538,16 @@ def main() -> int:
         help=(
             "Emit `test_virtualenv: true`: create a virtualenv with every "
             "python3.X the image ships. For runpod/base, which pins one "
-            "virtualenv version across four interpreters."
+            "virtualenv version across three interpreters."
+        ),
+    )
+    ap.add_argument(
+        "--test-python-path",
+        action="store_true",
+        help=(
+            "Emit `test_python_path: true`: apt's dist-packages is on sys.path "
+            "for the system python3 only, and python3 is the same interpreter "
+            "as python. For runpod/base."
         ),
     )
     ap.add_argument(
@@ -473,6 +557,15 @@ def main() -> int:
             "Emit `test_autoresearch: true`: run autoresearch's train.py end "
             "to end on a short time budget, so a broken image or dep bump is "
             "caught. For runpod/autoresearch only."
+        ),
+    )
+    ap.add_argument(
+        "--test-ray",
+        action="store_true",
+        help=(
+            "Emit `test_ray: true`: start a one-node Ray head in the pod, run "
+            "a num_gpus=1 torch CUDA task through it and check Ray's metrics "
+            "port. For runpod/ray-cluster only."
         ),
     )
     ap.add_argument("--check-all-gpu", action="store_true")
@@ -486,6 +579,22 @@ def main() -> int:
             "every produced group's candidate pool. Repeat for multiple "
             "patterns. Example: --exclude-instance '*Blackwell*' "
             "--exclude-instance 'RTX A4000'. Empty = no exclusions."
+        ),
+    )
+    ap.add_argument(
+        "--exclude-instance-for",
+        action="append",
+        default=[],
+        type=_scoped_exclude_spec,
+        dest="scoped_excludes",
+        metavar="'REF_GLOB: PATTERN[, PATTERN...]'",
+        help=(
+            "Like --exclude-instance, but only for GPU refs matching "
+            "REF_GLOB (fnmatch, case-sensitive, against the full ref). "
+            "Matching refs get their own group so the block doesn't cost "
+            "the other images that GPU. Repeat per rule; a ref matching "
+            "several rules gets all their patterns. Example: "
+            "--exclude-instance-for '*-torch260-*: B200*, B300*'"
         ),
     )
     ap.add_argument(
@@ -548,6 +657,10 @@ def main() -> int:
         )
         return 1
 
+    for ref_glob, _ in args.scoped_excludes:
+        if not any(fnmatch.fnmatchcase(r, ref_glob) for r in refs):
+            print(f"note: --exclude-instance-for {ref_glob!r} matched no ref")
+
     groups = build_groups(
         args.profile,
         refs,
@@ -569,10 +682,13 @@ def main() -> int:
         revoked_ca_names=args.revoked_ca_name,
         test_uv=args.test_uv,
         test_virtualenv=args.test_virtualenv,
+        test_python_path=args.test_python_path,
         test_autoresearch=args.test_autoresearch,
+        test_ray=args.test_ray,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,
+        scoped_excludes=args.scoped_excludes,
         min_cuda_version=(args.min_cuda_version or None),
         cuda_versions=args.cuda_versions,
     )

@@ -296,11 +296,11 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
 
     if _image_expects_torch(image):
         # Use `python` (the runpod/base symlink /usr/local/bin/python ->
-        # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 system
-        # `python3` resolves to python3.10 — but pytorch/Dockerfile
-        # installs torch via `python -m pip`, so torch only exists in
-        # python3.12's site-packages. On 24.04 they happen to coincide.
-        # Using `python` is portable.
+        # /usr/bin/python3.12), NOT `python3`. The system `python3` is
+        # whatever the Ubuntu release ships — pytorch/Dockerfile installs
+        # torch via `python -m pip`, so torch only exists in python3.12's
+        # site-packages. On 24.04 they happen to coincide. Using `python`
+        # is portable.
         program = (
             "import sys, torch\n"
             "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
@@ -620,25 +620,37 @@ def uv_check_command() -> str:
 def virtualenv_check_command() -> str:
     """Create a virtualenv with every python3.X the image ships.
 
-    The images pin one virtualenv version across four interpreters, and a
+    The images pin one virtualenv version across three interpreters, and a
     pin that stops supporting the oldest of them fails only for whoever
     happens to use that interpreter. Enumerating what is installed is the
     whole check — a hard-coded list would pass by testing nothing after an
     interpreter is dropped.
+
+    The one exception is Ubuntu's own system interpreter when it is not also
+    the image's default `python` (3.14 on 26.04): base installs no pip or
+    virtualenv for it, it is there for apt's tools. When it is the default
+    (3.12 on 24.04) it is provisioned like the rest and is checked.
     """
+    ver = "-c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'"
     return (
         "set -e; "
         "PYS=$(ls /usr/local/bin/python3.* /usr/bin/python3.* 2>/dev/null "
         "  | grep -E 'python3\\.[0-9]+$' || true); "
         "[ -n \"$PYS\" ] "
         "  || { echo 'FAIL: no python3.X interpreters found'; exit 1; }; "
+        f"SYSVER=$(/usr/bin/python3 {ver} 2>/dev/null || true); "
+        f"DEFVER=$(python {ver}); "
         "TMP=$(mktemp -d); "
         "for py in $PYS; do "
-        "  VER=$(\"$py\" -c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'); "
+        f"  VER=$(\"$py\" {ver}); "
         # Both /usr/bin and /usr/local/bin can expose the same interpreter;
         # key on the version so each one is exercised once. `if` rather than
         # `[ ... ] && continue` for the same reason as the uv PATH scan.
         "  if [ -d \"$TMP/v$VER\" ]; then continue; fi; "
+        "  if [ \"$VER\" = \"$SYSVER\" ] && [ \"$VER\" != \"$DEFVER\" ]; then "
+        "    echo \"skip system python $VER (apt's, not provisioned)\"; "
+        "    mkdir \"$TMP/v$VER\"; continue; "
+        "  fi; "
         "  \"$py\" -m virtualenv -q \"$TMP/v$VER\"; "
         "  \"$TMP/v$VER/bin/python\" -c "
         "    \"import sys; print('virtualenv ok for $VER ->', "
@@ -646,6 +658,51 @@ def virtualenv_check_command() -> str:
         "done; "
         "rm -rf \"$TMP\"; "
         "echo 'virtualenv ok on every interpreter'"
+    )
+
+
+def python_path_check_command() -> str:
+    """Check which interpreters see apt's Python modules, and what `python3` is.
+
+    apt's python3-* modules live in /usr/lib/python3/dist-packages and are
+    built for the system /usr/bin/python3 only. base hides that directory from
+    every other interpreter (a sitecustomize line), or a later
+    `apt install python3-*` shadows or breaks pip packages for them. It also
+    points `python3` at the same interpreter as `python`, which on 26.04 is
+    not the system one. Interpreters are enumerated rather than listed, so one
+    added to the image without the filter fails here instead of passing.
+    """
+    dist = "/usr/lib/python3/dist-packages"
+    ver = "-c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'"
+    return (
+        "set -e; "
+        "[ -x /usr/bin/python3 ] "
+        "  || { echo 'FAIL: no system /usr/bin/python3'; exit 1; }; "
+        f"SYSVER=$(/usr/bin/python3 {ver}); "
+        f"/usr/bin/python3 -c \"import sys; sys.exit(0 if '{dist}' in sys.path else 1)\" "
+        f"  || {{ echo \"FAIL: system python3 $SYSVER lost {dist} from sys.path\"; exit 1; }}; "
+        f"echo \"system python3 $SYSVER keeps {dist}\"; "
+        "PYS=$(ls /usr/local/bin/python3.* /usr/bin/python3.* 2>/dev/null "
+        "  | grep -E 'python3\\.[0-9]+$' || true); "
+        "SEEN=' '; "
+        "for py in $PYS; do "
+        f"  VER=$(\"$py\" {ver}); "
+        # Both /usr/bin and /usr/local/bin can expose the same interpreter;
+        # check each version once. The system one is expected to see apt's dir.
+        "  case \"$SEEN\" in *\" $VER \"*) continue ;; esac; "
+        "  SEEN=\"$SEEN$VER \"; "
+        "  if [ \"$VER\" = \"$SYSVER\" ]; then continue; fi; "
+        f"  if \"$py\" -c \"import sys; sys.exit(1 if '{dist}' in sys.path else 0)\"; then "
+        f"    echo \"python$VER hides {dist}\"; "
+        "  else "
+        f"    echo \"FAIL: python$VER still has {dist} on sys.path\"; exit 1; "
+        "  fi; "
+        "done; "
+        f"PYV=$(python {ver}); P3V=$(python3 {ver}); "
+        "[ \"$PYV\" = \"$P3V\" ] "
+        "  || { echo \"FAIL: python3 is $P3V but python is $PYV\"; exit 1; }; "
+        "echo \"python3 and python are both $PYV\"; "
+        "echo 'python path ok'"
     )
 
 
@@ -667,6 +724,41 @@ def autoresearch_check_command(
         f"prepare.MAX_SEQ_LEN = {seq_len}; prepare.EVAL_TOKENS = {eval_tokens}; "
         "import runpy; runpy.run_path('train.py', run_name='__main__')\"; "
         "echo 'autoresearch train.py ok'"
+    )
+
+
+def ray_check_command(metrics_port: int = 20217) -> str:
+    """Start a single-node Ray head in the pod and use the GPU through it.
+
+    The image's own multi-node launch needs a cluster (NODE_RANK and the
+    host's /etc/hosts), so this exercises the same Ray install by hand: Ray
+    must see the pod's GPU, schedule a `num_gpus=1` task that runs a torch
+    CUDA op, and serve `ray_` metrics on the contract metrics port. Ray is
+    stopped on the way out either way, so later checks see a clean pod."""
+    return (
+        "set -e; "
+        "trap 'ray stop --force >/dev/null 2>&1 || true' EXIT; "
+        f"ray start --head --metrics-export-port={metrics_port} "
+        "  --disable-usage-stats >/dev/null; "
+        "python -c \""
+        "import ray, torch; "
+        "ray.init(address='auto'); "
+        "res = ray.cluster_resources(); "
+        "assert res.get('GPU', 0) >= 1, f'Ray sees no GPU: {res}'; "
+        "ones = lambda: torch.ones(1024, 1024, device='cuda'); "
+        "f = ray.remote(num_gpus=1)(lambda: (ones() @ ones()).sum().item()); "
+        "total = ray.get(f.remote(), timeout=180); "
+        "assert total == 1024.0 ** 3, total; "
+        "print('ray GPU task ok, cluster GPUs:', res['GPU'])\"; "
+        # The metrics agent comes up asynchronously after `ray start`.
+        "for _ in $(seq 1 30); do "
+        f"  BODY=$(curl -fsS http://127.0.0.1:{metrics_port}/metrics || true); "
+        "  if printf '%s\\n' \"$BODY\" | grep -q '^ray_'; then break; fi; "
+        "  sleep 2; "
+        "done; "
+        "printf '%s\\n' \"$BODY\" | grep -q '^ray_' "
+        f"  || {{ echo 'FAIL: no ray_ metrics on :{metrics_port}/metrics'; exit 1; }}; "
+        f"echo 'ray_ metrics served on :{metrics_port}'"
     )
 
 

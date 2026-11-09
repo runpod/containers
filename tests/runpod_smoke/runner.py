@@ -22,6 +22,7 @@ from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
     autoresearch_check_command,
+    ray_check_command,
     ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
@@ -29,6 +30,7 @@ from .checks import (
     fetch_pod_cuda_version,
     host_incompatibility,
     pip_check_command,
+    python_path_check_command,
     python_tls_check_command,
     run_cuda_check,
     run_jupyter_check,
@@ -298,6 +300,7 @@ def _run_cuda_step(
 
 _HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
 _AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+_RAY_TIMEOUT = 300                # ray start + a GPU task + the metrics agent
 
 
 def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
@@ -316,6 +319,10 @@ def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
     if config.GROUP_TEST_VIRTUALENV.get(group, False):
         checks.append(
             ("virtualenv", virtualenv_check_command(), _HYGIENE_TIMEOUT)
+        )
+    if config.GROUP_TEST_PYTHON_PATH.get(group, False):
+        checks.append(
+            ("python path", python_path_check_command(), _HYGIENE_TIMEOUT)
         )
     if config.GROUP_TEST_UV.get(group, False):
         checks.append(("uv", uv_check_command(), _HYGIENE_TIMEOUT))
@@ -341,6 +348,8 @@ def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
             autoresearch_check_command(),
             _AUTORESEARCH_TIMEOUT,
         ))
+    if config.GROUP_TEST_RAY.get(group, False):
+        checks.append(("Ray GPU", ray_check_command(), _RAY_TIMEOUT))
     return checks
 
 
@@ -348,7 +357,7 @@ def _run_hygiene_steps(
     endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
-    `test_python_tls`, `test_uv`, `test_virtualenv`).
+    `test_python_tls`, `test_uv`, `test_virtualenv`, `test_python_path`).
 
     Runs after the CUDA gate — these answer "is the image put together
     correctly", which is only worth asking once the image boots and its

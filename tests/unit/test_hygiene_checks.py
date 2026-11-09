@@ -31,6 +31,7 @@ def _reset_groups() -> None:
         config.GROUP_PYTHON_TLS_VENV,
         config.GROUP_TEST_UV,
         config.GROUP_TEST_VIRTUALENV,
+        config.GROUP_TEST_PYTHON_PATH,
     ):
         d.clear()
 
@@ -84,6 +85,7 @@ class HygieneSelectionTests(unittest.TestCase):
             config.GROUP_TEST_PYTHON_TLS,
             config.GROUP_TEST_UV,
             config.GROUP_TEST_VIRTUALENV,
+            config.GROUP_TEST_PYTHON_PATH,
         ):
             d["grp"] = True
         labels = [label for label, _, _ in _hygiene_checks("grp")]
@@ -92,6 +94,7 @@ class HygieneSelectionTests(unittest.TestCase):
             [
                 "pip check",
                 "virtualenv",
+                "python path",
                 "uv",
                 "CA trust store",
                 "certifi / python TLS",
@@ -184,7 +187,9 @@ class CommandShapeTests(unittest.TestCase):
             ),
             "uv": checks.uv_check_command(),
             "virtualenv": checks.virtualenv_check_command(),
+            "python_path": checks.python_path_check_command(),
             "autoresearch": checks.autoresearch_check_command(),
+            "ray": checks.ray_check_command(),
         }
         for name, command in commands.items():
             with self.subTest(command=name):
@@ -207,6 +212,16 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("expected one uv on PATH", command)
         self.assertIn("uv is also installed as a pip package", command)
 
+    def test_python_path_check_enumerates_and_compares(self):
+        command = checks.python_path_check_command()
+        # Every python3.X in the image, not a fixed list, so a newly added
+        # interpreter without the sitecustomize filter fails.
+        self.assertIn("ls /usr/local/bin/python3.* /usr/bin/python3.*", command)
+        self.assertIn("/usr/lib/python3/dist-packages", command)
+        self.assertIn("still has /usr/lib/python3/dist-packages", command)
+        self.assertIn("lost /usr/lib/python3/dist-packages", command)
+        self.assertIn("python3 is $P3V but python is $PYV", command)
+
     def test_autoresearch_runs_train_in_the_venv(self):
         command = checks.autoresearch_check_command()
         self.assertIn("/opt/autoresearch/.venv/bin/activate", command)
@@ -214,6 +229,15 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("prepare.TIME_BUDGET = 5", command)
         # Sequence length is shrunk so the check fits a cheap GPU.
         self.assertIn("prepare.MAX_SEQ_LEN = 256", command)
+
+    def test_ray_check_uses_the_gpu_and_metrics_port(self):
+        command = checks.ray_check_command()
+        self.assertIn("ray start --head --metrics-export-port=20217", command)
+        self.assertIn("ray.remote(num_gpus=1)", command)
+        self.assertIn("device='cuda'", command)
+        self.assertIn("127.0.0.1:20217/metrics", command)
+        # Ray is stopped even when an assertion fails.
+        self.assertIn("trap 'ray stop --force", command)
 
     def test_ca_check_proves_tls_still_works(self):
         # Over-pruning a trust store is as broken as not pruning it, so a
@@ -317,8 +341,8 @@ class CaCertsVersionFloorTests(unittest.TestCase):
     so what we assert is that its patched package actually arrived."""
 
     FLOOR = "20260816"
-    # Both pod versions seen in CI, plus the pre-fix one they replaced.
-    PATCHED = ("20260816ubuntu0.22.04.1", "20260816ubuntu0.24.04.1")
+    # The patched builds the base Dockerfile pins, plus the pre-fix ones.
+    PATCHED = ("20260816ubuntu0.24.04.1", "20260816ubuntu0.26.04.1")
     STALE = ("20240203", "20250419ubuntu0.24.04.1")
 
     def _compare(self, installed: str) -> int:

@@ -134,7 +134,7 @@ jobs:
         with:
           name: nvidia-refs-${{ matrix.nvidia }}
           path: /tmp/nvidia-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-nvidia-pytorch:

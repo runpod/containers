@@ -127,6 +127,26 @@ class Pathspecs(unittest.TestCase):
     def test_a_plain_path_is_left_alone(self):
         self.assertEqual(P.git_pathspecs(["bake.sh"]), ["bake.sh"])
 
+    IGNORE = ["t/*/README.md", "!t/base/README.md"]
+    FILES = ["t/base/README.md", "t/base/Dockerfile", "t/pytorch/README.md",
+             "t/pytorch/Dockerfile", "t/comfyui/README.md"]
+
+    def test_ignored_files_are_excluded_from_the_log(self):
+        """A README-only commit must not set the bump or reach the notes."""
+        self.assertEqual(
+            P.exclude_pathspecs(["t/pytorch/**", "t/base/**"], self.IGNORE, self.FILES),
+            [":(exclude,literal)t/pytorch/README.md"],
+        )
+
+    def test_an_exception_is_never_excluded(self):
+        self.assertEqual(P.exclude_pathspecs(["t/base/**"], self.IGNORE, self.FILES), [])
+
+    def test_only_files_under_the_family_are_listed(self):
+        self.assertEqual(
+            P.exclude_pathspecs(["t/comfyui/**"], self.IGNORE, self.FILES),
+            [":(exclude,literal)t/comfyui/README.md"],
+        )
+
 
 class GraphFile(unittest.TestCase):
     def _write(self, text: str) -> Path:
@@ -209,6 +229,7 @@ class GraphFile(unittest.TestCase):
                 "nvidia-pytorch",
                 "pytorch",
                 "pytorch-cluster",
+                "ray-cluster",
                 "rocm",
             ],
         )
@@ -219,6 +240,62 @@ class GraphFile(unittest.TestCase):
             P.plan(graph, ["official-templates/comfyui/scripts/start.sh"], False),
             ["comfyui"],
         )
+
+
+class Ignore(unittest.TestCase):
+    IGNORE = ["t/*/README.md", "!t/base/README.md"]
+
+    def test_a_readme_alone_builds_nothing(self):
+        self.assertEqual(P.plan(GRAPH, ["t/pytorch/README.md"], False, self.IGNORE), [])
+
+    def test_an_exception_still_builds(self):
+        self.assertEqual(
+            P.plan(GRAPH, ["t/base/README.md"], False, self.IGNORE)[:1], ["base"]
+        )
+
+    def test_a_readme_next_to_a_real_change_does_not_hide_it(self):
+        got = P.plan(
+            GRAPH, ["t/pytorch/README.md", "t/pytorch/Dockerfile"], False, self.IGNORE
+        )
+        self.assertEqual(got, ["pytorch", "cluster"])
+
+    def test_since_release_skips_ignored_files_too(self):
+        changed = {"comfyui": ["t/comfyui/README.md"]}
+        got = P.plan_since_release(GRAPH, lambda n: changed.get(n, []), self.IGNORE)
+        self.assertEqual(got, [])
+
+    def test_real_graph_skips_a_pytorch_readme(self):
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        ignore = P.load_ignore(P.DEFAULT_GRAPH)
+        self.assertEqual(
+            P.plan(graph, ["official-templates/pytorch/README.md"], False, ignore), []
+        )
+
+    def test_real_graph_still_rebuilds_on_the_base_readme(self):
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        ignore = P.load_ignore(P.DEFAULT_GRAPH)
+        self.assertIn(
+            "base", P.plan(graph, ["official-templates/base/README.md"], False, ignore)
+        )
+
+    def test_nothing_a_dockerfile_copies_is_ignored(self):
+        # An ignored file that ends up in an image would ship stale content
+        # with no rebuild. Plain COPY/ADD sources are relative to the
+        # Dockerfile's own directory, which is its build context here.
+        ignore = P.load_ignore(P.DEFAULT_GRAPH)
+        root = P.REPO_ROOT / "official-templates"
+        for dockerfile in root.glob("*/Dockerfile*"):
+            for line in dockerfile.read_text().splitlines():
+                words = line.split()
+                if not words or words[0].upper() not in ("COPY", "ADD"):
+                    continue
+                if any(w.startswith("--from=") for w in words):
+                    continue
+                args = [w for w in words[1:] if not w.startswith("--")]
+                for src in args[:-1]:
+                    rel = (dockerfile.parent / src).relative_to(P.REPO_ROOT)
+                    with self.subTest(dockerfile=str(dockerfile), src=src):
+                        self.assertFalse(P.is_ignored(str(rel), ignore))
 
 
 if __name__ == "__main__":

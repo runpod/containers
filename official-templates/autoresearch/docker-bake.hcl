@@ -1,12 +1,11 @@
 # Autoresearch template
-# Builds on runpod/base. 24.04 gets every CUDA version the base image offers
-# for it; 22.04 keeps the 12.8.1 build it already had and is not widened —
-# Ubuntu 22.04 is on its way out.
+# Builds on runpod/base: one image per CUDA/Ubuntu combo the CUDA base offers
+# (shared/versions.hcl).
 
 # Which published runpod/base to build FROM — in-run base tag when base was
 # rebuilt in this run, else the last released base (see base.yml).
 variable "BASE_VERSION" {
-  default = "1.0.7"
+  default = "2.0.0"
 }
 
 # Repo suffix of that runpod/base: "-dev" when CI built it in this run on the
@@ -22,7 +21,6 @@ variable "AUTORESEARCH_BUILDS" {
         ubuntu_name = ubuntu.name
         cuda_code   = replace(cuda.version, ".", "")
       } if contains(cuda.ubuntu, ubuntu.version)
-        && (ubuntu.version == "24.04" || cuda.version == "12.8.1")
     ]
   ])
 }

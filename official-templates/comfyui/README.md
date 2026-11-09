@@ -26,6 +26,26 @@ not start on a host whose driver is older than the tag.
 
 If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration is performed automatically on the next boot. ComfyUI and the bundled custom nodes are updated to the versions pinned by the image, while models, inputs, outputs, user settings, and user-installed custom nodes are preserved. The virtual environment is also migrated to match the CUDA version of the tag you are now running. This may take a few extra minutes on the first start after the update.
 
+## Virtual environments on the volume
+
+Packages installed into ComfyUI at runtime (custom node requirements, anything
+you `pip install` yourself) go into a venv on the volume, and each CUDA variant
+has its own: `/workspace/runpod-slim/ComfyUI/.venv-cu128`, `.venv-cu130`,
+`.venv-cu132`. Many of these packages (xformers, triton, sageattention,
+onnxruntime-gpu, nunchaku) are built for one CUDA version, so the variants
+cannot share them.
+
+When you switch a volume to a different tag, the first start creates that
+tag's venv and reinstalls the requirements of your custom nodes into it.
+Packages you installed by hand are not carried over; the startup log prints
+the command that lists them. The previous venv is left in place so you can go
+back. If you are not going back, delete it to free space.
+
+If you used the `-cuda13.0` image before it had its own venv, your
+`.venv-cu128` holds packages built for CUDA 13.0. Delete
+`/workspace/runpod-slim/ComfyUI/.venv-cu128` before switching that volume to
+`-cuda12.8`, so they are reinstalled for 12.8.
+
 ## Access
 
 - `8188`: ComfyUI web UI

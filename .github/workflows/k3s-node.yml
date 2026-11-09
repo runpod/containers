@@ -128,17 +128,20 @@ jobs:
             # Same binary for every arch name, so check the machine too.
             say arch "$(uname -m)"
 
-            k3s --version | grep -qF "k3s version ${K3S_VERSION} "
-            say k3s "$(k3s --version | head -1 | cut -d" " -f3)"
+            v=$(k3s --version)
+            grep -qF "k3s version ${K3S_VERSION} " <<< "$v"
+            say k3s "$(head -1 <<< "$v" | cut -d" " -f3)"
 
             # The security minimum k3s does not bundle yet; k3s-node swaps it in.
-            /usr/local/lib/k3s-node/runc --version | grep -qx "runc version ${RUNC_VERSION#v}"
-            say runc "$(/usr/local/lib/k3s-node/runc --version | head -1 | cut -d" " -f3)"
+            v=$(/usr/local/lib/k3s-node/runc --version)
+            grep -qx "runc version ${RUNC_VERSION#v}" <<< "$v"
+            say runc "$(head -1 <<< "$v" | cut -d" " -f3)"
 
             # k3s adds the nvidia containerd runtime when it finds this binary.
             test -x /usr/bin/nvidia-container-runtime
-            nvidia-ctk --version | head -1 | grep -q " ${NVIDIA_CTK_VERSION%-*}$"
-            say nvidia-ctk "$(nvidia-ctk --version | head -1 | grep -o "[0-9.]*$")"
+            v=$(nvidia-ctk --version | sed -n 1p)
+            grep -q " ${NVIDIA_CTK_VERSION%-*}$" <<< "$v"
+            say nvidia-ctk "$(grep -o "[0-9.]*$" <<< "$v")"
 
             # The tunnel to the server, and the node password derivation.
             wg --version >/dev/null && ip -V >/dev/null && openssl version >/dev/null
