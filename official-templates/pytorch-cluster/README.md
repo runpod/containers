@@ -7,6 +7,9 @@ It layers two things on top of `runpod/pytorch`:
    `rdma-core`, `ibverbs-utils`, `infiniband-diags`, `perftest`.
 2. **A self-contained monitoring stack**, managed by `supervisord`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
+     Exception: on a **MIG slice** dcgm-exporter is not started — embedded DCGM
+     can't initialise inside a MIG instance without `CAP_SYS_ADMIN` — so that
+     node has no GPU metrics.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
 
 Published to its own repository, with the pytorch tag scheme, e.g.
@@ -50,6 +53,13 @@ set at `/etc/dcgm-exporter/extended-counters.csv` (from the `runpod/ansible-host
 monitoring role) rather than the default. Note this set uses
 `DCGM_FI_PROF_GR_ENGINE_ACTIVE` (compute-engine active ratio) as the utilization
 signal instead of the coarse `DCGM_FI_DEV_GPU_UTIL`.
+
+> **Upgrading from an image with dcgm-exporter 4.8.1 or older:** the exporter
+> (4.8.3+) renamed the per-node label on DCGM metrics from `Hostname` to
+> `hostname`. The pre-baked dashboards are updated, but your own Grafana panels,
+> alerts or recording rules that use `Hostname` (e.g. `{Hostname="node-0"}`,
+> `by (Hostname)`, `{{Hostname}}`) return nothing until you switch them to
+> `hostname`.
 
 Inspect running services with `supervisorctl status`; logs live under
 `/var/log/supervisor/`.

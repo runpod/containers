@@ -20,6 +20,14 @@ SUPERVISOR_CONF=/etc/supervisor/supervisord.conf
 # NODE_RANK (not a cluster pod) is not a head.
 is_head_node() { [[ "${NODE_RANK:-}" == "0" ]]; }
 
+# True when the container was handed a MIG slice rather than a whole GPU.
+# `nvidia-smi -L` lists MIG devices as "  MIG 1g.24gb Device 0: (UUID: MIG-...)".
+# Keep in sync with the smoke test (tests/runpod_smoke/checks.py).
+is_mig_gpu() {
+    [[ "${NVIDIA_VISIBLE_DEVICES:-}" == *MIG-* ]] && return 0
+    nvidia-smi -L 2>/dev/null | grep -q 'MIG'
+}
+
 # Build /etc/prometheus/prometheus.yml with one node_exporter (:9100) and one
 # dcgm-exporter (:9400) target per peer. Peers are every hostname in /etc/hosts
 # that starts with "node-"; falls back to localhost when none are present.
@@ -91,6 +99,15 @@ else
         supervisorctl status >/dev/null 2>&1 && break
         sleep 1
     done
+fi
+
+# dcgm-exporter runs embedded DCGM, which can't initialise inside a MIG slice
+# without CAP_SYS_ADMIN — it would only crash-loop. Skip it there.
+if is_mig_gpu; then
+    log "GPU is a MIG slice; dcgm-exporter not started (embedded DCGM unsupported on MIG)"
+else
+    log "starting dcgm-exporter"
+    supervisorctl start dcgm-exporter
 fi
 
 # Head-node only: start the (autostart=false) Prometheus + Grafana programs.

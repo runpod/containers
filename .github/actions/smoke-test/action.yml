@@ -158,6 +158,11 @@ inputs:
       For runpod/autoresearch only.
     required: false
     default: "false"
+  test-dcgm-exporter:
+    description: |
+      'true' to emit `test_dcgm_exporter: true`: scrape the in-pod
+      dcgm-exporter on :9400 and require the series the Grafana dashboards
+      read, with a hostname label. For runpod/pytorch-cluster only.
   test-ray:
     description: |
       'true' to emit `test_ray: true`: start a one-node Ray head in the pod,
@@ -473,6 +478,7 @@ runs:
         TEST_VIRTUALENV: ${{ inputs.test-virtualenv }}
         TEST_PYTHON_PATH: ${{ inputs.test-python-path }}
         TEST_AUTORESEARCH: ${{ inputs.test-autoresearch }}
+        TEST_DCGM_EXPORTER: ${{ inputs.test-dcgm-exporter }}
         TEST_RAY: ${{ inputs.test-ray }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         INSTANCES: ${{ inputs.instances }}
@@ -527,6 +533,9 @@ runs:
         fi
         if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-autoresearch)
+        fi
+        if [[ "${TEST_DCGM_EXPORTER,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-dcgm-exporter)
         fi
         if [[ "${TEST_RAY,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-ray)

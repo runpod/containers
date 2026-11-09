@@ -31,6 +31,7 @@ def _reset_groups() -> None:
         config.GROUP_PYTHON_TLS_VENV,
         config.GROUP_TEST_UV,
         config.GROUP_TEST_VIRTUALENV,
+        config.GROUP_TEST_DCGM_EXPORTER,
         config.GROUP_TEST_PYTHON_PATH,
     ):
         d.clear()
@@ -72,6 +73,11 @@ class HygieneSelectionTests(unittest.TestCase):
 
     def test_no_flags_means_no_checks(self):
         self.assertEqual(_hygiene_checks("grp"), [])
+
+    def test_dcgm_exporter_is_opt_in(self):
+        config.GROUP_TEST_DCGM_EXPORTER["grp"] = True
+        labels = [label for label, _, _ in _hygiene_checks("grp")]
+        self.assertEqual(labels, ["dcgm-exporter"])
 
     def test_only_opted_in_checks_appear(self):
         config.GROUP_TEST_UV["grp"] = True
@@ -189,6 +195,7 @@ class CommandShapeTests(unittest.TestCase):
             "virtualenv": checks.virtualenv_check_command(),
             "python_path": checks.python_path_check_command(),
             "autoresearch": checks.autoresearch_check_command(),
+            "dcgm_exporter": checks.dcgm_exporter_check_command(),
             "ray": checks.ray_check_command(),
         }
         for name, command in commands.items():
@@ -230,6 +237,31 @@ class CommandShapeTests(unittest.TestCase):
         # Sequence length is shrunk so the check fits a cheap GPU.
         self.assertIn("prepare.MAX_SEQ_LEN = 256", command)
 
+    def test_dcgm_check_requires_the_dashboard_labels(self):
+        command = checks.dcgm_exporter_check_command()
+        self.assertIn("http://localhost:9400/metrics", command)
+        # The dashboards' variables read these; both must carry the label.
+        for series in checks.DCGM_DASHBOARD_SERIES:
+            self.assertIn(series, command)
+        # Lower-case and non-empty: 4.8.3 renamed `Hostname` -> `hostname`.
+        self.assertIn('hostname=\\\"[^\\\"]', command)
+
+    def test_dcgm_check_tolerates_mig_slices(self):
+        # Embedded DCGM can't start on MIG; post_start.sh leaves it stopped
+        # and the check must accept that instead of scraping :9400.
+        command = checks.dcgm_exporter_check_command()
+        self.assertIn("nvidia-smi -L", command)
+        self.assertIn("*MIG-*", command)
+        self.assertIn("*STOPPED*", command)
+        mig_branch = command.index("if [ -n \"$MIG\" ]")
+        self.assertLess(mig_branch, command.index("localhost:9400"))
+
+    def test_dcgm_check_retries_within_the_ssh_timeout(self):
+        from runpod_smoke.runner import _HYGIENE_TIMEOUT
+        attempts, interval, curl_cap = 20, 5, 3
+        command = checks.dcgm_exporter_check_command(attempts, interval)
+        self.assertIn(f"seq 1 {attempts}", command)
+        self.assertLess(attempts * (interval + curl_cap), _HYGIENE_TIMEOUT)
     def test_ray_check_uses_the_gpu_and_metrics_port(self):
         command = checks.ray_check_command()
         self.assertIn("ray start --head --metrics-export-port=20217", command)
