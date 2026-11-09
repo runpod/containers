@@ -6,12 +6,15 @@ $JUPYTER_PASSWORD, passes it as its token, and the console opens
 `...-8888.proxy.runpod.net/lab?token=<JUPYTER_PASSWORD>`. This reuses that SAME
 secret for Grafana:
 
-  1. Read the token from ?token= (or the session cookie).
-  2. Constant-time compare it to JUPYTER_PASSWORD (or GRAFANA_PASSWORD if set,
-     for a Grafana-specific override).
+  1. Read the token from ?token=, else the session cookie.
+  2. Constant-time compare the token to JUPYTER_PASSWORD (or GRAFANA_PASSWORD
+     if set, for a Grafana-specific override), or the cookie to this process's
+     random session value.
   3. On match -> proxy to Grafana (loopback :3300) injecting the auth.proxy
-     identity header (X-WEBAUTH-User) and set an HttpOnly cookie so the browser
-     SPA's later (token-less) requests stay authenticated.
+     identity header (X-WEBAUTH-User); a valid ?token= also sets the HttpOnly
+     session cookie so the browser SPA's later (token-less) requests stay
+     authenticated. The cookie never holds the secret, and a proxy restart
+     ends every session (the stale cookie is purged; ?token= signs in again).
   4. No match / no secret set -> no header -> Grafana shows its login form.
 
 Client-supplied X-WEBAUTH-* is stripped so the identity can't be spoofed, and
@@ -35,6 +38,7 @@ import hmac
 import http.client
 import http.server
 import os
+import secrets
 import socketserver
 import urllib.parse
 
@@ -67,9 +71,12 @@ def token_ok(token):
     return bool(SECRET) and bool(token) and hmac.compare_digest(token, SECRET)
 
 
-# Set only after token_ok, so it carries SECRET, which a valid token equals,
-# never bytes from the request.
-SESSION_COOKIE = f"{COOKIE}={SECRET}; Path=/; HttpOnly; Secure; SameSite=Lax"
+SESSION = secrets.token_urlsafe(32)
+SESSION_COOKIE = f"{COOKIE}={SESSION}; Path=/; HttpOnly; Secure; SameSite=Lax"
+
+
+def session_ok(cookie):
+    return bool(cookie) and hmac.compare_digest(cookie, SESSION)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -93,10 +100,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._login(url_token)
             return
         from_url = url_token is not None
-        cookie_token = cookie_value(self.headers.get("Cookie"), COOKIE)
-        had_cookie = cookie_token is not None
-        token = url_token or cookie_token
-        ok = token_ok(token)
+        cookie = cookie_value(self.headers.get("Cookie"), COOKIE)
+        had_cookie = cookie is not None
+        ok = token_ok(url_token) if url_token else session_ok(cookie)
 
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length) if length else None
@@ -126,8 +132,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Fresh valid token in the URL -> (re)establish the session cookie.
             self.send_header("Set-Cookie", SESSION_COOKIE)
         elif not ok and (had_cookie or resp.status == 401):
-            # Stale/invalid token cookie (e.g. secret rotated on redeploy) -> purge
-            # it so the browser stops looping and the ?token= flow can recover.
+            # Stale/invalid session cookie (proxy restarted, or a secret-bearing
+            # cookie from an older image) -> purge it so the browser stops
+            # looping and the ?token= flow can recover.
             self.send_header(
                 "Set-Cookie",
                 f"{COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
