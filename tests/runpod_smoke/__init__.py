@@ -1,4 +1,4 @@
-"""Internal package for the RunPod image smoke-test runner.
+"""Internal package for the Runpod image smoke-test runner.
 
 See ../README.md for usage. test_images.py is the entry point and the only
 file users invoke directly; modules in this package are implementation
