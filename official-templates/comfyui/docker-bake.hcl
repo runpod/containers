@@ -159,7 +159,6 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
-    COMFYUI_VENV_NAME   = build.venv_name
     SAGEATTENTION_VERSION   = build.sageattention_version
     SAGEATTENTION_WHEEL_URL = build.sageattention_wheel_url
     SAGEATTENTION_SHA256    = build.sageattention_sha256
