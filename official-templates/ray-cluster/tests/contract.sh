@@ -23,7 +23,9 @@
 #      which RAY_DASHBOARD_PASSWORD outranks), and 200 with the bearer token;
 #      the dashboard agent (52365) refuses a job submission with no token;
 #      /api/authenticate sets the session cookie the UI rides, and so does
-#      nginx's front door on 8266 for a ?token= link, still checked by Ray. The worker
+#      nginx's front door on 8266 for a ?token= link, still checked by Ray. On
+#      Runpod (RUNPOD_POD_ID), a login at / bounces through Grafana's
+#      /runpod-login while a deep link keeps its path. The worker
 #      takes its token from JUPYTER_PASSWORD, so its join (step 4) proves both
 #      fallbacks resolve to one cluster token. A boot with no secret is refused
 #      (step 2), and RAY_AUTH_MODE=disabled is the explicit opt-out.
@@ -330,6 +332,18 @@ check_image() {
     code=$("${in_worker[@]}" curl -s -o /dev/null -w '%{http_code}' "http://$HEAD_IP:$FRONT_PORT/api/version")
     [[ "$code" == 401 ]] || fail "front door without a token: want 401, got $code"
     pass "dashboard front door: ?token= becomes Ray's session cookie, and Ray still checks it"
+
+    # On Runpod, a login at / bounces through Grafana's token proxy (8889) to
+    # sign in the Metrics tab's panels; a deep link keeps its path. Only nginx
+    # answers these, so the head needs no Grafana.
+    local locations
+    locations=$(docker run --rm -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
+        -e RUNPOD_POD_ID=abc123 -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" bash -c "nginx && for p in / /jobs; do
+            curl -sS -o /dev/null -w '%{redirect_url}\n' \"http://127.0.0.1:$FRONT_PORT\$p?token=$TOKEN\"; done" |
+        tail -n 2) || fail "a head with RUNPOD_POD_ID did not boot"
+    [[ "$locations" == "https://abc123-8889.proxy.runpod.net/runpod-login?token=$TOKEN"$'\n'*/jobs ]] ||
+        fail "RUNPOD_POD_ID front door: want / to bounce through Grafana's /runpod-login and /jobs to stay, got: $locations"
+    pass "dashboard front door on Runpod: / bounces through Grafana's login, a deep link keeps its path"
 
     if [[ -n "${RAY_CONTRACT_FIXTURE_DIR:-}" ]]; then
         local dir

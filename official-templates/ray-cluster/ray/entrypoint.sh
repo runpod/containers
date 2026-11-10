@@ -184,21 +184,24 @@ if [[ "$role" == head ]]; then
     if [[ "${RAY_CLUSTER_METRICS:-1}" != "0" ]]; then
         export RAY_PROMETHEUS_HOST=${RAY_PROMETHEUS_HOST:-http://127.0.0.1:9090}
         export RAY_GRAFANA_HOST=${RAY_GRAFANA_HOST:-http://127.0.0.1:3300}
-        # Grafana's token proxy checks the cluster token, so one ?token= link
-        # signs in both.
-        if [[ "$RAY_AUTH_MODE" == token && -z "${GRAFANA_PASSWORD:-}" ]]; then
-            GRAFANA_PASSWORD=${RAY_AUTH_TOKEN:-$(< "$RAY_AUTH_TOKEN_PATH")}
-            export GRAFANA_PASSWORD
+        # Grafana's token proxy also accepts the cluster token, so one ?token=
+        # link signs in both, while its own token (GRAFANA_PASSWORD, else
+        # JUPYTER_PASSWORD, which the console's Grafana link carries) still works.
+        if [[ "$RAY_AUTH_MODE" == token ]]; then
+            GRAFANA_CLUSTER_TOKEN=${RAY_AUTH_TOKEN:-$(< "$RAY_AUTH_TOKEN_PATH")}
+            export GRAFANA_CLUSTER_TOKEN
         fi
         if [[ -n "${RUNPOD_POD_ID:-}" && -z "${RAY_GRAFANA_IFRAME_HOST:-}" ]]; then
             proxy_base=${RUNPOD_PROXY_BASE:-proxy.runpod.net}
             export RAY_GRAFANA_IFRAME_HOST=https://${RUNPOD_POD_ID}-8889.$proxy_base
             # The panels are on Grafana's origin, so they need its cookie too:
-            # the front door's ?token= login bounces through the proxy's
-            # /runpod-login, which sets it and returns to the dashboard.
+            # the front door's ?token= login at / (the console's link) bounces
+            # through the proxy's /runpod-login, which sets it and returns to
+            # the dashboard. A deep link keeps its path and skips the bounce.
             export LOGIN_RETURN_URL=https://${RUNPOD_POD_ID}-8266.$proxy_base/
-            # shellcheck disable=SC2016 # $after_login and $arg_token are nginx's
-            printf 'set $after_login "%s/runpod-login?token=$arg_token";\n' "$RAY_GRAFANA_IFRAME_HOST" \
+            # shellcheck disable=SC2016 # $uri, $after_login and $arg_token are nginx's
+            printf '%s\n' 'set $after_login $uri;' 'if ($uri = /) {' \
+                "    set \$after_login \"$RAY_GRAFANA_IFRAME_HOST/runpod-login?token=\$arg_token\";" '}' \
                 > /etc/nginx/ray-dashboard-login.conf
         fi
     fi

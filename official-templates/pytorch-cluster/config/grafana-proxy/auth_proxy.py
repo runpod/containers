@@ -8,8 +8,8 @@ secret for Grafana:
 
   1. Read the token from ?token=, else the session cookie.
   2. Constant-time compare the token to JUPYTER_PASSWORD (or GRAFANA_PASSWORD
-     if set, for a Grafana-specific override), or the cookie to this process's
-     random session value.
+     if set, for a Grafana-specific override) and GRAFANA_CLUSTER_TOKEN, or the
+     cookie to this process's random session value.
   3. On match -> proxy to Grafana (loopback :3300) injecting the auth.proxy
      identity header (X-WEBAUTH-User); a valid ?token= also sets the HttpOnly
      session cookie so the browser SPA's later (token-less) requests stay
@@ -23,6 +23,11 @@ Grafana binds loopback so nothing can reach it except this proxy.
 Env (all optional):
   JUPYTER_PASSWORD    the shared token (reused from Jupyter)
   GRAFANA_PASSWORD    optional override for a Grafana-specific token
+  GRAFANA_CLUSTER_TOKEN
+                      a second accepted token, alongside the one above (the
+                      ray-cluster head sets it to the Ray cluster token, so
+                      the dashboard's link signs Grafana in while the
+                      console's JUPYTER_PASSWORD link keeps working)
   PROXY_LISTEN_PORT   default 8889 (the public port Runpod maps)
   GRAFANA_UPSTREAM    default 127.0.0.1:3300
   GRAFANA_PROXY_USER  Grafana username to log in as (default: runpod)
@@ -45,7 +50,14 @@ import urllib.parse
 LISTEN = int(os.environ.get("PROXY_LISTEN_PORT", "8889"))
 UPSTREAM = os.environ.get("GRAFANA_UPSTREAM", "127.0.0.1:3300")
 # Reuse Jupyter's shared secret; GRAFANA_PASSWORD overrides it if set.
-SECRET = os.environ.get("GRAFANA_PASSWORD") or os.environ.get("JUPYTER_PASSWORD", "")
+SECRETS = [
+    s.encode()
+    for s in (
+        os.environ.get("GRAFANA_PASSWORD") or os.environ.get("JUPYTER_PASSWORD", ""),
+        os.environ.get("GRAFANA_CLUSTER_TOKEN", ""),
+    )
+    if s
+]
 USER = os.environ.get("GRAFANA_PROXY_USER", "runpod")
 COOKIE = os.environ.get("AUTH_COOKIE", "cluster_auth")
 LOGIN_PATH = "/runpod-login"
@@ -68,7 +80,9 @@ def cookie_value(header, name):
 
 
 def token_ok(token):
-    return bool(SECRET) and bool(token) and hmac.compare_digest(token, SECRET)
+    # Bytes, so a non-ASCII token is a mismatch rather than a TypeError.
+    token = (token or "").encode()
+    return bool(token) and any([hmac.compare_digest(token, s) for s in SECRETS])
 
 
 SESSION = secrets.token_urlsafe(32)
