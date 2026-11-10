@@ -183,10 +183,11 @@ ARG TORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
 
-# Which venv on the network volume this image owns. Only CUDA 13.2 gets its own;
-# 12.8 and 13.0 keep sharing .venv-cu128 so existing volumes are untouched.
-ARG COMFYUI_VENV_NAME=.venv-cu128
-ENV COMFYUI_VENV_NAME=${COMFYUI_VENV_NAME}
+# Which venv on the network volume this image owns — one per torch CUDA build,
+# since packages users install there (xformers, triton, sageattention,
+# onnxruntime-gpu, nunchaku) are compiled against it. 13.0 used to share
+# .venv-cu128; start.sh treats that as a move and reinstalls node deps.
+ENV COMFYUI_VENV_NAME=.venv-${TORCH_INDEX_SUFFIX}
 
 # ---- FileBrowser version pin (set in docker-bake.hcl) ----
 ARG FILEBROWSER_VERSION

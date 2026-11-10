@@ -12,7 +12,8 @@ lives in .github/families.yml.
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
     plan_families.py --workflow comfyui    # which workflow builds this family
-    plan_families.py --paths comfyui       # pathspecs feeding it, deps included
+    plan_families.py --paths comfyui       # pathspecs feeding it, deps included,
+                                           # ignored files excluded
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
 
@@ -70,6 +71,28 @@ def load_graph(path: Path) -> dict[str, dict]:
     return graph
 
 
+def load_ignore(path: Path) -> list[str]:
+    """Top-level `ignore` patterns: files that never reach an image."""
+    raw = yaml.safe_load(path.read_text()) or {}
+    patterns = raw.get("ignore") or []
+    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        raise GraphError(f"{path}: 'ignore' must be a list of patterns")
+    return patterns
+
+
+def is_ignored(path: str, ignore: list[str]) -> bool:
+    """True when `path` matches an ignore pattern and no `!` exception."""
+    keep = [p[1:] for p in ignore if p.startswith("!")]
+    drop = [p for p in ignore if not p.startswith("!")]
+    return any(_matches(p, path) for p in drop) and not any(
+        _matches(p, path) for p in keep
+    )
+
+
+def build_inputs(changed: list[str], ignore: list[str]) -> list[str]:
+    return [c for c in changed if not is_ignored(c, ignore)]
+
+
 def _matches(pattern: str, changed: str) -> bool:
     # A trailing /** means "this directory and everything under it". fnmatch's
     # '*' happily crosses '/', so a prefix test is both cheaper and clearer.
@@ -78,7 +101,10 @@ def _matches(pattern: str, changed: str) -> bool:
     return fnmatch.fnmatch(changed, pattern)
 
 
-def direct_matches(graph: dict[str, dict], changed: list[str]) -> set[str]:
+def direct_matches(
+    graph: dict[str, dict], changed: list[str], ignore: list[str] = (),
+) -> set[str]:
+    changed = build_inputs(changed, list(ignore))
     return {
         name
         for name, spec in graph.items()
@@ -121,14 +147,19 @@ def build_order(graph: dict[str, dict], selected: set[str]) -> list[str]:
     return ordered
 
 
-def plan(graph: dict[str, dict], changed: list[str], all_families: bool) -> list[str]:
+def plan(
+    graph: dict[str, dict], changed: list[str], all_families: bool,
+    ignore: list[str] = (),
+) -> list[str]:
     selected = set(graph) if all_families else with_dependents(
-        graph, direct_matches(graph, changed)
+        graph, direct_matches(graph, changed, ignore)
     )
     return build_order(graph, selected)
 
 
-def plan_since_release(graph: dict[str, dict], changed_for) -> list[str]:
+def plan_since_release(
+    graph: dict[str, dict], changed_for, ignore: list[str] = (),
+) -> list[str]:
     """Plan from each family's last release instead of from one diff.
 
     A push diff only covers the commit that triggered the run, so anything
@@ -139,7 +170,11 @@ def plan_since_release(graph: dict[str, dict], changed_for) -> list[str]:
     selected = {
         name
         for name, spec in graph.items()
-        if any(_matches(p, c) for p in spec["paths"] for c in changed_for(name))
+        if any(
+            _matches(p, c)
+            for p in spec["paths"]
+            for c in build_inputs(changed_for(name), list(ignore))
+        )
     }
     return build_order(graph, with_dependents(graph, selected))
 
@@ -165,6 +200,25 @@ def git_pathspecs(paths: list[str]) -> list[str]:
     """Graph patterns as git pathspecs, for `git log -- …`. A trailing /**
     becomes a plain directory, which git already reads as "and below"."""
     return [p[:-2] if p.endswith("/**") else p for p in paths]
+
+
+def exclude_pathspecs(
+    paths: list[str], ignore: list[str], files: list[str],
+) -> list[str]:
+    """`:(exclude)` pathspecs for every ignored file under `paths`.
+
+    The bump and the release notes find a family's commits with
+    `git log -- <pathspecs>`, so an ignored file has to be excluded there too,
+    or a README-only commit that built nothing would still set the version
+    and show up in the changelog. Git can't re-include an excluded file, so
+    `!` exceptions are resolved here, against concrete files, rather than
+    handed to git as patterns.
+    """
+    return [
+        f":(exclude,literal){f}"
+        for f in files
+        if any(_matches(p, f) for p in paths) and is_ignored(f, ignore)
+    ]
 
 
 def _git(*args: str) -> str:
@@ -248,6 +302,7 @@ def main() -> int:
 
     try:
         graph = load_graph(args.graph)
+        ignore = load_ignore(args.graph)
         if args.image_repos:
             for repo in dict.fromkeys(s["image_repo"] for s in graph.values()):
                 print(repo)
@@ -265,14 +320,18 @@ def main() -> int:
         if args.paths:
             if args.paths not in graph:
                 raise GraphError(f"unknown family '{args.paths}'")
-            for spec in git_pathspecs(paths_with_deps(graph, args.paths)):
+            paths = paths_with_deps(graph, args.paths)
+            tracked = _git("-C", str(REPO_ROOT), "ls-files").splitlines()
+            for spec in git_pathspecs(paths) + exclude_pathspecs(
+                paths, load_ignore(args.graph), tracked
+            ):
                 print(spec)
             return 0
         if args.since_release:
-            families = plan_since_release(graph, changed_since_release)
+            families = plan_since_release(graph, changed_since_release, ignore)
         else:
             changed = [] if args.all else _read_changed(args.changed_files)
-            families = plan(graph, changed, args.all)
+            families = plan(graph, changed, args.all, ignore)
         if args.workflows:
             # Deduplicated, first-needed first: base covers four families.
             workflows = list(dict.fromkeys(graph[f]["workflow"] for f in families))
@@ -291,8 +350,11 @@ def main() -> int:
     elif args.since_release:
         report("selection", "families changed since their own last release")
     else:
-        direct = direct_matches(graph, changed)
+        direct = direct_matches(graph, changed, ignore)
         report("files changed", str(len(changed)))
+        skipped = [c for c in changed if is_ignored(c, ignore)]
+        if skipped:
+            report("ignored (no build)", ", ".join(skipped))
         report("matched by path", ", ".join(sorted(direct)) or "none")
         report("pulled in as deps",
                ", ".join(f for f in families if f not in direct) or "none")
