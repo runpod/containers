@@ -83,6 +83,7 @@ variable "COMPATIBLE_BUILDS" {
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
+          install_cuda_compat = combination.install_cuda_compat,
          },
       ]
     ]
@@ -151,11 +152,7 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
-<<<<<<< HEAD
-    COMFYUI_VENV_NAME   = build.venv_name
     INSTALL_CUDA_COMPAT = build.install_cuda_compat ? "true" : "false"
-=======
->>>>>>> 6b6a82efffb490721665b21aa7cd3326b77ae7fc
   }
 
   tags = [
