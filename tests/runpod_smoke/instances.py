@@ -1,9 +1,9 @@
 """GPU catalog discovery, instance resolution, and CUDA tag detection.
 
-All the logic that decides "which RunPod instances should this group be
+All the logic that decides "which Runpod instances should this group be
 tested on" lives here:
 
-  * discover_gpu_id_map / discover_gpu_catalog — startup-time RunPod queries
+  * discover_gpu_id_map / discover_gpu_catalog — startup-time Runpod queries
   * resolve_gpu_id / is_known_gpu — display-name -> gpuId lookup
   * resolve_instances — apply explicit list / budget filter / exclude filter
   * detect_cuda_version — parse the CUDA version out of an image tag
@@ -38,7 +38,7 @@ def detect_cuda_version(image: str) -> Optional[str]:
         runpod/base:...-ubuntu2404              -> None
         runpod/nvidia-pytorch:...-25.11         -> None (NGC tag, unknown CUDA)
 
-    Used to populate `--min-cuda-version` so RunPod's scheduler only places
+    Used to populate `--min-cuda-version` so Runpod's scheduler only places
     the pod on a host whose driver supports that CUDA version. Without this,
     a cu13.0 image landing on an older-driver host fails with:
         nvidia-container-cli: requirement error: unsatisfied condition: cuda>=13.0
@@ -52,11 +52,11 @@ def detect_cuda_version(image: str) -> Optional[str]:
 
 
 def resolve_gpu_id(display_name: str) -> str:
-    """Map a user-supplied GPU display name to its RunPod gpu id.
+    """Map a user-supplied GPU display name to its Runpod gpu id.
 
     Tries exact match first, then case-insensitive match (so 'RTX 4070 TI'
-    in the manifest still finds 'RTX 4070 Ti' in the RunPod catalog).
-    Falls back to the raw input — RunPod will then reject it with a clear
+    in the manifest still finds 'RTX 4070 Ti' in the Runpod catalog).
+    Falls back to the raw input — Runpod will then reject it with a clear
     error.
     """
     if display_name in config.GPU_ID_MAP:
@@ -235,7 +235,7 @@ def discover_cpu_catalog() -> list[dict]:
     """Fetch CPU flavors from `GET /v2/catalog/cpus`.
 
     Needed because v2 requires an explicit `cpu.id` + `vcpuCount` on pod
-    create, where the old CLI let RunPod pick the flavor itself.
+    create, where the old CLI let Runpod pick the flavor itself.
     """
     status, data = api.request_with_retries(
         "GET",
@@ -436,7 +436,7 @@ def resolve_instances(group_name: str, group_config: dict) -> list[str]:
          cycles through GPU types.
       1. Explicit `instances:` list in the manifest — wins, used as-is.
       2. `max_price_per_hour: X` (+ optional `min_vram_gb`, `manufacturer`)
-         — auto-pick from RunPod catalog, sorted cheapest first.
+         — auto-pick from Runpod catalog, sorted cheapest first.
       3. `check_all_gpu: true` — every catalog GPU matching the optional
          vRAM/vendor filters, for compatibility-matrix runs.
 

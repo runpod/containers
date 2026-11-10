@@ -1,12 +1,12 @@
-"""Who a readiness timeout belongs to: the image, or RunPod.
+"""Who a readiness timeout belongs to: the image, or Runpod.
 
 Nothing visible from outside separates them. `status` reads `RUNNING` from
 scheduling time onward, so a pod still downloading a 50GB image, a pod whose
-entrypoint cannot execute, and a pod RunPod never routed to all look
+entrypoint cannot execute, and a pod Runpod never routed to all look
 identical: no SSH, status RUNNING, no terminal state.
 
 The verdict therefore comes from evidence, and getting it wrong is expensive
-in both directions — blaming RunPod hides a broken image behind
+in both directions — blaming Runpod hides a broken image behind
 `on-skip: warn`, and blaming the image fails a release over a platform
 hiccup. What stays genuinely ambiguous is reported as UNVERIFIED rather than
 guessed either way.
@@ -115,7 +115,7 @@ class Classification(unittest.TestCase):
 class StartupFailureVisibleOnlyInTheSystemLog(unittest.TestCase):
     """A container that could not be created never wrote a line of its own.
 
-    Its only trace is RunPod's system log, so scanning the container stream
+    Its only trace is Runpod's system log, so scanning the container stream
     alone reported these as STUCK — which retries, ends as SKIP, and passes
     under `on-skip: warn`. A broken entrypoint could ship.
     """
@@ -163,7 +163,7 @@ class StartupFailureVisibleOnlyInTheSystemLog(unittest.TestCase):
         self.assertEqual(status, "STUCK")
 
 
-# Verbatim from the container log of a real MI300X pod that RunPod never
+# Verbatim from the container log of a real MI300X pod that Runpod never
 # gave a public port for 22/tcp. sshd is up; only the path to it is missing.
 ROCM_LOG_SSHD_UP = [
     "Starting Nginx service...",
@@ -207,7 +207,7 @@ class ContainerProgressFromItsOwnLog(unittest.TestCase):
         self.assertIsNone(self._progress(None))
 
 
-# Verbatim from a RunPod system log, mid-pull and then at hand-off. This is
+# Verbatim from a Runpod system log, mid-pull and then at hand-off. This is
 # the authoritative answer to "has the image even finished downloading",
 # which the container's own log can only hint at and `status` cannot answer.
 SYSLOG_PULLING = [
@@ -281,7 +281,7 @@ class WhoIsToBlameForATimeout(unittest.TestCase):
         self.assertIsNone(endpoint)
 
     def test_sshd_up_but_unreachable_is_infra_not_unverified(self):
-        """The MI300X case: the image did its part, RunPod never built a
+        """The MI300X case: the image did its part, Runpod never built a
         path to it. Blaming the image for that is a false red build."""
         outcome, detail, _ = self._wait_timeout(
             checks.ContainerProgress(started=True, sshd_up=True)
