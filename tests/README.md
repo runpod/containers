@@ -819,10 +819,10 @@ fields.
 
 | symptom in logs | likely cause | fix |
 |---|---|---|
-| `no RunPod API key — set RUNPOD_API_KEY…` | key missing from env and `~/.runpod/config.toml` | `export RUNPOD_API_KEY=<KEY>` |
-| `RunPod API rejected the key (HTTP 401…)` | key expired or lacks pod-management permission | regenerate at <https://www.runpod.io/console/user/settings> |
+| `no Runpod API key — set RUNPOD_API_KEY…` | key missing from env and `~/.runpod/config.toml` | `export RUNPOD_API_KEY=<KEY>` |
+| `Runpod API rejected the key (HTTP 401…)` | key expired or lacks pod-management permission | regenerate at <https://www.runpod.io/console/user/settings> |
 | `warn: no GPU catalog` | `GET /v2/catalog/gpus` failed — usually a bad/absent key | fix the key; budget and `check_all_gpu` selection are disabled without it |
-| `registry auth '<name>' not found in this RunPod account` | `REGISTRY_AUTH_NAME` doesn't match any credential — typo, or a different account than the one that has it | the error lists the names the account does have; fix the name or add the credential in the Runpod console |
+| `registry auth '<name>' not found in this Runpod account` | `REGISTRY_AUTH_NAME` doesn't match any credential — typo, or a different account than the one that has it | the error lists the names the account does have; fix the name or add the credential in the Runpod console |
 | `unauthorized: incorrect username or password` in the pod's system log | the attached credential's Docker Hub login is stale (common after switching accounts) | replace the token on that credential in the Runpod console, or drop `REGISTRY_AUTH_NAME` to pull our public images anonymously |
 | every pod SKIPs with an SSH failure | private key not mode `600`, or its public half isn't registered | `chmod 600 <key>`; verify the fingerprint appears in `GET /v2/account/ssh-keys` |
 | `no ssh endpoint assigned yet` for the whole timeout | the pod never got a machine, so neither `ssh.direct` nor `ssh.proxy` exists | genuine provisioning failure — retry, or check the pod in the console. A missing *direct* port alone no longer causes this: the proxy is used instead |
