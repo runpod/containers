@@ -48,7 +48,6 @@ variable "CUDA_TORCH_COMBINATIONS" {
       install_cuda_compat = false,
       torch_index_suffix = "cu128",
       torchaudio_index_suffix = "cu128",
-      venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
       torchaudio_version = "2.10.0+cu128"
@@ -57,7 +56,6 @@ variable "CUDA_TORCH_COMBINATIONS" {
       install_cuda_compat = true,
       torch_index_suffix = "cu130",
       torchaudio_index_suffix = "cu130",
-      venv_name = ".venv-cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
       torchaudio_version = "2.10.0+cu130"
@@ -66,7 +64,6 @@ variable "CUDA_TORCH_COMBINATIONS" {
       install_cuda_compat = true,
       torch_index_suffix = "cu132",
       torchaudio_index_suffix = "cpu",
-      venv_name = ".venv-cu132",
       torch_version = "2.13.0",
       torchvision_version = "0.28.0",
       torchaudio_version = "2.11.0+cpu"
@@ -83,8 +80,6 @@ variable "COMPATIBLE_BUILDS" {
           cuda_version_dash = replace(combination.cuda_version, ".", "-"),
           torch_index_suffix = combination.torch_index_suffix,
           torchaudio_index_suffix = combination.torchaudio_index_suffix,
-          venv_name = combination.venv_name,
-          install_cuda_compat = combination.install_cuda_compat,
           torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
@@ -156,8 +151,11 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
+<<<<<<< HEAD
     COMFYUI_VENV_NAME   = build.venv_name
     INSTALL_CUDA_COMPAT = build.install_cuda_compat ? "true" : "false"
+=======
+>>>>>>> 6b6a82efffb490721665b21aa7cd3326b77ae7fc
   }
 
   tags = [
