@@ -1,26 +1,18 @@
 name: Base Images Build
 
 # Reusable building block invoked by the release orchestrator (release.yml),
-# which computes the version ONCE and passes it in. Builds the whole
-# base -> pytorch -> {autoresearch, pytorch-cluster} dependency chain in one
-# run. Not triggered on its own (no push/pull_request/concurrency here) — the
+# which passes in the families it planned. Covers the
+# base -> pytorch -> {autoresearch, pytorch-cluster -> ray-cluster} dependency
+# chain; each family has its own version series and only the planned ones are
+# built. Not triggered on its own (no push/pull_request/concurrency here) — the
 # orchestrator owns triggers, gating, concurrency and the final release.
 on:
   workflow_call:
     inputs:
-      version:
-        description: "Semantic version without a leading v (e.g. 1.1.0)."
-        required: true
-        type: string
-      suffix:
-        description: "Tag suffix: empty for releases, -rc.<pr> for PRs, -dev otherwise."
-        required: false
-        default: ""
-        type: string
-      base_version:
+      families:
         description: >-
-          Last RELEASED version (no bump). Used as the pytorch base a cluster-only
-          PR layers onto when this run doesn't rebuild pytorch.
+          JSON array of families to build, from .github/scripts/plan_families.py.
+          A family absent from it keeps its published images and version.
         required: true
         type: string
 
@@ -28,7 +20,77 @@ permissions:
   contents: read
 
 jobs:
+  # One version series per family (git tags `base-v1.3.1`, `pytorch-v1.4.0`),
+  # all bumped by the same squash commit. The `*-published` outputs are the
+  # last RELEASED version of a family — what a dependent layers onto when that
+  # family is not rebuilt in this run.
+  versions:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      suffix: ${{ steps.base.outputs.suffix }}
+      base: ${{ steps.base.outputs.version }}
+      base-published: ${{ steps.base.outputs.previous-version }}
+      base-build: ${{ steps.base.outputs.should-build }}
+      pytorch: ${{ steps.pytorch.outputs.version }}
+      pytorch-published: ${{ steps.pytorch.outputs.previous-version }}
+      pytorch-build: ${{ steps.pytorch.outputs.should-build }}
+      cluster: ${{ steps.cluster.outputs.version }}
+      cluster-published: ${{ steps.cluster.outputs.previous-version }}
+      cluster-build: ${{ steps.cluster.outputs.should-build }}
+      ray-cluster: ${{ steps.ray-cluster.outputs.version }}
+      ray-cluster-build: ${{ steps.ray-cluster.outputs.should-build }}
+      autoresearch: ${{ steps.autoresearch.outputs.version }}
+      autoresearch-build: ${{ steps.autoresearch.outputs.should-build }}
+      filebrowser: ${{ steps.filebrowser.outputs.version }}
+      filebrowser-build: ${{ steps.filebrowser.outputs.should-build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: base
+        id: base
+        uses: ./.github/actions/compute-version
+        with:
+          family: base
+
+      - name: pytorch
+        id: pytorch
+        uses: ./.github/actions/compute-version
+        with:
+          family: pytorch
+
+      - name: pytorch-cluster
+        id: cluster
+        uses: ./.github/actions/compute-version
+        with:
+          family: pytorch-cluster
+
+      - name: ray-cluster
+        id: ray-cluster
+        uses: ./.github/actions/compute-version
+        with:
+          family: ray-cluster
+
+      - name: autoresearch
+        id: autoresearch
+        uses: ./.github/actions/compute-version
+        with:
+          family: autoresearch
+
+      - name: filebrowser
+        id: filebrowser
+        uses: ./.github/actions/compute-version
+        with:
+          family: filebrowser
+
   build-base:
+    needs: versions
+    if: >-
+      contains(fromJSON(inputs.families), 'base')
+      && needs.versions.outputs.base-build == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -44,15 +106,16 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/base
 
       - name: Build base images
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+          RELEASE_VERSION: ${{ needs.versions.outputs.base }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
         with:
           source: .
           files: |
@@ -71,6 +134,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -101,13 +165,13 @@ jobs:
         with:
           name: base-refs
           path: /tmp/base-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-base
-    if: needs.build-base.result == 'success'
+    if: "!cancelled() && needs.build-base.result == 'success'"
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -139,94 +203,124 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          test-uv: true
+          test-virtualenv: true
+          test-python-path: true
           on-skip: "warn"
           exclude-instances: |
             RTX 2000 Ada
 
   build-autoresearch:
-    needs: build-base
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    needs: [versions, build-base]
+    # Skipped base means base was not planned, so we layer on the published
+    # one; failed base means we must not build on it at all.
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'autoresearch')
+      && needs.versions.outputs.autoresearch-build == 'true'
+      && (needs.build-base.result == 'success'
+          || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
       id-token: write
-    outputs:
-      changed: ${{ steps.changes.outputs.autoresearch_any_changed }}
+    # Each image is a CUDA-devel base plus a ~12GB uv environment, so loading
+    # the whole matrix onto one runner's disk is what killed the pytorch job.
+    # Shard by CUDA version: one runner per version, at most two images each.
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Check if build is needed
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
-        id: changes
-        with:
-          files_yaml: |
-            autoresearch:
-              - 'official-templates/shared/**'
-              - 'official-templates/base/**'
-              - 'official-templates/autoresearch/**'
-              - 'container-template/**'
-
       - name: Setup Docker
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/autoresearch-${{ matrix.cuda }}
 
-      - name: Build autoresearch images
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/base to pull.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/autoresearch/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
+      - name: Build autoresearch images (${{ matrix.cuda }})
         id: build
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+          RELEASE_VERSION: ${{ needs.versions.outputs.autoresearch }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          # Which published runpod/base to build FROM: the in-run base tag
+          # when base is part of this build, else the last released base.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
+          targets: ${{ matrix.cuda }}
           load: true
           push: false
 
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
       - name: Extract image refs
         id: refs
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Grype scan
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
 
       - name: Install Cosign
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v2.6.0
 
       - name: Cosign sign and verify
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
       - name: Save refs artifact
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
@@ -235,37 +329,31 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/autoresearch-refs/refs.json
 
       - name: Upload refs artifact
-        if: github.event_name != 'pull_request' || steps.changes.outputs.autoresearch_any_changed == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: autoresearch-refs
+          name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-autoresearch
-    # Mirror the gate from `build-autoresearch` steps: on a release (push) or
-    # manual run we build every family, so we also test it; on a PR we only
-    # test when autoresearch inputs actually changed. `result == 'success'`
-    # alone isn't enough — when a PR skips the build, the JOB still reports
-    # success, so the test job would spin up a runner and feed an empty
-    # `image-refs` to smoke-test (which fails or warns about a no-op).
-    if: |
-      needs.build-autoresearch.result == 'success'
-      && (github.event_name != 'pull_request'
-          || needs.build-autoresearch.outputs.changed == 'true')
+    if: "!cancelled() && needs.build-autoresearch.result == 'success'"
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Download refs artifact
+      - name: Download refs for ${{ matrix.cuda }}
         uses: actions/download-artifact@v8
         with:
-          name: autoresearch-refs
+          name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs
 
       - name: Read refs
@@ -279,20 +367,204 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test
+      - name: Smoke test (${{ matrix.cuda }})
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # certifi lives in the uv venv (no --system-site-packages), so point
+          # the check there instead of the system python.
+          python-tls-venv: "/opt/autoresearch/.venv/bin/activate"
+          # Run the real train.py end to end to catch a broken dep bump. The
+          # check shrinks seq length so it fits a cheap 24GB GPU; still needs
+          # FlashAttention-3 kernels, which have no Blackwell build.
+          test-autoresearch: true
+          min-vram-gb: "24"
+          create-timeout: "1200"
+          exclude-instances: |
+            B200*
+            B300*
+            RTX 5090
+            RTX PRO *
+            PRO 6000 MIG *
+            RTX 2000 Ada
+
+  build-filebrowser:
+    needs: [versions, build-base]
+    # Skipped base means base was not planned, so we layer on the published
+    # one; failed base means we must not build on it at all.
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'filebrowser')
+      && needs.versions.outputs.filebrowser-build == 'true'
+      && (needs.build-base.result == 'success'
+          || needs.build-base.result == 'skipped')
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      id-token: write
+    # Ubuntu 24.04 only: a CPU image plus one CUDA image (FileBrowser does not
+    # use the GPU; the CUDA variant is for pods that want GPU tooling alongside).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/filebrowser
+
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/base to pull.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/filebrowser/docker-bake.hcl
+
+      - name: Build filebrowser images
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.filebrowser }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          # Which published runpod/base to build FROM: the in-run base tag
+          # when base is part of this build, else the last released base.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/filebrowser/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
+          load: true
+          push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/filebrowser-refs
+          printf '%s\n' "$REFS" > /tmp/filebrowser-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: filebrowser-refs
+          path: /tmp/filebrowser-refs/refs.json
+          retention-days: 3
+          if-no-files-found: error
+
+  test-filebrowser:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-filebrowser
+    if: "!cancelled() && needs.build-filebrowser.result == 'success'"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: filebrowser-refs
+          path: /tmp/filebrowser-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/filebrowser-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          # base profile routes the CPU tag to a CPU pod and the CUDA tag to a
+          # GPU pod by tag content; the functional check follows the image ref.
+          profile: base
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # Hit FileBrowser's /health route (HTTP 200) so the probe proves
+          # FileBrowser is up, not just that something answers on :80.
+          test-ports: |
+            80/health
           exclude-instances: |
             RTX 2000 Ada
 
   build-pytorch:
-    needs: build-base
-    # always() forces job run even if the dependant is skipped (but not if it failed)
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    needs: [versions, build-base]
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'pytorch')
+      && needs.versions.outputs.pytorch-build == 'true'
+      && (needs.build-base.result == 'success'
+          || needs.build-base.result == 'skipped')
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 240
     permissions:
@@ -303,83 +575,94 @@ jobs:
     # blowing peak runner disk and stalling the daemon for 15+ minutes until
     # the orchestrator kills the runner. Shard the matrix by CUDA major so
     # each runner only loads 5-10 images at a time onto its own disk.
-    outputs:
-      changed: ${{ steps.changes.outputs.pytorch_any_changed }}
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Check if build is needed
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
-        id: changes
-        with:
-          files_yaml: |
-            pytorch:
-              - 'official-templates/shared/**'
-              - 'official-templates/base/**'
-              - 'official-templates/pytorch/**'
-              - 'container-template/**'
-
       - name: Setup Docker
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           max-parallelism: 6
+          cache-key: ${{ github.repository }}/pytorch-${{ matrix.cuda }}-v2
+
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/base to pull.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
 
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
+          RELEASE_VERSION: ${{ needs.versions.outputs.pytorch }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          # Which published runpod/base to build FROM: the in-run base tag
+          # when base is part of this build, else the last released base.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
           load: true
           push: false
 
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
       - name: Extract image refs
         id: refs
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Grype scan
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
           
       - name: Install Cosign
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v2.6.0
 
       - name: Cosign sign and verify
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
@@ -388,7 +671,6 @@ jobs:
       # entry can pick them up. Artifact name is unique per shard, so the
       # three uploads don't collide.
       - name: Save refs artifact
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
@@ -397,25 +679,21 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/pytorch-refs/refs.json
 
       - name: Upload refs artifact
-        if: github.event_name != 'pull_request' || steps.changes.outputs.pytorch_any_changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pytorch-refs-${{ matrix.cuda }}
           path: /tmp/pytorch-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
   test-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch
-    if: |
-      needs.build-pytorch.result == 'success'
-      && (github.event_name != 'pull_request'
-          || needs.build-pytorch.outputs.changed == 'true')
+    if: "!cancelled() && needs.build-pytorch.result == 'success'"
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -446,11 +724,38 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          budget-usd-per-hour: "3.0"
           test-jupyter: true
+          test-torch-packages: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          test-pip-check: true
+          # Inherited from the CUDA base on 22.04: python3-gi ships without
+          # python3-gi-cairo, and nothing in our images uses it.
+          pip-check-allow: |
+            pygobject 3.42.1 requires pycairo
           exclude-instances: |
-            *Blackwell*
             RTX 2000 Ada
-          max-parallel: "4"
+          # Blackwell is blocked only for the images that can't run there:
+          # torch 2.6.0 (cu126 wheels) has no sm_100/sm_120 kernels in any
+          # column, and every cu129 wheel takes a torchvision that upstream
+          # builds without Blackwell: 2.12/2.13 in the 12.x columns and 2.8.0
+          # outside cu1281. Keep in sync with whl_src in
+          # official-templates/pytorch/docker-bake.hcl — the unit test
+          # test_pytorch_blackwell_rules fails if a cu126/cu129 build slips
+          # through. Patterns match catalog DISPLAY
+          # names, which never contain the word "Blackwell" — only the ids
+          # do. Enumerate the cards, with a trailing * so the MIG slices
+          # ('B300 MIG 34GB') match too.
+          exclude-instances-for: |
+            *-torch260-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1300-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1320-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+          max-parallel: "2"
 
   # -cluster layers monitoring + RDMA on top of a PUBLISHED runpod/pytorch.
   # It lives here (not a separate workflow) so it runs AFTER build-pytorch in
@@ -458,103 +763,111 @@ jobs:
   # and on a PR that changed pytorch it layers on that PR's RC pytorch — so the
   # smoke test reflects the real post-merge combination. A cluster-only PR
   # skips the pytorch rebuild and layers on the last released pytorch instead.
-  build-cluster:
-    needs: build-pytorch
-    # always() forces run even if build-pytorch is skipped (but not if it failed).
-    if: always() && (needs.build-pytorch.result == 'success' || needs.build-pytorch.result == 'skipped')
+  build-pytorch-cluster:
+    needs: [versions, build-pytorch]
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'pytorch-cluster')
+      && needs.versions.outputs.cluster-build == 'true'
+      && (needs.build-pytorch.result == 'success'
+          || (needs.build-pytorch.result == 'skipped'
+              && !(contains(fromJSON(inputs.families), 'pytorch')
+                   && needs.versions.outputs.pytorch-build == 'true')))
     runs-on: blacksmith-16vcpu-ubuntu-2404
     permissions:
       contents: read
       id-token: write
-    outputs:
-      changed: ${{ steps.changes.outputs.cluster_any_changed }}
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
+    env:
+      # Which published runpod/pytorch to build FROM: the in-run pytorch
+      # tag when pytorch is part of this build, else the last released
+      # pytorch — the only one that exists for a cluster-only change.
+      # Job-level so the pre-pull and the build resolve the same refs.
+      PYTORCH_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch') && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
 
-      - name: Check if build is needed
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
-        id: changes
-        with:
-          files_yaml: |
-            cluster:
-              - 'official-templates/shared/**'
-              - 'official-templates/base/**'
-              - 'official-templates/pytorch/**'
-              - 'official-templates/pytorch-cluster/**'
-              - 'container-template/**'
-
       - name: Setup Docker
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: ./.github/actions/docker-setup
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}-v2
+
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch-cluster/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
 
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
-          # The cluster's OWN tag: version + suffix (RC/-dev/release).
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_SUFFIX: ${{ inputs.suffix }}
-          # Which published runpod/pytorch to build FROM. If pytorch was
-          # (re)built in this run (push/dispatch, or a PR that changed pytorch),
-          # use that in-run tag (version+suffix). Otherwise (cluster-only PR)
-          # fall back to the last released pytorch — the only one that exists.
-          PYTORCH_BASE_VERSION: ${{ (github.event_name != 'pull_request' || needs.build-pytorch.outputs.changed == 'true') && format('{0}{1}', inputs.version, inputs.suffix) || inputs.base_version }}
+          # The cluster's OWN tag: its version + suffix (RC/-dev/release).
+          RELEASE_VERSION: ${{ needs.versions.outputs.cluster }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
         with:
           source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch-cluster/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
           load: true
           push: false
 
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
       - name: Extract image refs
         id: refs
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: ./.github/actions/image-name
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       - name: Grype scan
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
 
       - name: Push images
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: ./.github/actions/docker-push
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
 
       - name: Install Cosign
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v2.6.0
 
       - name: Cosign sign and verify
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
 
       - name: Save refs artifact
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
@@ -563,28 +876,21 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/cluster-refs/refs.json
 
       - name: Upload refs artifact
-        if: github.event_name != 'pull_request' || steps.changes.outputs.cluster_any_changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cluster-refs-${{ matrix.cuda }}
           path: /tmp/cluster-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
 
-  test-cluster:
+  test-pytorch-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-cluster
-    # Same gate shape as test-pytorch: on push/dispatch always test; on a PR
-    # only test when cluster inputs actually changed (otherwise build-cluster
-    # skipped its steps and there are no refs to test).
-    if: |
-      needs.build-cluster.result == 'success'
-      && (github.event_name != 'pull_request'
-          || needs.build-cluster.outputs.changed == 'true')
+    needs: build-pytorch-cluster
+    if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
     strategy:
       fail-fast: false
       matrix:
-        cuda: [cu1281, cu1290, cu1300]
+        cuda: [cu1281, cu1290, cu1300, cu1320]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -615,4 +921,224 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
-          min-cuda-version: "12.8"
+          budget-usd-per-hour: "3.0"
+          test-torch-packages: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # dcgm-exporter autostarts on every pod of this image, so a single
+          # pod is enough to prove it runs against our libdcgm and still
+          # emits the labels the dashboards query.
+          test-dcgm-exporter: true
+          # torch 2.12/2.13 in the 12.x columns and 2.8.0 on cu1290 take
+          # torchvision from cu129, which upstream builds without Blackwell.
+          # The 13.x columns here use cu130/cu132 and keep it.
+          exclude-instances-for: |
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+
+  # ray-cluster layers Ray onto a PUBLISHED runpod/pytorch-cluster, so it runs
+  # after build-pytorch-cluster in the same run, with the same base-selection
+  # rule: the in-run cluster tag when that family is part of this build, else
+  # the last released cluster.
+  build-ray-cluster:
+    needs: [versions, build-pytorch-cluster]
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'ray-cluster')
+      && needs.versions.outputs.ray-cluster-build == 'true'
+      && (needs.build-pytorch-cluster.result == 'success'
+          || (needs.build-pytorch-cluster.result == 'skipped'
+              && !(contains(fromJSON(inputs.families), 'pytorch-cluster')
+                   && needs.versions.outputs.cluster-build == 'true')))
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300, cu1320]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/ray-cluster-${{ matrix.cuda }}
+
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/pytorch-cluster to pull.
+          CLUSTER_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch-cluster') && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/ray-cluster/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
+      - name: Build ray-cluster images (${{ matrix.cuda }})
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          # The Ray image's OWN tag: its version + suffix (RC/-dev/release).
+          RELEASE_VERSION: ${{ needs.versions.outputs.ray-cluster }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          # Which published runpod/pytorch-cluster to build FROM: the in-run
+          # cluster tag when pytorch-cluster is part of this build, else the
+          # last released cluster.
+          CLUSTER_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch-cluster') && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/ray-cluster/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
+          targets: ${{ matrix.cuda }}
+          load: true
+          push: false
+
+      # The layout is only needed by bake; free the disk before tests/scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      # CPU-only: runs the loaded images under plain Docker with fixture
+      # topology env and checks what runpod/host depends on (ports, label,
+      # 2-node formation). Gates the push. Also captures the /nodes and
+      # /metrics payloads the host pins as test fixtures.
+      - name: Image contract test
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+          RAY_CONTRACT_FIXTURE_DIR: ${{ runner.temp }}/ray-contract-fixtures
+        run: |
+          set -euo pipefail
+          mapfile -t refs < <(jq -r '.[]' <<< "$REFS")
+          official-templates/ray-cluster/tests/contract.sh "${refs[@]}"
+
+      - name: Upload contract fixtures
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ray-contract-fixtures-${{ matrix.cuda }}
+          path: ${{ runner.temp }}/ray-contract-fixtures
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/ray-cluster-refs
+          printf '%s\n' "$REFS" > /tmp/ray-cluster-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ray-cluster-refs-${{ matrix.cuda }}
+          path: /tmp/ray-cluster-refs/refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+  # Single-pod GPU smoke test: with no NODE_RANK the entrypoint boots the CMD
+  # without Ray, so this covers SSH/Jupyter on the image, and test-ray starts
+  # a one-node Ray head by hand to run a GPU task. Multi-node formation is
+  # covered by the contract test above.
+  test-ray-cluster:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-ray-cluster
+    if: "!cancelled() && needs.build-ray-cluster.result == 'success'"
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu1281, cu1290, cu1300, cu1320]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ray-cluster-refs-${{ matrix.cuda }}
+          path: /tmp/ray-cluster-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/ray-cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-ray: true
+          test-pip-check: true
+          test-torch-packages: true
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          on-skip: "fail"
+          # As test-pytorch-cluster: torch 2.12/2.13 in the 12.x columns and
+          # 2.8.0 on cu1290 take torchvision from cu129, which upstream builds
+          # without Blackwell. The 13.x columns use cu130/cu132 and keep it.
+          exclude-instances-for: |
+            *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+            *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *

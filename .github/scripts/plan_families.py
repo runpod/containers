@@ -1,0 +1,367 @@
+#!/usr/bin/env python3
+"""Turn a list of changed files into the template families to build, in order.
+
+A family is selected when one of its `paths` changed. Every family that
+depends on a selected one comes along after it: a new base image means a new
+pytorch image, and a new pytorch image means a new pytorch-cluster. The graph
+lives in .github/families.yml.
+
+    plan_families.py --changed-files changed.txt
+    git diff --name-only origin/main...HEAD | plan_families.py --changed-files -
+    plan_families.py --since-release       # on main: diff each family from its tag
+    plan_families.py --all                 # workflow_dispatch: no diff to read
+    plan_families.py --workflows           # build workflows to call, not families
+    plan_families.py --workflow comfyui    # which workflow builds this family
+    plan_families.py --paths comfyui       # pathspecs feeding it, deps included,
+                                           # ignored files excluded
+    plan_families.py --image-repo comfyui  # just read one field of the graph
+    plan_families.py --image-repos         # every repo we publish to, one per line
+
+Prints a JSON array in build order on stdout and a human summary on stderr.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_GRAPH = REPO_ROOT / ".github" / "families.yml"
+
+
+class GraphError(Exception):
+    """The graph file is unusable — a typo we must not paper over."""
+
+
+def load_graph(path: Path) -> dict[str, dict]:
+    raw = yaml.safe_load(path.read_text()) or {}
+    families = raw.get("families")
+    if not isinstance(families, dict) or not families:
+        raise GraphError(f"{path}: no 'families' mapping")
+
+    graph: dict[str, dict] = {}
+    for name, spec in families.items():
+        spec = spec or {}
+        paths = spec.get("paths") or []
+        deps = spec.get("depends_on") or []
+        if not isinstance(paths, list) or not paths:
+            raise GraphError(f"{path}: family '{name}' has no paths")
+        if not isinstance(deps, list):
+            raise GraphError(f"{path}: family '{name}' has a malformed depends_on")
+        graph[name] = {
+            "paths": list(paths),
+            "depends_on": list(deps),
+            "image_repo": spec.get("image_repo") or "",
+            "workflow": spec.get("workflow") or "",
+        }
+
+    for name, spec in graph.items():
+        for dep in spec["depends_on"]:
+            if dep not in graph:
+                raise GraphError(f"{path}: '{name}' depends on unknown family '{dep}'")
+            if dep == name:
+                raise GraphError(f"{path}: '{name}' depends on itself")
+    return graph
+
+
+def load_ignore(path: Path) -> list[str]:
+    """Top-level `ignore` patterns: files that never reach an image."""
+    raw = yaml.safe_load(path.read_text()) or {}
+    patterns = raw.get("ignore") or []
+    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        raise GraphError(f"{path}: 'ignore' must be a list of patterns")
+    return patterns
+
+
+def is_ignored(path: str, ignore: list[str]) -> bool:
+    """True when `path` matches an ignore pattern and no `!` exception."""
+    keep = [p[1:] for p in ignore if p.startswith("!")]
+    drop = [p for p in ignore if not p.startswith("!")]
+    return any(_matches(p, path) for p in drop) and not any(
+        _matches(p, path) for p in keep
+    )
+
+
+def build_inputs(changed: list[str], ignore: list[str]) -> list[str]:
+    return [c for c in changed if not is_ignored(c, ignore)]
+
+
+def _matches(pattern: str, changed: str) -> bool:
+    # A trailing /** means "this directory and everything under it". fnmatch's
+    # '*' happily crosses '/', so a prefix test is both cheaper and clearer.
+    if pattern.endswith("/**"):
+        return changed.startswith(pattern[:-2])
+    return fnmatch.fnmatch(changed, pattern)
+
+
+def direct_matches(
+    graph: dict[str, dict], changed: list[str], ignore: list[str] = (),
+) -> set[str]:
+    changed = build_inputs(changed, list(ignore))
+    return {
+        name
+        for name, spec in graph.items()
+        if any(_matches(p, c) for p in spec["paths"] for c in changed)
+    }
+
+
+def with_dependents(graph: dict[str, dict], selected: set[str]) -> set[str]:
+    """Add every family that builds FROM a selected one, transitively."""
+    out = set(selected)
+    while True:
+        extra = {
+            name
+            for name, spec in graph.items()
+            if name not in out and out.intersection(spec["depends_on"])
+        }
+        if not extra:
+            return out
+        out |= extra
+
+
+def build_order(graph: dict[str, dict], selected: set[str]) -> list[str]:
+    """Declaration order, except a family never precedes what it builds FROM.
+
+    Only dependencies inside the selected set constrain the order — the rest
+    are already published, so there is nothing to wait for.
+    """
+    remaining = [n for n in graph if n in selected]
+    ordered: list[str] = []
+    while remaining:
+        ready = [
+            n
+            for n in remaining
+            if all(d in ordered or d not in selected for d in graph[n]["depends_on"])
+        ]
+        if not ready:
+            raise GraphError(f"dependency cycle among {', '.join(sorted(remaining))}")
+        ordered.extend(ready)
+        remaining = [n for n in remaining if n not in ready]
+    return ordered
+
+
+def plan(
+    graph: dict[str, dict], changed: list[str], all_families: bool,
+    ignore: list[str] = (),
+) -> list[str]:
+    selected = set(graph) if all_families else with_dependents(
+        graph, direct_matches(graph, changed, ignore)
+    )
+    return build_order(graph, selected)
+
+
+def plan_since_release(
+    graph: dict[str, dict], changed_for, ignore: list[str] = (),
+) -> list[str]:
+    """Plan from each family's last release instead of from one diff.
+
+    A push diff only covers the commit that triggered the run, so anything
+    that arrived while an earlier release was running — or while a queued run
+    was superseded, or in a run that failed — would never be built again.
+    Its own tag is the only record of what a family has actually published.
+    """
+    selected = {
+        name
+        for name, spec in graph.items()
+        if any(
+            _matches(p, c)
+            for p in spec["paths"]
+            for c in build_inputs(changed_for(name), list(ignore))
+        )
+    }
+    return build_order(graph, with_dependents(graph, selected))
+
+
+def paths_with_deps(graph: dict[str, dict], name: str) -> list[str]:
+    """A family's paths plus those of everything it builds FROM.
+
+    A change in base gives pytorch a new image, so base's commits have to
+    count as pytorch's too — for its version bump and for its release notes.
+    """
+    seen: list[str] = []
+    pending = [name]
+    while pending:
+        current = pending.pop(0)
+        for path in graph[current]["paths"]:
+            if path not in seen:
+                seen.append(path)
+        pending.extend(graph[current]["depends_on"])
+    return seen
+
+
+def git_pathspecs(paths: list[str]) -> list[str]:
+    """Graph patterns as git pathspecs, for `git log -- …`. A trailing /**
+    becomes a plain directory, which git already reads as "and below"."""
+    return [p[:-2] if p.endswith("/**") else p for p in paths]
+
+
+def exclude_pathspecs(
+    paths: list[str], ignore: list[str], files: list[str],
+) -> list[str]:
+    """`:(exclude)` pathspecs for every ignored file under `paths`.
+
+    The bump and the release notes find a family's commits with
+    `git log -- <pathspecs>`, so an ignored file has to be excluded there too,
+    or a README-only commit that built nothing would still set the version
+    and show up in the changelog. Git can't re-include an excluded file, so
+    `!` exceptions are resolved here, against concrete files, rather than
+    handed to git as patterns.
+    """
+    return [
+        f":(exclude,literal){f}"
+        for f in files
+        if any(_matches(p, f) for p in paths) and is_ignored(f, ignore)
+    ]
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ("git",) + args, check=True, capture_output=True, text=True
+    ).stdout
+
+
+# git's empty tree: diffing against it lists every tracked file, which is what
+# "never released" should mean.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def changed_since_release(name: str) -> list[str]:
+    """Paths touched since this family's last release tag."""
+    tag = subprocess.run(
+        ("git", "describe", "--tags", "--match", f"{name}-v*", "--abbrev=0", "HEAD"),
+        capture_output=True, text=True,
+    ).stdout.strip()
+    since = tag or EMPTY_TREE
+    return [
+        line
+        for line in _git("diff", "--name-only", f"{since}..HEAD").splitlines()
+        if line
+    ]
+
+
+def _read_changed(source: str) -> list[str]:
+    text = sys.stdin.read() if source == "-" else Path(source).read_text()
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--graph", type=Path, default=DEFAULT_GRAPH)
+    ap.add_argument(
+        "--changed-files",
+        help="file with one changed path per line, or '-' for stdin",
+    )
+    ap.add_argument(
+        "--since-release",
+        action="store_true",
+        help="diff each family from its own last release tag (use on main)",
+    )
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="select every family (no diff available)",
+    )
+    ap.add_argument(
+        "--workflows",
+        action="store_true",
+        help="print the reusable build workflows covering the planned families",
+    )
+    ap.add_argument(
+        "--paths",
+        metavar="FAMILY",
+        help="print this family's paths as git pathspecs, one per line",
+    )
+    ap.add_argument(
+        "--workflow",
+        metavar="FAMILY",
+        help="print the build workflow covering this family, then exit",
+    )
+    ap.add_argument(
+        "--image-repos",
+        action="store_true",
+        help="print every Docker Hub repo the families publish to, one per line",
+    )
+    ap.add_argument(
+        "--image-repo",
+        metavar="FAMILY",
+        help="print the Docker Hub repo this family publishes to, then exit",
+    )
+    args = ap.parse_args()
+
+    if not (args.all or args.changed_files or args.since_release
+            or args.image_repo or args.image_repos or args.workflow or args.paths):
+        ap.error("pass --changed-files, --since-release, --all, --workflow, "
+                 "--image-repo or --image-repos")
+
+    try:
+        graph = load_graph(args.graph)
+        ignore = load_ignore(args.graph)
+        if args.image_repos:
+            for repo in dict.fromkeys(s["image_repo"] for s in graph.values()):
+                print(repo)
+            return 0
+        if args.image_repo:
+            if args.image_repo not in graph:
+                raise GraphError(f"unknown family '{args.image_repo}'")
+            print(graph[args.image_repo]["image_repo"])
+            return 0
+        if args.workflow:
+            if args.workflow not in graph:
+                raise GraphError(f"unknown family '{args.workflow}'")
+            print(graph[args.workflow]["workflow"])
+            return 0
+        if args.paths:
+            if args.paths not in graph:
+                raise GraphError(f"unknown family '{args.paths}'")
+            paths = paths_with_deps(graph, args.paths)
+            tracked = _git("-C", str(REPO_ROOT), "ls-files").splitlines()
+            for spec in git_pathspecs(paths) + exclude_pathspecs(
+                paths, load_ignore(args.graph), tracked
+            ):
+                print(spec)
+            return 0
+        if args.since_release:
+            families = plan_since_release(graph, changed_since_release, ignore)
+        else:
+            changed = [] if args.all else _read_changed(args.changed_files)
+            families = plan(graph, changed, args.all, ignore)
+        if args.workflows:
+            # Deduplicated, first-needed first: base covers four families.
+            workflows = list(dict.fromkeys(graph[f]["workflow"] for f in families))
+            print(f"workflows:       {', '.join(workflows) or 'none'}", file=sys.stderr)
+            print(json.dumps(workflows))
+            return 0
+    except GraphError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
+
+    def report(label: str, value: str) -> None:
+        print(f"{label + ':':<20}{value}", file=sys.stderr)
+
+    if args.all:
+        report("selection", "every family (no diff to read)")
+    elif args.since_release:
+        report("selection", "families changed since their own last release")
+    else:
+        direct = direct_matches(graph, changed, ignore)
+        report("files changed", str(len(changed)))
+        skipped = [c for c in changed if is_ignored(c, ignore)]
+        if skipped:
+            report("ignored (no build)", ", ".join(skipped))
+        report("matched by path", ", ".join(sorted(direct)) or "none")
+        report("pulled in as deps",
+               ", ".join(f for f in families if f not in direct) or "none")
+    report("build order", ", ".join(families) or "none")
+    print(json.dumps(families))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

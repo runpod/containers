@@ -1,27 +1,31 @@
 # pytorch-cluster
 
-A `-cluster` variant of the Runpod PyTorch image for **multi-node GPU clusters**.
+A cluster variant of the Runpod PyTorch image for **multi-node GPU clusters**.
 It layers two things on top of `runpod/pytorch`:
 
 1. **RDMA / InfiniBand user-space stack** — `libibverbs1`, `ibverbs-providers`,
    `rdma-core`, `ibverbs-utils`, `infiniband-diags`, `perftest`.
 2. **A self-contained monitoring stack**, managed by `supervisord`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
+     Exception: on a **MIG slice** dcgm-exporter is not started — embedded DCGM
+     can't initialise inside a MIG instance without `CAP_SYS_ADMIN` — so that
+     node has no GPU metrics.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
 
-Image tags follow the pytorch scheme with a `-cluster` suffix, e.g.
-`runpod/pytorch:<version>-cu1281-torch280-ubuntu2404-cluster`.
+Published to its own repository, with the pytorch tag scheme, e.g.
+`runpod/pytorch-cluster:<version>-cu1281-torch280-ubuntu2404`. Its version
+series is its own, so it need not match the `runpod/pytorch` it builds on.
 
 ## How it works at startup
 
 The image reuses the shared `/start.sh`, which invokes the `/post_start.sh` hook
 shipped here. On start, `post_start.sh`:
 
-1. If `hostname` is **`node-0`**, renders `/etc/prometheus/prometheus.yml` with a
+1. On the head (**`NODE_RANK=0`**), renders `/etc/prometheus/prometheus.yml` with a
    `node` (`:9100`) and `dcgm` (`:9400`) scrape target for **every peer found in
    `/etc/hosts` whose name starts with `node-`** (falls back to localhost).
 2. Starts `supervisord`, which brings up the exporters on every node.
-3. If `hostname` is `node-0`, starts Prometheus + Grafana via `supervisorctl`.
+3. On the head (`NODE_RANK=0`), starts Prometheus + Grafana via `supervisorctl`.
 
 Grafana is pre-provisioned with a Prometheus datasource pointing at
 `http://127.0.0.1:9090`, so the query traffic never leaves the head node.
@@ -49,6 +53,13 @@ set at `/etc/dcgm-exporter/extended-counters.csv` (from the `runpod/ansible-host
 monitoring role) rather than the default. Note this set uses
 `DCGM_FI_PROF_GR_ENGINE_ACTIVE` (compute-engine active ratio) as the utilization
 signal instead of the coarse `DCGM_FI_DEV_GPU_UTIL`.
+
+> **Upgrading from an image with dcgm-exporter 4.8.1 or older:** the exporter
+> (4.8.3+) renamed the per-node label on DCGM metrics from `Hostname` to
+> `hostname`. The pre-baked dashboards are updated, but your own Grafana panels,
+> alerts or recording rules that use `Hostname` (e.g. `{Hostname="node-0"}`,
+> `by (Hostname)`, `{{Hostname}}`) return nothing until you switch them to
+> `hostname`.
 
 Inspect running services with `supervisorctl status`; logs live under
 `/var/log/supervisor/`.
@@ -88,10 +99,14 @@ Notes:
 - **No admin/admin login.** The username/password login form and HTTP basic auth
   are disabled, and the built-in admin account gets a random password at startup
   — the auth proxy is the only way in.
+- **`JUPYTER_DISABLE_AUTH` does not apply here.** It turns off JupyterLab's own
+  token only; the Grafana proxy still compares `?token=` against
+  `JUPYTER_PASSWORD` (or `GRAFANA_PASSWORD`). With the password unset the proxy
+  fails closed and Grafana shows its login form.
 
 ## Building locally
 
-`-cluster` builds `FROM` a published `runpod/pytorch:*` tag, so that base image
+The cluster image builds `FROM` a published `runpod/pytorch:*` tag, so that base image
 must exist first (build it, or point `BASE_IMAGE` at a published tag). Then:
 
 ```bash

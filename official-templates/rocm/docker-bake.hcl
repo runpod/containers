@@ -1,6 +1,5 @@
 variable "ROCM_TORCH_COMBINATIONS" {
   default = [
-    { rocm = "6.4.4", ubuntu = "22.04", python = "3.10", torch = "2.6.0" },
     { rocm = "6.4.4", ubuntu = "24.04", python = "3.12", torch = "2.6.0" },
     { rocm = "6.4.4", ubuntu = "24.04", python = "3.12", torch = "2.7.1" },
   ]
@@ -41,9 +40,10 @@ target "rocm-matrix" {
 
   args = {
     BASE_IMAGE = "rocm/pytorch:rocm${build.rocm}_ubuntu${build.ubuntu}_py${build.python}_pytorch_release_${build.torch}"
+    UBUNTU_VERSION = build.ubuntu
   }
 
   tags = [
-    "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm${replace(build.rocm, ".", "")}-ubuntu${replace(build.ubuntu, ".", "")}-py${replace(build.python, ".", "")}-pytorch${replace(build.torch, ".", "")}",
+    "runpod/rocm:${RELEASE_VERSION}${RELEASE_SUFFIX}-rocm${replace(build.rocm, ".", "")}-ubuntu${replace(build.ubuntu, ".", "")}-py${replace(build.python, ".", "")}-pytorch${replace(build.torch, ".", "")}",
   ]
 }

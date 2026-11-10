@@ -1,0 +1,107 @@
+name: Harness Unit Tests
+
+# Unit tests for the smoke-test harness in tests/runpod_smoke. No network,
+# no RunPod credentials, no pods — pure logic, so this runs on every PR and
+# finishes in seconds. The paid end-to-end coverage is the per-family smoke
+# test in release.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'tests/**'
+      - '.github/scripts/generate_test_manifest.py'
+      - '.github/workflows/harness-tests.yml'
+      # The Jupyter token contract runs the real start_jupyter out of these,
+      # so editing one has to re-run the suite.
+      - 'container-template/start.sh'
+      - 'official-templates/comfyui/scripts/start.sh'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/**'
+      - '.github/scripts/generate_test_manifest.py'
+      - 'container-template/start.sh'
+      - 'official-templates/comfyui/scripts/start.sh'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Run unit tests
+        shell: bash
+        working-directory: tests
+        run: python3 -m unittest discover -s unit -t . -v
+
+      # The generator is what turns CI inputs into a manifest, and its
+      # mutual-exclusion rule is the only thing standing between a caller
+      # and a silently ignored GPU selection.
+      - name: Manifest generator contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          gen() { python3 .github/scripts/generate_test_manifest.py "$@"; }
+
+          gen --profile gpu --refs '["runpod/base:1.0.0"]' \
+            --instance "RTX A4000" --instance "L4" \
+            --output "${RUNNER_TEMP}/m-instances.yaml" >/dev/null
+          grep -q 'instances:' "${RUNNER_TEMP}/m-instances.yaml"
+          grep -q 'RTX A4000' "${RUNNER_TEMP}/m-instances.yaml"
+          # An explicit list wins, so the budget filters must not be emitted.
+          ! grep -q 'max_price_per_hour' "${RUNNER_TEMP}/m-instances.yaml"
+
+          gen --profile gpu --refs '["runpod/base:1.0.0"]' --check-all-gpu \
+            --output "${RUNNER_TEMP}/m-all.yaml" >/dev/null
+          grep -q 'check_all_gpu: true' "${RUNNER_TEMP}/m-all.yaml"
+
+          if gen --profile gpu --refs '["runpod/base:1.0.0"]' \
+               --instance "L4" --check-all-gpu \
+               --output "${RUNNER_TEMP}/m-both.yaml" >/dev/null 2>&1; then
+            echo "::error::generator accepted --instance with --check-all-gpu"
+            exit 1
+          fi
+          echo "OK: instances and check-all-gpu are mutually exclusive"
+
+          # A scoped block must split the refs, not fall back to blocking
+          # the GPU for all of them: the matching ref goes to its own group
+          # carrying both patterns, the other keeps base_gpu and only the
+          # global one.
+          gen --profile gpu \
+            --refs '["runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404","runpod/pytorch:1.0.0-cu1300-torch2130-ubuntu2404"]' \
+            --exclude-instance "RTX 2000 Ada" \
+            --exclude-instance-for '*-torch260-*: B200*, B300*' \
+            --output "${RUNNER_TEMP}/m-scoped.yaml" >/dev/null
+          python3 - "${RUNNER_TEMP}/m-scoped.yaml" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "tests")
+          from runpod_smoke.manifest import parse_manifest
+          m = parse_manifest(Path(sys.argv[1]))
+          assert set(m) == {"base_gpu", "base_gpu_scoped1"}, m
+          assert m["base_gpu"]["images"] == [
+              "runpod/pytorch:1.0.0-cu1300-torch2130-ubuntu2404"], m
+          assert m["base_gpu"]["exclude_instances"] == ["RTX 2000 Ada"], m
+          assert m["base_gpu_scoped1"]["images"] == [
+              "runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404"], m
+          assert m["base_gpu_scoped1"]["exclude_instances"] == [
+              "RTX 2000 Ada", "B200*", "B300*"], m
+          PY
+          echo "OK: exclude-instance-for scopes the block to matching refs"

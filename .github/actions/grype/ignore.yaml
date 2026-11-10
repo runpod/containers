@@ -1,0 +1,63 @@
+# Findings Grype must not fail the build on. Only for vulnerabilities we cannot
+# act on: no fixed release exists, or the package comes from an upstream base
+# image we do not build. Each entry says why and when to look again; delete it
+# once a fixed image is available.
+
+ignore:
+  # ffmpeg 62.x bundled in nvcr.io/nvidia/pytorch, not the apt ffmpeg we install
+  # and not a pip package. The advisory's only fix is an upstream commit, so no
+  # release carries it and there is nothing to upgrade to. Review on the next
+  # bump of the NVIDIA base image.
+  - vulnerability: CVE-2026-75146
+    package:
+      name: ffmpeg
+      type: binary
+
+  # tar in the sandbox images is deliberately held at the 24.04 build: the
+  # 26.04 one calls openat2, which gVisor does not implement, so `tar -x`
+  # fails inside a sandbox (see sandbox-ubuntu/Dockerfile). Both "fixes" are
+  # 26.04 builds we cannot take. Review when the runtime implements openat2
+  # and the pin comes out.
+  - vulnerability: CVE-2025-45582
+    package:
+      name: tar
+      type: deb
+  - vulnerability: CVE-2026-5704
+    package:
+      name: tar
+      type: deb
+
+  # coreutils is Essential in ubuntu:26.04 and the installed version is the
+  # only one the release ships — 9.7-3ubuntu2.1 is from a later series, not
+  # resolute or resolute-updates, so there is nothing to upgrade to and the
+  # package cannot be removed. Review when 26.04 publishes a fixed build.
+  - vulnerability: CVE-2025-5278
+    package:
+      name: coreutils
+      type: deb
+  - vulnerability: CVE-2026-56391
+    package:
+      name: coreutils
+      type: deb
+
+  # torch < 2.10.0: torch.load(weights_only=True) can be made to corrupt memory
+  # by a crafted checkpoint (CVE-2026-24747). The only fix is 2.10.0, and the
+  # pytorch template's 2.6.0-2.9.1 images exist to ship exactly those versions,
+  # so there is nothing to upgrade within them. Only reached by loading an
+  # untrusted .pth file; images on 2.12+ are not affected. Review when the
+  # torch < 2.10 images are retired.
+  - vulnerability: GHSA-63cw-57p8-fm3p
+    package:
+      name: torch
+      type: python
+
+  # golang.org/x/net < 0.62.0 compiled into the runpodctl release binary
+  # (GO-2026-6860). The latest release, v3.0.1, is built with x/net 0.60.0
+  # and runpodctl main is still on 0.60.0, so there is no release to upgrade
+  # to. Scoped to the runpodctl path so x/net in any other Go binary still
+  # fails the build. Remove once a runpodctl release ships x/net >= 0.62.0.
+  - vulnerability: GO-2026-6860
+    package:
+      name: golang.org/x/net
+      type: go-module
+      location: /usr/local/bin/runpodctl

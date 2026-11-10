@@ -6,12 +6,19 @@
 
 ARG BASE_IMAGE=non-existing
 
+ARG DCGM_VERSION=4.6.1
+ARG DCGM_APT_VERSION=1:${DCGM_VERSION}-1
+ARG DCGM_EXPORTER_VERSION=4.8.4
+
 # dcgm-exporter binary source. We lift only the exporter binary + default
 # counter CSVs from NVIDIA's pinned image; the DCGM runtime it links against
-# (libdcgm) is installed via apt below and must share the same DCGM major
-# version (4.x) as this image.
-# ⚠️ If bumping the tag, re-verify /usr/bin/dcgm-exporter and /etc/dcgm-exporter.
-ARG DCGM_EXPORTER_IMAGE=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+# (libdcgm) is installed via apt below.
+# Since 4.8.2 NVIDIA only publishes the distroless flavour; its binary only
+# needs glibc (verified to run on ubuntu22.04's glibc 2.35).
+# ⚠️ If bumping the tag, re-verify /usr/bin/dcgm-exporter and /etc/dcgm-exporter,
+# and check the release notes for label/metric renames: the dashboards key off
+# the `hostname` and `gpu` labels (exporter 4.8.3 renamed `Hostname` -> `hostname`).
+ARG DCGM_EXPORTER_IMAGE=nvcr.io/nvidia/k8s/dcgm-exporter:${DCGM_VERSION}-${DCGM_EXPORTER_VERSION}-distroless
 FROM ${DCGM_EXPORTER_IMAGE} AS dcgm-exporter-src
 
 FROM ${BASE_IMAGE}
@@ -22,8 +29,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # DCGM runtime package. `datacenter-gpu-manager-4` is a virtual package; apt
 # needs the concrete CUDA-major provider (datacenter-gpu-manager-4-cuda12 for
 # CUDA 12.x bases, -cuda13 for CUDA 13.x). docker-bake.hcl sets this per matrix
-# entry; the default matches the CUDA 12.x targets.
-# ⚠️ Its DCGM major (4.x) must match DCGM_EXPORTER_IMAGE.
+# entry; the default matches the CUDA 12.x targets. -core (libdcgm) is pinned
+# explicitly as well: the provider depends on `-core (= <same version>)`, but
+# apt resolves -core to the newest version and fails rather than step it down.
+ARG DCGM_APT_VERSION
 ARG DCGM_PACKAGE=datacenter-gpu-manager-4-cuda12
 
 # RDMA/InfiniBand user-space stack, supervisor (process manager for the
@@ -34,13 +43,14 @@ RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         libibverbs1 ibverbs-providers rdma-core ibverbs-utils infiniband-diags perftest \
         supervisor \
-        "${DCGM_PACKAGE}" && \
+        "${DCGM_PACKAGE}=${DCGM_APT_VERSION}" \
+        "datacenter-gpu-manager-4-core=${DCGM_APT_VERSION}" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # node_exporter — system metrics (pinned + SHA-256 verified).
-ARG NODE_EXPORTER_VERSION=1.11.1
-ARG NODE_EXPORTER_SHA256=9f5ea48e5bc7b656f8a91a32e7d7deb89f70f73dabd0d974418aca15f37d6810
+ARG NODE_EXPORTER_VERSION=1.12.1
+ARG NODE_EXPORTER_SHA256=b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node_exporter.tar.gz \
         "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz" && \
     echo "${NODE_EXPORTER_SHA256}  /tmp/node_exporter.tar.gz" | sha256sum -c - && \
@@ -50,8 +60,8 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node_exporter.tar.gz \
     rm -rf /tmp/node_exporter*
 
 # Prometheus — scraper + query engine (pinned + SHA-256 verified).
-ARG PROMETHEUS_VERSION=3.13.1
-ARG PROMETHEUS_SHA256=962b812371aff838d152b6ff2d56fdb7a6396f5542f48ebf73421b9721f0d103
+ARG PROMETHEUS_VERSION=3.14.0
+ARG PROMETHEUS_SHA256=f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/prometheus.tar.gz \
         "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" && \
     echo "${PROMETHEUS_SHA256}  /tmp/prometheus.tar.gz" | sha256sum -c - && \
@@ -62,9 +72,9 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/prometheus.tar.gz \
     rm -rf /tmp/prometheus*
 
 # Grafana OSS — dashboards (pinned + SHA-256 verified).
-ARG GRAFANA_VERSION=13.1.0
-ARG GRAFANA_BUILD=28013217238
-ARG GRAFANA_SHA256=4f562bb224b8bb758b47789381babb284cb41687da8d714f2ff0e118e945e775
+ARG GRAFANA_VERSION=13.1.5
+ARG GRAFANA_BUILD=33098073184
+ARG GRAFANA_SHA256=35d3f3b93777564a95b6f2f9380340ac07b0f238e2df6ba46a106fde785d61f7
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/grafana.tar.gz \
         "https://dl.grafana.com/grafana/release/${GRAFANA_VERSION}/grafana_${GRAFANA_VERSION}_${GRAFANA_BUILD}_linux_amd64.tar.gz" && \
     echo "${GRAFANA_SHA256}  /tmp/grafana.tar.gz" | sha256sum -c - && \
@@ -97,7 +107,7 @@ RUN mkdir -p /etc/prometheus /var/lib/prometheus \
 
 # Exposed service: the Grafana UI is served on 8889 (via the auth proxy). The
 # Runpod template for this variant must map 8889/HTTP named "Grafana".
-# (Inherited from pytorch/base: 8888 Jupyter, 22 SSH, 8080 filebrowser.)
+# (Inherited from pytorch/base: 8888 Jupyter, 22 SSH.)
 EXPOSE 8889
 LABEL com.runpod.template.variant="pytorch-cluster" \
       com.runpod.ports.8889="Grafana (HTTP)"

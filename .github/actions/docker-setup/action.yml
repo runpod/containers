@@ -4,25 +4,23 @@ inputs:
   dockerhub-username:
     description: 'Docker Hub username'
     required: true
-  dockerhub-token:
-    description: 'Docker Hub token'
+  dockerhub-oidc:
+    description: 'Docker Hub OIDC'
     required: true
   max-parallelism:
     description: 'Maximum parallelism for Docker Build'
     required: false
     default: 8
+  cache-key:
+    description: >-
+      Sticky-disk cache lineage key for this image family (e.g. runpod/containers/base).
+      Trusted main builds use this key as-is. Pull requests and off-main dispatches
+      get a `/pr` suffix so they cannot commit into the release cache lineage.
+    required: true
 
 runs:
   using: 'composite'
   steps:
-    - name: Clear space to remove unused folders
-      shell: bash
-      run: |
-        rm -rf /usr/share/dotnet
-        rm -rf /opt/ghc
-        rm -rf "/usr/local/share/boost"
-        rm -rf "$AGENT_TOOLSDIRECTORY"
-
     - name: Enable containerd image store
       shell: bash
       run: |
@@ -56,16 +54,41 @@ runs:
           exit 1
         fi
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+    # Pinned ahead of the last release: it caps DOCKERHUB_OIDC_EXPIREIN at 1h,
+    # and our builds routinely run longer than that before pushing.
+    - name: Docker login
+      uses: docker/login-action@783ae9cac559640a24c9212dfa6cd9e998252f9a
+      env:
+        DOCKERHUB_OIDC_CONNECTIONID: ${{ inputs.dockerhub-oidc }}
+        DOCKERHUB_OIDC_EXPIREIN: 10800
       with:
         username: ${{ inputs.dockerhub-username }}
-        password: ${{ inputs.dockerhub-token }}
+
+    - name: Resolve sticky-disk cache key
+      id: cache
+      shell: bash
+      env:
+        FAMILY_KEY: ${{ inputs.cache-key }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+      run: |
+        set -euo pipefail
+        # PR jobs share sticky disks with main by default and can poison the
+        # snapshot release builds hydrate from. Isolate untrusted writes:
+        # https://docs.blacksmith.sh/blacksmith-caching/dependencies-sticky-disks
+        if [ "$EVENT_NAME" != "pull_request" ] && [ "$REF" = "refs/heads/main" ]; then
+          KEY="$FAMILY_KEY"
+        else
+          KEY="${FAMILY_KEY}/pr"
+        fi
+        echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+        echo "Sticky-disk cache key: ${KEY}"
 
     - name: Set up Docker Build
-      uses: useblacksmith/setup-docker-builder@ab5c1da94f53f5cd75c1038092aa276dddfccbba
+      uses: useblacksmith/setup-docker-builder@1e75355f81cbb3f93cba1eb5dd5e5b05110ca8f9 # v2.0.1
       with:
         max-parallelism: ${{ inputs.max-parallelism }}
+        cache-key: ${{ steps.cache.outputs.key }}
 
     - name: Inspect buildx builder
       shell: bash

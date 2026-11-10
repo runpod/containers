@@ -4,7 +4,9 @@
   * cuda_check_command / run_cuda_check — torch.cuda or nvidia-smi assertion
   * jupyter_check_command / run_jupyter_check — in-pod Jupyter probe over SSH
   * run_jupyter_proxy_check — public proxy probe from the test machine
-  * fetch_logs_via_ssh / dump_pod_logs — pull diagnostic info before terminating
+  * pip_check / ca_certs / python_tls / uv / virtualenv / dcgm_exporter
+    command builders — opt-in image checks, all run through `run_simple_check`
+ * REST API v2 log helpers / dump_pod_logs — diagnose failures before termination
 
 Selection of the CUDA check is driven by the IMAGE REF, not the manifest
 group name: new groups added in the future won't silently skip the check.
@@ -12,17 +14,19 @@ group name: new groups added in the future won't silently skip the check.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shlex
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Callable, NamedTuple, Optional
 
-from . import config
+from . import api, config
 from .log import log
-from .runpodctl import runpodctl_json
 
 
 # Error string returned by every helper that shells out to `ssh` and fails
@@ -58,20 +62,73 @@ def _resolve_ssh_identity() -> Optional[str]:
     return None
 
 
-def _ssh_command_prefix(host: str, port: int) -> list[str]:
-    """Build the `ssh ... root@<host> -p <port>` prefix common to all SSH calls."""
-    cmd = ["ssh", *config.SSH_OPTS, "-p", str(port)]
+class SshEndpoint(NamedTuple):
+    """Everything needed to reach one pod over SSH.
+
+    Passed by value rather than looked up in a registry: every pod's proxy
+    lives at the same `ssh.runpod.io:22` and is told apart only by `user`,
+    so anything keyed on (host, port) is a single global slot that parallel
+    pods overwrite — and a check would then run against the wrong pod and
+    still succeed, because the address it reached is a live pod.
+
+    Direct SSH lands in the container as root. The proxy needs an opaque
+    routing token and a pseudo-terminal, and the API hands us the exact
+    invocation in `ssh.proxy.command`, so `command` carries that instead of
+    us guessing the target.
+    """
+
+    host: str
+    port: int
+    user: str = "root"
+    command: str = ""
+    pty: bool = False
+
+    @property
+    def label(self) -> str:
+        return f"{self.user}@{self.host}:{self.port}"
+
+    def __bool__(self) -> bool:
+        return bool(self.host and self.port)
+
+
+def _ssh_command_prefix(endpoint: SshEndpoint) -> list[str]:
+    """Build the `ssh ... <user>@<host>` prefix common to all SSH calls.
+
+    When the API gave us its own invocation, its target wins, with the flags
+    its description tells us to add (`-i`, `-o StrictHostKeyChecking`) plus
+    `-tt` for an endpoint that insists on a terminal.
+    """
     identity = _resolve_ssh_identity()
+    target = f"{endpoint.user}@{endpoint.host}"
+    if endpoint.command:
+        # Keep only the target from the API string: the flags we add below
+        # are the ones it documents as missing, and re-using its argv
+        # verbatim would fight with SSH_OPTS.
+        parts = shlex.split(endpoint.command)
+        target = next((p for p in parts[1:] if "@" in p), target)
+    cmd = ["ssh", *config.SSH_OPTS]
+    if endpoint.pty:
+        # -tt, not -t: the local stdin is not a terminal under subprocess,
+        # and single -t silently declines to allocate one in that case.
+        cmd.append("-tt")
+    if int(endpoint.port) != 22:
+        cmd.extend(["-p", str(endpoint.port)])
     if identity:
         cmd.extend(["-i", identity])
-    cmd.append(f"root@{host}")
+    cmd.append(target)
     return cmd
 
 
-def ssh_probe(host: str, port: int, timeout: int = 8) -> tuple[bool, str]:
+def _strip_cr(text: str) -> str:
+    """A PTY turns every \\n into \\r\\n; undo that so parsing and logs match
+    what a direct, terminal-less connection would have produced."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def ssh_probe(endpoint: SshEndpoint, timeout: int = 8) -> tuple[bool, str]:
     """One-shot SSH connection attempt. Returns (success, stderr_excerpt).
     Used as the real container-readiness signal."""
-    cmd = [*_ssh_command_prefix(host, port), "echo", "ready"]
+    cmd = [*_ssh_command_prefix(endpoint), "echo", "ready"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -123,6 +180,39 @@ _TORCH_TAG_RE = re.compile(
 # with a misleading "ModuleNotFoundError".
 _ROCM_TAG_RE = re.compile(r"\brocm", re.IGNORECASE)
 
+# Appended to the torch check for groups that opted in with
+# `test_torch_packages`. These three come from their own wheel indexes and
+# carry compiled extensions pinned to one torch and CUDA version, so a
+# mismatch only surfaces on import or first use.
+_TORCH_PACKAGES_PROGRAM = (
+    "import torchvision\n"
+    "boxes = torch.tensor([[0., 0., 10., 10.], [1., 1., 11., 11.]], device='cuda')\n"
+    "keep = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device='cuda'), 0.5)\n"
+    "assert keep.tolist() == [0], f'nms kept {keep.tolist()}, expected [0]'\n"
+    "print(f'torchvision={torchvision.__version__} nms ok')\n"
+    "import torchaudio\n"
+    "wav = torch.sin(torch.arange(16000, device='cuda', dtype=torch.float32) / 20)\n"
+    "out = torchaudio.functional.resample(wav.unsqueeze(0), 16000, 8000)\n"
+    "assert out.shape == (1, 8000), f'resample gave {tuple(out.shape)}'\n"
+    "assert out.is_cuda, f'resample returned a {out.device} tensor'\n"
+    "print(f'torchaudio={torchaudio.__version__} resample ok')\n"
+    # The images ship torchcodec from torch 2.9 on, so gate on that rule
+    # rather than on whether the import happens to work. The round trip also
+    # covers the system FFmpeg torchcodec loads against.
+    "major, minor = (int(p) for p in torch.__version__.split('+')[0].split('.')[:2])\n"
+    "if (major, minor) < (2, 9):\n"
+    "    print(f'torchcodec: not shipped for torch {torch.__version__}')\n"
+    "else:\n"
+    "    import torchcodec\n"
+    "    from torchcodec.decoders import AudioDecoder\n"
+    "    from torchcodec.encoders import AudioEncoder\n"
+    "    encoded = AudioEncoder(wav.unsqueeze(0).cpu(), sample_rate=16000).to_tensor('wav')\n"
+    "    samples = AudioDecoder(encoded).get_all_samples()\n"
+    "    assert samples.sample_rate == 16000, f'decoded at {samples.sample_rate} Hz'\n"
+    "    assert samples.data.shape == (1, 16000), f'decoded {tuple(samples.data.shape)}'\n"
+    "    print(f'torchcodec={torchcodec.__version__} wav round trip ok')\n"
+)
+
 
 def _image_expects_gpu(image: str) -> bool:
     """True if the image ref implies a GPU runtime (CUDA or ROCm) inside."""
@@ -139,9 +229,33 @@ def _image_expects_rocm(image: str) -> bool:
     return bool(_ROCM_TAG_RE.search(image))
 
 
-def cuda_check_command(image: str) -> str:
+def fetch_pod_cuda_version(pod_id: str, attempts: int = 3) -> str:
+    """Return the CUDA version the host reported, e.g. '13.0'.
+
+    `min_cuda_version` is only a floor, so the scheduler may place the pod on
+    any host at or above it — this reports what it actually got, which is the
+    point of a compatibility matrix.
+
+    Nullable per the API: CPU pods and hosts that never reported one give ''.
+    Retried a few times because the value only lands once the scheduler has
+    assigned a machine. Reporting only — never turns a PASS into a FAIL.
+    """
+    for attempt in range(1, attempts + 1):
+        status, data = api.request("GET", f"/pods/{pod_id}", timeout=15)
+        cuda = data.get("cudaVersion") if isinstance(data, dict) else None
+        if 200 <= status < 300 and cuda:
+            return str(cuda).strip()
+        if attempt < attempts:
+            time.sleep(2)
+    return ""
+
+
+def cuda_check_command(image: str, torch_packages: bool = False) -> str:
     """Return a shell command that functionally validates the GPU/CUDA stack
     for a given image, or '' to skip the check (CPU images).
+
+    `torch_packages` (the group's `test_torch_packages` field) adds
+    torchvision, torchaudio and torchcodec ops, and requires them.
 
     Selection is driven by the IMAGE REF (not the manifest group name) so
     new manifest groups added in the future won't silently skip the check.
@@ -153,7 +267,9 @@ def cuda_check_command(image: str) -> str:
           the system `python`, so the torch.cuda path would falsely fail
           with ModuleNotFoundError)
         - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
-          (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack)
+          (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack),
+          plus torchvision, torchaudio and torchcodec when
+          `torch_packages` is set
         - has 'cuda' / 'cu\\d' only                  -> run nvidia-smi check
           (runpod/base GPU tags and autoresearch — torch in venv not
           visible to system python)
@@ -180,13 +296,12 @@ def cuda_check_command(image: str) -> str:
 
     if _image_expects_torch(image):
         # Use `python` (the runpod/base symlink /usr/local/bin/python ->
-        # /usr/bin/python3.12), NOT `python3`. On Ubuntu 22.04 system
-        # `python3` resolves to python3.10 — but pytorch/Dockerfile
-        # installs torch via `python -m pip`, so torch only exists in
-        # python3.12's site-packages. On 24.04 they happen to coincide.
-        # Using `python` is portable.
-        return (
-            "python - <<'PY'\n"
+        # /usr/bin/python3.12), NOT `python3`. The system `python3` is
+        # whatever the Ubuntu release ships — pytorch/Dockerfile installs
+        # torch via `python -m pip`, so torch only exists in python3.12's
+        # site-packages. On 24.04 they happen to coincide. Using `python`
+        # is portable.
+        program = (
             "import sys, torch\n"
             "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
             "n = torch.cuda.device_count()\n"
@@ -201,8 +316,10 @@ def cuda_check_command(image: str) -> str:
             "y = (x @ x).sum().item()\n"
             "assert y == 64*64*64, f'matmul gave {y}, expected {64*64*64}'\n"
             "print('matmul ok')\n"
-            "PY"
         )
+        if torch_packages:
+            program += _TORCH_PACKAGES_PROGRAM
+        return f"python - <<'PY'\n{program}PY"
 
     if _image_expects_gpu(image):
         # GPU image without system-Python torch (raw base, autoresearch's
@@ -225,24 +342,527 @@ def cuda_check_command(image: str) -> str:
     return ""
 
 
-def run_cuda_check(host: str, port: int, image: str) -> tuple[bool, str]:
+def run_cuda_check(
+    endpoint: SshEndpoint, image: str, torch_packages: bool = False,
+) -> tuple[bool, str]:
     """Run the GPU/CUDA functional check inside the pod over SSH.
     Returns (ok, output). ok=True when:
       * the image has no GPU check defined (treated as pass), OR
       * the remote command exits 0.
     output contains stdout+stderr for inclusion in the run log."""
-    cmd = cuda_check_command(image)
+    cmd = cuda_check_command(image, torch_packages)
     if not cmd:
         return True, "(no GPU check for this image)"
-    ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
+    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=90)
     except subprocess.TimeoutExpired:
-        return False, "cuda check timed out after 60s"
+        return False, "cuda check timed out after 90s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
-    combined = (r.stdout + r.stderr).strip()
+    combined = _strip_cr(r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
+
+
+# ---------------------------------------------------------------------------
+# Image hygiene checks (opt-in)
+#
+# Each builds a command that exits non-zero on failure and is run by
+# `run_simple_check` over SSH. All of them are manifest opt-ins rather than
+# auto-detected: an image that cannot satisfy one must say so by leaving the
+# flag off, so a missing interpreter reads as a config decision and not as a
+# silently skipped check.
+# ---------------------------------------------------------------------------
+
+
+# CA roots that must not be trusted anywhere, named one per entry and
+# matched case-insensitively against certificate subjects.
+#
+# Name the individual root, not the family. Distrust is decided per root:
+# Ubuntu's ca-certificates ships emSign ECC Root CA - G3 disabled while
+# still trusting C1, C3 and G1, so a bare 'emSign' would fail on three
+# roots nobody has revoked. Groups can override with `revoked_ca_names:`.
+REVOKED_CA_NAMES: tuple[str, ...] = (
+    # CON-1869 / CVE-2026-111943.
+    "emSign ECC Root CA - G3",
+)
+
+
+def _sh_quote_list(values: tuple[str, ...] | list[str]) -> str:
+    """Render values as a space-separated list of single-quoted shell words,
+    for interpolation into a `for name in ...` loop."""
+    return " ".join(shlex.quote(v) for v in values)
+
+
+# Fetch a real HTTPS endpoint through whichever trust store is in play. Kept
+# as two statements rather than `curl ... && echo ...`: under `set -e` a
+# failing left side of an AND-list is exempt, so the && form would let a
+# broken trust store reach the final `exit 0`.
+_TLS_PROBE = (
+    # HEAD, not GET: this only has to validate the TLS chain against the
+    # trust store, and pypi.org/simple/ is a ~50MB index that times out on a
+    # slow pod if downloaded in full.
+    "curl -fsS --max-time 30 -I https://pypi.org/simple/ -o /dev/null; "
+    "echo 'https fetch ok'"
+)
+
+# Every `uv` reachable on $PATH, one per line, in $FOUND.
+#
+# The `if` is load-bearing. With `[ -x ... ] && echo`, the loop's exit status
+# is the last iteration's test, so a $PATH whose final entry has no uv makes
+# the whole command substitution exit 1 and `set -e` kills the check before
+# it reports anything. An `if` with no `else` returns 0 instead.
+_UV_PATH_SCAN = (
+    # Resolve each hit to its canonical path and dedupe: on a usr-merged
+    # image /bin is a symlink to /usr/bin, so one uv shows up under both PATH
+    # entries. Distinct binaries have distinct realpaths and still both count.
+    "FOUND=$(printf '%s' \"$PATH\" | tr ':' '\\n' | while read -r d; do "
+    "  if [ -n \"$d\" ] && [ -x \"$d/uv\" ]; then "
+    "    readlink -f \"$d/uv\" 2>/dev/null || echo \"$d/uv\"; "
+    "  fi; "
+    "done | sort -u)"
+)
+
+
+def pip_check_command(allowed: tuple[str, ...] | list[str] = ()) -> str:
+    """Run `pip check` and fail on any conflict that isn't in `allowed`.
+
+    `allowed` holds substrings of accepted conflict lines (manifest field
+    `pip_check_allow`), for pre-existing conflicts inherited from a vendor
+    base image that we have decided not to carry as a red build. Anything
+    else — including a new conflict introduced by bumping a pinned
+    dependency — fails.
+    """
+    program = (
+        "import subprocess, sys\n"
+        f"allowed = {list(allowed)!r}\n"
+        "r = subprocess.run([sys.executable, '-m', 'pip', 'check'],\n"
+        "                   capture_output=True, text=True)\n"
+        "out = (r.stdout + r.stderr).strip()\n"
+        "print(out or '(pip check produced no output)')\n"
+        "bad = [ln for ln in out.splitlines()\n"
+        "       if ln.strip()\n"
+        "       and not ln.startswith('No broken requirements')\n"
+        "       and not any(a in ln for a in allowed)]\n"
+        "if bad:\n"
+        "    print('FAIL: unexpected dependency conflicts:')\n"
+        "    for ln in bad:\n"
+        "        print('  ' + ln)\n"
+        "    sys.exit(1)\n"
+        "print(f'pip check ok ({len(allowed)} known conflict(s) allowed)')\n"
+    )
+    return f"python - <<'PY'\n{program}PY"
+
+
+def ca_certs_check_command(
+    revoked: tuple[str, ...] | list[str] = REVOKED_CA_NAMES,
+    min_version: str = "",
+) -> str:
+    """Verify the SYSTEM trust store: the patched `ca-certificates` package
+    is installed, no revoked root is still trusted, and an HTTPS fetch
+    against the store succeeds.
+
+    Deliberately shell-only — sandbox images may ship no Python, and the
+    system store is what curl, apt and git use. The certifi bundle that
+    Python reaches for is a separate store with its own check below.
+
+    `min_version` is the floor for the installed package, compared with
+    `dpkg --compare-versions`. It is the direct check: the images ship
+    whatever distrust decision the distro published, so what we assert is
+    that the published package actually arrived. Without it, an
+    `apt-get install --only-upgrade ca-certificates` that found nothing to
+    upgrade exits 0 and the image looks patched when it is not.
+    """
+    version_gate = (
+        "VER=$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
+        "  || true); "
+        f"MIN={shlex.quote(min_version)}; "
+        "if [ -z \"$VER\" ]; then "
+        "  echo 'FAIL: ca-certificates is not installed via dpkg'; exit 1; "
+        "fi; "
+        "if dpkg --compare-versions \"$VER\" ge \"$MIN\"; then "
+        "  echo \"ca-certificates $VER >= $MIN\"; "
+        "else "
+        "  echo \"FAIL: ca-certificates $VER is older than $MIN — "
+        "the patched package did not reach this image\"; exit 1; "
+        "fi; "
+    ) if min_version else ""
+    return (
+        # pipefail: the subject scan below pipes openssl into openssl; without
+        # it a failed openssl leaves an empty list and every root reads absent.
+        "set -e; set -o pipefail; "
+        "echo \"ca-certificates: "
+        "$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null "
+        "  || echo 'not installed via dpkg')\"; "
+        f"{version_gate}"
+        "BUNDLE=/etc/ssl/certs/ca-certificates.crt; "
+        "test -s \"$BUNDLE\" "
+        "  || { echo \"FAIL: $BUNDLE missing or empty\"; exit 1; }; "
+        "echo \"trusted roots: $(grep -c 'BEGIN CERTIFICATE' \"$BUNDLE\")\"; "
+        # Subjects, so a revoked root is matched by name and not by the
+        # base64 body. Without openssl, fall back to the per-cert symlink
+        # names that update-ca-certificates maintains.
+        # Underscores become spaces so one spelling of a root name matches
+        # both forms: openssl prints 'CN=emSign Root CA - G1', while the
+        # filename fallback has 'emSign_Root_CA_-_G1.pem'.
+        "if command -v openssl >/dev/null 2>&1; then "
+        "  openssl crl2pkcs7 -nocrl -certfile \"$BUNDLE\" "
+        "    | openssl pkcs7 -print_certs -noout "
+        "    | tr '_' ' ' > /tmp/ca-subjects.txt; "
+        "else "
+        "  echo 'openssl not present — matching on /etc/ssl/certs names'; "
+        "  ls /etc/ssl/certs | tr '_' ' ' > /tmp/ca-subjects.txt; "
+        "fi; "
+        "rc=0; "
+        f"for name in {_sh_quote_list(revoked)}; do "
+        "  if grep -qi -- \"$name\" /tmp/ca-subjects.txt; then "
+        "    echo \"FAIL: revoked CA still trusted: $name\"; rc=1; "
+        "  else "
+        "    echo \"revoked CA absent: $name\"; "
+        "  fi; "
+        "done; "
+        # A trust store can also be broken by over-pruning, so prove it
+        # still validates a real endpoint before reporting success.
+        f"{_TLS_PROBE}; "
+        "exit $rc"
+    )
+
+
+def python_tls_check_command(
+    revoked: tuple[str, ...] | list[str] = REVOKED_CA_NAMES,
+    venv_activate: str = "",
+) -> str:
+    """Verify the certifi bundle, which is the store pip, requests and
+    ComfyUI actually use — upgrading the system store does not touch it.
+
+    `venv_activate` is an optional path to an `activate` script, for images
+    whose application runs in a virtualenv with its own certifi.
+    """
+    program = (
+        "import ssl, sys, urllib.request\n"
+        "import certifi\n"
+        "bundle = certifi.where()\n"
+        "print('certifi', certifi.__version__, bundle)\n"
+        "data = open(bundle, encoding='utf-8', errors='replace').read()\n"
+        # certifi carries a '# Label: \"...\"' comment per root. Without
+        # them a name search would pass on any bundle, so say so loudly
+        # rather than report a clean result we cannot stand behind.
+        "if '# Label:' not in data:\n"
+        "    print('FAIL: certifi bundle carries no labels — '\n"
+        "          'cannot match roots by name')\n"
+        "    sys.exit(1)\n"
+        f"revoked = {list(revoked)!r}\n"
+        "found = [n for n in revoked if n.lower() in data.lower()]\n"
+        "if found:\n"
+        "    print(f'FAIL: revoked CA present in certifi bundle: {found}')\n"
+        "    sys.exit(1)\n"
+        "print(f'certifi bundle clean ({len(revoked)} name(s) checked)')\n"
+        "ctx = ssl.create_default_context(cafile=bundle)\n"
+        "with urllib.request.urlopen('https://pypi.org/simple/',\n"
+        "                            context=ctx, timeout=30) as r:\n"
+        "    assert r.status == 200, f'pypi returned {r.status}'\n"
+        "print('https fetch via certifi ok')\n"
+    )
+    if venv_activate:
+        # The app venv ships its own certifi; its activate puts python on PATH.
+        prefix = f". {shlex.quote(venv_activate)}; "
+        interp = "python"
+    else:
+        # SSH exec PATH often drops /usr/local/bin (the base `python` symlink),
+        # and some images expose only python3. Add the dir back and resolve
+        # whichever interpreter exists.
+        prefix = (
+            "export PATH=/usr/local/bin:$PATH; "
+            "PYBIN=$(command -v python || command -v python3) "
+            "|| { echo 'FAIL: no python on PATH'; exit 1; }; "
+        )
+        interp = '"$PYBIN"'
+    return f"{prefix}{interp} - <<'PY'\n{program}PY"
+
+
+def uv_check_command() -> str:
+    """Verify uv is the single pinned copy and can actually resolve.
+
+    The duplicate test is the point: the NGC bases ship a pip-installed uv
+    in /usr/local/bin that shadows the pinned /bin/uv and keeps showing up
+    in scans. The Dockerfiles remove it, and this fails the build if a base
+    image brings it back.
+
+    /usr/local/bin is forced onto PATH: the SSH exec PATH often drops it, and
+    without it the scan cannot see a uv there and `python` (the base-image
+    symlink) is not found, so the pip-package guard would silently skip.
+    """
+    return (
+        "set -e; "
+        "export PATH=/usr/local/bin:$PATH; "
+        "uv --version; "
+        f"{_UV_PATH_SCAN}; "
+        "echo \"uv on PATH:\"; printf '%s\\n' \"$FOUND\"; "
+        "COUNT=$(printf '%s\\n' \"$FOUND\" | sed '/^$/d' | wc -l "
+        "  | tr -d '[:space:]'); "
+        "[ \"$COUNT\" -eq 1 ] "
+        "  || { echo \"FAIL: expected one uv on PATH, found $COUNT\"; exit 1; }; "
+        "if command -v python >/dev/null 2>&1; then "
+        "  if python -m pip show uv >/dev/null 2>&1; then "
+        "    echo 'FAIL: uv is also installed as a pip package'; exit 1; "
+        "  fi; "
+        "  echo 'no pip-installed uv'; "
+        "fi; "
+        "TMP=$(mktemp -d); "
+        "uv venv \"$TMP/venv\" >/dev/null; "
+        "uv pip install --python \"$TMP/venv/bin/python\" --quiet six; "
+        "\"$TMP/venv/bin/python\" -c "
+        "  \"import six; print('uv pip install ok', six.__version__)\"; "
+        "rm -rf \"$TMP\""
+    )
+
+
+def virtualenv_check_command() -> str:
+    """Create a virtualenv with every python3.X the image ships.
+
+    The images pin one virtualenv version across three interpreters, and a
+    pin that stops supporting the oldest of them fails only for whoever
+    happens to use that interpreter. Enumerating what is installed is the
+    whole check — a hard-coded list would pass by testing nothing after an
+    interpreter is dropped.
+
+    The one exception is Ubuntu's own system interpreter when it is not also
+    the image's default `python` (3.14 on 26.04): base installs no pip or
+    virtualenv for it, it is there for apt's tools. When it is the default
+    (3.12 on 24.04) it is provisioned like the rest and is checked.
+    """
+    ver = "-c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'"
+    return (
+        "set -e; "
+        "PYS=$(ls /usr/local/bin/python3.* /usr/bin/python3.* 2>/dev/null "
+        "  | grep -E 'python3\\.[0-9]+$' || true); "
+        "[ -n \"$PYS\" ] "
+        "  || { echo 'FAIL: no python3.X interpreters found'; exit 1; }; "
+        f"SYSVER=$(/usr/bin/python3 {ver} 2>/dev/null || true); "
+        f"DEFVER=$(python {ver}); "
+        "TMP=$(mktemp -d); "
+        "for py in $PYS; do "
+        f"  VER=$(\"$py\" {ver}); "
+        # Both /usr/bin and /usr/local/bin can expose the same interpreter;
+        # key on the version so each one is exercised once. `if` rather than
+        # `[ ... ] && continue` for the same reason as the uv PATH scan.
+        "  if [ -d \"$TMP/v$VER\" ]; then continue; fi; "
+        "  if [ \"$VER\" = \"$SYSVER\" ] && [ \"$VER\" != \"$DEFVER\" ]; then "
+        "    echo \"skip system python $VER (apt's, not provisioned)\"; "
+        "    mkdir \"$TMP/v$VER\"; continue; "
+        "  fi; "
+        "  \"$py\" -m virtualenv -q \"$TMP/v$VER\"; "
+        "  \"$TMP/v$VER/bin/python\" -c "
+        "    \"import sys; print('virtualenv ok for $VER ->', "
+        "     sys.version.split()[0])\"; "
+        "done; "
+        "rm -rf \"$TMP\"; "
+        "echo 'virtualenv ok on every interpreter'"
+    )
+
+
+def python_path_check_command() -> str:
+    """Check which interpreters see apt's Python modules, and what `python3` is.
+
+    apt's python3-* modules live in /usr/lib/python3/dist-packages and are
+    built for the system /usr/bin/python3 only. base hides that directory from
+    every other interpreter (a sitecustomize line), or a later
+    `apt install python3-*` shadows or breaks pip packages for them. It also
+    points `python3` at the same interpreter as `python`, which on 26.04 is
+    not the system one. Interpreters are enumerated rather than listed, so one
+    added to the image without the filter fails here instead of passing.
+    """
+    dist = "/usr/lib/python3/dist-packages"
+    ver = "-c 'import sys; print(\"%d.%d\" % sys.version_info[:2])'"
+    return (
+        "set -e; "
+        "[ -x /usr/bin/python3 ] "
+        "  || { echo 'FAIL: no system /usr/bin/python3'; exit 1; }; "
+        f"SYSVER=$(/usr/bin/python3 {ver}); "
+        f"/usr/bin/python3 -c \"import sys; sys.exit(0 if '{dist}' in sys.path else 1)\" "
+        f"  || {{ echo \"FAIL: system python3 $SYSVER lost {dist} from sys.path\"; exit 1; }}; "
+        f"echo \"system python3 $SYSVER keeps {dist}\"; "
+        "PYS=$(ls /usr/local/bin/python3.* /usr/bin/python3.* 2>/dev/null "
+        "  | grep -E 'python3\\.[0-9]+$' || true); "
+        "SEEN=' '; "
+        "for py in $PYS; do "
+        f"  VER=$(\"$py\" {ver}); "
+        # Both /usr/bin and /usr/local/bin can expose the same interpreter;
+        # check each version once. The system one is expected to see apt's dir.
+        "  case \"$SEEN\" in *\" $VER \"*) continue ;; esac; "
+        "  SEEN=\"$SEEN$VER \"; "
+        "  if [ \"$VER\" = \"$SYSVER\" ]; then continue; fi; "
+        f"  if \"$py\" -c \"import sys; sys.exit(1 if '{dist}' in sys.path else 0)\"; then "
+        f"    echo \"python$VER hides {dist}\"; "
+        "  else "
+        f"    echo \"FAIL: python$VER still has {dist} on sys.path\"; exit 1; "
+        "  fi; "
+        "done; "
+        f"PYV=$(python {ver}); P3V=$(python3 {ver}); "
+        "[ \"$PYV\" = \"$P3V\" ] "
+        "  || { echo \"FAIL: python3 is $P3V but python is $PYV\"; exit 1; }; "
+        "echo \"python3 and python are both $PYV\"; "
+        "echo 'python path ok'"
+    )
+
+
+def autoresearch_check_command(
+    time_budget: int = 5, seq_len: int = 256, eval_tokens: int = 1 << 18,
+) -> str:
+    """Run the real autoresearch command (train.py) end to end, but light:
+    a short time budget, a short sequence length (the batch x seq activations,
+    not the ~100M model, drive VRAM, so this fits a cheap GPU), and a small
+    eval. All three live in the read-only prepare.py and are patched via runpy
+    so train.py is untouched; torch.compile runs for real, hence the generous
+    timeout the caller must allow."""
+    return (
+        "set -e; "
+        ". /opt/autoresearch/.venv/bin/activate; "
+        "cd /opt/autoresearch; "
+        "python -c \""
+        f"import prepare; prepare.TIME_BUDGET = {time_budget}; "
+        f"prepare.MAX_SEQ_LEN = {seq_len}; prepare.EVAL_TOKENS = {eval_tokens}; "
+        "import runpy; runpy.run_path('train.py', run_name='__main__')\"; "
+        "echo 'autoresearch train.py ok'"
+    )
+
+
+# Series the Grafana dashboards resolve their template variables from
+# (`label_values(<series>, hostname)` in official-templates/pytorch-cluster/
+# config/dashboards). If one of these stops carrying a `hostname` label, the
+# Node dropdowns come up empty and every DCGM panel goes blank.
+DCGM_DASHBOARD_SERIES: tuple[str, ...] = (
+    "DCGM_FI_DEV_GPU_UTIL",
+    "DCGM_FI_DEV_FB_USED",
+)
+
+
+def dcgm_exporter_check_command(
+    attempts: int = 20, interval: int = 5,
+) -> str:
+    """Scrape the in-pod dcgm-exporter and require the dashboard labels.
+
+    The exporter is a binary lifted from NVIDIA's distroless image and run
+    against the libdcgm installed from apt, so the failures this catches —
+    the binary not starting against our libdcgm, or a label coming out
+    renamed (4.8.3 turned `Hostname` into `hostname`) — leave the pod booting
+    fine and the dashboards silently empty.
+
+    supervisord starts the exporter at boot and DCGM takes a while to come
+    up, so the scrape is retried for up to `attempts * interval` seconds
+    (plus curl's own 3s cap per try); keep that under the SSH timeout. On
+    failure it prints the supervisor state and the exporter's stderr.
+
+    On a MIG slice embedded DCGM can't initialise (no CAP_SYS_ADMIN), so
+    /post_start.sh deliberately leaves the exporter stopped. There the check
+    only asserts it is not crash-looping; detection mirrors `is_mig_gpu` in
+    official-templates/pytorch-cluster/post_start.sh.
+    """
+    series = _sh_quote_list(DCGM_DASHBOARD_SERIES)
+    return (
+        "set -e; "
+        "dcgm-exporter --version 2>&1 | head -n 1 || true; "
+        # Installed DCGM packages only (dpkg also lists known-but-absent ones).
+        "dpkg-query -W -f '${Status} ${Package} ${Version}\\n' "
+        "  'datacenter-gpu-manager-4-*' 2>/dev/null "
+        "  | awk '$3 == \"installed\" {print $4, $5}' || true; "
+        "case \"${NVIDIA_VISIBLE_DEVICES:-}\" in *MIG-*) MIG=1;; *) MIG=;; esac; "
+        "if [ -z \"$MIG\" ] && nvidia-smi -L 2>/dev/null | grep -q 'MIG'; then "
+        "  MIG=1; "
+        "fi; "
+        "if [ -n \"$MIG\" ]; then "
+        "  STATUS=$(supervisorctl status dcgm-exporter 2>&1 || true); "
+        "  echo \"$STATUS\"; "
+        "  case \"$STATUS\" in "
+        "    *STOPPED*) echo 'dcgm-exporter skipped on MIG slice "
+        "(embedded DCGM unsupported); not crash-looping'; exit 0;; "
+        "  esac; "
+        "  echo 'FAIL: MIG slice but dcgm-exporter was started "
+        "(expected STOPPED)'; "
+        "  tail -n 20 /var/log/supervisor/dcgm-exporter.err 2>&1 || true; "
+        "  exit 1; "
+        "fi; "
+        "OK=; MISSING=; "
+        f"for i in $(seq 1 {attempts}); do "
+        # Reset per attempt so the final message describes the last try.
+        "  MISSING=; "
+        # `if` so a failed scrape is a retry, not a `set -e` exit.
+        "  if BODY=$(curl -fsS --max-time 3 http://localhost:9400/metrics 2>&1); then "
+        f"    for s in {series}; do "
+        "      if ! printf '%s\\n' \"$BODY\" "
+        "          | grep -q \"^$s{.*hostname=\\\"[^\\\"]\"; then "
+        "        MISSING=\"$MISSING $s\"; "
+        "      fi; "
+        "    done; "
+        "    if [ -z \"$MISSING\" ]; then OK=1; break; fi; "
+        "  fi; "
+        f"  sleep {interval}; "
+        "done; "
+        "if [ -z \"$OK\" ]; then "
+        "  if [ -n \"$MISSING\" ]; then "
+        "    echo \"FAIL: no series with a hostname label for:$MISSING\"; "
+        "    printf '%s\\n' \"$BODY\" | grep -m 3 '^DCGM_FI_DEV_GPU_UTIL' || true; "
+        "  else "
+        "    echo \"FAIL: dcgm-exporter not answering on :9400: $BODY\"; "
+        "  fi; "
+        "  supervisorctl status dcgm-exporter 2>&1 || true; "
+        "  tail -n 20 /var/log/supervisor/dcgm-exporter.err 2>&1 || true; "
+        "  exit 1; "
+        "fi; "
+        "printf '%s\\n' \"$BODY\" | grep -m 1 '^DCGM_FI_DEV_GPU_UTIL{'; "
+        "echo 'dcgm-exporter ok: dashboard series carry a hostname label'"
+    )
+
+
+def ray_check_command(metrics_port: int = 20217) -> str:
+    """Start a single-node Ray head in the pod and use the GPU through it.
+
+    The image's own multi-node launch needs a cluster (NODE_RANK and the
+    host's /etc/hosts), so this exercises the same Ray install by hand: Ray
+    must see the pod's GPU, schedule a `num_gpus=1` task that runs a torch
+    CUDA op, and serve `ray_` metrics on the contract metrics port. Ray is
+    stopped on the way out either way, so later checks see a clean pod."""
+    return (
+        "set -e; "
+        "trap 'ray stop --force >/dev/null 2>&1 || true' EXIT; "
+        f"ray start --head --metrics-export-port={metrics_port} "
+        "  --disable-usage-stats >/dev/null; "
+        "python -c \""
+        "import ray, torch; "
+        "ray.init(address='auto'); "
+        "res = ray.cluster_resources(); "
+        "assert res.get('GPU', 0) >= 1, f'Ray sees no GPU: {res}'; "
+        "ones = lambda: torch.ones(1024, 1024, device='cuda'); "
+        "f = ray.remote(num_gpus=1)(lambda: (ones() @ ones()).sum().item()); "
+        "total = ray.get(f.remote(), timeout=180); "
+        "assert total == 1024.0 ** 3, total; "
+        "print('ray GPU task ok, cluster GPUs:', res['GPU'])\"; "
+        # The metrics agent comes up asynchronously after `ray start`.
+        "for _ in $(seq 1 30); do "
+        f"  BODY=$(curl -fsS http://127.0.0.1:{metrics_port}/metrics || true); "
+        "  if printf '%s\\n' \"$BODY\" | grep -q '^ray_'; then break; fi; "
+        "  sleep 2; "
+        "done; "
+        "printf '%s\\n' \"$BODY\" | grep -q '^ray_' "
+        f"  || {{ echo 'FAIL: no ray_ metrics on :{metrics_port}/metrics'; exit 1; }}; "
+        f"echo 'ray_ metrics served on :{metrics_port}'"
+    )
+
+
+def run_simple_check(
+    endpoint: SshEndpoint, command: str, timeout: int = 180,
+) -> tuple[bool, str]:
+    """Run one opt-in hygiene check over SSH. Returns (ok, output)."""
+    ssh_cmd = [*_ssh_command_prefix(endpoint), command]
+    try:
+        r = subprocess.run(
+            ssh_cmd, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"check timed out after {timeout}s"
+    except FileNotFoundError:
+        return False, _SSH_BINARY_NOT_FOUND
+    return (r.returncode == 0), _strip_cr(r.stdout + r.stderr).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +916,7 @@ def jupyter_check_command(timeout: int) -> str:
     )
 
 
-def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
+def run_jupyter_check(endpoint: SshEndpoint) -> tuple[bool, str]:
     """SSH into the pod and run the jupyter probe against 127.0.0.1:8888.
 
     This validates the IN-POD side: start.sh launched Jupyter with the
@@ -306,7 +926,7 @@ def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
     when jupyter probe exited non-zero (server not running / wrong token
     / API not healthy)."""
     cmd = jupyter_check_command(config.JUPYTER_WAIT_TIMEOUT)
-    ssh_cmd = [*_ssh_command_prefix(host, port), cmd]
+    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     # SSH command has its own grace loop (JUPYTER_WAIT_TIMEOUT) plus a 10s
     # curl; pad the outer timeout to leave room for SSH handshake.
     outer_timeout = config.JUPYTER_WAIT_TIMEOUT + 30
@@ -318,8 +938,151 @@ def run_jupyter_check(host: str, port: int) -> tuple[bool, str]:
         return False, f"jupyter check timed out after {outer_timeout}s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
-    combined = (r.stdout + r.stderr).strip()
+    combined = _strip_cr(r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
+
+
+# ---------------------------------------------------------------------------
+# Generic per-port checks (test_ports manifest field)
+# ---------------------------------------------------------------------------
+
+def port_check_command(test_port: int, wait_timeout: int, path: str = "/") -> str:
+    """Wait for localhost HTTP readiness; 4xx is a valid app response."""
+    return (
+        "set -e; "
+        f"echo 'Probing 127.0.0.1:{test_port}{path} (timeout {wait_timeout}s)...'; "
+        "CODE=pending; "
+        f"for i in $(seq 1 {wait_timeout}); do "
+        f"  if (echo > /dev/tcp/127.0.0.1/{test_port}) 2>/dev/null; then "
+        f"    CODE=$(curl -sS --max-time 5 -o /dev/null "
+        f"      -w '%{{http_code}}' 'http://127.0.0.1:{test_port}{path}' "
+        "      || echo 'curl_failed'); "
+        "    case \"$CODE\" in "
+        f"      [1234]*) echo \"port {test_port} responsive after $i"
+        "s: http=$CODE\"; break ;; "
+        "      *) ;; "
+        "    esac; "
+        "  fi; "
+        "  if [ $((i % 30)) -eq 0 ]; then "
+        f"    echo \"  ...still probing :{test_port} at ${{i}}s/{wait_timeout}s "
+        "(last code=$CODE)\"; "
+        "  fi; "
+        "  sleep 1; "
+        "done; "
+        "case \"$CODE\" in "
+        f"  [1234]*) echo 'port {test_port} OK' ;; "
+        f"  pending) echo 'FAIL: nothing ever listened on 127.0.0.1:{test_port} "
+        f"within {wait_timeout}s'; exit 1 ;; "
+        f"  *) echo \"FAIL: port {test_port} never returned HTTP <500 "
+        f"within {wait_timeout}s (last code: $CODE)\"; exit 1 ;; "
+        "esac"
+    )
+
+
+def run_port_check(
+    endpoint: SshEndpoint,
+    test_port: int,
+    on_line: Optional[Callable[[str], None]] = None,
+    path: str = "/",
+) -> tuple[bool, str]:
+    """Run the in-pod fallback probe with live progress and a hard timeout."""
+    ssh_cmd = [
+        *_ssh_command_prefix(endpoint),
+        port_check_command(test_port, config.PORT_WAIT_TIMEOUT, path),
+    ]
+    outer_timeout = config.PORT_WAIT_TIMEOUT + 60
+    try:
+        proc = subprocess.Popen(
+            ssh_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        return False, _SSH_BINARY_NOT_FOUND
+    assert proc.stdout is not None
+
+    timed_out = [False]
+
+    def kill_on_timeout() -> None:
+        timed_out[0] = True
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+    watchdog = threading.Timer(outer_timeout, kill_on_timeout)
+    watchdog.daemon = True
+    watchdog.start()
+    last_line = ""
+    try:
+        for raw in iter(proc.stdout.readline, ""):
+            line = raw.rstrip("\n")
+            if line:
+                if on_line:
+                    on_line(line)
+                last_line = line
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return False, f"port {test_port} check errored: {exc}"
+    finally:
+        watchdog.cancel()
+
+    if timed_out[0]:
+        return False, (
+            f"port {test_port} check wall-clock timeout after {outer_timeout}s"
+        )
+    return proc.returncode == 0, last_line
+
+
+def _proxy_status_ok(code: int) -> bool:
+    """A service is healthy through the public proxy only on HTTP 200."""
+    return code == 200
+
+
+def run_port_proxy_check(
+    pod_id: str, test_port: int, path: str = "/"
+) -> tuple[bool, str]:
+    """Probe a generic HTTP service through RunPod's public proxy."""
+    url = f"https://{pod_id}-{test_port}.proxy.runpod.net{path}"
+    deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
+    lines = [f"GET {url}"]
+    last_error = ""
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                code = response.status
+                body = response.read(256).decode("utf-8", errors="replace")
+                lines.append(
+                    f"attempt #{attempt}: HTTP {code} body={body[:160]!r}"
+                )
+                if _proxy_status_ok(code):
+                    return True, "\n".join(lines)
+                last_error = f"HTTP {code}"
+        except urllib.error.HTTPError as exc:
+            last_error = f"HTTP {exc.code} {exc.reason}"
+            lines.append(f"attempt #{attempt}: {last_error}")
+        except OSError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            lines.append(f"attempt #{attempt}: {last_error}")
+        time.sleep(5)
+    lines.append(
+        f"FAIL: no HTTP 200 via proxy after {config.PORT_PROXY_TIMEOUT}s "
+        f"({attempt} attempts), last error: {last_error}"
+    )
+    return False, "\n".join(lines)
 
 
 def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
@@ -385,6 +1148,340 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     return False, "\n".join(lines)
 
 
+def run_jupyter_static_check(pod_id: str) -> tuple[bool, str]:
+    """Hit a static asset through the public proxy.
+
+    `/api/status` is served by a plain handler and stays 200 even when every
+    StaticFileHandler route 500s — which is what tornado 6.5.9 did to
+    jupyter_server (tornadoweb/tornado#3724) and what makes the Lab UI render
+    as a blank page. Only a static fetch covers that. Returns (ok, log).
+    """
+    url = f"https://{pod_id}-8888.proxy.runpod.net/static/favicons/favicon.ico"
+    lines = [f"GET {url}"]
+    err = ""
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            lines.append(f"HTTP {resp.status} content-type={ctype}")
+            # A redirect to the login page would also be a 200, so reject HTML.
+            if resp.status == 200 and not ctype.startswith("text/html"):
+                return True, "\n".join(lines)
+            err = f"HTTP {resp.status} content-type={ctype}"
+    except urllib.error.HTTPError as e:
+        err = f"HTTP {e.code} {e.reason}"
+    except OSError as exc:
+        err = f"{type(exc).__name__}: {exc}"
+    lines.append(f"FAIL: static asset not served ({err}) -- Lab UI renders blank")
+    return False, "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Container logs via REST API (v2) + error scan
+# ---------------------------------------------------------------------------
+
+# Last log-API error per pod, so a repeatedly-slow stream logs once instead
+# of once per poll. Keyed by pod, so a different pod still gets its own line.
+_last_log_api_error: dict[str, str] = {}
+
+
+def fetch_pod_logs_api(
+    pod_id: str,
+    tail: int = 0,
+    source: str = "container",
+    deadline_sec: int = 15,
+) -> Optional[list[str]]:
+    """Fetch the SSE backfill from `GET /v2/pods/{id}/logs`.
+
+    The endpoint stays open for live logs. Stop after its historical
+    backfill is drained (socket idle) or the deadline expires.
+    """
+    api_key = api.load_api_key()
+    if not api_key:
+        return None
+    tail = tail or config.LOG_API_TAIL
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}/logs?source={source}&tail={tail}",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "text/event-stream",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    lines: list[str] = []
+    deadline = time.monotonic() + deadline_sec
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            while time.monotonic() < deadline:
+                try:
+                    raw = resp.readline()
+                except OSError:
+                    break
+                if not raw:
+                    break
+                text = raw.decode("utf-8", errors="replace").strip()
+                if not text.startswith("data:"):
+                    continue
+                try:
+                    payload = json.loads(text[len("data:"):].strip())
+                except json.JSONDecodeError:
+                    continue
+                line = payload.get("line")
+                if line is not None:
+                    lines.append(line.rstrip())
+    except (urllib.error.HTTPError, OSError) as exc:
+        # Deduped per pod: the readiness poll asks once per interval, and a
+        # pod whose log stream is slow produced ~20 identical lines per pod
+        # in one ROCm run, burying everything else.
+        message = f"log API fetch failed: {exc}"
+        if _last_log_api_error.get(pod_id) != message:
+            _last_log_api_error[pod_id] = message
+            log(f"  ({message})", indent=2)
+        return None
+    _last_log_api_error.pop(pod_id, None)
+    return lines
+
+
+# The container announced that its SSH server is up. `sshd` is started by
+# the entrypoint, so this is the container saying the thing we are waiting
+# for already happened — anything still unreachable after it is RunPod's
+# network path, not the image.
+_SSHD_UP_RE = re.compile(
+    # Debian/Ubuntu service script, used by container-template/start.sh
+    r"Starting OpenBSD Secure Shell server sshd"
+    # sshd -D in the foreground
+    r"|Server listening on .* port 22\b"
+    # container-template/start.sh's own last line: SSH setup is part of it
+    r"|Start script\(s\) finished, Pod is ready to use",
+    re.IGNORECASE,
+)
+
+
+class ContainerProgress(NamedTuple):
+    """How far the container got, read from its own log stream.
+
+    `status` cannot answer either question: RunPod reports `RUNNING` from the
+    moment the pod is scheduled, while the image may still be downloading for
+    another ten minutes — a 50GB ROCm base routinely is.
+
+    `started` is False while the image is still being pulled, because the
+    container does not exist yet and its log stream is empty. `sshd_up` means
+    the entrypoint got as far as bringing SSH up, which is what separates
+    "the image never opened a door" from "RunPod never built a road to it".
+    """
+
+    started: bool
+    sshd_up: bool
+
+
+def container_progress(
+    pod_id: str, deadline_sec: int = 8
+) -> Optional[ContainerProgress]:
+    """Read the container's progress, or None if the log API was unreachable.
+
+    None is distinct from `ContainerProgress(False, False)`: the first means
+    "could not look", the second "looked, nothing there yet".
+    """
+    lines = fetch_pod_logs_api(
+        pod_id, source="container", deadline_sec=deadline_sec
+    )
+    if lines is None:
+        return None
+    return ContainerProgress(
+        started=bool(lines),
+        sshd_up=any(_SSHD_UP_RE.search(line) for line in lines),
+    )
+
+
+# The host-side system log narrates the pull and hand-off in plain text, so
+# the stage a pod reached can be read directly instead of inferred:
+#
+#   <layer> Extracting [====>]  1.2MB/13.3MB
+#   <layer> Pull complete
+#   Status: Downloaded newer image for runpod/comfyui:1.4.6-cuda12.8
+#   create container runpod/comfyui:1.4.6-cuda12.8
+#   start container for runpod/comfyui:1.4.6-cuda12.8: begin
+#
+# RunPod re-checks the image after creating the container, so these markers
+# are not strictly ordered — the furthest stage seen is what counts.
+_SYS_PULLING_RE = re.compile(
+    r"\bExtracting\b|\bDownloading\b|\bPull complete\b|\bPulling from\b",
+    re.IGNORECASE,
+)
+_SYS_PULL_DONE_RE = re.compile(
+    r"\bStatus:\s*(?:Downloaded newer image|Image is up to date)\s+for\b",
+    re.IGNORECASE,
+)
+_SYS_CONTAINER_START_RE = re.compile(
+    r"\b(?:create|start) container\b", re.IGNORECASE
+)
+
+
+class PodStage(NamedTuple):
+    """How far RunPod got with the pod, per its own system log."""
+
+    pulling: bool
+    pull_done: bool
+    container_started: bool
+
+    @property
+    def label(self) -> str:
+        if self.container_started:
+            return "container started"
+        if self.pull_done:
+            return "image pulled, container not started yet"
+        if self.pulling:
+            return "still pulling the image"
+        return "no pull or start activity logged yet"
+
+
+def pod_stage(pod_id: str, deadline_sec: int = 8) -> Optional[PodStage]:
+    """Read the pod's stage from the system log, or None if unreachable.
+
+    Preferred over guessing from the container's log, which only says
+    "something ran"; this says whether RunPod has even finished downloading.
+    `status` says `RUNNING` throughout and cannot distinguish any of it.
+    """
+    lines = fetch_pod_logs_api(
+        pod_id, source="system", deadline_sec=deadline_sec
+    )
+    if lines is None:
+        return None
+    return PodStage(
+        pulling=any(_SYS_PULLING_RE.search(line) for line in lines),
+        pull_done=any(_SYS_PULL_DONE_RE.search(line) for line in lines),
+        container_started=any(
+            _SYS_CONTAINER_START_RE.search(line) for line in lines
+        ),
+    )
+
+
+def filter_sys_errors(lines: list[str], max_lines: int = 20) -> list[str]:
+    """Keep the lines matching `SYS_LOG_ERROR_PATTERN`, for display.
+
+    Deliberately narrow — it exists to shorten a long system log down to
+    something worth printing. It is NOT a startup-failure detector: the
+    pattern only matches error/fail/crash wording, so lines like
+    `exec: "/start.sh": no such file or directory` fall through it. Anything
+    classifying a failure must read the unfiltered stream.
+    """
+    pattern = re.compile(config.SYS_LOG_ERROR_PATTERN, re.IGNORECASE)
+    return [line for line in lines if pattern.search(line)][:max_lines]
+
+
+def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
+    """Return error-marker lines from the host-side REST system-log stream."""
+    lines = fetch_pod_logs_api(pod_id, source="system")
+    if lines is None:
+        return None
+    return filter_sys_errors(lines, max_lines)
+
+
+# `nvidia-container-cli` aborts the prestart hook when the image's
+# NVIDIA_REQUIRE_CUDA floor is above the host driver.
+_HOST_INCOMPATIBLE_RE = re.compile(
+    r"nvidia-container-cli:[^\n]*requirement error"
+    r"|unsatisfied condition:\s*cuda",
+    re.IGNORECASE,
+)
+_CUDA_CONDITION_RE = re.compile(
+    r"unsatisfied condition:\s*(cuda\s*[<>=!]+\s*[\d.]+)", re.IGNORECASE
+)
+
+# The container could not be started, or its entrypoint died on the spot.
+# Every one of these is deterministic: the same image fails the same way on
+# any host, so a pod that times out with one of these in its log is a broken
+# image and must not be reported as a retryable capacity problem.
+_STARTUP_FAILURE_RE = re.compile(
+    # runc/containerd refusing the container outright
+    r"oci runtime (?:create|exec) failed"
+    r"|standard_init_linux\.go:\d+: exec user process caused"
+    # a wrong-architecture or non-executable entrypoint
+    r"|exec format error"
+    r"|exec:? .*(?:not found|no such file or directory)"
+    r"|permission denied.*(?:start\.sh|entrypoint)"
+    # the entrypoint itself giving up
+    r"|/start\.sh: line \d+:[^\n]*(?:command not found|cannot execute)"
+    # the kernel killing it before sshd could come up
+    r"|out of memory: killed process|oom-kill",
+    re.IGNORECASE,
+)
+
+
+def container_startup_failure(log_lines: Optional[list[str]]) -> str:
+    """Summarize a deterministic container-start failure, or '' if none.
+
+    Read before a readiness timeout is blamed on the host: an image whose
+    entrypoint cannot execute looks exactly like a slow host from the
+    outside — no SSH, no RUNNING, no terminal status — but no other GPU will
+    fix it.
+    """
+    for line in log_lines or []:
+        if _STARTUP_FAILURE_RE.search(line):
+            return line.strip()[:200]
+    return ""
+
+
+def host_incompatibility(sys_errors: Optional[list[str]]) -> str:
+    """Summarize a container-init rejection, or '' if there wasn't one.
+
+    Unlike a dead host, this verdict is deterministic: the same image on the
+    same pinned CUDA is rejected by every host, so the caller must not retry
+    other instance types.
+    """
+    for line in sys_errors or []:
+        if not _HOST_INCOMPATIBLE_RE.search(line):
+            continue
+        match = _CUDA_CONDITION_RE.search(line)
+        return match.group(1) if match else line.strip()[:200]
+    return ""
+
+
+_LOG_SCAN_ATTEMPTS = 3
+_LOG_SCAN_RETRY_SLEEP_SEC = 10
+
+
+def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
+    """Scan container stdout for configured errors.
+
+    Empty API responses are retried and then fail as unverified: every
+    supported image emits boot logs, so zero lines cannot prove a clean boot.
+    """
+    if not api.load_api_key():
+        return True, "(no API key — log scan skipped)"
+    failures: list[str] = []
+    for attempt in range(1, _LOG_SCAN_ATTEMPTS + 1):
+        lines = fetch_pod_logs_api(pod_id)
+        if lines:
+            break
+        failures.append(
+            f"attempt #{attempt}: "
+            + ("fetch failed" if lines is None else "0 log lines")
+        )
+        if attempt < _LOG_SCAN_ATTEMPTS:
+            time.sleep(_LOG_SCAN_RETRY_SLEEP_SEC)
+    else:
+        return False, (
+            "log scan UNVERIFIED — the log API returned no container logs "
+            f"after {_LOG_SCAN_ATTEMPTS} attempts ({'; '.join(failures)})"
+        )
+
+    pattern = re.compile(config.LOG_ERROR_PATTERN, re.IGNORECASE)
+    matches = [line for line in lines if pattern.search(line)]
+    if not matches:
+        return True, f"scanned {len(lines)} log lines — no error markers"
+    report = [
+        f"scanned {len(lines)} log lines — "
+        f"{len(matches)} matched /{config.LOG_ERROR_PATTERN}/i:"
+    ]
+    report.extend(f"  {line}" for line in matches[:40])
+    if len(matches) > 40:
+        report.append(f"  ... (+{len(matches) - 40} more)")
+    return False, "\n".join(report)
+
+
 # ---------------------------------------------------------------------------
 # Diagnostic log fetch
 # ---------------------------------------------------------------------------
@@ -419,27 +1516,16 @@ def _gpu_smi_block(image: str) -> str:
 
 
 def fetch_logs_via_ssh(
-    host: str, port: int, image: str, tail: int = 20,
+    endpoint: SshEndpoint, image: str,
 ) -> Optional[str]:
-    """SSH to the pod and grab the most useful diagnostic info from inside
-    the container. Returns stdout on success, None if SSH didn't work."""
+    """Fetch the GPU SMI snapshot, the remaining SSH-only diagnostic."""
     if not config.SSH_LOG_FETCH:
         return None
-    remote_cmd = (
-        "set +e; "
-        "echo '=== uname / hostname ==='; uname -a; hostname; "
-        f"echo '=== last {tail} /var/log/syslog lines ==='; "
-        f"tail -n {tail} /var/log/syslog 2>/dev/null || echo '(no /var/log/syslog)'; "
-        f"echo '=== last {tail} dmesg lines ==='; "
-        f"dmesg --no-pager 2>/dev/null | tail -n {tail} || echo '(dmesg unavailable)'; "
-        "echo '=== /var/log/*.log tails ==='; "
-        "for f in /var/log/*.log; do "
-        "  [ -f \"$f\" ] || continue; "
-        "  echo \"--- $f ---\"; tail -n 5 \"$f\" 2>/dev/null; "
-        "done; "
-        + _gpu_smi_block(image)
-    )
-    cmd = [*_ssh_command_prefix(host, port), remote_cmd]
+    smi_block = _gpu_smi_block(image)
+    if not smi_block:
+        return None
+    remote_cmd = "set +e; " + smi_block
+    cmd = [*_ssh_command_prefix(endpoint), remote_cmd]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
     except subprocess.TimeoutExpired:
@@ -447,47 +1533,103 @@ def fetch_logs_via_ssh(
     except FileNotFoundError:
         return None
     if r.returncode == 0 and r.stdout.strip():
-        return r.stdout
+        return _strip_cr(r.stdout)
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
-def dump_pod_logs(pod_id: str, image: str, tail: int = 20) -> None:
-    """Print pod metadata + container logs (via direct SSH) before terminating."""
-    data = runpodctl_json("pod", "get", pod_id, timeout=30)
-    if not isinstance(data, dict):
-        log("(could not fetch pod state)", indent=2)
-        return
+class PodDiagnostics(NamedTuple):
+    """What the log dump found, for a caller that has to classify a failure.
+
+    Every stream is returned so the verdict is reached without fetching any
+    of them a second time.
+
+    `sys_lines` is the platform's own log, unfiltered — a container that
+    could not be started is reported here and nowhere else, since a
+    container that never ran has no stdout of its own. `sys_errors` is the
+    same stream narrowed for display; do not classify from it, because its
+    pattern only matches error/fail/crash wording and misses markers like
+    `exec: "/start.sh": no such file or directory`.
+
+    `container_lines` is the image's own stdout, where an entrypoint that
+    started and then died reports itself.
+    """
+
+    sys_errors: list[str]
+    container_lines: list[str]
+    sys_lines: list[str] = []
+
+
+def dump_pod_logs(pod_id: str, image: str) -> PodDiagnostics:
+    """Print metadata, API container logs, system errors, and GPU SMI."""
+    sys_errors: list[str] = []
+    api_lines: list[str] = []
+    sys_lines: list[str] = []
+    status, data = api.request("GET", f"/pods/{pod_id}", timeout=30)
+    if not (200 <= status < 300) or not isinstance(data, dict):
+        api.log_error("(could not fetch pod state)", status, data, indent=2)
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
     ssh = data.get("ssh") or {}
-    host, port = ssh.get("ip"), ssh.get("port")
+    direct = ssh.get("direct") or {}
+    proxy = ssh.get("proxy") or {}
+    endpoint = SshEndpoint("", 0)
+    if direct.get("host") and direct.get("port"):
+        endpoint = SshEndpoint(str(direct["host"]), int(direct["port"]))
+    # Fall back to the proxy so the SMI snapshot still gets fetched on pods
+    # that never received a direct TCP port.
+    elif proxy.get("host") and proxy.get("username"):
+        endpoint = SshEndpoint(
+            str(proxy["host"]), int(proxy.get("port") or 22),
+            str(proxy["username"]), str(proxy.get("command") or ""), pty=True,
+        )
 
     log(f"--- pod metadata for {pod_id} ---", indent=2)
     for key, val in [
-        ("desiredStatus",    data.get("desiredStatus")),
-        ("uptimeSeconds",    data.get("uptimeSeconds")),
-        ("ssh.ip:port",      f"{host}:{port}" if host and port else None),
-        ("ssh.error",        ssh.get("error")),
-        ("ssh.key_in_account", (ssh.get("ssh_key") or {}).get("in_account")),
-        ("imageName",        data.get("imageName")),
-        ("lastStatusChange", data.get("lastStatusChange")),
+        ("status",           data.get("status")),
+        ("cudaVersion",      data.get("cudaVersion")),
+        ("dataCenterId",     data.get("dataCenterId")),
+        ("cost",             data.get("cost")),
+        ("ssh.direct",       f"{direct['host']}:{direct['port']}"
+                             if direct.get("host") and direct.get("port")
+                             else None),
+        ("ssh.proxy",        proxy.get("host") or None),
+        ("image",            data.get("image")),
+        ("startedAt",        data.get("startedAt")),
     ]:
         log(f"  {key:20s} = {val!r}", indent=2)
 
-    if not (host and port):
-        log("  (no SSH endpoint yet — skipping log fetch)", indent=2)
-        log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return
+    api_lines = fetch_pod_logs_api(pod_id) or []
+    if api_lines:
+        log(f"--- container logs via API ({len(api_lines)} lines) ---", indent=2)
+        for line in api_lines:
+            log(f"  {line}", indent=2)
 
-    log(f"--- container/system logs via SSH (root@{host}:{port}) ---", indent=2)
-    logs = fetch_logs_via_ssh(host, int(port), image, tail=tail)
-    if logs is None:
-        log("  (SSH log fetch disabled or ssh binary not found)", indent=2)
+    # Fetched once and kept in both shapes: the unfiltered stream is what
+    # the failure classifier needs, the filtered one is what is worth printing.
+    sys_lines = fetch_pod_logs_api(pod_id, source="system") or []
+    sys_errors = filter_sys_errors(sys_lines)
+    if sys_errors:
+        log(
+            f"--- system-log error markers via API ({len(sys_errors)}) ---",
+            indent=2,
+        )
+        for line in sys_errors:
+            log(f"  {line}", indent=2)
+
+    if not endpoint:
+        log("  (no SSH endpoint yet — skipping GPU SMI fetch)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
+
+    logs = fetch_logs_via_ssh(endpoint, image)
+    if logs is None:
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
+    log(f"--- GPU SMI via SSH ({endpoint.label}) ---", indent=2)
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:
             log(f"    {line}", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
-        return
+        return PodDiagnostics(sys_errors, api_lines, sys_lines)
     for line in logs.splitlines():
         log(f"  {line}", indent=2)
+    return PodDiagnostics(sys_errors, api_lines, sys_lines)

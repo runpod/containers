@@ -18,10 +18,23 @@ variable "PYTORCH_BASE_VERSION" {
 
 variable "CLUSTER_BUILDS" {
   default = [
-    { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2204" },
     { cuda_code = "1281", torch_code = "280", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1281", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1281", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
     { cuda_code = "1290", torch_code = "280", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1290", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1290", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
     { cuda_code = "1300", torch_code = "291", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2120", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+
+    { cuda_code = "1320", torch_code = "291", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2120", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2121", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2130", ubuntu_name = "ubuntu2404" },
   ]
 }
 
@@ -58,6 +71,14 @@ group "cu1300" {
   ]
 }
 
+group "cu1320" {
+  targets = [
+    for b in CLUSTER_BUILDS :
+    "cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
+    if b.cuda_code == "1320"
+  ]
+}
+
 target "cluster-base" {
   context    = "official-templates/pytorch-cluster"
   dockerfile = "Dockerfile"
@@ -87,6 +108,6 @@ target "cluster-matrix" {
   # The cluster image's OWN tag keeps RELEASE_SUFFIX so dev/PR builds don't
   # clobber the released -cluster tag.
   tags = [
-    "runpod/pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}-cluster",
+    "runpod/pytorch-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }
