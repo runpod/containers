@@ -7,7 +7,7 @@ An AI coding agent autonomously runs ML experiments: it modifies `train.py`, tra
 ### What's included
 
 - **Ready on first boot**: Dependencies are installed and the training data and tokenizer are prepared at build time. On first start the repo is copied to `/workspace/autoresearch`, so your edits persist on the volume.
-- **CUDA 12.8 to 13.2**: Images are published for CUDA 12.8.1, 12.9.0, 13.0.0 and 13.2.0. The tag says which toolkit you get and which host driver it needs. PyTorch is the same in all of them: 2.9.1 from the `cu128` wheel index.
+- **CUDA 12.8 to 13.2**: Images are published for CUDA 12.8.1, 12.9.0, 13.0.0 and 13.2.0. The tag says which toolkit you get and which host driver it needs. PyTorch is the same in all of them: 2.10.0 from the `cu128` wheel index.
 - **Bring your own agent**: No coding agent is installed in the image. Connect one from your machine over SSH (Claude Code, Cursor, etc.). `runpodctl` is preinstalled for managing pods.
 
 ### Getting started

@@ -247,6 +247,23 @@ jobs:
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/autoresearch-${{ matrix.cuda }}
 
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/base to pull.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/autoresearch/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
       - name: Build autoresearch images (${{ matrix.cuda }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -262,9 +279,18 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
           load: true
           push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
 
       - name: Extract image refs
         id: refs
@@ -276,6 +302,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -397,6 +424,22 @@ jobs:
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/filebrowser
 
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/base to pull.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/filebrowser/docker-bake.hcl
+
       - name: Build filebrowser images
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -412,8 +455,17 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/filebrowser/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           load: true
           push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
 
       - name: Extract image refs
         id: refs
@@ -542,6 +594,23 @@ jobs:
           max-parallelism: 6
           cache-key: ${{ github.repository }}/pytorch-${{ matrix.cuda }}-v2
 
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/base to pull.
+          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -557,9 +626,18 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
           load: true
           push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
 
       - name: Extract image refs
         id: refs
@@ -702,6 +780,12 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    env:
+      # Which published runpod/pytorch to build FROM: the in-run pytorch
+      # tag when pytorch is part of this build, else the last released
+      # pytorch — the only one that exists for a cluster-only change.
+      # Job-level so the pre-pull and the build resolve the same refs.
+      PYTORCH_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch') && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -716,6 +800,20 @@ jobs:
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}-v2
 
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/pytorch-cluster/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -724,18 +822,23 @@ jobs:
           # The cluster's OWN tag: its version + suffix (RC/-dev/release).
           RELEASE_VERSION: ${{ needs.versions.outputs.cluster }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          # Which published runpod/pytorch to build FROM: the in-run pytorch
-          # tag when pytorch is part of this build, else the last released
-          # pytorch — the only one that exists for a cluster-only change.
-          PYTORCH_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch') && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
         with:
           source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch-cluster/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
           load: true
           push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
 
       - name: Extract image refs
         id: refs
@@ -823,6 +926,10 @@ jobs:
           test-ca-certs: true
           min-ca-certs-version: "20260816"
           test-python-tls: true
+          # dcgm-exporter autostarts on every pod of this image, so a single
+          # pod is enough to prove it runs against our libdcgm and still
+          # emits the labels the dashboards query.
+          test-dcgm-exporter: true
           # torch 2.12/2.13 in the 12.x columns and 2.8.0 on cu1290 take
           # torchvision from cu129, which upstream builds without Blackwell.
           # The 13.x columns here use cu130/cu132 and keep it.
@@ -866,6 +973,23 @@ jobs:
           dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/ray-cluster-${{ matrix.cuda }}
 
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        env:
+          # Must match the bake step: it decides which runpod/pytorch-cluster to pull.
+          CLUSTER_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch-cluster') && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/ray-cluster/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
       - name: Build ray-cluster images (${{ matrix.cuda }})
         id: build
         uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
@@ -883,9 +1007,18 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/ray-cluster/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
           load: true
           push: false
+
+      # The layout is only needed by bake; free the disk before tests/scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
 
       - name: Extract image refs
         id: refs

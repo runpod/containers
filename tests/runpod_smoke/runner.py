@@ -26,6 +26,7 @@ from .checks import (
     ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
+    dcgm_exporter_check_command,
     dump_pod_logs,
     fetch_pod_cuda_version,
     host_incompatibility,
@@ -344,6 +345,12 @@ def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
             ),
             _HYGIENE_TIMEOUT,
         ))
+    if config.GROUP_TEST_DCGM_EXPORTER.get(group, False):
+        checks.append((
+            "dcgm-exporter",
+            dcgm_exporter_check_command(),
+            _HYGIENE_TIMEOUT,
+        ))
     if config.GROUP_TEST_AUTORESEARCH.get(group, False):
         checks.append((
             "autoresearch train.py",
@@ -359,7 +366,8 @@ def _run_hygiene_steps(
     endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
-    `test_python_tls`, `test_uv`, `test_virtualenv`, `test_python_path`).
+    `test_python_tls`, `test_uv`, `test_virtualenv`, `test_dcgm_exporter`,
+    `test_autoresearch`, `test_python_path`).
 
     Runs after the CUDA gate — these answer "is the image put together
     correctly", which is only worth asking once the image boots and its
