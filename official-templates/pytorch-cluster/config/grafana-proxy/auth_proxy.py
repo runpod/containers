@@ -90,7 +90,9 @@ SESSION_COOKIE = f"{COOKIE}={SESSION}; Path=/; HttpOnly; Secure; SameSite=Lax"
 
 
 def session_ok(cookie):
-    return bool(cookie) and hmac.compare_digest(cookie, SESSION)
+    # Bytes, as in token_ok: a non-ASCII cookie must not raise.
+    cookie = (cookie or "").encode()
+    return bool(cookie) and hmac.compare_digest(cookie, SESSION.encode())
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

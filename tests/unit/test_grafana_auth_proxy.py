@@ -109,6 +109,15 @@ class Tokens(ProxyTest):
         purged = resp.headers.get_all("Set-Cookie")
         self.assertTrue(any(v.startswith("cluster_auth=;") for v in purged), purged)
 
+    def test_non_ascii_cookie_is_refused(self):
+        # Header bytes decode as latin-1; this used to raise in compare_digest.
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(conn.close)
+        conn.putrequest("GET", "/")
+        conn.putheader("Cookie", "cluster_auth=\xe9".encode("latin-1"))
+        conn.endheaders()
+        self.assertEqual(conn.getresponse().status, 401)
+
     def test_client_identity_header_is_stripped(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         self.addCleanup(conn.close)
