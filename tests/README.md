@@ -17,7 +17,7 @@ The code is split into a small package next to the entry point:
 tests/
 ├── README.md               ← you are here
 ├── test_images.py          ← entry point: main() + summary + CLI
-├── reap_clusters.py        ← deletes leaked smoke-test Instant Clusters (dev)
+├── reap_clusters.py        ← deletes leaked smoke-test Instant Clusters (prod, dev)
 ├── comfyui/                ← ComfyUI functional-test models and workflow
 ├── unit/                   ← unittest suite for the logic below (no network)
 └── runpod_smoke/
@@ -770,11 +770,13 @@ problem from an HTTP exposure/proxy problem.
 `runpod/pytorch-cluster` is meant to run as an Instant Cluster: `node-0` is
 the head and additionally runs Prometheus + Grafana. A pod cannot show that,
 so a `cluster: true` group provisions a real cluster per attempt through
-GraphQL (`createCluster` → checks → `deleteCluster`). Clusters are expensive
-and prod rarely has a free one, so this runs on **dev**:
+GraphQL (`createCluster` → checks → `deleteCluster`). Clusters bill every
+node, so on prod a cluster group only runs with `ALLOW_PROD_CLUSTERS=1`; CI
+sets it. For a local run, dev is the cheaper choice:
 
 ```bash
 export RUNPOD_ENV=dev RUNPOD_API_KEY=<dev key>   # SSH key registered on the dev account
+# or, on prod: export RUNPOD_API_KEY=<prod key> ALLOW_PROD_CLUSTERS=1
 cat > cluster.yaml <<'YAML'
 pytorch_cluster:
     images:
@@ -837,14 +839,16 @@ PASS  runpod/pytorch-cluster:1.5.0-cu1281-torch280-ubuntu2404
 
 The cluster is deleted in a `finally` and by the same atexit/signal handler
 as pods. `.github/workflows/reap-clusters.yml` is the backstop: hourly, it
-runs `reap_clusters.py --delete` against dev for `smoketest-*` clusters
-older than 90 minutes.
+runs `reap_clusters.py --delete` against prod and dev for `smoketest-*`
+clusters older than 90 minutes.
 
-In CI, `base.yml`'s `test-pytorch-cluster-instant` job runs this on dev for
-the cu1281 build with `profile: cluster` and `cluster-types: SLURM,TRAINING`
-(the smoke-test action's input for `cluster_types`). It needs the
-`DEV_TESTING_RUNPOD_API_KEY` and `DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY`
-secrets and skips with a warning until they exist.
+In CI, `base.yml`'s `test-pytorch-cluster-instant` job runs this on **prod**
+(`ALLOW_PROD_CLUSTERS=1`) for the cu1281 build with `profile: cluster` and
+`cluster-types: SLURM,TRAINING` (the smoke-test action's input for
+`cluster_types`): 2 nodes of the cheapest GPU type Instant Clusters offer.
+It uses the same `TESTING_RUNPOD_API_KEY` / `TESTING_RUNPOD_SSH_PRIVATE_KEY`
+secrets as the pod smoke tests and skips with a warning without them; no
+cluster capacity is a warning, not a failure.
 
 ## Unit tests
 

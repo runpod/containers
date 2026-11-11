@@ -1,0 +1,94 @@
+name: TEMP Instant Cluster Smoke Test
+
+on:
+  push:
+    branches: [feat/CON-1462-pytorch-cluster-smoke-tests]
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "pytorch-cluster image to test"
+        type: string
+        default: runpod/pytorch-cluster:2.3.0-rc.212-cu1281-torch2121-ubuntu2404
+      instances:
+        description: "Optional GPU ids to try, newline separated (empty = cheapest first)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-cluster-smoke-prod
+  cancel-in-progress: false
+
+env:
+  IMAGE: ${{ inputs.image || 'runpod/pytorch-cluster:2.3.0-rc.212-cu1281-torch2121-ubuntu2404' }}
+
+jobs:
+  cluster-smoke-prod:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    timeout-minutes: 60
+    env:
+      # Cluster groups only run on dev unless this is set.
+      ALLOW_PROD_CLUSTERS: "1"
+    steps:
+      - name: Check prod credentials
+        shell: bash
+        env:
+          KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          SSH: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${KEY}" || -z "${SSH}" ]]; then
+            echo "::error::TESTING_RUNPOD_API_KEY / TESTING_RUNPOD_SSH_PRIVATE_KEY are not set"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      # Shows what the test will pick (cheapest node first) before any spend.
+      - name: Prod cluster catalog
+        shell: bash
+        working-directory: tests
+        env:
+          RUNPOD_ENV: prod
+          RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          from runpod_smoke.cluster import cluster_catalog
+          catalog = cluster_catalog() or []
+          if not catalog:
+              print("::warning::prod cluster catalog is empty (account plan or no capacity)")
+          for gpu in catalog:
+              node = gpu.price * gpu.sizes[0]
+              print(f"{gpu.gpu_id:40s} sizes={gpu.sizes} "
+                    f"${gpu.price}/GPU/hr -> ${node:.2f}/node/hr, "
+                    f"${2 * node:.2f}/hr for 2 nodes")
+          PY
+
+      - name: Instant Cluster smoke test (prod)
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: '["${{ env.IMAGE }}"]'
+          profile: cluster
+          runpod-env: prod
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          cluster-nodes: "2"
+          cluster-types: "SLURM,TRAINING"
+          instances: ${{ inputs.instances }}
+          # GB10 nodes are arm64; the image is amd64-only.
+          exclude-instances: |
+            *GB10*
+          on-skip: "warn"
+
+      # The runner deletes its cluster itself; this catches the case where it
+      # was killed first (cancel, timeout). Only smoketest-* clusters are
+      # touched, and this workflow is the only thing creating them on prod.
+      - name: Delete leftover smoke-test clusters (prod)
+        if: always()
+        shell: bash
+        env:
+          RUNPOD_ENV: prod
+          RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+        run: python3 tests/reap_clusters.py --max-age-minutes 1 --delete

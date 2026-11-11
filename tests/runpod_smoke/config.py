@@ -19,10 +19,9 @@ _TESTS_DIR = os.path.dirname(_PKG_DIR)
 # Target environment
 # ---------------------------------------------------------------------------
 
-# Which RunPod environment to provision in. Prod is the default for pods;
-# Instant Clusters are expensive and prod rarely has a free one, so cluster
-# groups only run against dev (see ALLOW_PROD_CLUSTERS). The API key must
-# belong to the same environment — a prod key is rejected by dev and vice
+# Which RunPod environment to provision in. Prod is the default; cluster
+# groups additionally need ALLOW_PROD_CLUSTERS=1 there (CI sets it). The
+# API key must belong to the same environment — a prod key is rejected by dev and vice
 # versa.
 VALID_ENVS = ("prod", "dev")
 _ENV_DEFAULTS = {
@@ -279,9 +278,10 @@ COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
 # Instant Clusters (`cluster: true` groups)
 # ---------------------------------------------------------------------------
 
-# Clusters bill every node at a premium and prod almost never has one free,
-# so a cluster group refuses to run outside RUNPOD_ENV=dev unless this is
-# set — a manifest copied from a dev run must not quietly buy prod nodes.
+# Clusters bill every node at a premium, so a cluster group refuses to run
+# outside RUNPOD_ENV=dev unless this is set: a manifest copied from a dev run
+# must not quietly buy prod nodes. CI (base.yml test-pytorch-cluster-instant)
+# sets it and runs on prod; local runs opt in the same way.
 ALLOW_PROD_CLUSTERS = os.environ.get("ALLOW_PROD_CLUSTERS", "0") == "1"
 
 DEFAULT_CLUSTER_NODES = 2

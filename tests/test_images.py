@@ -360,8 +360,8 @@ def _apply_cluster_flags(grp: str, contents: dict) -> None:
     if config.RUNPOD_ENV != "dev" and not config.ALLOW_PROD_CLUSTERS:
         raise ValueError(
             f"group '{grp}' is a cluster group but RUNPOD_ENV={config.RUNPOD_ENV}; "
-            "Instant Cluster smoke tests run on dev (RUNPOD_ENV=dev with a dev "
-            "API key). Set ALLOW_PROD_CLUSTERS=1 to run them on prod anyway."
+            "prod clusters are billed per node, so set ALLOW_PROD_CLUSTERS=1 to "
+            "confirm, or use RUNPOD_ENV=dev with a dev API key."
         )
     config.GROUP_CLUSTER[grp] = True
     config.GROUP_TEST_JUPYTER[grp] = True

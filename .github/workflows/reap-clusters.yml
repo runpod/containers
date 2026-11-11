@@ -1,6 +1,7 @@
 name: Reap Leaked Smoke-Test Clusters
 
-# Safety net for Instant Clusters that the cluster smoke test leaks on dev —
+# Safety net for Instant Clusters that the cluster smoke test leaks (CI runs
+# it on prod, local runs usually use dev) —
 # the cluster counterpart of reap-pods.yml. A cancelled run can SIGKILL the
 # runner before cluster_runner deletes its cluster, and a leaked cluster bills
 # every node. Only clusters named `smoketest-<epoch>-...` are touched; age
@@ -30,22 +31,29 @@ concurrency:
 jobs:
   reap:
     runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: prod
+            key: TESTING_RUNPOD_API_KEY
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
-      - name: Reap stale smoke-test clusters (dev)
+      - name: Reap stale smoke-test clusters (${{ matrix.env }})
         shell: bash
         env:
-          RUNPOD_ENV: dev
-          RUNPOD_API_KEY: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
+          RUNPOD_ENV: ${{ matrix.env }}
+          RUNPOD_API_KEY: ${{ secrets[matrix.key] }}
+          KEY_NAME: ${{ matrix.key }}
           EVENT: ${{ github.event_name }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_MAX_AGE: ${{ inputs.max_age_minutes }}
         run: |
           set -euo pipefail
           if [[ -z "${RUNPOD_API_KEY}" ]]; then
-            echo "::warning::DEV_TESTING_RUNPOD_API_KEY is not set; nothing to reap"
+            echo "::warning::${KEY_NAME} is not set; nothing to reap on ${RUNPOD_ENV}"
             exit 0
           fi
           if [ "${EVENT}" = "schedule" ]; then

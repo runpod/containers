@@ -940,24 +940,29 @@ jobs:
 
   # The per-pod job above proves the image on every CUDA variant; this one
   # proves the cluster behaviour a single pod can't: node-0 as head, Grafana
-  # on :8889, Prometheus scraping every node. Runs on dev — prod rarely has a
-  # free cluster and they are expensive — and on one CUDA variant only.
+  # on :8889, Prometheus scraping every node. Runs on prod, where customers
+  # run it, on one CUDA variant only: clusters are billed per node, so the
+  # test takes the cheapest GPU type Instant Clusters offer, 2 nodes.
   test-pytorch-cluster-instant:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: build-pytorch-cluster
     if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
+    env:
+      # The harness refuses cluster groups on prod unless this is set, so a
+      # local run can't create a prod cluster by accident.
+      ALLOW_PROD_CLUSTERS: "1"
     steps:
-      - name: Check dev credentials
+      - name: Check prod credentials
         id: creds
         shell: bash
         env:
-          DEV_KEY: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
-          DEV_SSH: ${{ secrets.DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          SSH: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
         run: |
-          if [[ -n "${DEV_KEY}" && -n "${DEV_SSH}" ]]; then
+          if [[ -n "${KEY}" && -n "${SSH}" ]]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Instant Cluster smoke test skipped: set DEV_TESTING_RUNPOD_API_KEY and DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY (dev account)"
+            echo "::warning::Instant Cluster smoke test skipped: set TESTING_RUNPOD_API_KEY and TESTING_RUNPOD_SSH_PRIVATE_KEY"
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -986,21 +991,21 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Instant Cluster smoke test (dev)
+      - name: Instant Cluster smoke test
         if: steps.creds.outputs.ok == 'true'
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           profile: cluster
-          runpod-env: dev
-          runpod-api-key: ${{ secrets.DEV_TESTING_RUNPOD_API_KEY }}
-          ssh-private-key: ${{ secrets.DEV_TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          runpod-env: prod
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           cluster-nodes: "2"
           # The image ships the Slurm that slurm-init.sh runs, and only a
-          # SLURM cluster starts it; TRAINING is the fallback when dev has no
-          # SLURM capacity (the Slurm check is then skipped, not passed).
+          # SLURM cluster starts it; TRAINING is the fallback when there is
+          # no SLURM capacity (the Slurm check is then skipped, not passed).
           cluster-types: "SLURM,TRAINING"
-          # dev cluster capacity comes and goes; don't block on it.
+          # Cluster capacity comes and goes; don't block a release on it.
           on-skip: "warn"
           # GB10 nodes are arm64; the image is amd64-only.
           exclude-instances: |
