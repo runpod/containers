@@ -3,7 +3,7 @@
 Everything here talks to REST API v2 (see api.py) — no runpodctl.
 
 Owns the `ACTIVE_POD_IDS` set + lock — the source of truth for "what's
-still alive on RunPod" across all workers. atexit + SIGINT/SIGTERM
+still alive on Runpod" across all workers. atexit + SIGINT/SIGTERM
 handlers are installed at import time so anything we leak on crash
 gets terminated.
 """
@@ -196,7 +196,7 @@ def create_pod(
 
     compute_type='GPU' targets `gpu_id`; 'CPU' picks a flavor from the CPU
     catalog (v2 requires an explicit `cpu.id` + `vcpuCount`, unlike the old
-    CLI which let RunPod choose).
+    CLI which let Runpod choose).
 
     `cloud_type` overrides `config.CLOUD_TYPE` for this call only — used by
     the CPU-candidate loop to try SECURE then COMMUNITY. `data_center_ids`
@@ -278,7 +278,7 @@ def pod_state(pod_id: str) -> dict:
     terminal states.
 
     `ssh.direct` is null until the pod has a machine assignment and a public
-    port for `22/tcp`. RunPod does not always allocate that port — the pod
+    port for `22/tcp`. Runpod does not always allocate that port — the pod
     then shows only `ssh.proxy` in the console — so both endpoints are
     returned and the readiness poll accepts whichever answers.
     """
@@ -335,7 +335,7 @@ def _print_stall_hint(pod_id: str, elapsed: int) -> None:
     anonymous pull.
     """
     stage = pod_stage(pod_id)
-    where = f" RunPod's system log says: {stage.label}." if stage else ""
+    where = f" Runpod's system log says: {stage.label}." if stage else ""
     log(
         f"pod still has no SSH endpoint after {elapsed}s.{where} "
         "Most common cause is a slow or throttled image pull. "
@@ -453,7 +453,7 @@ def wait_for_running(
     started — a much stronger signal than any status field.
 
     `status` in particular is NOT a readiness signal and not a progress one:
-    RunPod reports `RUNNING` from the moment the pod is scheduled, while the
+    Runpod reports `RUNNING` from the moment the pod is scheduled, while the
     image may still be downloading for another ten minutes. The container's
     own log stream is what separates "still pulling" from "running but
     unreachable", so it is consulted before any timeout is attributed.
@@ -483,7 +483,7 @@ def wait_for_running(
 
         if pod_status_value != last_status:
             # Spelled out because RUNNING here does not mean "ready", and
-            # reading it that way makes every later line confusing: RunPod
+            # reading it that way makes every later line confusing: Runpod
             # sets it at scheduling time, before the image is pulled.
             note = (
                 " (scheduled; says nothing about the pull or sshd)"
@@ -544,7 +544,7 @@ def _classify_timeout(
     """Decide who a readiness timeout belongs to, worst-evidence-first.
 
     Two independent sources, because either can be unavailable and because
-    they answer different questions. RunPod's system log says whether the
+    they answer different questions. Runpod's system log says whether the
     image even finished downloading; the container's own log says whether the
     entrypoint got as far as starting sshd. `status` answers neither — it
     reads `RUNNING` from scheduling time onward.

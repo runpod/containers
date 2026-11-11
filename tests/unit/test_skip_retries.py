@@ -1,6 +1,6 @@
 """SKIP / UNVERIFIED jobs are re-run in-process instead of failing CI.
 
-A SKIP means RunPod had no capacity on any candidate when we asked, which
+A SKIP means Runpod had no capacity on any candidate when we asked, which
 says nothing about the image. Capacity frees up within minutes, so the
 harness waits and re-runs just those jobs before ON_SKIP decides the exit
 code — what people used to do by hand with "Re-run failed jobs".

@@ -1,7 +1,7 @@
 name: Smoke test
 description: |
   Generate a test manifest from bake image refs, then smoke-test each image
-  on a real RunPod pod via tests/test_images.py:
+  on a real Runpod pod via tests/test_images.py:
     - boots the image on the cheapest available eligible instance,
     - runs the per-group CUDA / GPU functional check over SSH,
     - terminates the pod (always — even on Ctrl-C / job timeout).
@@ -54,12 +54,12 @@ inputs:
     required: false
     default: ""
   runpod-api-key:
-    description: "RunPod API key (pod-management permissions required)"
+    description: "Runpod API key (pod-management permissions required)"
     required: true
   ssh-private-key:
     description: |
       PEM-formatted private key matching a public SSH key registered on the
-      RunPod account this API key belongs to. test_images.py uses it to ssh
+      Runpod account this API key belongs to. test_images.py uses it to ssh
       into the pod for the GPU/CUDA functional check and log capture.
     required: true
   budget-usd-per-hour:
@@ -354,7 +354,7 @@ inputs:
   on-skip:
     description: |
       What to do when at least one image ends up SKIPped (the smoke
-      test never actually ran on it — RunPod had no capacity on every
+      test never actually ran on it — Runpod had no capacity on every
       candidate, or every candidate landed on a stuck host). Real
       FAILs (broken container, CUDA check failed) are always fatal
       regardless of this knob.
@@ -384,12 +384,12 @@ inputs:
   skip-retry-delay:
     description: |
       Base wait in seconds before a retry round; round N waits N times this
-      (default 300 → 5, 10, 15, 20, 25 min) to give RunPod capacity time to free up.
+      (default 300 → 5, 10, 15, 20, 25 min) to give Runpod capacity time to free up.
     required: false
     default: "300"
   registry-auth-name:
     description: |
-      Display name of the registry credential in the RunPod account
+      Display name of the registry credential in the Runpod account
       (the `name` shown by `GET /v2/registries`) to attach to every pod.
 
       Empty (default) pulls anonymously — fine for our public images,
@@ -403,7 +403,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Configure RunPod credentials
+    - name: Configure Runpod credentials
       shell: bash
       env:
         # tests/test_images.py reads RUNPOD_API_KEY out of the env, so the
@@ -673,7 +673,7 @@ runs:
       shell: bash
       env:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
-        # 'Configure RunPod credentials' and 'Write SSH private key' steps.
+        # 'Configure Runpod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
         # Validated by test_images.py (prod / dev); cluster groups refuse
         # anything but dev.

@@ -146,7 +146,7 @@ def _create_pod_with_retries(
     dc_ids = cpu_candidate.data_center_ids if cpu_candidate else ""
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
-        # New name on each attempt — RunPod may keep a server-side record
+        # New name on each attempt — Runpod may keep a server-side record
         # of rejected names briefly, and unique names also make logs
         # unambiguous.
         name = (
@@ -228,7 +228,7 @@ def _classify_non_running(
       * the pod never got far enough to be judged -> STUCK. Either no SSH
         endpoint was ever offered, or the container had not emitted a single
         log line, meaning the image was still being pulled. `status` is no
-        help in telling that apart: RunPod reports RUNNING from scheduling
+        help in telling that apart: Runpod reports RUNNING from scheduling
         time onward, long before the pull finishes.
       * the container was demonstrably running and still nothing answered
         -> UNVERIFIED. A wedged host and an image whose sshd never starts
@@ -249,7 +249,7 @@ def _classify_non_running(
         )
         return "FAIL", f"container init rejected the image: {blocker}"
     # Both streams: a container that could not be created never wrote a
-    # line of its own, so its only trace is in RunPod's system log.
+    # line of its own, so its only trace is in Runpod's system log.
     startup = container_startup_failure(
         diagnostics.sys_lines + diagnostics.container_lines
     )
@@ -612,8 +612,8 @@ def test_pair(
                          it. Distinct so the summary doesn't mis-attribute
                          the failure to the container. `detail` is the raw
                          orchestrator error.
-        'UNAVAILABLE'  — RunPod has no capacity for this instance — try next
-        'STUCK'        — pod was created but RunPod never assigned an SSH
+        'UNAVAILABLE'  — Runpod has no capacity for this instance — try next
+        'STUCK'        — pod was created but Runpod never assigned an SSH
                          endpoint within CREATE_TIMEOUT. Almost always a bad
                          host in the scheduler pool, not an image bug — caller
                          should try a different instance type.
@@ -714,7 +714,7 @@ def test_image(
 
     Iterates instance types until one PASSes. Stops early on FAIL (real
     image bug — no point trying another GPU). UNAVAILABLE (capacity),
-    STUCK (RunPod gave us a dead host) and UNVERIFIED (an endpoint that
+    STUCK (Runpod gave us a dead host) and UNVERIFIED (an endpoint that
     never answered) all just move on to the next instance.
     CREATE_FAIL also short-circuits: a non-capacity orchestrator error
     (e.g. bad image tag, registry auth) won't be fixed by another GPU.
@@ -788,7 +788,7 @@ def test_image(
             "",
         )
     if stuck_instances:
-        # We tried every instance and RunPod never gave us a working host
+        # We tried every instance and Runpod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at
         # all".
         log(
@@ -799,7 +799,7 @@ def test_image(
         return (
             "SKIP",
             (
-                "RunPod never assigned an SSH endpoint"
+                "Runpod never assigned an SSH endpoint"
                 + _over_candidates(len(stuck_instances))
                 + " — likely a scheduler issue, try again later"
             ),

@@ -68,7 +68,7 @@ def _parse_cloud_types(raw: str) -> list[str]:
 CLOUD_TYPES = _parse_cloud_types(os.environ.get("CLOUD_TYPE", "SECURE"))
 CLOUD_TYPE = CLOUD_TYPES[0]
 DISK_GB = int(os.environ.get("DISK_GB", "100"))
-# CPU pods on RunPod cap container disk by flavor: the cheapest flavors
+# CPU pods on Runpod cap container disk by flavor: the cheapest flavors
 # (cpu3c-2-4 and similar) reject >20 GB outright; larger ones cap at 30 GB.
 # 20 GB is the universal safe value — and plenty for a smoke-test that
 # only boots start.sh and dwells for a minute. Overridable for the rare
@@ -81,12 +81,12 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 
 # Number of images to smoke-test concurrently. Each worker holds at most one
 # pod at a time, so MAX_PARALLEL=3 means up to 3 pods alive simultaneously.
-# Keep modest: RunPod has per-account rate limits, and your wallet has limits
+# Keep modest: Runpod has per-account rate limits, and your wallet has limits
 # too (DISK_GB * pods * hours can add up).
 MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 
 # What to do when at least one image ended up SKIPped. SKIPs mean the
-# test never actually ran against the image — RunPod had no capacity
+# test never actually ran against the image — Runpod had no capacity
 # on every candidate, or every candidate landed on a stuck host. In CI
 # that's effectively zero validation, so the default is strict ('fail').
 # Modes:
@@ -96,7 +96,7 @@ MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 #   'warn' — exit 0 + GitHub `::warning::` annotation. Job stays green
 #            but the run shows a yellow warning bubble in the PR check
 #            tab. Use when capacity-shortage is expected (tight DCs)
-#            and you'd rather not block PRs on RunPod's free capacity,
+#            and you'd rather not block PRs on Runpod's free capacity,
 #            but you still want a visible signal.
 #   'pass' — exit 0, no annotation. Legacy lenient behaviour, no signal
 #            at all. Avoid unless you have downstream tooling that
@@ -114,7 +114,7 @@ def _coerce_on_skip(raw: str) -> str:
 
 ON_SKIP: str = _coerce_on_skip(os.environ.get("ON_SKIP", "fail"))
 
-# How many times to retry pod-create when RunPod returns a transient
+# How many times to retry pod-create when Runpod returns a transient
 # orchestrator error ("Something went wrong", 502/503, etc.). Capacity-
 # shortage errors are NOT retried (we move on to the next instance instead).
 CREATE_RETRIES = int(os.environ.get("CREATE_RETRIES", "3"))
@@ -140,7 +140,7 @@ PROBE_HEARTBEAT_SEC = int(os.environ.get("PROBE_HEARTBEAT_SEC", "60"))
 
 
 # Docker Hub authenticated pulls. Unset means anonymous pulls: fine for
-# public images, but RunPod datacenters share an IP pool that hits Docker
+# public images, but Runpod datacenters share an IP pool that hits Docker
 # Hub's `toomanyrequests` rate limit fast. Name the credential with
 # REGISTRY_AUTH_NAME (looked up in `GET /v2/registries`) or pass its
 # REGISTRY_AUTH_ID directly. A name that doesn't resolve is fatal —
@@ -178,7 +178,7 @@ SSH_OPTS = [
     "-o", "BatchMode=yes",
     "-o", "LogLevel=ERROR",
     # OpenSSH 8.7+ disables ssh-rsa (SHA-1) by default. The sshd inside
-    # RunPod base images can still want legacy ssh-rsa for RSA client keys
+    # Runpod base images can still want legacy ssh-rsa for RSA client keys
     # (which is what runpodctl auto-generates), so we re-enable it
     # explicitly.
     "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
@@ -234,7 +234,7 @@ SYS_LOG_ERROR_PATTERN = os.environ.get(
 
 # Password we hand to start.sh via env. Not a secret — every pod we spin
 # up is short-lived (reaped within the hour) and is only reachable through
-# RunPod's authenticated proxy. We just need ANY non-empty value so start.sh
+# Runpod's authenticated proxy. We just need ANY non-empty value so start.sh
 # decides to launch Jupyter (see start.sh: `if [[ $JUPYTER_PASSWORD ]]`).
 JUPYTER_TEST_PASSWORD = "admin"
 
@@ -242,7 +242,7 @@ JUPYTER_TEST_PASSWORD = "admin"
 # ready", so a brief startup grace is needed before we probe.
 JUPYTER_WAIT_TIMEOUT = int(os.environ.get("JUPYTER_WAIT_TIMEOUT", "30"))
 
-# RunPod exposes any port declared as `<port>/http` through its public
+# Runpod exposes any port declared as `<port>/http` through its public
 # proxy at `https://<pod-id>-<port>.proxy.runpod.net`. The proxy takes a
 # few seconds to register newly-exposed ports — we retry up to this many
 # seconds before giving up.
@@ -385,7 +385,7 @@ CPU_GROUP_NAMES: frozenset[str] = frozenset({"base_cpu"})
 
 # CPU flavors from GET /v2/catalog/cpus, populated at startup. v2 requires
 # an explicit `cpu.id` + `vcpuCount` on pod create, unlike the old CLI which
-# let RunPod pick — so we choose the cheapest fitting flavor ourselves.
+# let Runpod pick — so we choose the cheapest fitting flavor ourselves.
 CPU_CATALOG: list[dict] = []
 
 # vCPU count requested for CPU pods. Must be a power of two and inside the
@@ -469,7 +469,7 @@ def cpu_candidate_for(instance: str) -> CpuCandidate:
 
 # Display-name -> gpu id mapping, populated at startup from
 # `GET /v2/catalog/gpus`. Keeps the YAML manifest free
-# of RunPod-internal gpuId strings — users only put display names there.
+# of Runpod-internal gpuId strings — users only put display names there.
 GPU_ID_MAP: dict[str, str] = {}
 
 # GPU catalog with pricing. Populated at startup via GraphQL since
