@@ -1,7 +1,7 @@
 name: Harness Unit Tests
 
 # Unit tests for the smoke-test harness in tests/runpod_smoke. No network,
-# no RunPod credentials, no pods — pure logic, so this runs on every PR and
+# no Runpod credentials, no pods — pure logic, so this runs on every PR and
 # finishes in seconds. The paid end-to-end coverage is the per-family smoke
 # test in release.yml.
 
