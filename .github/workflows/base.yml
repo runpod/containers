@@ -242,6 +242,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -264,9 +273,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/base to pull.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -281,12 +287,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.autoresearch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          # Which runpod/base to build FROM: the in-run base tag when base
-          # was built in this run, else the last released (public) base.
-          # Keyed on the build itself, not the plan: a planned base with
-          # nothing releasable is skipped, and its in-run tag never exists.
-          BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
-          BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
@@ -422,6 +422,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
     # Ubuntu 24.04 only: a CPU image plus one CUDA image (FileBrowser does not
     # use the GPU; the CUDA variant is for pods that want GPU tooling alongside).
     steps:
@@ -446,9 +455,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/base to pull.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -462,10 +468,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.filebrowser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          # Which runpod/base to build FROM: the in-run base tag when base
-          # was built in this run, else the last released (public) base.
-          BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
-          BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
@@ -596,6 +598,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -619,9 +630,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/base to pull.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -636,12 +644,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.pytorch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          # Which runpod/base to build FROM: the in-run base tag when base
-          # was built in this run, else the last released (public) base.
-          # Keyed on the build itself, not the plan: a planned base with
-          # nothing releasable is skipped, and its in-run tag never exists.
-          BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
-          BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
@@ -802,12 +804,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    # Which published runpod/pytorch this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
     env:
-      # Which published runpod/pytorch to build FROM: the in-run pytorch
-      # tag when pytorch is part of this build, else the last released
-      # pytorch — the only one that exists for a cluster-only change.
-      # Job-level so the pre-pull and the build resolve the same refs.
-      PYTORCH_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch') && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
+      PYTORCH_BASE_VERSION: ${{ needs.build-pytorch.result == 'success' && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
+      PYTORCH_BASE_REPO_SUFFIX: ${{ needs.build-pytorch.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -845,11 +850,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.cluster }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          # Which runpod/pytorch to build FROM: the in-run pytorch tag when
-          # pytorch was built in this run, else the last released (public)
-          # pytorch — the only one that exists for a cluster-only change.
-          PYTORCH_BASE_VERSION: ${{ needs.build-pytorch.result == 'success' && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
-          PYTORCH_BASE_REPO_SUFFIX: ${{ needs.build-pytorch.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
@@ -988,6 +988,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    # Which published runpod/pytorch-cluster this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      CLUSTER_BASE_VERSION: ${{ needs.build-pytorch-cluster.result == 'success' && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
+      CLUSTER_BASE_REPO_SUFFIX: ${{ needs.build-pytorch-cluster.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -1010,9 +1019,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/pytorch-cluster to pull.
-          CLUSTER_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch-cluster') && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -1028,11 +1034,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.ray-cluster }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          # Which published runpod/pytorch-cluster to build FROM: the in-run
-          # cluster tag when pytorch-cluster was built in this run, else the
-          # last released cluster.
-          CLUSTER_BASE_VERSION: ${{ needs.build-pytorch-cluster.result == 'success' && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
-          CLUSTER_BASE_REPO_SUFFIX: ${{ needs.build-pytorch-cluster.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
