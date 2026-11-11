@@ -206,11 +206,18 @@ LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
 # Slurm a SLURM cluster runs, so every other slurmctld/slurmd error (PMIx
 # included) is a finding. A brand-new slurmctld has no saved state, so it
 # always logs "Could not open <x> state file" and "NOTE: Trying backup state
-# save file" once per state file. Empty disables the filter.
+# save file" once per state file. slurmd 26.05 logs "Cannot find slurmd
+# cpu/memory cgroup" because the platform's slurm.conf enables the cgroup
+# plugin and the pod is a cgroup v1 container with no slurmd cgroup to find;
+# jobs still run, just without cgroup limits. That is the platform config,
+# not the image, so only those two exact lines are dropped. Empty disables
+# the filter.
 LOG_ERROR_IGNORE = os.environ.get(
     "LOG_ERROR_IGNORE",
     r"^\s*slurmctld: error: (?:Could not open \w+ state file"
-    r"|NOTE: Trying backup state save file)",
+    r"|NOTE: Trying backup state save file)"
+    r"|^\s*(?:\[[^\]]+\]\s*)?(?:slurmd:\s*)?"
+    r"error: Cannot find slurmd (?:cpu|memory) cgroup\s*$",
 )
 
 # System logs contain host-side failures that never reach container stdout:

@@ -9,7 +9,7 @@
 # (some GeForce cards), and DWELL_SEC=0 for a faster debugging loop.
 pytorch_cluster:
     images:
-    - runpod/pytorch-cluster:2.2.0-cu1281-torch2130-ubuntu2404
+    - runpod/pytorch-cluster:2.3.0-rc.212-cu1281-torch2121-ubuntu2404
     # Head (node-0, runs Prometheus + Grafana) plus one worker — the smallest
     # shape that proves Prometheus scrapes across nodes.
     cluster: true

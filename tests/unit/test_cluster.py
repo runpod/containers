@@ -589,8 +589,9 @@ class SlurmOnlyOnSlurmClusters(unittest.TestCase):
 
 
 class SlurmLogScan(unittest.TestCase):
-    """Only a new slurmctld's missing-state lines are expected; the image
-    ships the Slurm a SLURM cluster runs, so its other errors are findings."""
+    """Only a new slurmctld's missing-state lines and slurmd's container
+    cgroup lines are expected; the image ships the Slurm a SLURM cluster
+    runs, so its other errors are findings."""
 
     FIRST_BOOT = [
         "Starting Jupyter Lab...",
@@ -610,6 +611,30 @@ class SlurmLogScan(unittest.TestCase):
         ok, report = self._scan(self.FIRST_BOOT)
         self.assertTrue(ok, report)
         self.assertIn("2 expected line(s) ignored", report)
+
+    def test_container_cgroup_lines_are_ignored(self):
+        cgroup = [
+            "[2026-11-11T07:49:25.426] error: Cannot find slurmd cpu cgroup",
+            "[2026-11-11T07:49:25.427] error: Cannot find slurmd memory cgroup",
+        ]
+        ok, report = self._scan(self.FIRST_BOOT + cgroup)
+        self.assertTrue(ok, report)
+        self.assertIn("4 expected line(s) ignored", report)
+
+    def test_cgroup_lines_match_any_timestamp_or_prefix(self):
+        variants = [
+            "[2027-03-01T23:59:59.999] error: Cannot find slurmd cpu cgroup",
+            "error: Cannot find slurmd memory cgroup",
+            "slurmd: error: Cannot find slurmd cpu cgroup",
+        ]
+        ok, report = self._scan(variants)
+        self.assertTrue(ok, report)
+
+    def test_other_cgroup_errors_fail(self):
+        other = ("[2026-11-11T07:49:25.426] error: "
+                 "Cannot find slurmd cpu cgroup: oom")
+        ok, _ = self._scan([other])
+        self.assertFalse(ok)
 
     def test_other_slurm_errors_fail(self):
         pmix = ("slurmctld: error:  mpi/pmix_v5: init: (null) [0]: "
