@@ -1179,8 +1179,95 @@ def main() -> int:
     results: list[Result] = []
     jobs = _plan_all_clouds(manifest, group_filter, results)
     _run_jobs(jobs, results)
+    _run_cluster_pod_fallback(manifest, group_filter, results)
 
     return _print_summary(results)
+
+
+FALLBACK_NOTE = "single-pod fallback, no Instant Cluster capacity"
+
+
+def _cluster_pod_fallback_jobs(
+    manifest: dict[str, dict],
+    group_filter: Optional[str],
+    results: list[Result],
+) -> tuple[list[Job], list[int]]:
+    """Pod jobs for every cluster-group image that ended SKIP, and the
+    indexes of the SKIP rows they replace. Flips those groups to pod groups.
+
+    A cluster group only SKIPs when no candidate had capacity, after every
+    retry. Its manifest carries no per-pod budget (cluster pricing differs),
+    so the candidates come from the CLUSTER_POD_FALLBACK_* filters."""
+    jobs: list[Job] = []
+    replaced: list[int] = []
+    cloud = config.CLOUD_TYPES[0]
+    for group, contents in manifest.items():
+        if group_filter and group != group_filter:
+            continue
+        if not config.GROUP_CLUSTER.get(group, False):
+            continue
+        images = set(contents.get("images", []))
+        skipped = [
+            i for i, r in enumerate(results) if r[0] in images and r[1] == "SKIP"
+        ]
+        if not skipped:
+            continue
+        pod_config = {
+            key: value for key, value in contents.items()
+            if key not in ("instances", "check_all_gpu")
+        }
+        pod_config.update(
+            max_price_per_hour=config.CLUSTER_POD_FALLBACK_MAX_PRICE,
+            min_vram_gb=config.CLUSTER_POD_FALLBACK_MIN_VRAM_GB,
+            manufacturer=contents.get("manufacturer") or "Nvidia",
+        )
+        config.GROUP_CLUSTER[group] = False
+        instances = resolve_instances(group, pod_config)
+        if not instances:
+            config.GROUP_CLUSTER[group] = True
+            log(
+                f"::warning::group '{group}': no Instant Cluster capacity and no "
+                "pod GPU matches the fallback filters "
+                f"(<= ${config.CLUSTER_POD_FALLBACK_MAX_PRICE}/hr, "
+                f">= {config.CLUSTER_POD_FALLBACK_MIN_VRAM_GB} GB)"
+            )
+            continue
+        log(
+            f"::warning::group '{group}': no Instant Cluster capacity; testing "
+            f"{len(skipped)} image(s) on a single pod instead "
+            f"({', '.join(instances[:4])}{', ...' if len(instances) > 4 else ''}). "
+            "Multi-node behaviour (head node, Prometheus across nodes, Slurm) "
+            "is NOT verified by this run."
+        )
+        for i in skipped:
+            jobs.append((results[i][0], group, instances, "", cloud))
+            replaced.append(i)
+    return jobs, replaced
+
+
+def _run_cluster_pod_fallback(
+    manifest: dict[str, dict],
+    group_filter: Optional[str],
+    results: list[Result],
+) -> None:
+    """With CLUSTER_POD_FALLBACK=1, re-test cluster images that found no
+    cluster capacity on one pod, replacing their SKIP rows in place."""
+    if not config.CLUSTER_POD_FALLBACK:
+        return
+    if len(config.CLOUD_TYPES) > 1 and config.CLOUD_TYPE != config.CLOUD_TYPES[0]:
+        config.CLOUD_TYPE = config.CLOUD_TYPES[0]
+        _init_gpu_catalog()
+    jobs, replaced = _cluster_pod_fallback_jobs(manifest, group_filter, results)
+    if not jobs:
+        return
+    print()
+    bar = "=" * 20
+    log(f"{bar} single-pod fallback: {len(jobs)} job(s) {bar}")
+    fallback: list[Result] = []
+    _run_jobs(jobs, fallback)
+    for i, new in zip(replaced, fallback):
+        note = f"{FALLBACK_NOTE}; {new[2]}" if new[2] else FALLBACK_NOTE
+        results[i] = (new[0], new[1], note, *new[3:])
 
 
 def _plan_all_clouds(

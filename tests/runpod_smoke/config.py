@@ -284,6 +284,21 @@ COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
 # sets it and runs on prod; local runs opt in the same way.
 ALLOW_PROD_CLUSTERS = os.environ.get("ALLOW_PROD_CLUSTERS", "0") == "1"
 
+# When a cluster group finds no Instant Cluster capacity anywhere (it ends
+# SKIP after its retries), run the same image as an ordinary one-GPU pod
+# group instead, so the image still gets a real test. The pod cannot show
+# the multi-node behaviour (head node, Prometheus across nodes, Slurm), and
+# the result says so. Candidates come from the per-pod catalog with these
+# filters; the cluster group's own `instances:` are cluster GPU ids and are
+# not reused. CI sets CLUSTER_POD_FALLBACK=1.
+CLUSTER_POD_FALLBACK = os.environ.get("CLUSTER_POD_FALLBACK", "0") == "1"
+CLUSTER_POD_FALLBACK_MAX_PRICE = float(
+    os.environ.get("CLUSTER_POD_FALLBACK_MAX_PRICE", "1.0") or 1.0
+)
+CLUSTER_POD_FALLBACK_MIN_VRAM_GB = int(
+    os.environ.get("CLUSTER_POD_FALLBACK_MIN_VRAM_GB", "16") or 16
+)
+
 DEFAULT_CLUSTER_NODES = 2
 
 # createCluster `type` values, tried in order for each GPU until one is

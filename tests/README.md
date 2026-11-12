@@ -640,6 +640,8 @@ pytorch:
 | `MONITORING_WAIT_TIMEOUT` | `240` | Seconds for each monitoring wait on a node: supervisord programs, Grafana health, Prometheus scraping every node. |
 | `GRAFANA_PROXY_TIMEOUT` | `180` | Seconds for Grafana to answer `/api/health` through the public proxy. |
 | `CLUSTER_REQUIRE_DCGM` | `1` | `0` drops dcgm-exporter from the required programs and Prometheus jobs, for GPUs without DCGM support (some GeForce cards on dev). |
+| `CLUSTER_POD_FALLBACK` | `0` | `1` re-tests a cluster group that found no Instant Cluster capacity (it ended SKIP after its retries) on a single ordinary GPU pod. The pod result replaces the SKIP and is marked "single-pod fallback"; multi-node checks (head node, Prometheus across nodes, Slurm) do not run. CI sets it. |
+| `CLUSTER_POD_FALLBACK_MAX_PRICE` / `CLUSTER_POD_FALLBACK_MIN_VRAM_GB` | `1.0` / `16` | Per-pod budget filters for the fallback's GPU candidates (cheapest first, Nvidia; the group's `exclude_instances` still apply). |
 | `CLOUD_TYPE` | `SECURE` | `SECURE`, `COMMUNITY`, both as a comma list, or `ALL`. Multiple tiers are planned and swept in one invocation — see [CUDA axis](#cuda-axis). |
 | `DISK_GB` | `100` | Container disk size for GPU pods. |
 | `CPU_DISK_GB` | `20` | Container disk size for CPU pods. Runpod caps this per CPU flavor (20 GB on the cheapest, 30 GB on larger ones); 20 is the universal safe value. |
@@ -847,8 +849,13 @@ In CI, `base.yml`'s `test-pytorch-cluster-instant` job runs this on **prod**
 `cluster-types: SLURM,TRAINING` (the smoke-test action's input for
 `cluster_types`): 2 nodes of the cheapest GPU type Instant Clusters offer.
 It uses the same `TESTING_RUNPOD_API_KEY` / `TESTING_RUNPOD_SSH_PRIVATE_KEY`
-secrets as the pod smoke tests and skips with a warning without them; no
-cluster capacity is a warning, not a failure.
+secrets as the pod smoke tests and skips with a warning without them.
+
+Prod cluster nodes are 8-GPU (2 nodes of A100 ≈ $34/hr and up) and are
+usually all reserved, so the job retries twice (2 and 4 minutes) and then
+falls back to a single pod (`CLUSTER_POD_FALLBACK=1`, ≤ $1/hr): the image is
+still tested, and a warning plus the "single-pod fallback" note in the
+summary say the multi-node checks did not run.
 
 ## Unit tests
 

@@ -951,6 +951,8 @@ jobs:
       # The harness refuses cluster groups on prod unless this is set, so a
       # local run can't create a prod cluster by accident.
       ALLOW_PROD_CLUSTERS: "1"
+      # No cluster capacity -> test the image on a single pod instead.
+      CLUSTER_POD_FALLBACK: "1"
     steps:
       - name: Check prod credentials
         id: creds
@@ -1007,6 +1009,11 @@ jobs:
           cluster-types: "SLURM,TRAINING"
           # Cluster capacity comes and goes; don't block a release on it.
           on-skip: "warn"
+          # Short retries, then the single-pod fallback. Five rounds of
+          # 5-10 minutes never found prod cluster capacity, and only delayed
+          # the fallback.
+          skip-retries: "2"
+          skip-retry-delay: "120"
           # GB10 nodes are arm64; the image is amd64-only.
           exclude-instances: |
             *GB10*
