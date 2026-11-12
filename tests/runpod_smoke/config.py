@@ -122,11 +122,22 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # Whole-job retries for SKIP / UNVERIFIED (every candidate had no capacity,
 # or the host never answered). After the first pass, those jobs — and only
 # those — are re-run up to SKIP_RETRIES more times, waiting
-# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15, 20, 25 min by
-# default). FAIL is never retried. Disabled under ON_SKIP=pass. Set
-# SKIP_RETRIES=0 to turn it off.
+# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15, 20, 25 min
+# by default; see SKIP_RETRY_BACKOFF). FAIL is never retried. Disabled under
+# ON_SKIP=pass. Set SKIP_RETRIES=0 to turn it off.
 SKIP_RETRIES = max(0, int(os.environ.get("SKIP_RETRIES") or "5"))
 SKIP_RETRY_DELAY = max(0, int(os.environ.get("SKIP_RETRY_DELAY") or "300"))
+# `linear` (default): round N waits N x SKIP_RETRY_DELAY. `fixed`: every round
+# waits SKIP_RETRY_DELAY, e.g. the cluster job's 5 rounds 300 s apart before
+# its single-pod fallback.
+SKIP_RETRY_BACKOFF = (
+    (os.environ.get("SKIP_RETRY_BACKOFF") or "linear").strip().lower()
+)
+if SKIP_RETRY_BACKOFF not in ("linear", "fixed"):
+    raise ValueError(
+        "SKIP_RETRY_BACKOFF must be 'linear' or 'fixed', "
+        f"got {SKIP_RETRY_BACKOFF!r}"
+    )
 
 # How long a pod can sit in "no SSH endpoint yet" before we surface a hint
 # about slow pulls / possible Docker Hub rate limit. Doesn't fail the pod

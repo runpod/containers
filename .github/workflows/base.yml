@@ -1009,11 +1009,11 @@ jobs:
           cluster-types: "SLURM,TRAINING"
           # Cluster capacity comes and goes; don't block a release on it.
           on-skip: "warn"
-          # Short retries, then the single-pod fallback. Five rounds of
-          # 5-10 minutes never found prod cluster capacity, and only delayed
-          # the fallback.
-          skip-retries: "2"
-          skip-retry-delay: "120"
+          # 5 retries 300 s apart (~25 min of trying for a cluster, nothing
+          # billed), then the single-pod fallback.
+          skip-retries: "5"
+          skip-retry-delay: "300"
+          skip-retry-backoff: "fixed"
           # GB10 nodes are arm64; the image is amd64-only.
           exclude-instances: |
             *GB10*

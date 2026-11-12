@@ -51,7 +51,7 @@ from runpod_smoke.manifest import (
     parse_manifest,
 )
 from runpod_smoke.pod import list_registries
-from runpod_smoke.runner import test_image
+from runpod_smoke.runner import pod_run, test_image
 
 
 # Each entry: (image, group, instances-to-try, cuda_pin, cloud). One pod is
@@ -833,7 +833,9 @@ def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
         pending = [i for i, r in enumerate(final) if r[1] in _RETRYABLE]
         if not pending:
             break
-        delay = config.SKIP_RETRY_DELAY * attempt
+        delay = config.SKIP_RETRY_DELAY * (
+            1 if config.SKIP_RETRY_BACKOFF == "fixed" else attempt
+        )
         print()
         log(
             f"::notice::{len(pending)} job(s) ended SKIP/UNVERIFIED (no "
@@ -1053,6 +1055,19 @@ def _print_cluster_reports() -> None:
             print(line)
 
 
+def _print_fallback_reports() -> None:
+    """For every cluster image tested on a single pod instead: why, where,
+    and each check's result, with the cluster-only checks shown as not run."""
+    if not cluster_report.FALLBACK_REPORTS:
+        return
+    print()
+    print(" SINGLE-POD FALLBACK ".center(84, "-"))
+    for report in cluster_report.FALLBACK_REPORTS:
+        print()
+        for line in report.render_text():
+            print(line)
+
+
 def _print_summary(results: list[Result]) -> int:
     """Print the SUMMARY block and return the exit code.
 
@@ -1101,6 +1116,7 @@ def _print_summary(results: list[Result]) -> int:
             if line is not None:
                 print(line)
     _print_cluster_reports()
+    _print_fallback_reports()
 
     _emit_step_summary(results, counts)
     _write_results_json(results, counts)
@@ -1178,20 +1194,27 @@ def main() -> int:
 
     results: list[Result] = []
     jobs = _plan_all_clouds(manifest, group_filter, results)
+    started = time.monotonic()
     _run_jobs(jobs, results)
-    _run_cluster_pod_fallback(manifest, group_filter, results)
+    _run_cluster_pod_fallback(
+        manifest, group_filter, results, waited_s=time.monotonic() - started,
+    )
 
     return _print_summary(results)
 
 
-FALLBACK_NOTE = "single-pod fallback, no Instant Cluster capacity"
+FALLBACK_NOTE = (
+    "single-pod fallback, no Instant Cluster capacity; multi-node checks "
+    "not run (see SINGLE-POD FALLBACK)"
+)
 
 
 def _cluster_pod_fallback_jobs(
     manifest: dict[str, dict],
     group_filter: Optional[str],
     results: list[Result],
-) -> tuple[list[Job], list[int]]:
+    waited_s: float = 0.0,
+) -> tuple[list[Job], list[int], list[cluster_report.FallbackReport]]:
     """Pod jobs for every cluster-group image that ended SKIP, and the
     indexes of the SKIP rows they replace. Flips those groups to pod groups.
 
@@ -1200,7 +1223,9 @@ def _cluster_pod_fallback_jobs(
     so the candidates come from the CLUSTER_POD_FALLBACK_* filters."""
     jobs: list[Job] = []
     replaced: list[int] = []
+    reports: list[cluster_report.FallbackReport] = []
     cloud = config.CLOUD_TYPES[0]
+    rounds = 1 + (config.SKIP_RETRIES if config.ON_SKIP != "pass" else 0)
     for group, contents in manifest.items():
         if group_filter and group != group_filter:
             continue
@@ -1232,23 +1257,31 @@ def _cluster_pod_fallback_jobs(
                 f">= {config.CLUSTER_POD_FALLBACK_MIN_VRAM_GB} GB)"
             )
             continue
+        types = cluster_types_for(group)
+        nodes = config.GROUP_CLUSTER_NODES.get(group, config.DEFAULT_CLUSTER_NODES)
         log(
-            f"::warning::group '{group}': no Instant Cluster capacity; testing "
-            f"{len(skipped)} image(s) on a single pod instead "
-            f"({', '.join(instances[:4])}{', ...' if len(instances) > 4 else ''}). "
-            "Multi-node behaviour (head node, Prometheus across nodes, Slurm) "
-            "is NOT verified by this run."
+            f"::warning::group '{group}': no {nodes}-node Instant Cluster "
+            f"({', '.join(types)}) in {rounds} round(s) over "
+            f"{waited_s / 60:.0f} min; testing {len(skipped)} image(s) on ONE "
+            f"pod instead, cheapest first ({', '.join(instances[:4])}"
+            f"{', ...' if len(instances) > 4 else ''}). Head node, Grafana, "
+            "Prometheus across nodes and Slurm are NOT verified by this run."
         )
         for i in skipped:
             jobs.append((results[i][0], group, instances, "", cloud))
             replaced.append(i)
-    return jobs, replaced
+            reports.append(cluster_report.FallbackReport(
+                results[i][0], tried=results[i][3], cluster_types=types,
+                node_count=nodes, rounds=rounds, waited_s=waited_s,
+            ))
+    return jobs, replaced, reports
 
 
 def _run_cluster_pod_fallback(
     manifest: dict[str, dict],
     group_filter: Optional[str],
     results: list[Result],
+    waited_s: float = 0.0,
 ) -> None:
     """With CLUSTER_POD_FALLBACK=1, re-test cluster images that found no
     cluster capacity on one pod, replacing their SKIP rows in place."""
@@ -1257,7 +1290,9 @@ def _run_cluster_pod_fallback(
     if len(config.CLOUD_TYPES) > 1 and config.CLOUD_TYPE != config.CLOUD_TYPES[0]:
         config.CLOUD_TYPE = config.CLOUD_TYPES[0]
         _init_gpu_catalog()
-    jobs, replaced = _cluster_pod_fallback_jobs(manifest, group_filter, results)
+    jobs, replaced, reports = _cluster_pod_fallback_jobs(
+        manifest, group_filter, results, waited_s,
+    )
     if not jobs:
         return
     print()
@@ -1265,9 +1300,11 @@ def _run_cluster_pod_fallback(
     log(f"{bar} single-pod fallback: {len(jobs)} job(s) {bar}")
     fallback: list[Result] = []
     _run_jobs(jobs, fallback)
-    for i, new in zip(replaced, fallback):
+    for i, new, report, job in zip(replaced, fallback, reports, jobs):
         note = f"{FALLBACK_NOTE}; {new[2]}" if new[2] else FALLBACK_NOTE
         results[i] = (new[0], new[1], note, *new[3:])
+        report.finish(new[1], new[2], pod_run(job[0], job[1]))
+        cluster_report.FALLBACK_REPORTS.append(report)
 
 
 def _plan_all_clouds(

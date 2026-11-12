@@ -387,6 +387,12 @@ inputs:
       (default 300 → 5, 10, 15, 20, 25 min) to give Runpod capacity time to free up.
     required: false
     default: "300"
+  skip-retry-backoff:
+    description: |
+      'linear' (default): retry round N waits N x skip-retry-delay. 'fixed':
+      every round waits skip-retry-delay.
+    required: false
+    default: "linear"
   registry-auth-name:
     description: |
       Display name of the registry credential in the Runpod account
@@ -688,6 +694,7 @@ runs:
         # the exit code — replaces the manual "re-run failed jobs".
         SKIP_RETRIES: ${{ inputs.skip-retries }}
         SKIP_RETRY_DELAY: ${{ inputs.skip-retry-delay }}
+        SKIP_RETRY_BACKOFF: ${{ inputs.skip-retry-backoff }}
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}

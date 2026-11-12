@@ -72,7 +72,8 @@ jobs:
           cluster-nodes: "2"
           cluster-types: "SLURM,TRAINING"
           on-skip: "warn"
-          skip-retries: "2"
-          skip-retry-delay: "120"
+          skip-retries: "5"
+          skip-retry-delay: "300"
+          skip-retry-backoff: "fixed"
           exclude-instances: |
             *GB10*

@@ -71,11 +71,38 @@ def _set_host_cuda(version: str) -> None:
     _thread_local.host_cuda = version
 
 
+def _host_cuda_now() -> str:
+    """The host CUDA version recorded for this thread's current attempt."""
+    return getattr(_thread_local, "host_cuda", "") or ""
+
+
 def _take_host_cuda() -> str:
     """Read and clear the version left by the last test_pair on this thread."""
     version = getattr(_thread_local, "host_cuda", "") or ""
     _thread_local.host_cuda = ""
     return version
+
+
+# What each pod attempt actually checked, for reports that must say what a
+# run covered (the single-pod fallback for cluster images). Worker threads
+# run attempts in parallel, so the in-flight list is thread-local and the
+# finished record is published under a lock.
+_attempt = threading.local()
+_POD_RUNS_LOCK = threading.Lock()
+# (image, group) -> {"instance", "pod_id", "host_cuda", "steps"} of the last
+# attempt that created a pod. steps: [(check label, "ok" | "FAIL")] in order.
+POD_RUNS: dict[tuple[str, str], dict] = {}
+
+
+def _record_step(label: str, outcome: Optional[_Outcome]) -> None:
+    steps = getattr(_attempt, "steps", None)
+    if steps is not None:
+        steps.append((label, "ok" if outcome is None else "FAIL"))
+
+
+def pod_run(image: str, group: str) -> Optional[dict]:
+    with _POD_RUNS_LOCK:
+        return POD_RUNS.get((image, group))
 
 
 def _log_attempt_header(
@@ -381,8 +408,10 @@ def _run_hygiene_steps(
             log(f"  {line}", indent=2)
         if not ok:
             log(f"{label} check FAILED", indent=2)
+            _record_step(label, ("FAIL", ""))
             dump_pod_logs(pod_id, image)
             return "FAIL", f"{label} check failed"
+        _record_step(label, None)
         log(f"{label} check passed", indent=2)
     return None
 
@@ -640,11 +669,14 @@ def test_pair(
         f"(timeout {config.CREATE_TIMEOUT}s)",
         indent=2,
     )
+    _attempt.steps = []
 
     try:
         state, wait_detail, endpoint = wait_for_running(pod_id)
         if state != "RUNNING":
+            _record_step("SSH ready", ("FAIL", ""))
             return _classify_non_running(state, wait_detail, pod_id, image)
+        _record_step("SSH ready", None)
 
         log(f"smoke check passed: {wait_detail}", indent=2)
         st = pod_state(pod_id)
@@ -666,28 +698,47 @@ def test_pair(
         # outcome to surface to the caller. Kept as straight-line code
         # (no fancy abstraction) so the failure points stay easy to read
         # in stack traces / logs.
+        torch_packages = config.GROUP_TEST_TORCH_PACKAGES.get(group, False)
+        if cuda_check_command(image, torch_packages):
+            label = (
+                "CUDA / torch + torchvision/audio/codec" if torch_packages
+                else "CUDA / torch"
+            )
+        else:
+            label = ""
         outcome = _run_cuda_step(endpoint, image, group, pod_id)
+        if label:
+            _record_step(label, outcome)
         if outcome is not None:
             return outcome
         outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
         if outcome is not None:
             return outcome
         outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
+        if config.GROUP_TEST_JUPYTER.get(group, False):
+            _record_step("Jupyter via proxy", outcome)
         if outcome is not None:
             return outcome
         outcome = _run_port_steps(endpoint, pod_id, image, group)
+        if config.GROUP_TEST_PORTS.get(group):
+            _record_step("test ports", outcome)
         if outcome is not None:
             return outcome
         outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+        if config.GROUP_TEST_COMFYUI.get(group, False):
+            _record_step("ComfyUI", outcome)
         if outcome is not None:
             return outcome
         outcome = _run_log_scan_step(pod_id, image)
+        if config.LOG_ERROR_SCAN:
+            _record_step("log scan", outcome)
         if outcome is not None:
             return outcome
         outcome = _run_dwell_step(endpoint, pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_post_dwell_steps(pod_id, image, group)
+        if outcome is None:
+            outcome = _run_post_dwell_steps(pod_id, image, group)
+        if config.DWELL_SEC > 0:
+            _record_step(f"alive after {config.DWELL_SEC}s", outcome)
         if outcome is not None:
             return outcome
 
@@ -696,6 +747,14 @@ def test_pair(
     finally:
         # Always clean up this specific pod, even on exception.
         cleanup_pod(pod_id)
+        with _POD_RUNS_LOCK:
+            POD_RUNS[(image, group)] = {
+                "instance": instance,
+                "pod_id": pod_id,
+                "host_cuda": _host_cuda_now(),
+                "steps": list(getattr(_attempt, "steps", None) or []),
+            }
+        _attempt.steps = None
 
 
 def test_image(

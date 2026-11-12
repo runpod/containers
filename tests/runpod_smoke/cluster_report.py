@@ -155,3 +155,81 @@ def end(verdict: str, detail: str) -> Optional[ClusterReport]:
     with _REPORTS_LOCK:
         REPORTS.append(report)
     return report
+
+
+# Checks a cluster run makes that one pod cannot: there is no second node, no
+# NODE_RANK, so post_start keeps Prometheus/Grafana stopped and no Slurm runs.
+CLUSTER_ONLY_CHECKS = (
+    "hostname / rank (node-*)",
+    "monitoring services (head + workers)",
+    "Prometheus scrapes all nodes",
+    "Grafana via proxy :8889",
+)
+SLURM_CHECK = "Slurm: nodes idle, srun on all"
+NEEDS_CLUSTER = "not run: needs a cluster"
+
+
+class FallbackReport:
+    """What a cluster image was tested on instead, when no Instant Cluster
+    could be created: why it fell back, the pod it ran on, and every check
+    with its result, including the cluster checks that could not run."""
+
+    def __init__(
+        self, image: str, *, tried: str, cluster_types: tuple[str, ...],
+        node_count: int, rounds: int, waited_s: float,
+    ):
+        self.image = image
+        self.tried = tried
+        self.cluster_types = cluster_types
+        self.node_count = node_count
+        self.rounds = rounds
+        self.waited_s = waited_s
+        self.verdict = ""
+        self.detail = ""
+        self.pod: dict = {}
+
+    def finish(self, verdict: str, detail: str, pod: Optional[dict]) -> None:
+        self.verdict, self.detail, self.pod = verdict, detail, pod or {}
+
+    def _rows(self) -> list[list[str]]:
+        rows = [[label, status] for label, status in self.pod.get("steps", [])]
+        if not rows:
+            rows = [["(no pod was created)", self.verdict or "?"]]
+        cluster_only = list(CLUSTER_ONLY_CHECKS)
+        if "SLURM" in self.cluster_types:
+            cluster_only.append(SLURM_CHECK)
+        return rows + [[label, NEEDS_CLUSTER] for label in cluster_only]
+
+    def render_text(self) -> list[str]:
+        head = ["check", "result"]
+        body = self._rows()
+        widths = [max(len(r[c]) for r in [head, *body]) for c in range(2)]
+
+        def fmt(row: list[str]) -> str:
+            return "  ".join(c.ljust(widths[i]) for i, c in enumerate(row)).rstrip()
+
+        minutes = self.waited_s / 60
+        types = ", ".join(self.cluster_types) or "?"
+        lines = [
+            f"{self.verdict or '?'}  {self.image}  (single pod, NOT a cluster)",
+            f"  why: no {self.node_count}-node Instant Cluster in {self.rounds} "
+            f"round(s) over {minutes:.0f} min; every create was refused",
+            f"       tried: {self.tried or '?'}",
+            f"       as: {types}",
+        ]
+        if self.pod:
+            pod = self.pod
+            cuda = f", host CUDA {pod['host_cuda']}" if pod.get("host_cuda") else ""
+            lines.append(
+                f"  ran on: 1x {pod.get('instance', '?')}{cuda} "
+                f"(pod {pod.get('pod_id', '?')})"
+            )
+        lines += ["", "  " + fmt(head), "  " + "  ".join("-" * w for w in widths)]
+        lines.extend("  " + fmt(row) for row in body)
+        if self.detail:
+            lines += ["", f"  stopped at: {self.detail}"]
+        return lines
+
+
+# One per cluster image that fell back to a pod, for SUMMARY.
+FALLBACK_REPORTS: list[FallbackReport] = []
