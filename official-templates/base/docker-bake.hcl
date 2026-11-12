@@ -63,8 +63,12 @@ target "cuda-matrix" {
     "runpod/base:${RELEASE_VERSION}${RELEASE_SUFFIX}-cuda${combo.cuda_code}-${combo.ubuntu_name}",
   ]
   
+  # -cudnn-runtime plus the devel image's dev packages (the cuda-dev stage), not
+  # -cudnn-devel: same toolchain without the static libraries and Nsight
+  # Compute. See the cuda-dev stage in the Dockerfile.
   args = {
-    BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-devel-ubuntu${combo.ubuntu_version}"
+    BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-runtime-ubuntu${combo.ubuntu_version}"
+    ROOT_STAGE = "cuda-dev"
     UBUNTU_VERSION = combo.ubuntu_version
   }
 }
