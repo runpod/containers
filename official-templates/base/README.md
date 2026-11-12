@@ -18,6 +18,13 @@ The Runpod Base images provide a clean, developer friendly environment for every
 
 > **`python3` and apt packages.** `python`, `python3` and `pip` all point to 3.12. Packages installed with `apt install python3-*` are built for the Ubuntu release's own interpreter and are only importable from `/usr/bin/python3` — 3.14 on 26.04 (on 24.04 that is 3.12 itself). Python 3.11–3.13 don't see them, so for those use `pip install`. The same goes for scripts starting with `#!/usr/bin/env python3` that need an apt-installed module: run them with `/usr/bin/python3`. On 26.04 the image has no `add-apt-repository`; add a PPA by hand, or `apt-get install software-properties-common`.
 
+> **CUDA images: smaller toolkit install.** The CUDA images used to be up to 5.7 GB larger than needed. The toolkit is the same as NVIDIA's `cudnn-devel` image: `nvcc`, headers, every shared library and the cuDNN/NCCL dev files, at the versions the tag names. Two things are left out:
+>
+> - **Static libraries** (`lib*_static.a`, 1.3–2.4 GB; `libcudart_static.a` is kept). To get one back, reinstall its package at the installed version, e.g. `apt-get install --reinstall "libcufft-dev-12-8=$(dpkg-query -W -f='${Version}' libcufft-dev-12-8)"`. Without the `=version`, apt moves the library to the newest patch release instead.
+> - **Nsight Compute** (`ncu`). To install it: `apt-get install cuda-nsight-compute-12-8` (use your CUDA version).
+>
+> CUDA packages also no longer move to a newer patch release than the tag names (12.9.0 used to ship parts of 12.9.1).
+
 ### Available configurations
 - **Ubuntu**: 24.04 (Noble); CPU-only also on 26.04 (Resolute)
 - **CUDA**: 12.8.1, 12.9.0, 13.0.0, and 13.2.0 (Ubuntu 24.04)
