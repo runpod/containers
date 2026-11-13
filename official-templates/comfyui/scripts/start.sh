@@ -235,36 +235,54 @@ find_previous_venv() {
 # the requirements pass fetches builds that match this image.
 CUDA_BUILT_PACKAGES_RE='^(torch|torchvision|torchaudio|xformers|triton|flash-attn|sageattention|nunchaku|spconv.*|cupy-cuda.*|nvidia-.*)$'
 
-# Copy the previous venv's package set into ours in one pip call, at the exact
-# versions that worked with these nodes. --no-deps skips resolution: the set is
-# already closed. Fails as a whole on any unavailable pin; the caller falls back.
+# Copy the previous venv's packages into ours (the active venv), then remove
+# the CUDA-built ones. The copy is hard links, since both venvs sit side by side
+# on the same volume: ~5s for 5.5 GB, against minutes to download and unpack
+# the same wheels again. pip replaces files by unlinking, never in place, so
+# installs in either venv never reach the other. Across filesystems it falls
+# back to a real copy.
 seed_venv_from_previous() {
-    local previous="$1" frozen line name
-    local kept=() dropped=()
+    local previous="$1" src dst frozen line name script
+    local dropped=()
 
-    # The old venv has no pip; it borrows the image's via system site-packages.
-    frozen=$("$previous/bin/python" -m pip freeze --local 2>/dev/null | tr -d '\r') || return 1
+    src=$(compgen -G "$previous/lib/python3*/site-packages" | head -n 1)
+    dst=$(compgen -G "$VENV_DIR/lib/python3*/site-packages" | head -n 1)
+    # Compiled modules are tied to the interpreter's minor version.
+    if [ -z "$src" ] || [ -z "$dst" ] \
+        || [ "$(basename "$(dirname "$src")")" != "$(basename "$(dirname "$dst")")" ]; then
+        return 1
+    fi
+    echo "Copying packages from $(basename "$previous")"
+    cp -al "$src/." "$dst/" 2>/dev/null || cp -a "$src/." "$dst/" || return 1
+
+    # Console scripts point their shebang at the old venv's python.
+    for script in "$previous"/bin/*; do
+        case "$(basename "$script")" in
+            python* | activate* | Activate.ps1 | pip*) continue ;;
+        esac
+        [ -f "$script" ] && [ ! -e "$VENV_DIR/bin/$(basename "$script")" ] || continue
+        if head -n 1 "$script" | grep -q "^#!$previous/bin/python"; then
+            sed "1s|^#!$previous/bin/python[0-9.]*|#!$VENV_DIR/bin/python|" "$script" \
+                > "$VENV_DIR/bin/$(basename "$script")" \
+                && chmod +x "$VENV_DIR/bin/$(basename "$script")"
+        fi
+    done
+
+    # Local versions (+cu128) and direct URLs (git builds such as sam2) may be
+    # compiled against the old torch; the requirements pass rebuilds them here.
+    frozen=$(python -m pip freeze --local 2>/dev/null | tr -d '\r') || return 1
     while read -r line; do
         case "$line" in "" | "#"* | "-e "*) continue ;; esac
         name=$(printf '%s' "${line%%[ =@]*}" | tr 'A-Z_.' 'a-z--')
-        # Local versions (+cu128) and direct URLs (git, file) cannot be
-        # re-fetched from the index as they are; leave them to the requirements.
         if [[ "$line" != *"=="* || "$line" == *"+"* || "$name" =~ $CUDA_BUILT_PACKAGES_RE ]]; then
             dropped+=("$name")
-            continue
         fi
-        kept+=("$line")
     done <<< "$frozen"
-
-    if [ "${#kept[@]}" = "0" ]; then
-        return 1
-    fi
-    echo "Carrying over ${#kept[@]} packages from $(basename "$previous")"
+    echo "Copied $(grep -c . <<< "$frozen") packages"
     if [ "${#dropped[@]}" != "0" ]; then
-        echo "  Not carried over (CUDA-specific or not on the index): ${dropped[*]}"
+        echo "  Removing CUDA-specific or URL-installed ones: ${dropped[*]}"
+        python -m pip uninstall --quiet -y "${dropped[@]}" || return 1
     fi
-    run_with_heartbeat "still installing" \
-        python -m pip install --quiet --no-cache-dir --no-deps "${kept[@]}"
 }
 
 # Baked nodes are skipped: their deps are in the image's system site-packages.
@@ -272,9 +290,10 @@ seed_venv_from_previous() {
 #
 # A workspace restored from a snapshot (no network volume) brings the old venv
 # back on every pod, so this runs on every launch, not once. Hence the fast
-# path: seed from the old venv, then check all requirements in a single
-# resolve. The per-node loop — one resolve per node, minutes for a big node
-# set — is only the fallback when either step fails.
+# path: copy the old venv's packages (no download), then check all
+# requirements in a single resolve. The per-node loop, which downloads every
+# node's deps again (minutes for a big node set), is only the fallback when
+# either step fails.
 reinstall_user_node_deps() {
     local previous="$1" req node count=0 started=$SECONDS
     local reqs=() nodes=() req_args=()

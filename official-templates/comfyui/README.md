@@ -36,10 +36,11 @@ onnxruntime-gpu, nunchaku) are built for one CUDA version, so the variants
 cannot share them.
 
 When you switch a volume to a different tag, the first start creates that
-tag's venv and fills it from the previous one: every package is reinstalled at
-the version you had, then your custom nodes' requirements are checked in one
-pass. CUDA-specific packages (the ones above) and packages installed from a
-URL or local path are not carried over. Node requirements that list them get
+tag's venv and fills it from the previous one: the packages are copied over at
+the versions you had (hard links on the same volume, so it takes seconds and
+no extra space), then your custom nodes' requirements are checked in one pass.
+CUDA-specific packages (the ones above) and packages installed from a URL or
+local path are removed from the copy. Node requirements that list them get
 builds that match the new tag; ones you installed by hand need installing
 again, and the startup log prints the command that lists them. The previous
 venv is left in place so you can go back. If you are not going back, delete it
