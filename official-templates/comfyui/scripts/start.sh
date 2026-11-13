@@ -230,14 +230,77 @@ find_previous_venv() {
     echo "$found"
 }
 
+# Packages compiled against one torch/CUDA build. Carried into a venv for
+# another variant they fail at import, so the seed below leaves them out and
+# the requirements pass fetches builds that match this image.
+CUDA_BUILT_PACKAGES_RE='^(torch|torchvision|torchaudio|xformers|triton|flash-attn|sageattention|nunchaku|spconv.*|cupy-cuda.*|nvidia-.*)$'
+
+# Copy the previous venv's packages into ours (the active venv), then remove
+# the CUDA-built ones. The copy is hard links, since both venvs sit side by side
+# on the same volume: ~5s for 5.5 GB, against minutes to download and unpack
+# the same wheels again. pip replaces files by unlinking, never in place, so
+# installs in either venv never reach the other. Across filesystems it falls
+# back to a real copy.
+seed_venv_from_previous() {
+    local previous="$1" src dst frozen line name script
+    local dropped=()
+
+    src=$(compgen -G "$previous/lib/python3*/site-packages" | head -n 1)
+    dst=$(compgen -G "$VENV_DIR/lib/python3*/site-packages" | head -n 1)
+    # Compiled modules are tied to the interpreter's minor version.
+    if [ -z "$src" ] || [ -z "$dst" ] \
+        || [ "$(basename "$(dirname "$src")")" != "$(basename "$(dirname "$dst")")" ]; then
+        return 1
+    fi
+    echo "Copying packages from $(basename "$previous")"
+    cp -al "$src/." "$dst/" 2>/dev/null || cp -a "$src/." "$dst/" || return 1
+
+    # Console scripts point their shebang at the old venv's python.
+    for script in "$previous"/bin/*; do
+        case "$(basename "$script")" in
+            python* | activate* | Activate.ps1 | pip*) continue ;;
+        esac
+        [ -f "$script" ] && [ ! -e "$VENV_DIR/bin/$(basename "$script")" ] || continue
+        if head -n 1 "$script" | grep -q "^#!$previous/bin/python"; then
+            sed "1s|^#!$previous/bin/python[0-9.]*|#!$VENV_DIR/bin/python|" "$script" \
+                > "$VENV_DIR/bin/$(basename "$script")" \
+                && chmod +x "$VENV_DIR/bin/$(basename "$script")"
+        fi
+    done
+
+    # Local versions (+cu128) and direct URLs (git builds such as sam2) may be
+    # compiled against the old torch; the requirements pass rebuilds them here.
+    frozen=$(python -m pip freeze --local 2>/dev/null | tr -d '\r') || return 1
+    while read -r line; do
+        case "$line" in "" | "#"* | "-e "*) continue ;; esac
+        name=$(printf '%s' "${line%%[ =@]*}" | tr 'A-Z_.' 'a-z--')
+        if [[ "$line" != *"=="* || "$line" == *"+"* || "$name" =~ $CUDA_BUILT_PACKAGES_RE ]]; then
+            dropped+=("$name")
+        fi
+    done <<< "$frozen"
+    echo "Copied $(grep -c . <<< "$frozen") packages"
+    if [ "${#dropped[@]}" != "0" ]; then
+        echo "  Removing CUDA-specific or URL-installed ones: ${dropped[*]}"
+        python -m pip uninstall --quiet -y "${dropped[@]}" || return 1
+    fi
+}
+
 # Baked nodes are skipped: their deps are in the image's system site-packages.
 # The old venv is left in place so going back to its own image still works.
+#
+# A workspace restored from a snapshot (no network volume) brings the old venv
+# back on every pod, so this runs on every launch, not once. Hence the fast
+# path: copy the old venv's packages (no download), then check all
+# requirements in a single resolve. The per-node loop, which downloads every
+# node's deps again (minutes for a big node set), is only the fallback when
+# either step fails.
 reinstall_user_node_deps() {
-    local previous="$1" req node count=0
+    local previous="$1" req node count=0 started=$SECONDS
+    local reqs=() nodes=() req_args=()
     echo "============================================="
     echo "  This volume was last used with $(basename "$previous")"
     echo "  Reinstalling custom node deps into $VENV_NAME"
-    echo "  This may take several minutes"
+    echo "  This may take a few minutes"
     echo "============================================="
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         [ -f "$req" ] || continue
@@ -245,12 +308,30 @@ reinstall_user_node_deps() {
         case " ${BAKED_NODES[*]} " in
             *" $node "*) continue ;;
         esac
-        count=$((count + 1))
-        echo "[$count] $node"
-        python -m pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+        reqs+=("$req")
+        nodes+=("$node")
+        req_args+=(-r "$req")
     done
-    echo "Done — $count user nodes processed."
-    echo "Packages you installed by hand were not carried over; list them with:"
+    count=${#reqs[@]}
+
+    if [ "$count" != "0" ] && seed_venv_from_previous "$previous" \
+        && echo "Checking requirements of $count user nodes in one pass" \
+        && run_with_heartbeat "still resolving" \
+            python -m pip install --quiet "${req_args[@]}"; then
+        echo "Done — deps for $count user nodes in place after $((SECONDS - started))s."
+    else
+        if [ "$count" != "0" ]; then
+            echo "Fast path did not complete; installing node by node instead."
+        fi
+        local i
+        for i in "${!reqs[@]}"; do
+            echo "[$((i + 1))] ${nodes[$i]}"
+            python -m pip install -r "${reqs[$i]}" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+        done
+        echo "Done — $count user nodes processed in $((SECONDS - started))s."
+    fi
+    echo "CUDA-specific packages you installed by hand (xformers, sageattention,"
+    echo "nunchaku, ...) need a build for this image; the old venv's list:"
     echo "  $previous/bin/python -m pip freeze --local"
     if [ "$previous" = "$OLD_VENV_DIR" ]; then
         echo "$previous predates every current image, so nothing needs it."
