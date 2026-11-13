@@ -189,7 +189,7 @@ RUN apt-get update --yes && \
     apt-get clean && \
     rm -rf /tmp/slurm-debs /var/lib/apt/lists/*
 
-# Strip AWS EFA Nsight plugin — AWS-only hardware, not used on RunPod.
+# Strip AWS EFA Nsight plugin — AWS-only hardware, not used on Runpod.
 # Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true

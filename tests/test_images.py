@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test RunPod container images.
+"""Smoke-test Runpod container images.
 
 Entry point. See ./README.md for the manifest schema, env vars, and how
 the CUDA / Jupyter checks work. All implementation lives in the
@@ -8,7 +8,7 @@ runpod_smoke/ package next to this file.
 Usage:
     ./test_images.py [path/to/images.yaml] [group_filter]
 
-Requirements: a RunPod API key (RUNPOD_API_KEY or ~/.runpod/config.toml),
+Requirements: a Runpod API key (RUNPOD_API_KEY or ~/.runpod/config.toml),
 python3 >= 3.9
 """
 
@@ -150,7 +150,7 @@ def _init_registry_auth() -> Optional[int]:
     if not config.REGISTRY_AUTH_ID:
         have = ", ".join(sorted(r.get("name") or "?" for r in registries))
         print(f"::error::registry auth '{config.REGISTRY_AUTH_NAME}' not found "
-              f"in this RunPod account (has: {have or 'none'})")
+              f"in this Runpod account (has: {have or 'none'})")
         return 1
     log(
         f"using registry auth: {config.REGISTRY_AUTH_ID} "
@@ -419,7 +419,7 @@ def _resolve_all_instances(manifest: dict[str, dict]) -> dict[str, list[str]]:
 
 
 def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
-    """Surface manifest entries that don't map to any RunPod display name
+    """Surface manifest entries that don't map to any Runpod display name
     (typos / casing) so the user sees them once at startup instead of
     inside the per-job logs."""
     unmapped = sorted({
@@ -431,7 +431,7 @@ def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
     if not unmapped:
         return
     log(
-        f"warn: {len(unmapped)} instance(s) don't match any RunPod "
+        f"warn: {len(unmapped)} instance(s) don't match any Runpod "
         "displayName — check spelling/casing:"
     )
     for inst in unmapped:
@@ -718,7 +718,7 @@ def _run_jobs_once(jobs: list[Job], label: str = "running") -> list[Result]:
     return _run_jobs_parallel(jobs)
 
 
-# Outcomes that say nothing about the image — RunPod had no capacity, or the
+# Outcomes that say nothing about the image — Runpod had no capacity, or the
 # host never answered — so running the job again later can change them. FAIL
 # is a verdict on the image and is never retried.
 _RETRYABLE = ("SKIP", "UNVERIFIED")
@@ -1071,7 +1071,7 @@ def _print_summary(results: list[Result]) -> int:
     # decide exit code based on the mode.
     msg = (
         f"{counts['SKIP']} image(s) SKIPped — no real validation "
-        "happened. RunPod had no capacity on every candidate instance "
+        "happened. Runpod had no capacity on every candidate instance "
         "type, or every candidate landed on a stuck host, even after "
         f"{config.SKIP_RETRIES} retry round(s) (SKIP_RETRIES). "
         "Set ON_SKIP=pass to silence this, ON_SKIP=warn to keep the "
