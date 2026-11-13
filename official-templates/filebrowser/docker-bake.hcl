@@ -28,7 +28,7 @@ variable "FILEBROWSER_VERSIONS" {
 # The single CUDA version shipped alongside the CPU image. Must be a 24.04 CUDA
 # build that runpod/base publishes (see shared/versions.hcl).
 variable "FILEBROWSER_CUDA" {
-  default = "12.8.1"
+  default = "13.2.0"
 }
 
 variable "FILEBROWSER_BUILDS" {
