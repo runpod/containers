@@ -24,7 +24,7 @@ on:
       - 'official-templates/pytorch/docker-bake.hcl'
       - 'official-templates/pytorch-cluster/docker-bake.hcl'
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'

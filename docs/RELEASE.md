@@ -17,6 +17,7 @@ them (reused via `workflow_call`), and tags + releases each family once its
 own build has succeeded.
 
 - [TL;DR](#tldr)
+- [Branches and environments](#branches-and-environments)
 - [Versioning rules](#versioning-rules)
 - [The release flow](#the-release-flow)
 - [Image tags you will see](#image-tags-you-will-see)
@@ -29,19 +30,67 @@ own build has succeeded.
 
 ## TL;DR
 
-1. Open a PR. **The PR title must be a Conventional Commit** (e.g. `feat: add X`) —
-   we squash-merge, so the PR title becomes the commit subject on `main`. For a
-   breaking change use `feat!: …` in the title and preferably a `BREAKING CHANGE:`
-   footer in the description.
-2. CI builds **release-candidate** images for your PR, tagged `X.Y.Z-rc.<PR#>`.
-3. Merge the PR. For each family your change touched, CI:
-   - computes its next version from its own last tag and the commit type,
-   - builds and pushes its images `X.Y.Z`,
+Work goes `feature → develop → main`. Nothing is released until it reaches
+`main`.
+
+1. Open a PR **into `develop`**. **The PR title must be a Conventional Commit**
+   (e.g. `feat: add X`): we squash-merge into `develop`, so the title becomes
+   the commit subject that the later release reads. For a breaking change use
+   `feat!: …` in the title and preferably a `BREAKING CHANGE:` footer in the
+   description.
+2. CI builds **release-candidate** images for your PR, tagged `X.Y.Z-rc.<PR#>`,
+   into the private `runpod/<repo>-dev` repos.
+3. Squash-merge into `develop`. CI rebuilds everything that is not yet on
+   `main` and publishes it as `X.Y.Z-dev.<PR#>`, still private. No tag, no
+   release. Each push gives you the complete set that the next release will
+   contain, not just the family you touched.
+4. When the batch is ready, open `develop → main` and **merge it with a merge
+   commit, not a squash**. For each family the batch touched, CI:
+   - computes its next version from its own last tag and the commit types,
+   - builds and pushes its public images `X.Y.Z`,
    - creates the tag `<family>-vX.Y.Z` and a GitHub Release whose notes list
      the commits that touched that family, each with its own description.
-4. Untouched families are not rebuilt and keep their published version.
-5. `ci:` / `chore:` / `docs:` changes release nothing of their own. They can
-   still carry out work that an earlier run left unreleased — see below.
+5. Untouched families are not rebuilt and keep their published version.
+6. `ci:` / `chore:` / `docs:` changes release nothing of their own. They can
+   still carry out work that an earlier run left unreleased, see below.
+
+---
+
+## Branches and environments
+
+Changes go `feature → develop → main`. The target branch picks the
+**env**, and the env picks the Docker Hub repos. Only what targets
+`main` is prod; everything else is dev, so nothing that is not headed for
+`main` can reach the public repos:
+
+| Event                 | Env     | Repos                              | Tag suffix    | Tag + Release |
+| --------------------- | ------- | ---------------------------------- | ------------- | ------------- |
+| PR into `develop`, or any branch other than `main` | dev | `runpod/<repo>-dev` (private) | `-rc.<PR#>` | no |
+| Push to `develop`     | dev     | `runpod/<repo>-dev` (private)      | `-dev.<PR#>`, or `-dev.<sha7>` for a direct push | no |
+| PR into `main`        | prod    | `runpod/<repo>` (public)           | `-rc.<PR#>`   | no            |
+| Push to `main`        | prod    | `runpod/<repo>` (public)           | none          | yes           |
+| `workflow_dispatch`   | prod from `main`, else dev | as for the env | `-dev` | no |
+
+- The dev repo of a family is its `image_repo` plus `-dev`
+  (`runpod/ubuntu` → `runpod/ubuntu-dev`); `plan_families.py --image-repos
+  --include-dev` lists both sets.
+- The dev env logs in to Docker Hub through its own OIDC connection
+  (`DOCKERHUB_DEV_OIDC_CONNECTIONID`). Smoke tests run on the same RunPod
+  account as prod; their pods pull the private images with the registry
+  RunPod registry credential named by the repo variable
+  `TESTING_REGISTRY_AUTH_NAME`, resolved by name on the testing account.
+- A family rebuilt in the same dev run is layered on its parent's `-dev`
+  image (`runpod/base-dev:1.4.0-rc.12-…`); otherwise on the parent's last
+  public release, exactly as on prod.
+- **Merge `feature → develop` with squash** (the PR title is the Conventional
+  Commit, as before). **Merge `develop → main` with a merge commit, not
+  squash**: the release bump and notes are computed from the individual
+  commits, and a squash would fold every `feat:` into the release PR's title.
+- Releases are tagged on main's merge commits, which develop never contains.
+  The dev env therefore takes a family's newest tag by version, not the
+  newest reachable one, and a push to develop plans from
+  `git diff origin/main...HEAD` — everything not on main yet. Merging main
+  back into develop (after a hotfix, say) is fine but not required by CI.
 
 ---
 
@@ -64,8 +113,10 @@ Notes:
   `RELEASE_VERSION` in `official-templates/shared/versions.hcl` is only a
   fallback default for local `docker buildx bake` runs; CI always overrides it.
 - Each family has its own series, so versions drift apart: `base-v1.7.0` and
-  `comfyui-v1.3.4` can be current at the same time. The bump level comes from
-  the one squash commit, so families released together move by the same step.
+  `comfyui-v1.3.4` can be current at the same time. The bump level is also per
+  family: one `develop → main` carrying a `fix:` for comfyui and a `feat:` for
+  pytorch-cluster releases `comfyui-v1.4.1` and `pytorch-cluster-v1.3.0`,
+  while every other family stays put.
 - A family with **no tag yet** starts at exactly `1.0.0` on its first
   releasable change — the bump level is ignored, so a first `feat:` does not
   skip to `1.1.0`.
@@ -80,9 +131,12 @@ Notes:
 
 ```mermaid
 flowchart TD
-    A[Open PR<br/>title = Conventional Commit] --> B[plan: families this PR touches<br/>+ everything building FROM them]
-    B --> B2[RC images X.Y.Z-rc.PR# per family]
-    B2 --> C{Merge to main<br/>squash}
+    A[Open PR into develop<br/>title = Conventional Commit] --> B[plan: families this PR touches<br/>+ everything building FROM them]
+    B --> B2[RC images X.Y.Z-rc.PR# in runpod/*-dev]
+    B2 --> B3{Squash-merge<br/>into develop}
+    B3 --> B4[plan: everything not on main yet]
+    B4 --> B5[dev images X.Y.Z-dev.PR# in runpod/*-dev<br/>no tag, no release]
+    B5 --> C{Merge develop to main<br/>merge commit}
     C -->|feat/fix/breaking| D[plan: families changed since<br/>their own last release tag]
     D --> E[Build & push each planned family<br/>at its own X.Y.Z]
     E --> G{This family built<br/>and tested?}
@@ -111,10 +165,30 @@ it.
   no phantom bump.
 - No git tag or GitHub Release is created.
 - The RC tag is reused on every push to the same PR (always the latest build).
+- A PR into `develop` (or between two feature branches) publishes into
+  `runpod/<repo>-dev`; only a PR into `main` reaches the public repos.
+
+### On push to `develop`
+
+- Plans from `git diff origin/main...HEAD`: **everything not yet on `main`**,
+  not just what this push changed. A merge therefore rebuilds the whole
+  outstanding batch, so the private repos always hold the complete set that
+  the next release will publish, with every family's parents consistent.
+- Published as `X.Y.Z-dev.<PR#>` into `runpod/<repo>-dev`, where `<PR#>` is
+  the PR this push merged. The number names the state of `develop`, not the
+  family that changed, so one number pulls a matching set.
+- Never creates a tag or a GitHub Release. The version is computed the same
+  way as for a release, so it previews what merging to `main` will produce.
+- Superseded runs are cancelled rather than queued: a later push rebuilds
+  everything the earlier one would have, and no tags are at stake.
 
 ### On merge to `main` (release)
 
-- Only happens when the squashed commit is `feat`/`fix`/`perf`/breaking.
+- Only happens when the merge brings in `feat`/`fix`/`perf`/breaking commits.
+  Merge `develop → main` with a **merge commit**: history simplification
+  prunes it from each family's path-scoped log and exposes the individual
+  commits, which is what the bump and the notes are computed from. A squash
+  would collapse them into the release PR's own title.
 - Planning here does **not** use the push diff. Each family is compared
   against **its own last release tag**, so anything still unreleased is picked
   up — including changes from a run that failed, or from a queued run that
@@ -131,11 +205,14 @@ it.
   generation is not used either: it compares against the newest release in
   the repo, which for a per-family tag belongs to some other family.
 - Pushes to `main` are **serialized** (workflow `concurrency`), so two merges
-  landing close together can't race.
+  landing close together can't race for the same version. Pushes to `develop`
+  are not: they create no tags, so the newest run simply wins.
 
 ### Manual run (`workflow_dispatch`)
 
-- Builds every family with a `-dev` suffix (e.g. `1.1.0-dev`).
+- Builds every family with a `-dev` suffix (e.g. `1.1.0-dev`) — into the
+  public repos when run from `main`, into `runpod/<repo>-dev` from any other
+  branch.
 - Never creates a tag or release. Useful for testing pipeline changes, since
   pipeline-only edits do not trigger builds automatically (see below).
 
@@ -148,8 +225,11 @@ For the version `1.1.0` as an example:
 | Context            | Suffix        | Example tag                                  |
 | ------------------ | ------------- | -------------------------------------------- |
 | Release (`main`)   | none          | `runpod/base:1.1.0-ubuntu2404`               |
-| Pull request       | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2404`         |
-| Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2404`           |
+| PR into `main`     | `-rc.<PR#>`   | `runpod/base:1.1.0-rc.42-ubuntu2404`         |
+| PR into `develop`  | `-rc.<PR#>`   | `runpod/base-dev:1.1.0-rc.42-ubuntu2404`     |
+| Push to `develop`  | `-dev.<PR#>`  | `runpod/base-dev:1.1.0-dev.42-ubuntu2404` (PR #42 merged) |
+| Direct push to `develop` | `-dev.<sha7>` | `runpod/base-dev:1.1.0-dev.1a2b3c4-ubuntu2404` |
+| Manual dispatch    | `-dev`        | `runpod/base:1.1.0-dev-ubuntu2404` (from `main`; `runpod/base-dev` otherwise) |
 
 Image repositories: one per template family, listed in `.github/families.yml`
 (`python3 .github/scripts/plan_families.py --image-repos`).
@@ -217,20 +297,45 @@ Key behaviours:
 
 ### Cut a normal release
 
-1. Ensure your PR **title** follows Conventional Commits (`feat:` / `fix:` / …).
+1. Ensure your PR **title** follows Conventional Commits (`feat:` / `fix:` / …)
+   and that it targets `develop`.
 2. Get the PR reviewed and green (RC images build + smoke test). The squash
-   **description** becomes the release notes for the families this PR touches
-   — GitHub pre-fills it with the branch's commit list, so replace that with
+   **description** becomes the release notes for the families this PR touches,
+   and GitHub pre-fills it with the branch's commit list, so replace that with
    something a reader would want.
-3. **Squash merge** into `main`. The release is fully automatic from here.
-4. Verify: a `<family>-vX.Y.Z` tag and Release appear for each family your
-   change touched, and those families publish `X.Y.Z` images. Families you did
-   not touch stay where they were.
+3. **Squash merge** into `develop`. CI publishes the whole outstanding batch
+   as `X.Y.Z-dev.<PR#>` in the private repos. Nothing is released yet, so this
+   is where you validate the set on a pod.
+4. When the batch is ready, open `develop → main` and **merge it with a merge
+   commit**. Its own title is not read for versioning, so `chore: release …`
+   is fine. The release is fully automatic from here.
+5. Verify: a `<family>-vX.Y.Z` tag and Release appear for each family the
+   batch touched, and those families publish `X.Y.Z` images. Families nobody
+   touched stay where they were.
 
 ### Ship a hotfix / patch
 
-- Merge a PR titled `fix: …`. This bumps the patch version (e.g. `1.1.0` →
-  `1.1.1`) and releases as usual.
+Through `develop`, like anything else, when the fix can wait for the next
+batch: a PR titled `fix: …` bumps the patch version (e.g. `1.1.0` → `1.1.1`)
+and releases when `develop` reaches `main`.
+
+When it cannot wait:
+
+1. Branch `hotfix/<thing>` **off `main`**, not off `develop`, so the release
+   carries only the fix.
+2. Open it as a PR into `main`, titled `fix: …`. It builds RC images into the
+   **public** repos, since a PR into `main` is prod.
+3. Merge it. Only the families the fix touched are rebuilt and released;
+   the rest keep their versions.
+4. Afterwards merge `main` back into `develop`. CI does not require it: the
+   dev env reads a family's newest tag by version rather than a reachable one.
+   Do it anyway so `develop` contains the fix and nobody reverts it by
+   accident.
+
+A hotfix and a batch waiting in `develop` converge cleanly. If the hotfix
+takes `pytorch` to `1.4.1`, a later `develop → main` that also touched
+`pytorch` continues from `1.4.1`, and families the hotfix did not touch are
+not rebuilt by it at all.
 
 ### Ship a breaking change (major)
 
@@ -312,7 +417,18 @@ either.
 ## Repository requirements
 
 - **Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`,
+  `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
+  `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
+- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
+  credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
+  `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests
+  pull anonymously and fail with `unauthorized`; set to a name the account
+  doesn't have, they fail before any pod is created
+  (`registry auth '…' not found`).
+- **Docker Hub:** the `runpod/<repo>-dev` repos exist and are **private**; the
+  dev OIDC connection accepts PR refs and `refs/heads/develop` and can push to
+  all of them.
 - **Permissions:** the orchestrator grants `id-token: write` (for Cosign
   signing in the reusable builds) and its `release` job uses `contents: write`
   to create tags and Releases. Ensure GitHub Actions is allowed to create
@@ -324,10 +440,13 @@ either.
   as skipped, and the `release` job is a matrix (`release (comfyui)`), so keep
   branch-protection required checks to ones that always run — `plan`, and the
   lint/test workflows.
-- **Merge strategy:** the repo uses **squash merge**. The PR title is what drives
-  the version, so keep it Conventional-Commit compliant.
+- **Merge strategy:** **squash merge** into `develop` — the PR title is what
+  drives the version, so keep it Conventional-Commit compliant. `develop` →
+  `main` is a **merge commit** (see [Branches and environments](#branches-and-environments)).
+- **Branch protection:** `develop` needs the same required checks as `main`.
 - **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
-  (`docker-setup`) so they cannot poison the keys used by main/release. Also
+  (`docker-setup`) so they cannot poison the keys used by main/release; pushes
+  to develop write their own `/dev` lineage. Also
   enable Sticky Disk **Branch Protection** in the Blacksmith dashboard — that
   setting is not in git.
 
@@ -344,4 +463,6 @@ either.
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |
 | No release despite a `feat`/`fix` merge to `main`  | The change may not touch any family's `paths` (check the `plan` job's log), or that family's build failed — its Release is skipped with a warning while the others go out. |
 | A family released at a higher bump than the merge  | Expected: the bump covers everything the family still had unreleased, so an older `feat:` outranks today's `fix:`. |
+| Dev smoke test fails with `CREATE_FAIL` / `unauthorized` | The pod could not pull the private `-dev` image: the `TESTING_REGISTRY_AUTH_NAME` variable is unset, or its credential cannot read `runpod/*-dev`. |
+| A release merged from develop got a lower bump than expected | `develop → main` was squash-merged, so only the release PR's title counted. Use a merge commit. |
 | PR checks are stuck "Expected"/pending             | Branch-protection required checks likely still reference the old workflow names. Update them to the `Build and Release / …` check names. |

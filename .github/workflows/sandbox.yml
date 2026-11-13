@@ -26,8 +26,15 @@ jobs:
   # is not rebuilt here.
   versions:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    # pull-requests: compute-version names a develop push's dev image after
+    # the PR it merged.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       suffix: ${{ steps.ubuntu.outputs.suffix }}
+      env: ${{ steps.ubuntu.outputs.env }}
+      repo-suffix: ${{ steps.ubuntu.outputs.repo-suffix }}
       ubuntu: ${{ steps.ubuntu.outputs.version }}
       ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
       openclaw: ${{ steps.openclaw.outputs.version }}
@@ -82,7 +89,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-ubuntu
 
       - name: Build sandbox-ubuntu image
@@ -92,6 +99,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.ubuntu }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -228,7 +236,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-openclaw
 
       - name: Build sandbox-openclaw image
@@ -238,6 +246,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.openclaw }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -403,7 +412,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-harbor
 
       - name: Build sandbox-harbor image
@@ -413,7 +422,9 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.harbor }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
@@ -524,7 +535,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-browser
 
       - name: Build sandbox-browser image
@@ -534,7 +545,9 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
         with:
           source: .
           files: |
