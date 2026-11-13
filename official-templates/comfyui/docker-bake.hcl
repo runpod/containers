@@ -1,6 +1,6 @@
 # === Version Pins (single source of truth) ===
 variable "COMFYUI_VERSION" {
-  default = "v0.35.0"
+  default = "v0.44.0"
 }
 variable "MANAGER_SHA" {
   default = "9d4cceea1351"

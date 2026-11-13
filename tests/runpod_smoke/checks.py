@@ -1114,7 +1114,7 @@ def _proxy_status_ok(code: int) -> bool:
 def run_port_proxy_check(
     pod_id: str, test_port: int, path: str = "/"
 ) -> tuple[bool, str]:
-    """Probe a generic HTTP service through RunPod's public proxy."""
+    """Probe a generic HTTP service through Runpod's public proxy."""
     url = f"https://{pod_id}-{test_port}.proxy.runpod.net{path}"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
     lines = [f"GET {url}"]
@@ -1153,7 +1153,7 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     """Hit `https://<pod-id>-8888.proxy.runpod.net/api/status?token=admin`
     from the test machine. Verifies that:
 
-      1. RunPod's public proxy has the pod registered for port 8888.
+      1. Runpod's public proxy has the pod registered for port 8888.
          If the port was exposed as `8888/tcp` instead of `8888/http`, the
          proxy never wires it up and this fails. The SSH-side check would
          still pass — that's exactly the kind of misconfiguration the
@@ -1310,7 +1310,7 @@ def fetch_pod_logs_api(
 
 # The container announced that its SSH server is up. `sshd` is started by
 # the entrypoint, so this is the container saying the thing we are waiting
-# for already happened — anything still unreachable after it is RunPod's
+# for already happened — anything still unreachable after it is Runpod's
 # network path, not the image.
 _SSHD_UP_RE = re.compile(
     # Debian/Ubuntu service script, used by container-template/start.sh
@@ -1326,14 +1326,14 @@ _SSHD_UP_RE = re.compile(
 class ContainerProgress(NamedTuple):
     """How far the container got, read from its own log stream.
 
-    `status` cannot answer either question: RunPod reports `RUNNING` from the
+    `status` cannot answer either question: Runpod reports `RUNNING` from the
     moment the pod is scheduled, while the image may still be downloading for
     another ten minutes — a 50GB ROCm base routinely is.
 
     `started` is False while the image is still being pulled, because the
     container does not exist yet and its log stream is empty. `sshd_up` means
     the entrypoint got as far as bringing SSH up, which is what separates
-    "the image never opened a door" from "RunPod never built a road to it".
+    "the image never opened a door" from "Runpod never built a road to it".
     """
 
     started: bool
@@ -1368,7 +1368,7 @@ def container_progress(
 #   create container runpod/comfyui:1.4.6-cuda12.8
 #   start container for runpod/comfyui:1.4.6-cuda12.8: begin
 #
-# RunPod re-checks the image after creating the container, so these markers
+# Runpod re-checks the image after creating the container, so these markers
 # are not strictly ordered — the furthest stage seen is what counts.
 _SYS_PULLING_RE = re.compile(
     r"\bExtracting\b|\bDownloading\b|\bPull complete\b|\bPulling from\b",
@@ -1384,7 +1384,7 @@ _SYS_CONTAINER_START_RE = re.compile(
 
 
 class PodStage(NamedTuple):
-    """How far RunPod got with the pod, per its own system log."""
+    """How far Runpod got with the pod, per its own system log."""
 
     pulling: bool
     pull_done: bool
@@ -1405,7 +1405,7 @@ def pod_stage(pod_id: str, deadline_sec: int = 8) -> Optional[PodStage]:
     """Read the pod's stage from the system log, or None if unreachable.
 
     Preferred over guessing from the container's log, which only says
-    "something ran"; this says whether RunPod has even finished downloading.
+    "something ran"; this says whether Runpod has even finished downloading.
     `status` says `RUNNING` throughout and cannot distinguish any of it.
     """
     lines = fetch_pod_logs_api(

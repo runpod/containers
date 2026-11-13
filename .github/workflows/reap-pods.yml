@@ -1,6 +1,6 @@
 name: Reap Leaked Smoke-Test Pods
 
-# Safety net for RunPod pods that the smoke tests leak.
+# Safety net for Runpod pods that the smoke tests leak.
 #
 # The smoke test (tests/test_images.py) normally deletes its pod in a
 # try/finally and via SIGINT/SIGTERM handlers. But when a PR gets a new

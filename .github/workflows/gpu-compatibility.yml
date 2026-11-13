@@ -1,6 +1,6 @@
 name: GPU Compatibility Matrix
 
-# Manual sweep for any image: boots it on every NVIDIA GPU in the RunPod
+# Manual sweep for any image: boots it on every NVIDIA GPU in the Runpod
 # catalog independently and reports a per-GPU pass/fail matrix. AMD is out
 # of scope here — the CUDA axis has no meaning for it; use a local manifest.
 #
