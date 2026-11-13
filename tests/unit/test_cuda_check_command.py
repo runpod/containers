@@ -44,3 +44,30 @@ class TorchCheckProgram(unittest.TestCase):
         command = cuda_check_command("runpod/base:1.0.0-rocm644-ubuntu2404")
         self.assertIn("rocm-smi", command)
         self.assertNotIn("import torch", command)
+
+
+COMFYUI_IMAGE = "runpod/comfyui:1.7.0-comfyuiv0.35.0-cuda{}"
+
+
+class ComfyUISageAttentionCheck(unittest.TestCase):
+    def test_variants_with_a_wheel_compile_and_require_it(self):
+        for cuda in ("12.8", "13.0", "13.2"):
+            with self.subTest(cuda=cuda):
+                image = COMFYUI_IMAGE.format(cuda)
+                command = cuda_check_command(image)
+                self.assertTrue(command.startswith("python3.12 - <<'PY'\n"))
+                body = _python_body(image)
+                compile(body, "<cuda-check>", "exec")
+                self.assertIn("import torch", body)
+                self.assertIn("from sageattention import sageattn", body)
+                self.assertNotIn("find_spec", body)
+
+    def test_unknown_cuda_variant_does_not_require_it(self):
+        command = cuda_check_command(COMFYUI_IMAGE.format("12.6"))
+        self.assertNotIn("sageattention", command)
+        self.assertIn("nvidia-smi", command)
+
+    def test_other_images_do_not_run_it(self):
+        for image in (PYTORCH_IMAGE, "runpod/base:1.0.0-cuda1281-ubuntu2404"):
+            with self.subTest(image=image):
+                self.assertNotIn("sageattention", cuda_check_command(image))

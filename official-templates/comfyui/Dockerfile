@@ -20,6 +20,10 @@ ARG CUDA_VERSION_DASH=12-8
 ARG TORCH_INDEX_SUFFIX=cu128
 # torchaudio has no cu132 build; see docker-bake.hcl for why 13.2 uses +cpu.
 ARG TORCHAUDIO_INDEX_SUFFIX=cu128
+# Prebuilt SageAttention wheel for this exact torch + CUDA; empty skips it.
+ARG SAGEATTENTION_VERSION=""
+ARG SAGEATTENTION_WHEEL_URL=""
+ARG SAGEATTENTION_SHA256=""
 
 # Install minimal dependencies needed for building
 RUN apt-get update && \
@@ -129,6 +133,24 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     -r requirements.lock && \
     TORCH_VERSION="${TORCH_VERSION}" TORCHVISION_VERSION="${TORCHVISION_VERSION}" TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION}" \
     python3.12 -c 'import importlib.metadata as m, os, sys; expected = {"torch": os.environ["TORCH_VERSION"], "torchvision": os.environ["TORCHVISION_VERSION"], "torchaudio": os.environ["TORCHAUDIO_VERSION"]}; mismatches = [f"{pkg}: expected {version}, got {m.version(pkg)}" for pkg, version in expected.items() if m.version(pkg) != version]; sys.exit("\n".join(mismatches) if mismatches else 0)'
+
+# SageAttention needs a compile per torch + CUDA pair, so it comes as a pinned
+# wheel rather than through the lock. --no-deps keeps it from touching the
+# hash-locked torch; the wheel's own torch==<exact> pin is checked instead.
+# Not imported here: _qattn_sm90 links libcuda.so.1, which only a GPU host has.
+RUN if [ -n "${SAGEATTENTION_WHEEL_URL}" ]; then \
+        mkdir -p /tmp/sageattention && \
+        wheel="/tmp/sageattention/sageattention-${SAGEATTENTION_VERSION}-cp312-cp312-linux_x86_64.whl" && \
+        curl -fSL "${SAGEATTENTION_WHEEL_URL}" -o "${wheel}" && \
+        printf '%s  %s\n' "${SAGEATTENTION_SHA256}" "${wheel}" > /tmp/sageattention/wheel.sha256 && \
+        sha256sum -c /tmp/sageattention/wheel.sha256 && \
+        python3.12 -m pip install --no-cache-dir --no-deps --no-index --find-links /tmp/sageattention \
+            "sageattention==${SAGEATTENTION_VERSION}" && \
+        rm -rf /tmp/sageattention && \
+        TORCH_VERSION="${TORCH_VERSION}" python3.12 -c 'import importlib.metadata as m, os, sys; pin = "torch==" + os.environ["TORCH_VERSION"]; requires = m.requires("sageattention") or []; sys.exit(0 if pin in requires else f"sageattention requires {requires}, image has {pin}")'; \
+    else \
+        echo "No SageAttention wheel for this CUDA variant; skipping."; \
+    fi
 
 # Pre-populate ComfyUI-Manager cache so first cold start skips the slow registry fetch
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
