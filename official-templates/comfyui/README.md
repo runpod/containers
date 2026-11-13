@@ -73,6 +73,10 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 --preview-method auto
 ```
 
+ComfyUI starts without CORS headers, so pages on other websites cannot call it
+from a browser. If your own site needs to, add
+`--enable-cors-header https://your.site` here.
+
 ## Directory Structure
 
 - `/workspace/runpod-slim/ComfyUI`: ComfyUI install
