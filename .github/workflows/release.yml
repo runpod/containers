@@ -30,14 +30,17 @@ permissions:
   id-token: write
   pull-requests: read
 
-# PR: cancel superseded runs (per ref). Push: SERIALIZE per branch — a
-# constant group with cancel-in-progress:false makes a 2nd merge wait for the
-# 1st to finish (and create its tag), so two merges landing close together
-# can't both compute the same next version and race. main's group stays
-# `main-release`: manual-release.yml joins it by that name.
+# PR: cancel superseded runs (per ref). Push to main: SERIALIZE — a constant
+# group with cancel-in-progress:false makes a 2nd merge wait for the 1st to
+# finish (and create its tag), so two merges landing close together can't both
+# compute the same next version and race. main's group stays `main-release`:
+# manual-release.yml joins it by that name.
+# Push to develop: cancel instead. A develop run plans everything not yet on
+# main, so a newer run rebuilds whatever the cancelled one would have, and no
+# tags are at stake.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && format('{0}-release', github.ref_name) || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
 
 jobs:
   # Which families this event touches, plus everything that builds FROM them.

@@ -8,7 +8,7 @@ name: Docker Hub Tag Cleanup
 #                 (runpod/<repo>-dev only)
 # Both the public runpod/<repo> and the private runpod/<repo>-dev repos are
 # swept; the private ones can only be listed with a successful login.
-# Release tags (e.g. 1.2.3-ubuntu2204, 1.2.3-cuda1281-ubuntu2404) and `latest`
+# Release tags (e.g. 1.2.3-ubuntu2404, 1.2.3-cuda1281-ubuntu2404) and `latest`
 # are never eligible — the delete filter only matches the -rc./-dev markers.
 #
 # It also removes orphaned Cosign signatures (`sha256-<digest>.sig` / `.att`):
