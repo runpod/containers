@@ -73,6 +73,14 @@ RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA
 RUN test "$(grep -c 'timeout=5)' ComfyUI-Manager/glob/manager_util.py)" = 2 && \
     sed -i 's/timeout=5)/timeout=30)/g' ComfyUI-Manager/glob/manager_util.py
 
+# Runpod fixes to the pinned sources: one patch per issue in patches/, paths
+# relative to the ComfyUI root, applied before the git commit below. git apply
+# refuses a patch whose context has moved, so a pin bump that touches patched
+# code fails the build instead of shipping without the fix: rebase the patch
+# onto the new pin, or delete it once upstream has the fix.
+COPY patches/ /tmp/patches/
+RUN git -C /tmp/build/ComfyUI apply --verbose /tmp/patches/*.patch
+
 # Init git repos with upstream remotes so ComfyUI-Manager can detect versions
 # and users can update via Manager at their own risk
 WORKDIR /tmp/build/ComfyUI
@@ -134,13 +142,16 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
 RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/cache
 
-# Bake ComfyUI + custom nodes into a known location for runtime copy
+# Bake ComfyUI + custom nodes into a known location for runtime copy. The
+# patch hash is part of the manifest so start.sh re-syncs existing volumes
+# when a patch is added or changed.
 RUN printf '%s\n' \
     "COMFYUI_VERSION=${COMFYUI_VERSION}" \
     "MANAGER_SHA=${MANAGER_SHA}" \
     "KJNODES_SHA=${KJNODES_SHA}" \
     "CIVICOMFY_SHA=${CIVICOMFY_SHA}" \
     "RUNPODDIRECT_SHA=${RUNPODDIRECT_SHA}" \
+    "PATCHES_SHA256=$(cat /tmp/patches/*.patch | sha256sum | cut -d' ' -f1)" \
     > /tmp/build/ComfyUI/.runpod-bundle-version && \
     cp -r /tmp/build/ComfyUI /opt/comfyui-baked
 
