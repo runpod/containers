@@ -388,6 +388,60 @@ GROUP_MIN_CUDA: dict[str, str] = {}
 GROUP_CUDA_VERSIONS: dict[str, list[str]] = {}
 GROUP_CUDA_ALL: dict[str, bool] = {}
 
+# `cuda_versions: allowed` — like `all`, but only versions at or above the
+# image's own CUDA floor: the tag marker (`cu1290` -> 12.9), else the group's
+# `min_cuda_version`. Those are the hosts the image can actually be scheduled
+# on, so they are the ones a compatibility claim is about. GROUP_CUDA_ALL is
+# set too; GROUP_CUDA_FLOOR keeps the group floor that the axis would
+# otherwise pop from GROUP_MIN_CUDA.
+GROUP_CUDA_ALLOWED: dict[str, bool] = {}
+GROUP_CUDA_FLOOR: dict[str, str] = {}
+
+# With CLOUD_TYPE=ALL every (image, GPU, CUDA) job is planned once per tier.
+# For a compatibility sweep the tier says nothing about the image, so this
+# keeps only the first tier's job (SECURE before COMMUNITY): a GPU offered in
+# both is tested once, a community-only card still gets its community job.
+DEDUPE_CLOUD_TIERS = (os.environ.get("DEDUPE_CLOUD_TIERS") or "").strip().lower() in (
+    "1", "true", "yes",
+)
+
+
+# ---------------------------------------------------------------------------
+# Spend cap (runpod_smoke/spend.py)
+# ---------------------------------------------------------------------------
+
+def _non_negative_float(raw: str, default: float) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+# Total USD a run may spend on pods, from catalog $/hr x pod lifetime. 0 (the
+# default) disables the cap. Every pod reserves SPEND_RESERVE_MINUTES of its
+# hourly price before it is created; a pod that would push spent + reserved
+# past the cap is never created and its job is recorded as SKIP. Size the
+# reservation to the longest a pod lives (CREATE_TIMEOUT plus the checks),
+# or a slow pod can overrun its hold.
+SPEND_CAP_USD = _non_negative_float(os.environ.get("SPEND_CAP_USD", ""), 0.0)
+SPEND_RESERVE_MINUTES = _non_negative_float(
+    os.environ.get("SPEND_RESERVE_MINUTES", ""), 30.0
+)
+
+# Appended to every pod name (`smoketest-<epoch>-<tid>-<attempt>-<suffix>`)
+# so one run can find and delete exactly its own pods. reap-pods.yml reads
+# the epoch from field 2, which a suffix doesn't move. Alphanumerics only;
+# anything else is ignored rather than put into a pod name.
+_POD_NAME_SUFFIX_RAW = (os.environ.get("POD_NAME_SUFFIX") or "").strip()
+POD_NAME_SUFFIX = (
+    _POD_NAME_SUFFIX_RAW
+    if _POD_NAME_SUFFIX_RAW.isascii()
+    and _POD_NAME_SUFFIX_RAW.isalnum()
+    and len(_POD_NAME_SUFFIX_RAW) <= 32
+    else ""
+)
+
 # Safety cap on the GPU x CUDA fan-out. A catalog-wide `all` sweep is ~34
 # jobs today, but the fleet grows and a stray run shouldn't turn into a
 # day of GPU time. Jobs past the cap are dropped with a warning.

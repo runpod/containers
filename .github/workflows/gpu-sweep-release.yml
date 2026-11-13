@@ -1,0 +1,240 @@
+name: GPU Sweep (release)
+
+# After every release, boot each image the release built on a representative
+# GPU subset, once per allowed host CUDA version, and publish an
+# image x GPU x CUDA result (pass / fail / untested) on the family's GitHub
+# Release. GPUs and spend cap: .github/gpu-sweep.yml.
+#
+# Reports, never gates. The one-GPU smoke test in the build workflows is the
+# release gate; this runs after the release has already been cut.
+#
+# Why a separate workflow and not a job in release.yml: release.yml
+# serializes pushes to main with a workflow-level concurrency group, so a
+# multi-hour sweep inside it would hold the next merge's release hostage.
+# workflow_run starts once the release run has finished, with its own queue.
+#
+# Only push runs on main trigger it, and the code that runs is this
+# workflow's own commit (main), never PR code. The release commit is only
+# read for its tags: it can predate the sweep scripts, and an old release
+# should be swept with today's harness anyway.
+
+on:
+  workflow_run:
+    workflows: ["Build and Release"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release-run-id:
+        description: "Run id of the 'Build and Release' push run to sweep (its refs artifacts last 3 days)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Never cancel: a cancel SIGKILLs the runner mid-cleanup and leaks paid pods.
+# Sweeps queue; a release that lands while one runs is swept next.
+concurrency:
+  group: gpu-sweep-release
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.event == 'push'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Bounded by the spend cap in practice; this is the wall-clock backstop.
+    timeout-minutes: 600
+    permissions:
+      contents: write   # attach the result to each family's GitHub Release
+      actions: read     # download the release run's refs artifacts
+    steps:
+      - name: Resolve release run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          WR_ID: ${{ github.event.workflow_run.id }}
+          WR_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_RUN_ID: ${{ inputs.release-run-id }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT}" == "workflow_run" ]]; then
+            RUN_ID="${WR_ID}"; SHA="${WR_SHA}"
+          else
+            [[ "${INPUT_RUN_ID}" =~ ^[0-9]+$ ]] \
+              || { echo "::error::release-run-id must be a numeric run id"; exit 1; }
+            RUN_ID="${INPUT_RUN_ID}"
+            # Tab-split: the workflow name itself contains spaces.
+            IFS=$'\t' read -r SHA WF EV < <(gh api "repos/${GH_REPO}/actions/runs/${RUN_ID}" \
+              --jq '[.head_sha, .name, .event] | @tsv')
+            if [[ "${WF}" != "Build and Release" || "${EV}" != "push" ]]; then
+              echo "::error::run ${RUN_ID} is '${WF}' (${EV}), not a 'Build and Release' push run"
+              exit 1
+            fi
+          fi
+          echo "run-id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Sweeping release run ${RUN_ID} at ${SHA}"
+
+      # Full history and tags, so the release commit's tags can be read
+      # below without checking it out.
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # The tags at the commit are exactly the families that run released.
+      # A family whose build or smoke test failed was pushed but not tagged,
+      # and is not swept.
+      - name: Released families
+        id: tags
+        env:
+          SHA: ${{ steps.run.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git tag --points-at "${SHA}" | tee "${RUNNER_TEMP}/tags.txt"
+          echo "count=$(grep -c . "${RUNNER_TEMP}/tags.txt" || true)" >> "$GITHUB_OUTPUT"
+
+      - name: Download refs from the release run
+        if: steps.tags.outputs.count != '0'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ steps.run.outputs.run-id }}
+          github-token: ${{ github.token }}
+          pattern: "*-refs*"
+          path: ${{ runner.temp }}/refs
+
+      - name: Plan sweep
+        id: plan
+        if: steps.tags.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/gpu_sweep.py plan \
+            --refs-dir "${RUNNER_TEMP}/refs" \
+            --tags "${RUNNER_TEMP}/tags.txt" \
+            --manifest-out "${RUNNER_TEMP}/sweep-manifest.yaml" \
+            --plan-out "${RUNNER_TEMP}/sweep-plan.json"
+
+      # Harness knobs the smoke-test action has no input for. $GITHUB_ENV
+      # reaches the composite action's steps.
+      - name: Configure harness
+        if: fromJSON(steps.plan.outputs.images || '0') > 0
+        env:
+          CAP: ${{ steps.plan.outputs.spend-cap-usd }}
+          RESERVE: ${{ steps.plan.outputs.reserve-minutes }}
+          COMBOS: ${{ steps.plan.outputs.max-combos }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "POD_NAME_SUFFIX=sweep${RUN_ID}"
+            echo "SPEND_CAP_USD=${CAP}"
+            echo "SPEND_RESERVE_MINUTES=${RESERVE}"
+            echo "MAX_CUDA_COMBOS=${COMBOS}"
+            echo "DEDUPE_CLOUD_TIERS=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Sweep
+        id: sweep
+        if: fromJSON(steps.plan.outputs.images || '0') > 0
+        # A FAIL exits the harness 1. That is the result, not a broken
+        # workflow: the report below publishes it and turns the job red.
+        continue-on-error: true
+        uses: ./.github/actions/smoke-test
+        with:
+          manifest: ${{ runner.temp }}/sweep-manifest.yaml
+          image-refs: "[]"
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          cloud-type: ${{ steps.plan.outputs.cloud }}
+          max-parallel: ${{ steps.plan.outputs.max-parallel }}
+          # 'warn', not 'pass': 'pass' turns retries off, and parallel jobs
+          # racing for the same scarce GPU lose capacity to each other. Two
+          # rounds re-run only SKIP / UNVERIFIED jobs; the spend cap still
+          # holds, and what's left after them is reported untested. The exit
+          # code doesn't matter here (continue-on-error).
+          on-skip: warn
+          skip-retries: "2"
+          skip-retry-delay: "300"
+          create-timeout: "1200"
+          upload-results-json: "true"
+          results-artifact-name: gpu-sweep-raw-${{ github.run_id }}
+
+      # The harness deletes its own pods, including on SIGTERM. This catches
+      # a runner killed outright. reap-pods.yml (hourly, smoketest-*) is the
+      # backstop behind this.
+      - name: Delete leftover sweep pods
+        if: always() && fromJSON(steps.plan.outputs.images || '0') > 0
+        env:
+          RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          RUN_ID: ${{ github.run_id }}
+        run: python3 .github/scripts/gpu_sweep.py reap --suffix "sweep${RUN_ID}"
+
+      - name: Report
+        id: report
+        if: always() && fromJSON(steps.plan.outputs.images || '0') > 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          SHA: ${{ steps.run.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LOG_URL=$(gh api "repos/${GH_REPO}/actions/runs/${RUN_ID}/attempts/${ATTEMPT}/jobs" \
+            --jq '.jobs[] | select(.name == "sweep") | .html_url' 2>/dev/null | head -n1 || true)
+          python3 .github/scripts/gpu_sweep.py report \
+            --plan "${RUNNER_TEMP}/sweep-plan.json" \
+            --results "${RUNNER_TEMP}/smoke-results/results.json" \
+            --out-dir "${RUNNER_TEMP}/gpu-compat" \
+            --run-url "${RUN_URL}" \
+            --log-url "${LOG_URL:-${RUN_URL}}" \
+            --commit "${SHA}"
+
+      - name: Upload result
+        if: always() && steps.report.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gpu-compatibility-${{ steps.run.outputs.sha }}
+          path: ${{ runner.temp }}/gpu-compat
+          retention-days: 90
+
+      # gpu-compatibility.json on each family's Release, holding only that
+      # family's images. --clobber so a re-sweep replaces the result.
+      - name: Attach result to releases
+        if: always() && steps.report.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for file in "${RUNNER_TEMP}"/gpu-compat/*-v*.json; do
+            tag="$(basename "${file}" .json)"
+            cp "${file}" "${RUNNER_TEMP}/gpu-compatibility.json"
+            gh release upload "${tag}" "${RUNNER_TEMP}/gpu-compatibility.json" --clobber
+            echo "attached gpu-compatibility.json to ${tag}"
+          done
+
+      # Red on any FAIL so GPU breakage is seen, after the result is out.
+      # Nothing depends on this job, so it blocks no release.
+      - name: Verdict
+        if: always() && steps.report.outcome == 'success'
+        env:
+          FAILS: ${{ steps.report.outputs.fail-count }}
+        run: |
+          if [[ "${FAILS:-0}" != "0" ]]; then
+            echo "::error::${FAILS} image x GPU x CUDA combination(s) failed — see the summary"
+            exit 1
+          fi
+
+      - name: Nothing to sweep
+        if: steps.tags.outputs.count == '0' || (steps.plan.outcome == 'success' && steps.plan.outputs.images == '0')
+        run: echo "No released GPU images in this run — nothing to sweep." >> "$GITHUB_STEP_SUMMARY"

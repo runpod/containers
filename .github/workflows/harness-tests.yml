@@ -11,6 +11,11 @@ on:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
       - '.github/workflows/harness-tests.yml'
+      # Release GPU sweep: planner/reporter and the GPU subset it reads.
+      - '.github/scripts/gpu_sweep.py'
+      - '.github/scripts/test_gpu_sweep.py'
+      - '.github/gpu-sweep.yml'
+      - '.github/families.yml'
       # The Jupyter token contract runs the real start_jupyter out of these,
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
@@ -28,6 +33,10 @@ on:
     paths:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
+      - '.github/scripts/gpu_sweep.py'
+      - '.github/scripts/test_gpu_sweep.py'
+      - '.github/gpu-sweep.yml'
+      - '.github/families.yml'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
       # test_grafana_auth_proxy runs the real proxy.
@@ -109,3 +118,17 @@ jobs:
               "RTX 2000 Ada", "B200*", "B300*"], m
           PY
           echo "OK: exclude-instance-for scopes the block to matching refs"
+
+          # `allowed` keeps min_cuda_version: the harness reads it as the
+          # axis floor for tags with no CUDA marker (NGC nvidia-pytorch).
+          gen --profile gpu --refs '["runpod/nvidia-pytorch:1.0.0-25.11"]' \
+            --check-all-gpu --cuda-version allowed --min-cuda-version 13.0 \
+            --output "${RUNNER_TEMP}/m-allowed.yaml" >/dev/null
+          grep -q 'cuda_versions: allowed' "${RUNNER_TEMP}/m-allowed.yaml"
+          grep -q 'min_cuda_version: 13.0' "${RUNNER_TEMP}/m-allowed.yaml"
+          echo "OK: cuda_versions=allowed keeps the floor"
+
+      # Plans the release sweep and builds the per-release result JSON.
+      - name: Release GPU sweep script
+        shell: bash
+        run: python3 .github/scripts/test_gpu_sweep.py

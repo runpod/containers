@@ -8,8 +8,20 @@ description: |
 
 inputs:
   image-refs:
-    description: "JSON array of image refs to smoke-test"
+    description: |
+      JSON array of image refs to smoke-test. Ignored when `manifest` is set
+      (pass "[]").
     required: true
+  manifest:
+    description: |
+      Path to a ready-made test manifest. Skips manifest generation, so
+      `profile`, `image-refs` and every selection / test-* input that feeds
+      the generator are ignored — the manifest says it all. For callers
+      that need more than one group per run, e.g. the release GPU sweep
+      (.github/scripts/gpu_sweep.py), which gives each family its own floor.
+      Empty (default) generates the manifest from the inputs.
+    required: false
+    default: ""
   profile:
     description: |
       Manifest grouping strategy passed to generate_test_manifest.py.
@@ -454,7 +466,24 @@ runs:
 
         echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
 
+    - name: Use provided manifest
+      if: ${{ inputs.manifest != '' }}
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+      run: |
+        set -euo pipefail
+        if [[ ! -s "${MANIFEST}" ]]; then
+          echo "::error::manifest '${MANIFEST}' does not exist or is empty"
+          exit 1
+        fi
+        echo "MANIFEST_PATH=$(realpath "${MANIFEST}")" >> "${GITHUB_ENV}"
+        echo "::group::test manifest"
+        cat "${MANIFEST}"
+        echo "::endgroup::"
+
     - name: Generate test manifest
+      if: ${{ inputs.manifest == '' }}
       shell: bash
       env:
         REFS: ${{ inputs.image-refs }}
