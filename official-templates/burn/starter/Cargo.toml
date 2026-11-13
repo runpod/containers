@@ -1,0 +1,8 @@
+[package]
+name = "burn-starter"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+burn = { version = "=@BURN_VERSION@", features = ["cuda", "vulkan", "flex"] }
