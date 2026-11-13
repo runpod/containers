@@ -167,6 +167,11 @@ ARG TORCHAUDIO_VERSION
 # .venv-cu128; start.sh treats that as a move and reinstalls node deps.
 ENV COMFYUI_VENV_NAME=.venv-${TORCH_INDEX_SUFFIX}
 
+# Install NVIDIA's CUDA forward-compatibility driver libs (cuda-compat-*) so
+# the image can run on hosts whose driver is older than the image's CUDA.
+# start.sh only activates them after a cuInit() probe succeeds.
+ARG INSTALL_CUDA_COMPAT=false
+
 # ---- FileBrowser version pin (set in docker-bake.hcl) ----
 ARG FILEBROWSER_VERSION
 ARG FILEBROWSER_SHA256
@@ -214,6 +219,11 @@ RUN apt-get update && \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends cuda-minimal-build-${CUDA_VERSION_DASH} \
+    && if [ "${INSTALL_CUDA_COMPAT}" = "true" ]; then \
+        apt-get install -y --no-install-recommends cuda-compat-${CUDA_VERSION_DASH} && \
+        ln -sfn /usr/local/cuda/compat /opt/cuda-compat && \
+        test -e /opt/cuda-compat/libcuda.so.1; \
+    fi \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm cuda-keyring_1.1-1_all.deb \
