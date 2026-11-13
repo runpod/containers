@@ -174,9 +174,9 @@ _TORCH_TAG_RE = re.compile(
 )
 
 # runpod/comfyui variants that bake a prebuilt SageAttention wheel (see the
-# template's docker-bake.hcl). -cuda13.2 has no wheel yet; add it here when
-# it gets one so a missing install fails instead of passing unnoticed.
-_SAGEATTENTION_IMAGE_RE = re.compile(r"\bcomfyui:\S*-cuda(?:12\.8|13\.0)$")
+# template's docker-bake.hcl). A new CUDA variant with a wheel belongs here too,
+# so a missing install fails instead of passing unnoticed.
+_SAGEATTENTION_IMAGE_RE = re.compile(r"\bcomfyui:\S*-cuda(?:12\.8|13\.0|13\.2)$")
 
 # Image-tag markers for AMD ROCm runtimes. Matched BEFORE the torch regex
 # so that ROCm-pytorch images (which inherit from rocm/pytorch:* and keep

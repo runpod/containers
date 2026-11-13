@@ -38,9 +38,10 @@ variable "FILEBROWSER_SHA256" {
 # from the suffix so the post-install check compares against what pip resolved.
 #
 # SageAttention is compiled against one exact torch + CUDA pair, so each row
-# pins its own prebuilt wheel (https://github.com/kodxana/runpod-sageattention).
-# Empty means the variant ships without it: there is no wheel for torch 2.13.0
-# + cu132 yet.
+# pins its own prebuilt wheel from https://github.com/runpod/sageattention
+# (release 0.2.0; every wheel there passed GPU tests on SM 8.0/8.6/8.9/9.0/12.0).
+# Leave the three fields empty for a variant that has no wheel: it then ships
+# without SageAttention.
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8",
@@ -50,8 +51,8 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchvision_version = "0.25.0",
       torchaudio_version = "2.10.0+cu128",
       sageattention_version = "2.2.0+torch2.10.0.cu128.sm90fix1",
-      sageattention_wheel_url = "https://github.com/kodxana/runpod-sageattention/releases/download/0.1.1/sageattention-2.2.0%2Btorch2.10.0.cu128.sm90fix1-cp312-cp312-linux_x86_64.whl",
-      sageattention_sha256 = "0b20e939401a087a9a72d1393701cc65614ac0c7742a80e29dc80c826a924df0"
+      sageattention_wheel_url = "https://github.com/runpod/sageattention/releases/download/0.2.0/sageattention-2.2.0%2Btorch2.10.0.cu128.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "e46dda74dd1ca41e231e33af03b8bdbe1f5f3de4802472ed86ea3162fb596fb0"
     },
     { cuda_version = "13.0",
       torch_index_suffix = "cu130",
@@ -60,8 +61,8 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchvision_version = "0.25.0",
       torchaudio_version = "2.10.0+cu130",
       sageattention_version = "2.2.0+torch2.10.0.cu130.sm90fix1",
-      sageattention_wheel_url = "https://github.com/kodxana/runpod-sageattention/releases/download/0.1.1/sageattention-2.2.0%2Btorch2.10.0.cu130.sm90fix1-cp312-cp312-linux_x86_64.whl",
-      sageattention_sha256 = "dbd550f7a8330c3667d516a4b636497d7372471ff248a81800a6144a395019e1"
+      sageattention_wheel_url = "https://github.com/runpod/sageattention/releases/download/0.2.0/sageattention-2.2.0%2Btorch2.10.0.cu130.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "4277a667b6ba5f8b33e20fb44cb2399d571b44a159225242db4aaf004f2498ce"
     },
     { cuda_version = "13.2",
       torch_index_suffix = "cu132",
@@ -69,9 +70,9 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torch_version = "2.13.0",
       torchvision_version = "0.28.0",
       torchaudio_version = "2.11.0+cpu",
-      sageattention_version = "",
-      sageattention_wheel_url = "",
-      sageattention_sha256 = ""
+      sageattention_version = "2.2.0+torch2.13.0.cu132.sm90fix1",
+      sageattention_wheel_url = "https://github.com/runpod/sageattention/releases/download/0.2.0/sageattention-2.2.0%2Btorch2.13.0.cu132.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "0e940815cb1e9bccffcde5303f095c324f2174e2fe0100eae7614c92dbd1050b"
     }
   ]
 }

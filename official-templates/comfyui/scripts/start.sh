@@ -683,8 +683,9 @@ if [ -s "$ARGS_FILE" ]; then
 fi
 
 # ComfyUI exits at import when --use-sage-attention is set and the package is
-# missing — which it is on -cuda13.2, so switching a volume to that tag would
-# otherwise leave ComfyUI dead. find_spec only locates it: importing needs CUDA.
+# missing, so a volume moved to an image without it (an older tag, or a future
+# variant with no wheel) would otherwise leave ComfyUI dead. find_spec only
+# locates it: importing needs CUDA.
 if [[ " ${COMFY_ARGS[*]} " == *" --use-sage-attention "* ]]; then
     if python -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("sageattention") is None)'; then
         # Kernels exist for SM 8.0-9.0 and 12.0; elsewhere ComfyUI falls back
