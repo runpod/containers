@@ -1,0 +1,426 @@
+"""Instant Cluster test orchestration — the cluster counterpart of
+runner.test_pair.
+
+  * test_cluster_pair(image, instance, group) — one cluster on one GPU
+    type: create it, wait for every member pod, run the checks, delete it.
+    Returns the same (status, detail) vocabulary as test_pair, so
+    runner.test_image walks GPU types and summarises identically.
+
+Checks, in order, per node then cluster-wide:
+  1. SSH readiness on every node (pod.wait_for_running)
+  2. hostname matches the cluster rank (node-0 is the head)
+  3. CUDA functional check on every node
+  4. Jupyter through the public proxy on every node
+  5. monitoring: exporters on every node, head-only services only on node-0,
+     and Prometheus on the head scraping every node
+  6. Grafana on the head through the public proxy (health, token login,
+     no anonymous access, datasource query)
+  7. image hygiene checks the group opted into, on the head only
+  8. container-log error scan, dwell, then SSH re-probe of every node
+"""
+
+from __future__ import annotations
+
+import re
+import threading
+import time
+from typing import Optional
+
+from . import cluster_report, config
+from .checks import SshEndpoint, dump_pod_logs, run_simple_check, ssh_probe
+from .cluster import (
+    ClusterNode,
+    cleanup_cluster,
+    cluster_gpu_sizes,
+    cluster_types_for,
+    create_cluster,
+    pick_gpus_per_node,
+    register_cluster,
+    wait_for_nodes,
+)
+from .cluster_checks import (
+    head_monitoring_command,
+    node_identity_command,
+    run_grafana_proxy_check,
+    slurm_check_command,
+    worker_monitoring_command,
+)
+from .cluster_report import FAIL, OK, ClusterReport
+from .log import log
+from .pod import pod_state, wait_for_running
+from .runner import (
+    _Outcome,
+    _classify_non_running,
+    _hygiene_checks,
+    _log_attempt_header,
+    _run_cuda_step,
+    _run_hygiene_steps,
+    _run_jupyter_steps,
+    _run_log_scan_step,
+    _set_host_cuda,
+)
+
+
+def _create_cluster_with_retries(
+    image: str, gpu_id: str, group: str, node_count: int, gpus_per_node: int,
+) -> tuple[Optional[str], str, str]:
+    """(cluster_id, "", "") or (None, UNAVAILABLE | CREATE_FAIL, detail).
+
+    Each cluster type is tried in turn, and any refusal moves on to the next
+    one rather than to the next GPU: dev has rejected one type for a GPU it
+    deploys fine as another, so a refusal says something about the type, not
+    only about capacity. The verdict is the last type's when all fail.
+    """
+    types = cluster_types_for(group)
+    result: tuple[Optional[str], str, str] = (None, "CREATE_FAIL", "")
+    for i, cluster_type in enumerate(types):
+        log(f"cluster type: {cluster_type}", indent=2)
+        result = _create_one_type(
+            image, gpu_id, group, node_count, gpus_per_node, cluster_type,
+        )
+        if result[0]:
+            report = cluster_report.current()
+            if report is not None:
+                report.cluster_type = cluster_type
+            return result
+        if i + 1 < len(types):
+            log(f"{cluster_type} refused, trying {types[i + 1]}", indent=2)
+    return result
+
+
+def _create_one_type(
+    image: str, gpu_id: str, group: str, node_count: int, gpus_per_node: int,
+    cluster_type: str,
+) -> tuple[Optional[str], str, str]:
+    """One cluster type, with runner._create_pod_with_retries' policy."""
+    raw = ""
+    for attempt in range(1, config.CREATE_RETRIES + 1):
+        # `smoketest-<epoch>-` is what reap_clusters.py keys on.
+        name = (
+            f"smoketest-{int(time.time())}-"
+            f"{threading.get_ident() % 10000:04d}-{attempt}"
+        )
+        cluster_id, kind, raw = create_cluster(
+            image, gpu_id, name, node_count=node_count,
+            gpus_per_node=gpus_per_node, group=group, cluster_type=cluster_type,
+        )
+        if cluster_id:
+            return cluster_id, "", ""
+        if kind == "UNAVAILABLE":
+            log(f"no {cluster_type} capacity ({raw[:160]})", indent=2)
+            return None, "UNAVAILABLE", ""
+        if kind == "TRANSIENT" and attempt < config.CREATE_RETRIES:
+            backoff = config.CREATE_RETRY_BACKOFF * attempt
+            log(
+                f"transient cluster-create error ({raw[:120]}), "
+                f"retry {attempt}/{config.CREATE_RETRIES - 1} in {backoff}s",
+                indent=2,
+            )
+            time.sleep(backoff)
+            continue
+        break
+    log(f"cluster create failed: {raw[:400]}", indent=2)
+    return None, "CREATE_FAIL", f"cluster create failed: {raw[:200].strip()}"
+
+
+def _resolve_node_shape(group: str, gpu_id: str) -> tuple[Optional[int], int]:
+    """(gpus_per_node, node_count); gpus_per_node None = not offered."""
+    node_count = config.GROUP_CLUSTER_NODES.get(group, config.DEFAULT_CLUSTER_NODES)
+    requested = config.GROUP_CLUSTER_GPUS_PER_NODE.get(group, 0)
+    offered = cluster_gpu_sizes(gpu_id)
+    if offered is None:
+        # Catalog unreadable: try the request as given and let createCluster
+        # be the judge rather than skipping a GPU we know nothing about.
+        gpus = requested or 1
+        log(f"cluster GPU catalog unavailable, asking for {gpus} GPU(s)/node", indent=2)
+        return gpus, node_count
+    gpus = pick_gpus_per_node(requested, offered)
+    if gpus is None:
+        log(
+            f"'{gpu_id}' offers no cluster nodes with "
+            f"{requested or 'any'} GPU(s) (offered: {offered or 'none'})",
+            indent=2,
+        )
+    return gpus, node_count
+
+
+def _fail(node: ClusterNode, image: str, detail: str) -> _Outcome:
+    log(f"{node.hostname}: {detail} -- FAIL", indent=2)
+    dump_pod_logs(node.pod_id, image)
+    return "FAIL", f"{node.hostname}: {detail}"
+
+
+def _run_check(
+    node: ClusterNode, endpoint: SshEndpoint, label: str, command: str,
+    timeout: int, image: str, row: str,
+) -> Optional[_Outcome]:
+    log(f"{node.hostname}: running {label} check...", indent=2)
+    ok, output = run_simple_check(endpoint, command, timeout=timeout)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    cluster_report.mark(row, node.hostname, OK if ok else FAIL)
+    if ok:
+        log(f"{node.hostname}: {label} check passed", indent=2)
+        return None
+    return _fail(node, image, f"{label} check failed")
+
+
+def _node_steps(
+    node: ClusterNode, endpoint: SshEndpoint, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Checks that hold for every member pod."""
+    outcome = _run_check(
+        node, endpoint, "hostname/rank", node_identity_command(node.idx),
+        60, image, "rank",
+    )
+    if outcome is not None:
+        return outcome
+    outcome = _run_cuda_step(endpoint, image, group, node.pod_id)
+    cluster_report.mark("cuda", node.hostname, FAIL if outcome else OK)
+    if outcome is None:
+        outcome = _run_jupyter_steps(endpoint, node.pod_id, image, group)
+        cluster_report.mark("jupyter", node.hostname, FAIL if outcome else OK)
+    if outcome is not None:
+        return outcome[0], f"{node.hostname}: {outcome[1]}"
+    return None
+
+
+def _monitoring_steps(
+    nodes: list[ClusterNode], endpoints: dict[str, SshEndpoint], image: str,
+) -> Optional[_Outcome]:
+    """Workers first: a worker whose exporters never started is the most
+    precise explanation for the head's target check failing."""
+    wait = config.MONITORING_WAIT_TIMEOUT
+    dcgm = config.CLUSTER_REQUIRE_DCGM
+    for node in nodes:
+        if node.is_head:
+            continue
+        outcome = _run_check(
+            node, endpoints[node.pod_id], "worker monitoring",
+            worker_monitoring_command(wait, dcgm), wait + 60, image,
+            "monitoring",
+        )
+        if outcome is not None:
+            return outcome
+    head = nodes[0]
+    # Up to three waits in a row: supervisord, Grafana health, scrapes.
+    outcome = _run_check(
+        head, endpoints[head.pod_id], "head monitoring stack",
+        head_monitoring_command(len(nodes), wait, dcgm), 3 * wait + 60, image,
+        "monitoring",
+    )
+    # The head check ends with the scrape check, so one verdict covers both.
+    cluster_report.mark("scrape", head.hostname, FAIL if outcome else OK)
+    if outcome is not None:
+        return outcome
+
+    log(f"{head.hostname}: running Grafana check (public proxy)...", indent=2)
+    ok, output = run_grafana_proxy_check(head.pod_id)
+    for line in output.splitlines():
+        log(f"  {line}", indent=2)
+    cluster_report.mark("grafana", head.hostname, OK if ok else FAIL)
+    if not ok:
+        return _fail(head, image, "Grafana not reachable/healthy via proxy on "
+                     f":{config.GRAFANA_PORT}")
+    log(f"{head.hostname}: Grafana check passed", indent=2)
+    return None
+
+
+def _dwell_steps(
+    nodes: list[ClusterNode], endpoints: dict[str, SshEndpoint], image: str,
+) -> Optional[_Outcome]:
+    """One dwell for the whole cluster, then every node must still answer."""
+    if config.DWELL_SEC <= 0:
+        return None
+    log(f"dwelling {config.DWELL_SEC}s and re-probing every node...", indent=2)
+    time.sleep(config.DWELL_SEC)
+    for node in nodes:
+        ok, err = ssh_probe(endpoints[node.pod_id], timeout=8)
+        cluster_report.mark("dwell", node.hostname, OK if ok else FAIL)
+        if not ok:
+            return _fail(node, image, f"container crashed after initial boot "
+                         f"({config.DWELL_SEC}s dwell re-probe failed: {err})")
+    return _log_scan_steps(nodes, image)
+
+
+def _log_scan_steps(nodes: list[ClusterNode], image: str) -> Optional[_Outcome]:
+    for node in nodes:
+        outcome = _run_log_scan_step(node.pod_id, image)
+        if config.LOG_ERROR_SCAN:
+            cluster_report.mark("logs", node.hostname, FAIL if outcome else OK)
+        if outcome is not None:
+            return outcome[0], f"{node.hostname}: {outcome[1]}"
+    return None
+
+
+def _hygiene_rows(group: str) -> list[tuple[str, str, bool]]:
+    return [(f"hygiene:{label}", label, True) for label, _, _ in _hygiene_checks(group)]
+
+
+def _mark_hygiene(group: str, head: ClusterNode, outcome: Optional[_Outcome]) -> None:
+    """The hygiene steps stop at the first failure and name it in the detail
+    (`<label> check failed`): everything before it passed, the rest never ran."""
+    for label, _, _ in _hygiene_checks(group):
+        if outcome is not None and outcome[1] == f"{label} check failed":
+            cluster_report.mark(f"hygiene:{label}", head.hostname, FAIL)
+            return
+        cluster_report.mark(f"hygiene:{label}", head.hostname, OK)
+
+
+def _run_cluster_checks(
+    nodes: list[ClusterNode], image: str, group: str,
+) -> _Outcome:
+    endpoints: dict[str, SshEndpoint] = {}
+    # Members boot in parallel, so waiting on them in turn costs only the
+    # slowest boot, not the sum: one shared deadline for all of them.
+    deadline = time.time() + config.CLUSTER_BOOT_TIMEOUT
+    for node in nodes:
+        log(
+            f"{node.hostname}: waiting for pod {node.pod_id} "
+            f"(ip {node.ip or '?'})",
+            indent=2,
+        )
+        budget = max(int(deadline - time.time()), config.POLL_INTERVAL)
+        state, detail, endpoint = wait_for_running(node.pod_id, timeout=budget)
+        if state != "RUNNING":
+            cluster_report.mark("ssh", node.hostname, FAIL, state.lower())
+            status, why = _classify_non_running(state, detail, node.pod_id, image)
+            return status, (f"{node.hostname}: {why}" if why else why)
+        assert endpoint is not None
+        took = re.search(r"after (\d+)s", detail)
+        cluster_report.mark(
+            "ssh", node.hostname, OK,
+            f"{took.group(1)}s" + (" proxy" if endpoint.pty else "") if took else "",
+        )
+        log(f"{node.hostname}: {detail}", indent=2)
+        endpoints[node.pod_id] = endpoint
+
+    host_cuda = pod_state(nodes[0].pod_id).get("cuda_version") or ""
+    if host_cuda:
+        _set_host_cuda(host_cuda)
+        log(f"host CUDA: {host_cuda}", indent=2)
+
+    for node in nodes:
+        outcome = _node_steps(node, endpoints[node.pod_id], image, group)
+        if outcome is not None:
+            return outcome
+    outcome = _monitoring_steps(nodes, endpoints, image)
+    if outcome is not None:
+        return outcome
+    head = nodes[0]
+    if _created_type() == "SLURM":
+        wait = config.MONITORING_WAIT_TIMEOUT
+        outcome = _run_check(
+            head, endpoints[head.pod_id], "Slurm",
+            slurm_check_command(len(nodes), wait), wait + 180, image, "slurm",
+        )
+        if outcome is not None:
+            return outcome
+    outcome = _run_hygiene_steps(endpoints[head.pod_id], head.pod_id, image, group)
+    _mark_hygiene(group, head, outcome)
+    if outcome is not None:
+        return outcome
+    outcome = _log_scan_steps(nodes, image)
+    if outcome is not None:
+        return outcome
+    outcome = _dwell_steps(nodes, endpoints, image)
+    if outcome is not None:
+        return outcome
+    return "PASS", ""
+
+
+def _created_type() -> str:
+    """The createCluster type that succeeded for the attempt in progress."""
+    report = cluster_report.current()
+    return report.cluster_type if report is not None else ""
+
+
+def _excluded_data_center(nodes: list[ClusterNode]) -> str:
+    """The excluded data center a member landed in, or "" if none did."""
+    excluded = {
+        d.strip().upper()
+        for d in config.CLUSTER_EXCLUDE_DATA_CENTERS.split(",") if d.strip()
+    }
+    if not excluded:
+        return ""
+    for node in nodes:
+        dc = str(pod_state(node.pod_id).get("data_center") or "")
+        report = cluster_report.current()
+        if report is not None and node.is_head:
+            report.data_center = dc
+        if dc.upper() in excluded:
+            return dc
+    return ""
+
+
+def test_cluster_pair(
+    image: str, instance: str, group: str, cuda_pin: str = "", cloud: str = "",
+) -> _Outcome:
+    """test_cluster_pair, plus the report card (printed under SUMMARY) for
+    any cluster it created."""
+    status, detail = "FAIL", "harness error"
+    try:
+        status, detail = _test_cluster_pair(image, instance, group, cuda_pin, cloud)
+        return status, detail
+    finally:
+        cluster_report.end(status, detail)
+
+
+def _test_cluster_pair(
+    image: str, instance: str, group: str, cuda_pin: str = "", cloud: str = "",
+) -> _Outcome:
+    """One Instant Cluster attempt on GPU type `instance`. Same statuses as
+    runner.test_pair. `cuda_pin` and `cloud` are accepted for signature
+    parity and ignored: clusters are secure-cloud only and have no CUDA axis.
+    """
+    del cuda_pin, cloud
+    _set_host_cuda("")
+    _, gpu_id = _log_attempt_header(image, instance, group)
+    gpus_per_node, node_count = _resolve_node_shape(group, gpu_id)
+    if gpus_per_node is None:
+        return "UNAVAILABLE", ""
+    log(
+        f"cluster: {node_count} node(s) x {gpus_per_node} GPU(s), "
+        f"env={config.RUNPOD_ENV}",
+        indent=1,
+    )
+
+    report = ClusterReport(image, gpu_id, node_count, gpus_per_node)
+    report.add_rows(_hygiene_rows(group))
+    report.add_rows([("logs", "log scan", False)])
+    if config.DWELL_SEC > 0:
+        report.add_rows([("dwell", f"alive after {config.DWELL_SEC}s", False)])
+    cluster_report.begin(report)
+    cluster_id, early, early_detail = _create_cluster_with_retries(
+        image, gpu_id, group, node_count, gpus_per_node,
+    )
+    if early:
+        return early, early_detail
+    assert cluster_id is not None
+    report.cluster_id = cluster_id
+    if report.cluster_type == "SLURM":
+        report.add_rows(
+            [("slurm", "Slurm: nodes idle, srun on all", True)], after="grafana",
+        )
+    register_cluster(cluster_id)
+    log(f"cluster {cluster_id} created, waiting for {node_count} member pods", indent=2)
+    try:
+        nodes, why = wait_for_nodes(cluster_id, node_count)
+        if nodes is None:
+            log(f"{why} -- STUCK (trying next instance type)", indent=2)
+            return "STUCK", ""
+        log(
+            "members: " + ", ".join(f"{n.hostname}={n.pod_id}" for n in nodes),
+            indent=2,
+        )
+        dead = _excluded_data_center(nodes)
+        if dead:
+            log(
+                f"placed in excluded data center {dead} (CLUSTER_EXCLUDE_DATA_CENTERS)"
+                " -- deleting, UNAVAILABLE (trying next instance type)",
+                indent=2,
+            )
+            return "UNAVAILABLE", ""
+        return _run_cluster_checks(nodes, image, group)
+    finally:
+        cleanup_cluster(cluster_id)

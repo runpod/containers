@@ -39,10 +39,17 @@ ARG DCGM_PACKAGE=datacenter-gpu-manager-4-cuda12
 # monitoring daemons), and the DCGM runtime (provides libdcgm for the
 # embedded dcgm-exporter). The NVIDIA CUDA apt repo is already configured in
 # the base image.
+# libpmix2t64: base ships SchedMD Slurm, whose mpi/pmix plugin dlopens
+# libpmix.so.2 at runtime, so nothing depends on it. Without it slurmctld and
+# slurmd log "can not load PMIx library" and `srun --mpi=pmix` fails. It lives
+# here, not in base, because only cluster images run Slurm, and adding it to
+# base (with libhwloc-plugins, libxnvctrl0) broke autoresearch cuda1290's
+# torch.compile with CUBLAS_STATUS_INVALID_VALUE.
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         libibverbs1 ibverbs-providers rdma-core ibverbs-utils infiniband-diags perftest \
         supervisor \
+        libpmix2t64 \
         "${DCGM_PACKAGE}=${DCGM_APT_VERSION}" \
         "datacenter-gpu-manager-4-core=${DCGM_APT_VERSION}" && \
     apt-get clean && \

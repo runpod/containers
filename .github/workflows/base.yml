@@ -938,6 +938,86 @@ jobs:
             *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
             *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
 
+  # The per-pod job above proves the image on every CUDA variant; this one
+  # proves the cluster behaviour a single pod can't: node-0 as head, Grafana
+  # on :8889, Prometheus scraping every node. Runs on prod, where customers
+  # run it, on one CUDA variant only: clusters are billed per node, so the
+  # test takes the cheapest GPU type Instant Clusters offer, 2 nodes.
+  test-pytorch-cluster-instant:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: build-pytorch-cluster
+    if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
+    env:
+      # The harness refuses cluster groups on prod unless this is set, so a
+      # local run can't create a prod cluster by accident.
+      ALLOW_PROD_CLUSTERS: "1"
+      # No cluster capacity -> test the image on a single pod instead.
+      CLUSTER_POD_FALLBACK: "1"
+    steps:
+      - name: Check prod credentials
+        id: creds
+        shell: bash
+        env:
+          KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          SSH: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${KEY}" && -n "${SSH}" ]]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Instant Cluster smoke test skipped: set TESTING_RUNPOD_API_KEY and TESTING_RUNPOD_SSH_PRIVATE_KEY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for cu1281
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cluster-refs-cu1281
+          path: /tmp/cluster-refs
+
+      - name: Read refs
+        if: steps.creds.outputs.ok == 'true'
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/cluster-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Instant Cluster smoke test
+        if: steps.creds.outputs.ok == 'true'
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: cluster
+          runpod-env: prod
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          cluster-nodes: "2"
+          # The image ships the Slurm that slurm-init.sh runs, and only a
+          # SLURM cluster starts it; TRAINING is the fallback when there is
+          # no SLURM capacity (the Slurm check is then skipped, not passed).
+          cluster-types: "SLURM,TRAINING"
+          # Cluster capacity comes and goes; don't block a release on it.
+          on-skip: "warn"
+          # 5 retries 300 s apart (~25 min of trying for a cluster, nothing
+          # billed), then the single-pod fallback.
+          skip-retries: "5"
+          skip-retry-delay: "300"
+          skip-retry-backoff: "fixed"
+          # GB10 nodes are arm64; the image is amd64-only.
+          exclude-instances: |
+            *GB10*
+
   # ray-cluster layers Ray onto a PUBLISHED runpod/pytorch-cluster, so it runs
   # after build-pytorch-cluster in the same run, with the same base-selection
   # rule: the in-run cluster tag when that family is part of this build, else

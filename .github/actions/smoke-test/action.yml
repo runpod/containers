@@ -19,10 +19,40 @@ inputs:
         gpu   Put every ref into a single base_gpu group with the
               budget / vRAM / manufacturer filter applied. Use for every
               pure-GPU workflow (autoresearch, pytorch, nvidia-pytorch, rocm).
+        cluster
+              One Instant Cluster per image (node-0 head + workers) instead
+              of a pod: SSH, Jupyter and CUDA on every node, the monitoring
+              stack and Grafana on node-0. For runpod/pytorch-cluster. Needs
+              runpod-env: dev (prod clusters are refused).
       The functional check (nvidia-smi / torch.cuda / rocm-smi / skip) is
       always derived from the IMAGE REF, never from the profile, so the
       same `gpu` profile works regardless of what the image actually is.
     required: true
+  runpod-env:
+    description: |
+      RunPod environment to provision in: 'prod' (default) or 'dev'. Picks
+      the API and proxy hosts; the API key and the registered SSH key must
+      belong to the same environment.
+    required: false
+    default: "prod"
+  cluster-nodes:
+    description: "Pods per Instant Cluster (profile: cluster)"
+    required: false
+    default: "2"
+  cluster-gpus-per-node:
+    description: |
+      GPUs per cluster node (profile: cluster). Empty picks the smallest
+      node size each GPU type offers.
+    required: false
+    default: ""
+  cluster-types:
+    description: |
+      createCluster types to try, in order, for each GPU (profile: cluster),
+      csv: TRAINING, SLURM, APPLICATION, RAY. Set it to the type the image
+      is built for, e.g. "SLURM,TRAINING" for runpod/pytorch-cluster. Empty
+      keeps the harness default (TRAINING,SLURM).
+    required: false
+    default: ""
   runpod-api-key:
     description: "Runpod API key (pod-management permissions required)"
     required: true
@@ -357,6 +387,12 @@ inputs:
       (default 300 → 5, 10, 15, 20, 25 min) to give Runpod capacity time to free up.
     required: false
     default: "300"
+  skip-retry-backoff:
+    description: |
+      'linear' (default): retry round N waits N x skip-retry-delay. 'fixed':
+      every round waits skip-retry-delay.
+    required: false
+    default: "linear"
   registry-auth-name:
     description: |
       Display name of the registry credential in the Runpod account
@@ -486,6 +522,9 @@ runs:
         EXCLUDE_INSTANCES_FOR: ${{ inputs.exclude-instances-for }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
+        CLUSTER_NODES: ${{ inputs.cluster-nodes }}
+        CLUSTER_GPUS_PER_NODE: ${{ inputs.cluster-gpus-per-node }}
+        CLUSTER_TYPES: ${{ inputs.cluster-types }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -533,6 +572,15 @@ runs:
         fi
         if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-autoresearch)
+        fi
+        if [[ "${PROFILE}" == "cluster" ]]; then
+          EXTRA_ARGS+=(--cluster-nodes "${CLUSTER_NODES:-2}")
+          if [[ -n "${CLUSTER_GPUS_PER_NODE}" ]]; then
+            EXTRA_ARGS+=(--cluster-gpus-per-node "${CLUSTER_GPUS_PER_NODE}")
+          fi
+          if [[ -n "${CLUSTER_TYPES}" ]]; then
+            EXTRA_ARGS+=(--cluster-types "${CLUSTER_TYPES}")
+          fi
         fi
         if [[ "${TEST_DCGM_EXPORTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-dcgm-exporter)
@@ -633,6 +681,9 @@ runs:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
         # 'Configure Runpod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
+        # Validated by test_images.py (prod / dev); cluster groups refuse
+        # anything but dev.
+        RUNPOD_ENV: ${{ inputs.runpod-env }}
         # Unknown tier names are dropped by config._parse_cloud_types, which
         # falls back to SECURE, so the raw input is safe to propagate.
         CLOUD_TYPE: ${{ inputs.cloud-type }}
@@ -643,6 +694,7 @@ runs:
         # the exit code — replaces the manual "re-run failed jobs".
         SKIP_RETRIES: ${{ inputs.skip-retries }}
         SKIP_RETRY_DELAY: ${{ inputs.skip-retry-delay }}
+        SKIP_RETRY_BACKOFF: ${{ inputs.skip-retry-backoff }}
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
