@@ -143,7 +143,7 @@ COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
 RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/cache
 
 # Bake ComfyUI + custom nodes into a known location for runtime copy. The
-# patch hash is part of the manifest so start.sh re-syncs existing volumes
+# patch hashes are part of the manifest so start.sh re-syncs existing volumes
 # when a patch is added or changed.
 RUN printf '%s\n' \
     "COMFYUI_VERSION=${COMFYUI_VERSION}" \
@@ -151,7 +151,7 @@ RUN printf '%s\n' \
     "KJNODES_SHA=${KJNODES_SHA}" \
     "CIVICOMFY_SHA=${CIVICOMFY_SHA}" \
     "RUNPODDIRECT_SHA=${RUNPODDIRECT_SHA}" \
-    "PATCHES_SHA256=$(cat /tmp/patches/*.patch | sha256sum | cut -d' ' -f1)" \
+    "$(sha256sum /tmp/patches/*.patch)" \
     > /tmp/build/ComfyUI/.runpod-bundle-version && \
     cp -r /tmp/build/ComfyUI /opt/comfyui-baked
 
