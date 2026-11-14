@@ -58,12 +58,14 @@
          # Create directory if missing
          os.makedirs(abs_path, exist_ok=True)
  
-@@ -318,6 +336,8 @@
+@@ -318,6 +336,10 @@
              return web.json_response({"error": "Path must be absolute"}, status=400)
  
          abs_path = os.path.abspath(path)
-+        if not _is_allowed_dir(abs_path):
-+            return web.json_response({"error": "Folder must be inside a model folder"}, status=400)
++        # Downloads go to <root>/<model folder>, so check those, not the root itself.
++        if not any(_is_allowed_dir(os.path.join(abs_path, get_model_type_folder_name(t)))
++                   for t in folder_paths.folder_names_and_paths):
++            return web.json_response({"error": "No model folder under this root is registered with ComfyUI"}, status=400)
          os.makedirs(abs_path, exist_ok=True)
          if not _set_global_default_root(abs_path):
              return web.json_response({"error": "Failed to persist global root"}, status=500)
