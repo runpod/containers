@@ -1,0 +1,62 @@
+--- a/api_server/routes/internal/internal_routes.py
++++ b/api_server/routes/internal/internal_routes.py
+@@ -5,6 +5,13 @@
+ import app.logger
+ import os
+ 
++
++def _local_only(request):
++    # Runpod image: logs are served to local clients only.
++    if request.remote not in ("127.0.0.1", "::1") or "X-Forwarded-For" in request.headers:
++        raise web.HTTPForbidden()
++
++
+ class InternalRoutes:
+     '''
+     The top level web router for internal routes: /internal/*
+@@ -21,10 +28,12 @@
+     def setup_routes(self):
+         @self.routes.get('/logs')
+         async def get_logs(request):
++            _local_only(request)
+             return web.json_response("".join([(l["t"] + " - " + l["m"]) for l in app.logger.get_logs()]))
+ 
+         @self.routes.get('/logs/raw')
+         async def get_raw_logs(request):
++            _local_only(request)
+             self.terminal_service.update_size()
+             return web.json_response({
+                 "entries": list(app.logger.get_logs()),
+@@ -33,6 +42,7 @@
+ 
+         @self.routes.patch('/logs/subscribe')
+         async def subscribe_logs(request):
++            _local_only(request)
+             json_data = await request.json()
+             client_id = json_data["clientId"]
+             enabled = json_data["enabled"]
+--- a/comfy_extras/nodes_dataset.py
++++ b/comfy_extras/nodes_dataset.py
+@@ -403,6 +403,9 @@
+     Returns:
+         List of saved filenames
+     """
++    # Runpod image: overwrite-mode prefixes must be plain file names.
++    if overwrite and (os.path.basename(prefix) != prefix or prefix in (".", "..")):
++        raise ValueError(f"Invalid filename_prefix {prefix!r}: must be a plain file name")
+     os.makedirs(output_dir, exist_ok=True)
+     saved_files = []
+ 
+--- a/server.py
++++ b/server.py
+@@ -483,7 +483,9 @@
+                 full_output_folder = os.path.join(upload_dir, os.path.normpath(subfolder))
+                 filepath = os.path.abspath(os.path.join(full_output_folder, filename))
+ 
+-                if os.path.commonpath((upload_dir, filepath)) != upload_dir:
++                # Runpod image: the subfolder created below must stay inside upload_dir too.
++                if os.path.commonpath((upload_dir, filepath)) != upload_dir or \
++                        os.path.commonpath((upload_dir, os.path.abspath(full_output_folder))) != upload_dir:
+                     return web.Response(status=400), None, None
+ 
+                 if not os.path.exists(full_output_folder):

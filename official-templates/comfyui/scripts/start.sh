@@ -671,7 +671,10 @@ log_cuda_venv_diagnostics
 cd "$COMFYUI_DIR"
 
 # Array, not a string: argparse needs each flag as its own argv entry.
-COMFY_ARGS=(--listen 0.0.0.0 --port 8188 --enable-cors-header)
+# No --enable-cors-header: bare, it lets any website's page call this ComfyUI
+# from the visitor's browser. Owners who need it add it with their own origin
+# to comfyui_args.txt.
+COMFY_ARGS=(--listen 0.0.0.0 --port 8188)
 
 # One array element per word, since a line may hold `--foo bar`.
 if [ -s "$ARGS_FILE" ]; then
