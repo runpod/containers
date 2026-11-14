@@ -1,0 +1,71 @@
+--- a/custom_nodes/Civicomfy/server/routes/DownloadModel.py
++++ b/custom_nodes/Civicomfy/server/routes/DownloadModel.py
+@@ -266,6 +266,9 @@
+             except Exception:
+                 base_output_dir = get_model_dir(model_type_value)
+         output_dir = os.path.join(base_output_dir, sub_path) if sub_path else base_output_dir
++        from ..routes.GetModelDirs import _is_allowed_dir
++        if not _is_allowed_dir(output_dir):
++            raise web.HTTPBadRequest(reason="Download location must be inside a model folder")
+         # Ensure directory exists (including subdirectories)
+         try:
+             os.makedirs(output_dir, exist_ok=True)
+--- a/custom_nodes/Civicomfy/server/routes/GetModelDirs.py
++++ b/custom_nodes/Civicomfy/server/routes/GetModelDirs.py
+@@ -20,6 +20,18 @@
+ CUSTOM_ROOTS_FILE = os.path.join(PLUGIN_ROOT, "custom_roots.json")
+ ROOT_SETTINGS_FILE = os.path.join(PLUGIN_ROOT, "root_settings.json")
+ GLOBAL_ROOT_KEY = "global_default_root"
++
++def _is_allowed_dir(path):
++    """Runpod image: Civicomfy only reads and writes inside ComfyUI's model folders, never custom_nodes."""
++    p = os.path.realpath(path)
++    def inside(base):
++        base = os.path.realpath(base)
++        return os.path.commonpath([base, p]) == base
++    if any(inside(d) for d in folder_paths.get_folder_paths("custom_nodes")):
++        return False
++    bases = [folder_paths.models_dir] + [d for key, value in folder_paths.folder_names_and_paths.items()
++                                         if key != "custom_nodes" for d in value[0]]
++    return any(inside(b) for b in bases)
+ 
+ def _load_custom_roots():
+     try:
+@@ -173,6 +185,8 @@
+     root = (request.query.get("root") or "").strip()
+     try:
+         base_dir = os.path.abspath(root) if root else _get_effective_base_dir(model_type)
++        if not _is_allowed_dir(base_dir):
++            return web.json_response({"error": "Folder must be inside a model folder"}, status=400)
+         os.makedirs(base_dir, exist_ok=True)
+         subdirs = _list_subdirs(base_dir)
+         global_root = get_global_default_root()
+@@ -199,6 +213,8 @@
+         # If client provided an explicit root, prefer it
+         base_dir = (data.get("root") or "").strip()
+         base_dir = os.path.abspath(base_dir) if base_dir else _get_effective_base_dir(model_type)
++        if not _is_allowed_dir(base_dir):
++            return web.json_response({"error": "Folder must be inside a model folder"}, status=400)
+         os.makedirs(base_dir, exist_ok=True)
+ 
+         # Normalize and sanitize each part; disallow absolute and traversal
+@@ -282,6 +298,8 @@
+             return web.json_response({"error": "Path must be absolute"}, status=400)
+         # Normalize to absolute path
+         abs_path = os.path.abspath(abs_path)
++        if not _is_allowed_dir(abs_path):
++            return web.json_response({"error": "Folder must be inside a model folder"}, status=400)
+         # Create directory if missing
+         os.makedirs(abs_path, exist_ok=True)
+ 
+@@ -318,6 +336,10 @@
+             return web.json_response({"error": "Path must be absolute"}, status=400)
+ 
+         abs_path = os.path.abspath(path)
++        # Downloads go to <root>/<model folder>, so check those, not the root itself.
++        if not any(_is_allowed_dir(os.path.join(abs_path, get_model_type_folder_name(t)))
++                   for t in folder_paths.folder_names_and_paths):
++            return web.json_response({"error": "No model folder under this root is registered with ComfyUI"}, status=400)
+         os.makedirs(abs_path, exist_ok=True)
+         if not _set_global_default_root(abs_path):
+             return web.json_response({"error": "Failed to persist global root"}, status=500)
