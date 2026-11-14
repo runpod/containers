@@ -1,27 +1,30 @@
 --- a/custom_nodes/ComfyUI-RunpodDirect/__init__.py
 +++ b/custom_nodes/ComfyUI-RunpodDirect/__init__.py
-@@ -447,7 +447,7 @@
+@@ -447,9 +447,9 @@
              expected_hash_type = None
  
          # Validate save_path
 -        if save_path not in folder_paths.folder_names_and_paths:
 +        if save_path not in folder_paths.folder_names_and_paths or save_path in ("custom_nodes", "configs"):
              return web.json_response(
-                 {"error": f"Invalid save_path: {save_path}. Must be one of: {list(folder_paths.folder_names_and_paths.keys())}"},
-                 status=400
-@@ -489,6 +489,12 @@
+-                {"error": f"Invalid save_path: {save_path}. Must be one of: {list(folder_paths.folder_names_and_paths.keys())}"},
++                {"error": f"Invalid save_path: {save_path}. Must be one of: {[k for k in folder_paths.folder_names_and_paths if k not in ('custom_nodes', 'configs')]}"},
                  status=400
              )
  
+@@ -488,6 +488,12 @@
+                 {"error": "Security error: attempted directory escape"},
+                 status=400
+             )
++
 +        # Never write into code: a pack may register a model folder inside custom_nodes
 +        for code_dir in folder_paths.get_folder_paths("custom_nodes"):
 +            code_dir = os.path.realpath(code_dir)
 +            if os.path.commonpath([code_dir, os.path.realpath(output_dir)]) == code_dir:
 +                return web.json_response({"error": f"Invalid save_path: {save_path}"}, status=400)
-+
+ 
          temp_output_path = f"{output_path}.runpoddirect.part"
  
-         # If a previous session crashed mid-download, remove stale temp file and start clean.
 @@ -664,6 +670,15 @@
          return None
  
