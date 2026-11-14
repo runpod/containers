@@ -10,7 +10,16 @@
      if json_data['version'] != 'unknown' and selected_version != 'unknown':
          if skip_post_install:
              if cnr_id in core.unified_manager.nightly_inactive_nodes or cnr_id in core.unified_manager.cnr_inactive_nodes:
-@@ -1670,6 +1673,8 @@
+@@ -1649,6 +1652,8 @@
+ 
+ @routes.post("/manager/queue/update_comfyui")
+ async def update_comfyui(request):
++    # Runpod image: disabled; the image pins the ComfyUI version.
++    return web.Response(status=403, text="Updating ComfyUI is disabled on this image")
+     resp = _reject_simple_form_content_type(request)
+     if resp is not None:
+         return resp
+@@ -1670,6 +1675,8 @@
  
  @routes.post("/comfyui_manager/comfyui_switch_version")
  async def comfyui_switch_version(request):
