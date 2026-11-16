@@ -36,10 +36,20 @@ onnxruntime-gpu, nunchaku) are built for one CUDA version, so the variants
 cannot share them.
 
 When you switch a volume to a different tag, the first start creates that
-tag's venv and reinstalls the requirements of your custom nodes into it.
-Packages you installed by hand are not carried over; the startup log prints
-the command that lists them. The previous venv is left in place so you can go
-back. If you are not going back, delete it to free space.
+tag's venv and fills it from the previous one: the packages are copied over at
+the versions you had (hard links on the same volume, so it takes seconds and
+no extra space), then your custom nodes' requirements are checked in one pass.
+CUDA-specific packages (the ones above) and packages installed from a URL or
+local path are removed from the copy. Node requirements that list them get
+builds that match the new tag; ones you installed by hand need installing
+again, and the startup log prints the command that lists them. The previous
+venv is left in place so you can go back. If you are not going back, delete it
+to free space.
+
+This runs on every start where the tag's venv is missing. If you restore
+`/workspace` from your own snapshot instead of using a network volume, take
+the snapshot after one start on the new tag so that it includes the new venv.
+Otherwise every pod repeats the migration.
 
 If you used the `-cuda13.0` image before it had its own venv, your
 `.venv-cu128` holds packages built for CUDA 13.0. Delete
@@ -127,6 +137,32 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 --max-batch-size 8
 --preview-method auto
 ```
+
+ComfyUI starts without CORS headers, so pages on other websites cannot call it
+from a browser. If your own site needs to, add
+`--enable-cors-header https://your.site` here.
+
+## SageAttention
+
+The `-cuda12.8`, `-cuda13.0` and `-cuda13.2` images ship [SageAttention](https://github.com/thu-ml/SageAttention) 2.2.0, prebuilt for their exact PyTorch and CUDA by [runpod/sageattention](https://github.com/runpod/sageattention), so there is nothing to compile. It is off by default; to turn it on, add this line to `comfyui_args.txt` and restart the pod:
+
+```
+--use-sage-attention
+```
+
+It has kernels for these GPUs:
+
+| compute capability | GPUs |
+|---|---|
+| 8.0 | A100 |
+| 8.6 | A40, RTX A6000, RTX 3090 |
+| 8.9 | L40S, L4, RTX 4090, RTX 6000 Ada |
+| 9.0 | H100, H200 |
+| 12.0 | RTX 5090, RTX PRO 6000 Blackwell |
+
+On any other GPU (B200, B300, V100, T4…) ComfyUI falls back to PyTorch attention, and the startup log warns about it. On an image without SageAttention, startup drops the flag with a warning rather than letting ComfyUI exit.
+
+Do not `pip install sageattention` on top: the PyPI package is the older 1.x release, and it would shadow the prebuilt one.
 
 ## Directory Structure
 
