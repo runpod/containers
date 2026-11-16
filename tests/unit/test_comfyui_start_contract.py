@@ -334,7 +334,12 @@ class FileBrowser(Sandbox):
     def test_no_password_does_not_start_filebrowser(self) -> None:
         calls, out = self.start({}, db_exists=True)
         self.assertEqual(calls, [], "not even the CLI may run")
-        self.assertIn("FILEBROWSER_PASSWORD is not set", out)
+        self.assertIn("FILEBROWSER_PASSWORD is not set, so FileBrowser was not started.", out)
+        # Boxed like the ComfyUI banner, so it is not lost above ComfyUI's
+        # startup output.
+        box = out.split("=============================================")
+        self.assertEqual(len(box), 3, out)
+        self.assertIn("FileBrowser was not started", box[1])
 
     def test_no_default_password_anywhere(self) -> None:
         self.assertNotIn("adminadmin12", function("start_filebrowser"))

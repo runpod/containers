@@ -219,9 +219,12 @@ def create_pod(
     env = {}
     if test_jupyter:
         env["JUPYTER_PASSWORD"] = config.JUPYTER_TEST_PASSWORD
-    # The ComfyUI image does not start ComfyUI without a password.
+    # The ComfyUI image starts neither ComfyUI nor FileBrowser without a
+    # password, and its workflow probes FileBrowser on 8080. FileBrowser's
+    # login page answers 200, so the port check needs no sign-in.
     if group and config.GROUP_TEST_COMFYUI.get(group, False):
         env["COMFYUI_PASSWORD"] = config.COMFYUI_TEST_PASSWORD
+        env["FILEBROWSER_PASSWORD"] = config.FILEBROWSER_TEST_PASSWORD
     if env:
         body["env"] = env
     if config.REGISTRY_AUTH_ID:

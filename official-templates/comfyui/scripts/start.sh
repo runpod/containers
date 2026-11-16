@@ -169,9 +169,12 @@ start_filebrowser() {
     elif [ -n "${FILEBROWSER_PASSWORD:-}" ]; then
         method=json
     else
-        echo "FILEBROWSER_PASSWORD is not set; skipping FileBrowser. Set FILEBROWSER_PASSWORD"
-        echo "(12 or more characters) and restart the pod, or set FILEBROWSER_DISABLE_AUTH=true"
-        echo "to run it with no password (understand the risk)."
+        echo "============================================="
+        echo "  FILEBROWSER_PASSWORD is not set, so FileBrowser was not started."
+        echo "  Set FILEBROWSER_PASSWORD, at least 12 characters, on the pod"
+        echo "  and restart it; sign in as admin with it. To run with no"
+        echo "  password anyway, set FILEBROWSER_DISABLE_AUTH=true instead."
+        echo "============================================="
         return 0
     fi
 

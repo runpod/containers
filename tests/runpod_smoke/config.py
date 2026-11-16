@@ -211,6 +211,10 @@ COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
 # every request through :8188 has to carry it. Not a secret, for the same
 # reasons as JUPYTER_TEST_PASSWORD.
 COMFYUI_TEST_PASSWORD = "smoke-comfyui-password"
+# FILEBROWSER_PASSWORD for the same pods: the image does not start FileBrowser
+# without one. FileBrowser rejects passwords under 12 characters and common
+# ones, and then does not start either.
+FILEBROWSER_TEST_PASSWORD = "smoke-filebrowser-password"
 COMFYUI_WORKFLOW = os.environ.get(
     "COMFYUI_WORKFLOW",
     os.path.join(_TESTS_DIR, "comfyui", "workflows", "gsl_starter_1_1.api.json"),

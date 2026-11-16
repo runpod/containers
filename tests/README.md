@@ -648,8 +648,6 @@ pytorch:
 | `PORT_WAIT_TIMEOUT` | `300` | Seconds the SSH diagnostic probe waits for a `test_ports` service to bind and return HTTP 200. |
 | `PORT_PROXY_TIMEOUT` | `300` | Seconds the public-proxy check retries each `test_ports` service before failing. |
 | `COMFYUI_PORT` | `8188` | HTTP port exposed for the ComfyUI public-proxy checks. |
-
-Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`), since the image does not start ComfyUI without one.
 | `COMFYUI_WORKFLOW` | `tests/comfyui/workflows/gsl_starter_1_1.api.json` | API workflow submitted by the functional test. |
 | `COMFYUI_MODELS_MANIFEST` | `tests/comfyui/models.json` | Models provisioned through ComfyUI-RunpodDirect before the workflow runs. |
 | `COMFYUI_WAIT_TIMEOUT` | `300` | Maximum wait for ComfyUI `/system_stats`. |
@@ -657,6 +655,8 @@ Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `1800` | Maximum wait for each functional-test model download. |
 | `COMFYUI_GEN_TIMEOUT` | `600` | Maximum wait for workflow execution and its image output. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Directory where validated ComfyUI PNGs are retained for artifact upload. |
+
+Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`) and `FILEBROWSER_PASSWORD=smoke-filebrowser-password` (`config.FILEBROWSER_TEST_PASSWORD`), since the image starts neither ComfyUI nor FileBrowser (probed on 8080) without one.
 
 
 ## Functional check
