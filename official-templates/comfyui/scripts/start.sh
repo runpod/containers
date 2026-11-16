@@ -629,6 +629,57 @@ PY
     echo "============================================="
 }
 
+# The image ships SageAttention in the system site-packages, which the venv
+# reaches through --system-site-packages. A copy installed into the venv (pip
+# install, or a custom node's requirements) comes first on sys.path and is the
+# one ComfyUI and custom nodes import, so say so — and when it is older than
+# ours, how to drop it. Reads dist-info only: importing needs CUDA.
+log_sageattention_override() {
+    # Fail open: a crashed probe must not abort startup (set -e).
+    VENV_DIR="$VENV_DIR" python - <<'PY' || true
+import importlib.metadata as md
+import os
+import re
+import sys
+
+venv = os.path.realpath(sys.prefix) + os.sep
+
+
+def find(in_venv):
+    for entry in sys.path:
+        if not entry or not os.path.isdir(entry):
+            continue
+        if (os.path.realpath(entry) + os.sep).startswith(venv) != in_venv:
+            continue
+        for dist in md.distributions(path=[entry]):
+            if re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower() == "sageattention":
+                return dist
+    return None
+
+
+def release(version):
+    # "2.2.0+torch2.10.0.cu128.sm90fix1" -> (2, 2, 0); the local part is the build
+    parts = [int(n) for n in re.findall(r"\d+", version.split("+")[0])[:3]]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+user, bundled = find(True), find(False)
+if user is None or bundled is None:
+    sys.exit(0)
+pip = os.path.join(os.environ["VENV_DIR"], "bin", "pip")
+if release(user.version) < release(bundled.version):
+    print(f"WARNING: SageAttention {user.version} installed in {os.environ['VENV_DIR']} overrides "
+          f"the pre-installed {bundled.version}, which is newer and built for this image's "
+          "PyTorch and CUDA.")
+    print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
+elif user.version != bundled.version:
+    print(f"NOTE: using SageAttention {user.version} installed in {os.environ['VENV_DIR']} "
+          f"instead of the pre-installed {bundled.version}.")
+    print(f"  If it fails to load, uninstall it to use the pre-installed one: "
+          f"{pip} uninstall -y sageattention")
+PY
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                     #
 # ---------------------------------------------------------------------------- #
@@ -866,6 +917,7 @@ time python -m pip --version
 sync_comfyui_pinned_packages
 
 log_cuda_venv_diagnostics
+log_sageattention_override
 
 # Start ComfyUI — keep container alive if it crashes so SSH/Jupyter remain accessible
 cd "$COMFYUI_DIR"

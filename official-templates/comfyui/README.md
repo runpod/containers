@@ -103,7 +103,7 @@ It has kernels for these GPUs:
 
 On any other GPU (B200, B300, V100, T4…) ComfyUI falls back to PyTorch attention, and the startup log warns about it. On an image without SageAttention, startup drops the flag with a warning rather than letting ComfyUI exit.
 
-Do not `pip install sageattention` on top: the PyPI package is the older 1.x release, and it would shadow the prebuilt one.
+Do not `pip install sageattention` on top: the PyPI package is the older 1.x release, and it would shadow the prebuilt one. A SageAttention installed in the ComfyUI venv (by hand or by a custom node) always takes precedence over the pre-installed one; the startup log names it, and when it is older, gives the `pip uninstall` command that brings the pre-installed one back.
 
 ## Directory Structure
 
