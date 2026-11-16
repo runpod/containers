@@ -3,10 +3,10 @@ ComfyUI-Manager's security settings and user-supplied ComfyUI arguments.
 
 Like test_jupyter_contract, each test runs the real shell function pulled out
 of official-templates/comfyui/scripts/start.sh, with fakes on PATH where it
-calls out, and checks what it did. The rules are the Jupyter ones: a password
-variable means it is enforced, an explicit *_DISABLE_AUTH=true runs without
-one, and neither means the service does not start. No password ever reaches
-the output, which is the pod log.
+calls out, and checks what it did. ComfyUI and FileBrowser always require a
+password: the variable set means it is enforced, and without it the service
+does not start. Unlike Jupyter there is no *_DISABLE_AUTH opt-out. No password
+ever reaches the output, which is the pod log.
 """
 
 import argparse
@@ -90,17 +90,13 @@ class ComfyUIAuthMode(Sandbox):
         self.assertEqual(self.mode({})[0], "off")
         self.assertEqual(self.mode({"COMFYUI_PASSWORD": ""})[0], "off")
 
-    def test_disable_auth_is_the_only_way_to_run_without(self) -> None:
+    def test_there_is_no_opt_out(self) -> None:
+        """COMFYUI_DISABLE_AUTH, which an earlier rc honoured, changes nothing."""
         mode, out = self.mode({"COMFYUI_DISABLE_AUTH": "true"})
-        self.assertEqual(mode, "disabled")
-        self.assertIn("NO authentication", out)
-        for value in ("1", "yes", "TRUE", "True", " true"):
-            with self.subTest(value=value):
-                self.assertEqual(self.mode({"COMFYUI_DISABLE_AUTH": value})[0], "off")
-
-    def test_disable_auth_wins_like_jupyter(self) -> None:
+        self.assertEqual(mode, "off")
+        self.assertNotIn("NO authentication", out)
         mode, out = self.mode({"COMFYUI_DISABLE_AUTH": "true", "COMFYUI_PASSWORD": SECRET})
-        self.assertEqual(mode, "disabled")
+        self.assertEqual(mode, "proxy")
         self.assertNotIn(SECRET, out)
 
 
@@ -126,6 +122,15 @@ class MainProgram(unittest.TestCase):
         shutdown = function("on_shutdown")
         loop = shutdown.index('kill "$PROXY_PID"')
         self.assertLess(loop, shutdown.index('pkill -TERM -f "$AUTH_PROXY"'))
+
+    def test_no_opt_out_variables(self) -> None:
+        """ComfyUI and FileBrowser always need a password; only Jupyter keeps
+        its JUPYTER_DISABLE_AUTH."""
+        for name in ("COMFYUI_DISABLE_AUTH", "FILEBROWSER_DISABLE_AUTH", "noauth\n"):
+            self.assertNotIn(name, self.text.replace("switched to noauth.", ""))
+        code = "\n".join(line for line in self.text.splitlines()
+                         if not line.lstrip().startswith("#"))
+        self.assertNotIn("--listen 0.0.0.0", code)
 
     def test_no_permissive_cors(self) -> None:
         launch = self.text[self.text.index("COMFY_ARGS=("):]
@@ -213,11 +218,14 @@ class ComfyArgs(Sandbox):
         parsed = self.parse(args)
         self.assertEqual((parsed.listen, parsed.port), ("127.0.0.1", 18188))
 
-    def test_disabled_listens_on_the_public_port(self) -> None:
-        args, port = self.build("disabled", "")
-        self.assertEqual(port, "8188")
-        parsed = self.parse(args)
-        self.assertEqual((parsed.listen, parsed.port), ("0.0.0.0", 8188))
+    def test_no_mode_puts_comfyui_on_the_network(self) -> None:
+        """There is no opt-out: whatever the mode says, ComfyUI is loopback-only."""
+        for mode in ("proxy", "disabled", ""):
+            with self.subTest(mode=mode):
+                args, port = self.build(mode, "")
+                self.assertEqual(port, "18188")
+                parsed = self.parse(args)
+                self.assertEqual((parsed.listen, parsed.port), ("127.0.0.1", 18188))
 
     def test_abbreviated_flags_cannot_open_comfyui(self) -> None:
         """argparse takes `--lis` for --listen; the script's own flags come
@@ -368,18 +376,22 @@ class FileBrowser(Sandbox):
         self.assertIn("<FILEBROWSER_PASSWORD>", out)
         self.assertNotIn(SECRET, out)
 
-    def test_disable_auth_runs_noauth(self) -> None:
+    def test_there_is_no_opt_out(self) -> None:
+        """FILEBROWSER_DISABLE_AUTH, which an earlier rc honoured, changes
+        nothing: without a password FileBrowser stays off."""
         calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": "true"},
                                 db_exists=True, FB_HAS_ADMIN="1")
-        self.assertTrue(any("--auth.method=noauth" in c for c in calls))
-        self.assertFalse(any("users update" in c for c in calls),
-                         "the stored password is kept for when the opt-out goes")
-        self.assertTrue(self.served(calls))
-        self.assertIn("NO authentication", out)
-
-    def test_disable_auth_requires_the_exact_string_true(self) -> None:
-        calls, _ = self.start({"FILEBROWSER_DISABLE_AUTH": "1"}, db_exists=True)
         self.assertEqual(calls, [])
+        self.assertIn("FileBrowser was not started", out)
+
+    def test_login_is_forced_back_on(self) -> None:
+        """A database left on noauth, by hand or by an earlier rc, is switched
+        back to a login on the next start."""
+        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET, "FILEBROWSER_DISABLE_AUTH": "true"},
+                              db_exists=True, FB_HAS_ADMIN="1")
+        self.assertTrue(any("--auth.method=json" in c for c in calls))
+        self.assertFalse(any("noauth" in c for c in calls))
+        self.assertTrue(self.served(calls))
 
 
 if __name__ == "__main__":

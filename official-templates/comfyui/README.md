@@ -49,27 +49,25 @@ If you used the `-cuda13.0` image before it had its own venv, your
 ## Access
 
 Every `/http` port is reachable by anyone who has the pod's proxy URL, so
-each one needs a password. All three web services work the same way: set the
-password variable and the service requires it; set the `*_DISABLE_AUTH=true`
-variable and it runs with no password; set neither and it does not start, and
-the pod log says why. When both are set, the opt-out wins. Passwords are never
-written to the pod log.
+each one needs a password. ComfyUI and FileBrowser always require one: set the
+password variable and the service requires it; leave it unset and the service
+does not start, and the pod log says why. There is no way to run either of
+them without a password. Passwords are never written to the pod log.
 
-| port | service | password variable | opt-out |
+| port | service | password variable | without a password |
 |---|---|---|---|
-| `8188` | ComfyUI | `COMFYUI_PASSWORD` | `COMFYUI_DISABLE_AUTH=true` |
-| `8080` | FileBrowser, rooted at `/workspace` | `FILEBROWSER_PASSWORD` | `FILEBROWSER_DISABLE_AUTH=true` |
-| `8888` | JupyterLab, rooted at `/workspace` | `JUPYTER_PASSWORD` | `JUPYTER_DISABLE_AUTH=true` |
+| `8188` | ComfyUI | `COMFYUI_PASSWORD` (12+ characters) | not started |
+| `8080` | FileBrowser, rooted at `/workspace` | `FILEBROWSER_PASSWORD` (12+ characters) | not started |
+| `8888` | JupyterLab, rooted at `/workspace` | `JUPYTER_PASSWORD` | not started, unless `JUPYTER_DISABLE_AUTH=true` |
 
 - `22`: SSH, key only (set `PUBLIC_KEY`, or add an SSH key to your Runpod account). No root password is generated or logged.
 
 ### ComfyUI (`8188`)
 
-ComfyUI has no login of its own. With `COMFYUI_PASSWORD` set, it listens only
-inside the pod, and port 8188 is served by a small proxy that asks for the
-password on every request, including the websocket the UI uses. The password
-must be at least 12 characters; a shorter one counts as not set, and ComfyUI
-does not start.
+ComfyUI has no login of its own, so it listens only inside the pod, and port
+8188 is served by a small proxy that asks for `COMFYUI_PASSWORD` on every
+request, including the websocket the UI uses. The password must be at least 12
+characters; a shorter one counts as not set, and ComfyUI does not start.
 
 - **Browser:** open the `:8188` URL. The browser asks for a username and
   password. Any username works; the password is `COMFYUI_PASSWORD`. You can
@@ -86,12 +84,6 @@ does not start.
   even while that visitor is signed in. Opening a link to the UI from another
   site still works. Clients that are not browsers are not affected.
 
-`COMFYUI_DISABLE_AUTH=true` serves ComfyUI directly on 8188 with no password.
-Anyone with the URL can then run workflows on your GPU, and can install
-custom nodes through ComfyUI-Manager. A custom node runs its own code on the
-pod, so that gives them a shell, your files, and the pod's environment
-variables.
-
 `--listen` and `--port` in `comfyui_args.txt` are ignored, with a warning in
 the log, because the start script sets them.
 
@@ -102,9 +94,10 @@ Installing from a git URL or a pip package name does not.
 
 ### FileBrowser (`8080`)
 
-Sign in as `admin` with `FILEBROWSER_PASSWORD`. FileBrowser requires at least
-12 characters and rejects common passwords. If yours is rejected, the log says
-so and FileBrowser does not start. The admin password is reset to
+Sign in as `admin` with `FILEBROWSER_PASSWORD`. Without it, FileBrowser does
+not start. FileBrowser requires at least 12 characters and rejects common
+passwords. If yours is rejected, the log says so and FileBrowser does not
+start. The admin password is reset to
 `FILEBROWSER_PASSWORD` on every start. This also replaces the `adminadmin12`
 default that older versions of this image created.
 

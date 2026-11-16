@@ -10,8 +10,8 @@ OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
 BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
-# 8188 is the port the template exposes. With a password set, the proxy owns
-# it and ComfyUI listens on loopback only, on the internal port.
+# 8188 is the port the template exposes. The password proxy owns it, and
+# ComfyUI listens on loopback only, on the internal port.
 COMFYUI_PUBLIC_PORT=8188
 COMFYUI_INTERNAL_PORT=18188
 AUTH_PROXY="/opt/comfyui-auth-proxy/auth_proxy.py"
@@ -154,26 +154,19 @@ filebrowser_cli() {
     return 1
 }
 
-# Same contract as Jupyter: FILEBROWSER_DISABLE_AUTH=true runs it with no
-# login, a set FILEBROWSER_PASSWORD is the admin password, and anything else
-# leaves FileBrowser off. Images before this one created admin with the
-# published default adminadmin12 whenever FILEBROWSER_PASSWORD was unset, so
-# admin's password is set from the env on every start rather than only when
-# the database is first created.
+# FileBrowser always requires a login: a set FILEBROWSER_PASSWORD is the admin
+# password, and without one FileBrowser is not started. There is no opt-out.
+# Images before this one created admin with the published default
+# adminadmin12 whenever FILEBROWSER_PASSWORD was unset, so admin's password is
+# set from the env on every start rather than only when the database is first
+# created, and the login method is forced back to json in case a database was
+# switched to noauth.
 start_filebrowser() {
-    local method
-    if [ "${FILEBROWSER_DISABLE_AUTH:-}" = "true" ]; then
-        echo "WARNING: FILEBROWSER_DISABLE_AUTH=true -- starting FileBrowser with NO authentication."
-        echo "WARNING: anyone with this pod's :8080 proxy URL can read, change and delete everything in /workspace."
-        method=noauth
-    elif [ -n "${FILEBROWSER_PASSWORD:-}" ]; then
-        method=json
-    else
+    if [ -z "${FILEBROWSER_PASSWORD:-}" ]; then
         echo "============================================="
         echo "  FILEBROWSER_PASSWORD is not set, so FileBrowser was not started."
         echo "  Set FILEBROWSER_PASSWORD, at least 12 characters, on the pod"
-        echo "  and restart it; sign in as admin with it. To run with no"
-        echo "  password anyway, set FILEBROWSER_DISABLE_AUTH=true instead."
+        echo "  and restart it; sign in as admin with it."
         echo "============================================="
         return 0
     fi
@@ -187,23 +180,16 @@ start_filebrowser() {
         fi
     fi
 
-    if ! filebrowser_cli config set --auth.method="$method"; then
+    if ! filebrowser_cli config set --auth.method=json; then
         echo "ERROR: could not set FileBrowser's login method (see above); it was not started."
         return 0
     fi
 
-    # admin is user 1, which noauth signs every visitor in as, so it has to
-    # exist in both modes. Under noauth its password is never used, and an
-    # existing one is left alone for when the opt-out is removed.
     local ok=1
     if filebrowser_cli users find admin > /dev/null; then
-        if [ "$method" = json ]; then
-            filebrowser_cli users update admin --password "$FILEBROWSER_PASSWORD" || ok=0
-        fi
-    elif [ "$method" = json ]; then
-        filebrowser_cli users add admin "$FILEBROWSER_PASSWORD" --perm.admin || ok=0
+        filebrowser_cli users update admin --password "$FILEBROWSER_PASSWORD" || ok=0
     else
-        filebrowser_cli users add admin "$(openssl rand -base64 24)" --perm.admin || ok=0
+        filebrowser_cli users add admin "$FILEBROWSER_PASSWORD" --perm.admin || ok=0
     fi
     if [ "$ok" = 0 ]; then
         echo "ERROR: could not set the FileBrowser admin password (see above), so FileBrowser"
@@ -215,25 +201,17 @@ start_filebrowser() {
     nohup filebrowser -d "$DB_FILE" &> /filebrowser.log &
 }
 
-# Decides how ComfyUI is served, following the Jupyter contract above:
-#   COMFYUI_DISABLE_AUTH=true  ComfyUI on 0.0.0.0:8188 with no password
-#   COMFYUI_PASSWORD set       ComfyUI on loopback, the password proxy on 8188
-#   neither                    ComfyUI is not started
+# Decides whether ComfyUI is served. It always requires a password; there is
+# no opt-out:
+#   COMFYUI_PASSWORD set   ComfyUI on loopback, the password proxy on 8188
+#   not set                ComfyUI is not started
 # A password shorter than COMFYUI_PASSWORD_MIN_LENGTH counts as not set: the
 # URL is public, so a short one could be guessed.
-# Sets COMFYUI_AUTH_MODE to proxy, disabled or off, and for off,
-# COMFYUI_OFF_REASON to finish the sentence "COMFYUI_PASSWORD ...". The
-# password is never printed.
+# Sets COMFYUI_AUTH_MODE to proxy or off, and for off, COMFYUI_OFF_REASON to
+# finish the sentence "COMFYUI_PASSWORD ...". The password is never printed.
 resolve_comfyui_auth() {
     COMFYUI_OFF_REASON=""
-    if [ "${COMFYUI_DISABLE_AUTH:-}" = "true" ]; then
-        echo "WARNING: COMFYUI_DISABLE_AUTH=true -- starting ComfyUI with NO authentication."
-        echo "WARNING: anyone with this pod's :8188 proxy URL can run workflows on your GPU and"
-        echo "WARNING: install custom nodes through ComfyUI-Manager, which runs their code on the"
-        echo "WARNING: pod: that is a shell, your files in /workspace and the pod's environment"
-        echo "WARNING: variables."
-        COMFYUI_AUTH_MODE=disabled
-    elif [ -z "${COMFYUI_PASSWORD:-}" ]; then
+    if [ -z "${COMFYUI_PASSWORD:-}" ]; then
         COMFYUI_AUTH_MODE=off
         COMFYUI_OFF_REASON="is not set"
     elif [ "${#COMFYUI_PASSWORD}" -lt "$COMFYUI_PASSWORD_MIN_LENGTH" ]; then
@@ -304,7 +282,8 @@ append_user_args() {
 }
 
 # Sets COMFY_ARGS (an array: argparse needs each flag as its own argv entry)
-# and COMFY_LISTEN_PORT from COMFYUI_AUTH_MODE and $ARGS_FILE.
+# and COMFY_LISTEN_PORT from $ARGS_FILE. ComfyUI always listens on loopback,
+# on the internal port; only the password proxy is reachable from outside.
 # The script's --listen and --port go last. argparse keeps the last value
 # given and accepts any unambiguous prefix of a flag, so a `--lis 0.0.0.0`
 # that append_user_args does not recognise is still overridden by them.
@@ -313,13 +292,8 @@ append_user_args() {
 build_comfy_args() {
     COMFY_ARGS=()
     append_user_args
-    if [ "$COMFYUI_AUTH_MODE" = proxy ]; then
-        COMFY_LISTEN_PORT=$COMFYUI_INTERNAL_PORT
-        COMFY_ARGS+=(--listen 127.0.0.1 --port "$COMFY_LISTEN_PORT")
-    else
-        COMFY_LISTEN_PORT=$COMFYUI_PUBLIC_PORT
-        COMFY_ARGS+=(--listen 0.0.0.0 --port "$COMFY_LISTEN_PORT")
-    fi
+    COMFY_LISTEN_PORT=$COMFYUI_INTERNAL_PORT
+    COMFY_ARGS+=(--listen 127.0.0.1 --port "$COMFY_LISTEN_PORT")
 }
 
 # ComfyUI-Manager's security settings, pinned rather than inherited from
@@ -738,8 +712,7 @@ if [ "$COMFYUI_AUTH_MODE" = off ]; then
     echo "  ComfyUI has no login of its own: without a password, anyone"
     echo "  with this pod's :8188 URL could use your GPU and run code here."
     echo "  Set COMFYUI_PASSWORD, at least $COMFYUI_PASSWORD_MIN_LENGTH characters, on the"
-    echo "  pod and restart it; the browser then asks for it. To run with"
-    echo "  no password anyway, set COMFYUI_DISABLE_AUTH=true instead."
+    echo "  pod and restart it; the browser then asks for it."
     echo "  SSH, JupyterLab and FileBrowser are not affected."
     echo "============================================="
     hold_pod
@@ -912,10 +885,8 @@ build_comfy_args
 # ERR trap would also fire on the shutdown path and hold the pod open.
 trap - ERR
 
-if [ "$COMFYUI_AUTH_MODE" = proxy ]; then
-    run_auth_proxy &
-    PROXY_PID=$!
-fi
+run_auth_proxy &
+PROXY_PID=$!
 
 echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
@@ -931,22 +902,17 @@ announce_when_ready() {
         sleep 2
     done
     echo "============================================="
-    if [ "$COMFYUI_AUTH_MODE" = proxy ]; then
-        # The proxy must answer, and must refuse a request with no password.
-        local code
-        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-            "http://127.0.0.1:$COMFYUI_PUBLIC_PORT/" || true)
-        if [ "$code" = 401 ]; then
-            echo "  ComfyUI is READY on port $COMFYUI_PUBLIC_PORT after $((SECONDS - started))s."
-            echo "  It asks for a password: the pod's COMFYUI_PASSWORD."
-        else
-            echo "  ComfyUI started, but the password proxy on port"
-            echo "  $COMFYUI_PUBLIC_PORT is not answering (got: ${code:-nothing})."
-            echo "  ComfyUI stays on 127.0.0.1 and is not reachable from outside."
-        fi
+    # The proxy must answer, and must refuse a request with no password.
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        "http://127.0.0.1:$COMFYUI_PUBLIC_PORT/" || true)
+    if [ "$code" = 401 ]; then
+        echo "  ComfyUI is READY on port $COMFYUI_PUBLIC_PORT after $((SECONDS - started))s."
+        echo "  It asks for a password: the pod's COMFYUI_PASSWORD."
     else
-        echo "  ComfyUI is READY on port $COMFYUI_PUBLIC_PORT after $((SECONDS - started))s,"
-        echo "  with NO password (COMFYUI_DISABLE_AUTH=true)."
+        echo "  ComfyUI started, but the password proxy on port"
+        echo "  $COMFYUI_PUBLIC_PORT is not answering (got: ${code:-nothing})."
+        echo "  ComfyUI stays on 127.0.0.1 and is not reachable from outside."
     fi
     echo "  ComfyUI-Manager may still be refreshing its node list below;"
     echo "  that runs in the background and does not hold up the UI."
