@@ -212,6 +212,10 @@ RUN corepack enable && \
 
 FROM filebrowser-src AS filebrowser-build
 
+# pipefail: the stamp check below pipes `go version -m` into awk, and a
+# failing go must fail the build, not hand awk empty input.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ARG FILEBROWSER_VERSION
 
 # GOTOOLCHAIN=local: build with this image's Go, never a downloaded one.
