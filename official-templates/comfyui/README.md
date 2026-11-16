@@ -83,6 +83,10 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 --preview-method auto
 ```
 
+ComfyUI starts without CORS headers, so pages on other websites cannot call it
+from a browser. If your own site needs to, add
+`--enable-cors-header https://your.site` here.
+
 ## SageAttention
 
 The `-cuda12.8`, `-cuda13.0` and `-cuda13.2` images ship [SageAttention](https://github.com/thu-ml/SageAttention) 2.2.0, prebuilt for their exact PyTorch and CUDA by [runpod/sageattention](https://github.com/runpod/sageattention), so there is nothing to compile. It is off by default; to turn it on, add this line to `comfyui_args.txt` and restart the pod:
