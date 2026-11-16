@@ -1106,20 +1106,6 @@ pin_manager_security
 cd "$COMFYUI_DIR"
 
 build_comfy_args
-# Array, not a string: argparse needs each flag as its own argv entry.
-# No --enable-cors-header: bare, it lets any website's page call this ComfyUI
-# from the visitor's browser. Owners who need it add it with their own origin
-# to comfyui_args.txt.
-COMFY_ARGS=(--listen 0.0.0.0 --port 8188)
-
-# One array element per word, since a line may hold `--foo bar`.
-if [ -s "$ARGS_FILE" ]; then
-    while read -r word; do
-        if [ -n "$word" ]; then
-            COMFY_ARGS+=("$word")
-        fi
-    done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
-fi
 
 # ComfyUI exits at import when --use-sage-attention is set and the package is
 # missing, so a volume moved to an image without it (an older tag, or a future
