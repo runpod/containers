@@ -396,7 +396,7 @@ seed_venv_from_previous() {
 # Fast path: seed from the old venv, then one combined resolve. The per-node
 # loop is only the fallback.
 reinstall_user_node_deps() {
-    local previous="$1" req node count=0 started=$SECONDS
+    local previous="$1" req node count=0 seeded=0 started=$SECONDS
     local reqs=() nodes=() req_args=()
     echo "============================================="
     echo "  This volume was last used with $(basename "$previous")"
@@ -415,7 +415,10 @@ reinstall_user_node_deps() {
     done
     count=${#reqs[@]}
 
-    if [ "$count" != "0" ] && seed_venv_from_previous "$previous" \
+    if [ "$count" != "0" ] && seed_venv_from_previous "$previous"; then
+        seeded=1
+    fi
+    if [ "$seeded" = "1" ] \
         && echo "Checking requirements of $count user nodes in one pass" \
         && run_with_heartbeat "still resolving" \
             python -m pip install --quiet "${req_args[@]}"; then
@@ -432,8 +435,14 @@ reinstall_user_node_deps() {
         echo "Done — $count user nodes processed in $((SECONDS - started))s."
     fi
     rm -f "$VENV_DIR/$MIGRATION_MARKER"
-    echo "CUDA-specific packages you installed by hand (xformers, sageattention,"
-    echo "nunchaku, ...) need a build for this image; the old venv's list:"
+    if [ "$seeded" = "1" ]; then
+        echo "Packages you installed by hand were copied, except CUDA-specific ones"
+        echo "(xformers, sageattention, nunchaku, ...), which need a build for this"
+        echo "image. The old venv's list:"
+    else
+        echo "Packages you installed by hand (not in a node's requirements.txt) were"
+        echo "not carried over; reinstall the ones you need. The old venv's list:"
+    fi
     echo "  $previous/bin/python -m pip freeze --local"
     if [ "$previous" = "$OLD_VENV_DIR" ]; then
         echo "$previous predates every current image, so nothing needs it."
