@@ -121,6 +121,7 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "pillow>=13.0.0" >> requirements.in && \
     echo "tornado>=6.5.10" >> requirements.in && \
     echo "certifi>=2026.10.19" >> requirements.in && \
+    echo "av>=19.0.0" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
     PIP_INDEX_URL=https://pypi.org/simple \
@@ -167,6 +168,59 @@ RUN printf '%s\n' \
     cp -r /tmp/build/ComfyUI /opt/comfyui-baked
 
 # ============================================================================
+# FileBrowser - built from source
+# ============================================================================
+# Upstream archived FileBrowser on 2026-09-01: FILEBROWSER_VERSION is its last
+# release and no security fixes will follow. Its release binary carries the Go
+# toolchain and modules of July 2026, so it is rebuilt here with a current Go
+# and the vulnerable modules raised. Drop these stages when FileBrowser is
+# replaced.
+FROM golang:1.26.11-bookworm AS filebrowser-src
+
+ARG FILEBROWSER_VERSION
+ARG FILEBROWSER_COMMIT
+
+# A git checkout, not the source tarball: Go stamps the module version from it
+# (v2.63.23+dirty once go.mod is raised), so scanners still match FileBrowser's
+# own advisories. A tarball build reports (devel) and they never match.
+RUN git clone --quiet --depth 1 --branch "${FILEBROWSER_VERSION}" \
+        https://github.com/filebrowser/filebrowser.git /src && \
+    test "$(git -C /src rev-parse HEAD)" = "${FILEBROWSER_COMMIT}"
+WORKDIR /src
+
+# The web UI, embedded into the binary from frontend/dist (frontend/assets.go).
+# Corepack runs the exact pnpm the project pins in package.json.
+FROM node:24-bookworm-slim AS filebrowser-frontend
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+COPY --from=filebrowser-src /src /src
+WORKDIR /src/frontend
+RUN corepack enable && \
+    pnpm install --frozen-lockfile && \
+    pnpm run build
+
+FROM filebrowser-src AS filebrowser-build
+
+ARG FILEBROWSER_VERSION
+
+# GOTOOLCHAIN=local: build with this image's Go, never a downloaded one.
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+COPY --from=filebrowser-frontend /src/frontend/dist /src/frontend/dist
+RUN go get \
+        github.com/andybalholm/brotli@v1.3.0 \
+        github.com/klauspost/compress@v1.20.4 \
+        golang.org/x/crypto@v0.59.0 \
+        golang.org/x/image@v0.48.0 \
+        golang.org/x/net@v0.62.0 \
+        golang.org/x/sys@v0.50.0 \
+        golang.org/x/text@v0.44.0 && \
+    go mod tidy && \
+    go build -trimpath \
+        -ldflags "-s -w -X github.com/filebrowser/filebrowser/v2/version.Version=${FILEBROWSER_VERSION#v}" \
+        -o /out/filebrowser . && \
+    /out/filebrowser version
+
+# ============================================================================
 # Stage 2: Runtime - Clean image with pre-installed packages
 # ============================================================================
 FROM ubuntu:24.04
@@ -188,10 +242,6 @@ ARG TORCHAUDIO_VERSION
 # onnxruntime-gpu, nunchaku) are compiled against it. 13.0 used to share
 # .venv-cu128; start.sh treats that as a move and reinstalls node deps.
 ENV COMFYUI_VENV_NAME=.venv-${TORCH_INDEX_SUFFIX}
-
-# ---- FileBrowser version pin (set in docker-bake.hcl) ----
-ARG FILEBROWSER_VERSION
-ARG FILEBROWSER_SHA256
 
 # Keep runtime pip installs aligned with the baked CUDA-specific PyTorch stack.
 # The pins carry a local version (+cu128), which PyPI does not serve — without
@@ -258,12 +308,8 @@ COPY --from=builder /opt/comfyui-baked /opt/comfyui-baked
 RUN pip uninstall -y uv 2>/dev/null || true && \
     rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
-# Install FileBrowser (pinned version with checksum)
-RUN curl -fSL "https://github.com/filebrowser/filebrowser/releases/download/${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" -o /tmp/fb.tar.gz && \
-    printf '%s  /tmp/fb.tar.gz\n' "${FILEBROWSER_SHA256}" > /tmp/fb.sha256 && \
-    sha256sum -c /tmp/fb.sha256 && \
-    tar xzf /tmp/fb.tar.gz -C /usr/local/bin filebrowser && \
-    rm /tmp/fb.tar.gz /tmp/fb.sha256
+# FileBrowser, rebuilt from source in the stages above
+COPY --from=filebrowser-build /out/filebrowser /usr/local/bin/filebrowser
 
 # Set CUDA environment variables
 ENV PATH=/usr/local/cuda/bin:${PATH}
