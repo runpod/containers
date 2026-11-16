@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
@@ -20,10 +21,19 @@ def _base_url(pod_id: str) -> str:
     return f"https://{pod_id}-{config.COMFYUI_PORT}.proxy.runpod.net"
 
 
+def auth_headers() -> dict:
+    """Basic auth with the test pod's COMFYUI_PASSWORD, as a browser sends it."""
+    token = base64.b64encode(f"smoke:{config.COMFYUI_TEST_PASSWORD}".encode())
+    return {"Authorization": "Basic " + token.decode()}
+
+
 def _request(
     url: str, data: Optional[bytes] = None, timeout: int = 30,
+    authenticated: bool = True,
 ) -> tuple[int, bytes]:
     headers = {"User-Agent": _UA}
+    if authenticated:
+        headers.update(auth_headers())
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers)
@@ -50,6 +60,41 @@ def probe_comfyui_alive(
         if attempt < retries:
             time.sleep(retry_sleep)
     return False, last_error
+
+
+def check_comfyui_requires_password(pod_id: str) -> tuple[bool, str]:
+    """Through the public proxy, nothing may reach ComfyUI without the
+    password: queueing a workflow, reading the UI, or a wrong password."""
+    base = _base_url(pod_id)
+    probes = [
+        ("POST /prompt, no password", base + "/prompt", b"{}"),
+        ("GET /, no password", base + "/", None),
+        ("GET /system_stats, no password", base + "/system_stats", None),
+    ]
+    lines = []
+    for label, url, data in probes:
+        try:
+            code, _ = _request(url, data, timeout=20, authenticated=False)
+        except OSError as exc:
+            return False, f"{label}: {type(exc).__name__}: {exc}"
+        lines.append(f"{label}: HTTP {code}")
+        if code != 401:
+            return False, "; ".join(lines) + " (expected 401)"
+    wrong = urllib.request.Request(
+        base + "/system_stats",
+        headers={"User-Agent": _UA, "Authorization": "Bearer not-the-password"},
+    )
+    try:
+        with urllib.request.urlopen(wrong, timeout=20) as response:
+            code = response.status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    except OSError as exc:
+        return False, f"wrong password: {type(exc).__name__}: {exc}"
+    lines.append(f"GET /system_stats, wrong password: HTTP {code}")
+    if code != 401:
+        return False, "; ".join(lines) + " (expected 401)"
+    return True, "; ".join(lines)
 
 
 def _wait_for_system_stats(base: str, emit: Callable[[str], None]) -> bool:

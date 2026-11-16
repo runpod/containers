@@ -216,8 +216,14 @@ def create_pod(
         body["dataCenterIds"] = [
             d.strip() for d in data_center_ids.split(",") if d.strip()
         ]
+    env = {}
     if test_jupyter:
-        body["env"] = {"JUPYTER_PASSWORD": config.JUPYTER_TEST_PASSWORD}
+        env["JUPYTER_PASSWORD"] = config.JUPYTER_TEST_PASSWORD
+    # The ComfyUI image does not start ComfyUI without a password.
+    if group and config.GROUP_TEST_COMFYUI.get(group, False):
+        env["COMFYUI_PASSWORD"] = config.COMFYUI_TEST_PASSWORD
+    if env:
+        body["env"] = env
     if config.REGISTRY_AUTH_ID:
         body["registry"] = config.REGISTRY_AUTH_ID
 

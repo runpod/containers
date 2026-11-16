@@ -48,10 +48,72 @@ If you used the `-cuda13.0` image before it had its own venv, your
 
 ## Access
 
-- `8188`: ComfyUI web UI
-- `8080`: FileBrowser (admin / `FILEBROWSER_PASSWORD`, default: `adminadmin12`)
-- `8888`: JupyterLab, rooted at `/workspace`. `JUPYTER_PASSWORD` is the login token; deploying with "Start Jupyter notebook" enabled sets it for you. Unset, JupyterLab does not start — same as the pytorch and base templates. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD`; the `:8888` proxy URL is public, so anyone with it gets a root shell.
+Every `/http` port is reachable by anyone who has the pod's proxy URL, so
+each one needs a password. All three web services work the same way: set the
+password variable and the service requires it; set the `*_DISABLE_AUTH=true`
+variable and it runs with no password; set neither and it does not start, and
+the pod log says why. When both are set, the opt-out wins. Passwords are never
+written to the pod log.
+
+| port | service | password variable | opt-out |
+|---|---|---|---|
+| `8188` | ComfyUI | `COMFYUI_PASSWORD` | `COMFYUI_DISABLE_AUTH=true` |
+| `8080` | FileBrowser, rooted at `/workspace` | `FILEBROWSER_PASSWORD` | `FILEBROWSER_DISABLE_AUTH=true` |
+| `8888` | JupyterLab, rooted at `/workspace` | `JUPYTER_PASSWORD` | `JUPYTER_DISABLE_AUTH=true` |
+
 - `22`: SSH, key only (set `PUBLIC_KEY`, or add an SSH key to your Runpod account). No root password is generated or logged.
+
+### ComfyUI (`8188`)
+
+ComfyUI has no login of its own. With `COMFYUI_PASSWORD` set, it listens only
+inside the pod, and port 8188 is served by a small proxy that asks for the
+password on every request, including the websocket the UI uses. The password
+must be at least 12 characters; a shorter one counts as not set, and ComfyUI
+does not start.
+
+- **Browser:** open the `:8188` URL. The browser asks for a username and
+  password. Any username works; the password is `COMFYUI_PASSWORD`. You can
+  also open `https://<pod-id>-8188.proxy.runpod.net/?token=<COMFYUI_PASSWORD>`
+  once to sign in without the prompt.
+- **API clients:** send the password as `Authorization: Bearer <COMFYUI_PASSWORD>`
+  or as an HTTP Basic password, for example
+  `curl -u any:$COMFYUI_PASSWORD https://<pod-id>-8188.proxy.runpod.net/system_stats`.
+  A request without it gets `401`.
+- **Wrong passwords:** after 10 wrong passwords in a row, the proxy stops
+  checking passwords and answers `429` until attempts slow to one a second.
+  Browsers that are already signed in keep working.
+- Web pages on another site cannot call this ComfyUI from a visitor's browser,
+  even while that visitor is signed in. Opening a link to the UI from another
+  site still works. Clients that are not browsers are not affected.
+
+`COMFYUI_DISABLE_AUTH=true` serves ComfyUI directly on 8188 with no password.
+Anyone with the URL can then run workflows on your GPU, and can install
+custom nodes through ComfyUI-Manager. A custom node runs its own code on the
+pod, so that gives them a shell, your files, and the pod's environment
+variables.
+
+`--listen` and `--port` in `comfyui_args.txt` are ignored, with a warning in
+the log, because the start script sets them.
+
+ComfyUI-Manager's security settings are written on every start:
+`security_level = normal`, `allow_git_url_install = False` and
+`allow_pip_install = False`. Installing node packs from the registry works.
+Installing from a git URL or a pip package name does not.
+
+### FileBrowser (`8080`)
+
+Sign in as `admin` with `FILEBROWSER_PASSWORD`. FileBrowser requires at least
+12 characters and rejects common passwords. If yours is rejected, the log says
+so and FileBrowser does not start. The admin password is reset to
+`FILEBROWSER_PASSWORD` on every start. This also replaces the `adminadmin12`
+default that older versions of this image created.
+
+### JupyterLab (`8888`)
+
+`JUPYTER_PASSWORD` is the login token; deploying with "Start Jupyter notebook"
+enabled sets it for you. This is the same behaviour as the pytorch and base
+templates. With `JUPYTER_DISABLE_AUTH=true`, anyone with the URL gets a root
+shell.
 
 ## Pre-installed custom nodes
 

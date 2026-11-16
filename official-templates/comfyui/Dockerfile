@@ -274,6 +274,13 @@ EXPOSE 8188 22 8888 8080
 # Copy start script
 COPY scripts/start.sh /start.sh
 
+# Password proxy in front of ComfyUI (see start.sh). It runs on the image's
+# interpreter with ComfyUI's own aiohttp, so the build fails here if that
+# stops importing rather than every pod failing at start.
+COPY scripts/auth_proxy.py /opt/comfyui-auth-proxy/auth_proxy.py
+RUN /usr/bin/python3.12 -I -c "import yarl; from aiohttp import web; web.AppKey" && \
+    /usr/bin/python3.12 -I -m py_compile /opt/comfyui-auth-proxy/auth_proxy.py
+
 # Set Python 3.12 as default
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
     update-alternatives --set python3 /usr/bin/python3.12

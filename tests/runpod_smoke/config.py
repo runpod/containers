@@ -206,6 +206,11 @@ PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
 # ComfyUI listens on this HTTP port. `test_comfyui` exposes it as
 # `<port>/http` and runs a labelled proxy-first reachability check.
 COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
+
+# COMFYUI_PASSWORD for test pods; ComfyUI does not start without one, and
+# every request through :8188 has to carry it. Not a secret, for the same
+# reasons as JUPYTER_TEST_PASSWORD.
+COMFYUI_TEST_PASSWORD = "smoke-comfyui-password"
 COMFYUI_WORKFLOW = os.environ.get(
     "COMFYUI_WORKFLOW",
     os.path.join(_TESTS_DIR, "comfyui", "workflows", "gsl_starter_1_1.api.json"),

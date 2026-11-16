@@ -130,7 +130,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 4 | **Image hygiene checks** (each opt-in) — `pip check`, `virtualenv`, `uv`, system CA store, certifi bundle, in that order. See [Hygiene checks](#hygiene-checks) | `FAIL` (named per check — a conflicting pin, a CA upgrade that did nothing, a shadowing uv) |
 | 5 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 6 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
-| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
+| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first, sending the pod's `COMFYUI_PASSWORD`; SSH diagnoses a failed proxy check. Then, through the proxy, `POST /prompt`, `GET /` and `GET /system_stats` without the password, and with a wrong one, must all return `401` | `FAIL` (ComfyUI unavailable, incorrectly exposed, or answering without its password) |
 | 8 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
 | 9 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
 | 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
@@ -648,6 +648,8 @@ pytorch:
 | `PORT_WAIT_TIMEOUT` | `300` | Seconds the SSH diagnostic probe waits for a `test_ports` service to bind and return HTTP 200. |
 | `PORT_PROXY_TIMEOUT` | `300` | Seconds the public-proxy check retries each `test_ports` service before failing. |
 | `COMFYUI_PORT` | `8188` | HTTP port exposed for the ComfyUI public-proxy checks. |
+
+Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`), since the image does not start ComfyUI without one.
 | `COMFYUI_WORKFLOW` | `tests/comfyui/workflows/gsl_starter_1_1.api.json` | API workflow submitted by the functional test. |
 | `COMFYUI_MODELS_MANIFEST` | `tests/comfyui/models.json` | Models provisioned through ComfyUI-RunpodDirect before the workflow runs. |
 | `COMFYUI_WAIT_TIMEOUT` | `300` | Maximum wait for ComfyUI `/system_stats`. |
