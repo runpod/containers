@@ -190,12 +190,19 @@ fi
 # address (NODE_ADDR, e.g. 10.65.0.3/24) on a VXLAN between the hosts. The node registers with it,
 # and flannel sends pod traffic over it: node to node directly, not through the server's tunnel.
 # Without it, every node has the host's container address (the same on every host).
+# The overlay is always on ens1. NODE_ADDR may be an IP or a hostname; a hostname resolves to its
+# first IPv4 address, retried for up to a minute since the record may not exist yet at start.
 if [ "${1:-}" = agent ] && [ -n "${NODE_ADDR:-}" ]; then
-  node_ip="${NODE_ADDR%/*}"
-  node_iface="$(ip -o -4 addr show | awk -v ip="$node_ip" '{ split($4, a, "/") } a[1] == ip { print $2; exit }')"
-  if [ -z "$node_iface" ]; then
-    echo "k3s-node: no interface has NODE_ADDR $NODE_ADDR" >&2; exit 1
-  fi
+  node_host="${NODE_ADDR%/*}"
+  node_iface=ens1
+  tries=0
+  until node_ip="$(getent ahostsv4 "$node_host" | awk '{ print $1; exit }')" && [ -n "$node_ip" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 30 ]; then
+      echo "k3s-node: NODE_ADDR $NODE_ADDR does not resolve" >&2; exit 1
+    fi
+    echo "k3s-node: waiting for NODE_ADDR $node_host to resolve" >&2; sleep 2
+  done
   shift
   set -- agent --node-ip="$node_ip" --flannel-iface="$node_iface" "$@"
   echo "k3s-node: cluster network $node_ip on $node_iface" >&2
