@@ -230,6 +230,30 @@ class ProxyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.seen[0]["path"], "/ws?clientId=abc")
         self.assertNotIn("Authorization", self.seen[0]["headers"])
 
+    async def test_websocket_from_a_foreign_origin_is_refused(self):
+        """Belt and braces beside Sec-Fetch-Site: an upgrade whose Origin
+        is another host is refused even with the password."""
+        for origin in ("https://evil.example", "null"):
+            with self.subTest(origin=origin):
+                with self.assertRaises(aiohttp.WSServerHandshakeError) as caught:
+                    await self.client.ws_connect(self.base + "/ws", headers={
+                        **BEARER, "Host": "abc-8188.proxy.runpod.net",
+                        "Origin": origin})
+                self.assertEqual(caught.exception.status, 403)
+        self.assertEqual(self.seen, [])
+
+    async def test_websocket_from_its_own_origin_passes(self):
+        """The UI's own socket: Origin is the public URL, Host the same name.
+        A port on either side does not matter."""
+        for host, origin in (
+                ("abc-8188.proxy.runpod.net", "https://abc-8188.proxy.runpod.net"),
+                ("abc-8188.proxy.runpod.net:443", "https://abc-8188.proxy.runpod.net")):
+            with self.subTest(host=host):
+                ws = await self.client.ws_connect(self.base + "/ws", headers={
+                    **BEARER, "Host": host, "Origin": origin})
+                self.assertEqual(await ws.receive_str(timeout=5), '{"type": "status"}')
+                await ws.close()
+
     async def test_upstream_down_is_502(self):
         self.proxy.UPSTREAM = "127.0.0.1:1"
         status, _, body = await self.call("GET", "/", headers=BEARER)

@@ -19,6 +19,8 @@ AUTH_PROXY="/opt/comfyui-auth-proxy/auth_proxy.py"
 # there must not be able to change the proxy.
 SYSTEM_PYTHON="/usr/bin/python3.12"
 AUTH_PROXY_RESTART_DELAY=5
+AUTH_PROXY_MAX_FAST_FAILURES=5
+AUTH_PROXY_FAST_FAILURE_SECONDS=30
 # Same floor as FileBrowser's: the :8188 URL is public and guessable.
 COMFYUI_PASSWORD_MIN_LENGTH=12
 
@@ -224,17 +226,32 @@ resolve_comfyui_auth() {
 
 # The password proxy, restarted if it exits, so a crash does not leave
 # ComfyUI unreachable until the pod restarts. Exit code 2 is the proxy
-# refusing its configuration, which a restart cannot fix. Runs in the
-# background; on_shutdown stops this loop and then the proxy.
+# refusing its configuration, which a restart cannot fix. A cause the proxy
+# cannot report as 2 (the port already bound, a broken aiohttp) makes it die
+# straight away every time, so after AUTH_PROXY_MAX_FAST_FAILURES exits in a
+# row within AUTH_PROXY_FAST_FAILURE_SECONDS of starting, the loop gives up
+# instead of logging a warning every few seconds forever. A run that lasted
+# longer resets the count. Runs in the background; on_shutdown stops this
+# loop and then the proxy.
 run_auth_proxy() {
-    local code
+    local code started fast=0
     while true; do
         code=0
+        started=$SECONDS
         COMFYUI_PROXY_PORT=$COMFYUI_PUBLIC_PORT \
         COMFYUI_UPSTREAM="127.0.0.1:$COMFYUI_INTERNAL_PORT" \
             "$SYSTEM_PYTHON" -I "$AUTH_PROXY" || code=$?
         if [ "$code" = 2 ]; then
             echo "ERROR: the ComfyUI password proxy refused to start (see above); port $COMFYUI_PUBLIC_PORT stays closed."
+            return 0
+        fi
+        if [ $((SECONDS - started)) -lt "$AUTH_PROXY_FAST_FAILURE_SECONDS" ]; then
+            fast=$((fast + 1))
+        else
+            fast=0
+        fi
+        if [ "$fast" -ge "$AUTH_PROXY_MAX_FAST_FAILURES" ]; then
+            echo "ERROR: the ComfyUI password proxy exited (code $code) $fast times in a row right after starting; giving up, port $COMFYUI_PUBLIC_PORT stays closed. See the errors above, fix the cause and restart the pod."
             return 0
         fi
         echo "WARNING: the ComfyUI password proxy exited (code $code); restarting it in ${AUTH_PROXY_RESTART_DELAY}s."
@@ -297,12 +314,21 @@ build_comfy_args() {
 }
 
 # ComfyUI-Manager's security settings, pinned rather than inherited from
-# whatever a Manager release defaults to. Behind the proxy ComfyUI listens on
-# loopback, which Manager reads as "local" and which loosens what normal- and
-# the two allow_* flags permit, so all three are written on every start:
-#   security_level = normal      registry installs only, no unknown git URLs
+# whatever a Manager release defaults to. This is load-bearing, not defence
+# in depth: Manager decides "local mode" from --listen (the launch address,
+# not the client's IP), and with ComfyUI on 127.0.0.1 behind the proxy every
+# loopback-gated install is open unless config.ini closes it. Under
+# --listen 0.0.0.0 they were closed whatever the config said. In the pinned
+# Manager (MANAGER_SHA) loopback gates exactly three things, and all three
+# are written on every start:
+#   security_level = normal      high-risk installs stay refused
 #   allow_git_url_install = False
 #   allow_pip_install = False
+# Manager reads them once at startup, so an edit to config.ini while
+# ComfyUI runs is overwritten here before it can take effect.
+# Newer Manager releases add allow_flagged_nodepack_install, ORed with
+# loopback, which no config value can close; the Dockerfile fails the build
+# if the pinned Manager gains it, so a bump has to decide about it.
 # The new config is written; a legacy one (user/default/ComfyUI-Manager) is
 # pinned too when it exists, since Manager migrates it into the new path.
 pin_manager_security() {

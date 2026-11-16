@@ -135,7 +135,9 @@ BUDGET = web.AppKey("budget", FailureBudget)
 
 
 def matches(candidate):
-    """Constant-time comparison, as bytes so non-ASCII input is a mismatch."""
+    """Constant-time comparison. Compared as bytes because compare_digest
+    raises TypeError on two str with non-ASCII characters: as str, a
+    non-ASCII password or attempt would be a 500 on every request."""
     if not candidate:
         return False
     return hmac.compare_digest(candidate.encode(), PASSWORD.encode())
@@ -262,10 +264,27 @@ def sign_in_redirect(request):
     return response
 
 
+def foreign_origin(request):
+    """True when a websocket upgrade's Origin names a host other than the one
+    it was sent to. A second check beside Sec-Fetch-Site: ComfyUI's own
+    Host/Origin check only runs when Host is loopback, and Host here is the
+    public proxy hostname. Ports are ignored, since the public proxy may add
+    or drop them."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return False
+    host = request.headers.get("Host", "")
+    split = urllib.parse.urlsplit
+    return (split(origin).hostname or "") != (split("//" + host).hostname or "")
+
+
 async def proxy(request):
     site = request.headers.get("Sec-Fetch-Site")
     navigation = is_navigation(request)
     if site in ("cross-site", "same-site") and not navigation:
+        return web.Response(status=403, text="Cross-site request refused.\n")
+    websocket = request.headers.get("Upgrade", "").lower() == "websocket"
+    if websocket and foreign_origin(request):
         return web.Response(status=403, text="Cross-site request refused.\n")
 
     found, refusal = credentials(request)
@@ -285,7 +304,7 @@ async def proxy(request):
     )
     session = request.app[CLIENT]
 
-    if request.headers.get("Upgrade", "").lower() == "websocket":
+    if websocket:
         return await proxy_websocket(request, session, headers)
     return await proxy_http(request, session, headers,
                             set_cookie="cookie" not in found)

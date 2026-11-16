@@ -261,6 +261,43 @@ class AuthProxyRestart(Sandbox):
         self.assertIn("refused to start", result.stdout)
         self.assertNotIn(SECRET, result.stdout + result.stderr)
 
+    def run_loop(self, script: str, overrides: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
+        runs = self.work / "runs"
+        fake = self.bin / "fake-python"
+        fake.write_text(f"#!/bin/bash\necho run >> {runs}\nn=$(wc -l < {runs})\n{script}")
+        fake.chmod(0o755)
+        result = self.run_bash(
+            constants("COMFYUI_PUBLIC_PORT", "COMFYUI_INTERNAL_PORT",
+                      "AUTH_PROXY_MAX_FAST_FAILURES",
+                      "AUTH_PROXY_FAST_FAILURE_SECONDS")
+            + overrides
+            + function("run_auth_proxy") + "\nrun_auth_proxy",
+            {"SYSTEM_PYTHON": str(fake), "AUTH_PROXY": "proxy.py",
+             "AUTH_PROXY_RESTART_DELAY": "0", "COMFYUI_PASSWORD": SECRET})
+        return result, runs.read_text().splitlines()
+
+    def test_gives_up_after_repeated_fast_failures(self) -> None:
+        """A cause the proxy cannot report as 2 (port in use) must not loop
+        forever, logging a warning every few seconds."""
+        result, runs = self.run_loop("exit 1\n")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(len(runs), 5)
+        self.assertEqual(result.stdout.count("restarting it"), 4)
+        self.assertIn("giving up", result.stdout)
+
+    def test_a_long_run_resets_the_count(self) -> None:
+        """Runs that lived past the fast-failure window are crashes worth
+        restarting; only consecutive fast exits count towards giving up."""
+        # Runs 1-4 die at once, run 5 outlives a 1s window, runs 6-9 die at
+        # once, run 10 refuses its config. Without the reset, 8 fast exits
+        # would have given up at run 5.
+        result, runs = self.run_loop(
+            '[ "$n" -eq 5 ] && sleep 2.2\n[ "$n" -ge 10 ] && exit 2\nexit 1\n',
+            overrides="AUTH_PROXY_FAST_FAILURE_SECONDS=1\n")
+        self.assertEqual(len(runs), 10)
+        self.assertIn("refused to start", result.stdout)
+        self.assertNotIn("giving up", result.stdout)
+
 
 class ManagerSecurity(Sandbox):
     def pin(self) -> subprocess.CompletedProcess:

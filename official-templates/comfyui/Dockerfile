@@ -73,6 +73,15 @@ RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA
 RUN test "$(grep -c 'timeout=5)' ComfyUI-Manager/glob/manager_util.py)" = 2 && \
     sed -i 's/timeout=5)/timeout=30)/g' ComfyUI-Manager/glob/manager_util.py
 
+# ComfyUI listens on loopback behind the password proxy, and Manager loosens
+# its install gates on a loopback --listen. start.sh pins the config values
+# that close the gates in this Manager (see pin_manager_security). Newer
+# Manager releases add allow_flagged_nodepack_install, ORed with loopback, so
+# no config value closes it: fail here so a Manager bump decides about it.
+RUN if grep -rq 'allow_flagged_nodepack_install' ComfyUI-Manager --include='*.py'; then \
+        echo "ComfyUI-Manager gained allow_flagged_nodepack_install; review pin_manager_security in start.sh" >&2; exit 1; \
+    fi
+
 # Init git repos with upstream remotes so ComfyUI-Manager can detect versions
 # and users can update via Manager at their own risk
 WORKDIR /tmp/build/ComfyUI
