@@ -195,6 +195,7 @@ class CommandShapeTests(unittest.TestCase):
             "virtualenv": checks.virtualenv_check_command(),
             "python_path": checks.python_path_check_command(),
             "autoresearch": checks.autoresearch_check_command(),
+            "burn": checks.burn_check_command(),
             "dcgm_exporter": checks.dcgm_exporter_check_command(),
             "ray": checks.ray_check_command(),
         }
@@ -236,6 +237,13 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("prepare.TIME_BUDGET = 5", command)
         # Sequence length is shrunk so the check fits a cheap GPU.
         self.assertIn("prepare.MAX_SEQ_LEN = 256", command)
+
+    def test_burn_runs_the_prebuilt_starter(self):
+        command = checks.burn_check_command()
+        self.assertIn("vulkaninfo --summary", command)
+        # The binary itself, not `cargo run`, so the check never rebuilds.
+        self.assertIn("/opt/burn-starter/target/release/burn-starter", command)
+        self.assertNotIn("cargo", command)
 
     def test_dcgm_check_requires_the_dashboard_labels(self):
         command = checks.dcgm_exporter_check_command()

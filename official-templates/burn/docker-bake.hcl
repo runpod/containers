@@ -8,11 +8,6 @@ variable "BASE_VERSION" {
   default = "2.1.0"
 }
 
-# Burn release the starter project pins (Cargo.toml).
-variable "BURN_VERSION" {
-  default = "0.22.1"
-}
-
 variable "BURN_BUILDS" {
   default = flatten([
     for cuda in CUDA_VERSIONS : [
@@ -80,7 +75,6 @@ target "burn-matrix" {
 
   args = {
     BASE_IMAGE = "runpod/base:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
-    BURN_VERSION = BURN_VERSION
   }
 
   tags = [

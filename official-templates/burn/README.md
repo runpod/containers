@@ -6,8 +6,8 @@ Built on our base images: SSH, JupyterLab, and the CUDA toolkit come from there.
 
 ### What's included
 
-- **Rust**: Rust 1.100.0 with `rustfmt`, `clippy`, `rust-analyzer`, and `rust-src`. The toolchain lives in `/opt/rustup` and `/opt/cargo`, so mounting a volume on `/workspace` does not hide it.
-- **Burn 0.22.1, already compiled**: `/opt/burn-starter` depends on Burn with the `cuda`, `vulkan`, `flex`, and `autodiff` features. It was built when the image was made, so the cargo registry already has Burn and its dependencies.
+- **Rust**: Rust 1.100.0 with `rustfmt`, `clippy`, `rust-analyzer`, and `rust-src`. The toolchain lives in `/opt/rustup` and `/opt/cargo`, so mounting a volume on `/workspace` does not hide it. Only root can change the toolchain. The cargo registry and the starter belong to the `rust` group, so to build as another user, add that user to it (`usermod -aG rust <user>`).
+- **Burn 0.22.1, already compiled**: `/opt/burn-starter` depends on Burn with the `cuda`, `vulkan`, and `flex` features, and its `Cargo.lock` pins every dependency. It was built when the image was made, so the cargo registry already has Burn and its dependencies. For training, add the `autodiff` feature; cargo then compiles the extra crates once.
 - **CUDA and Vulkan backends**: The CUDA backend uses the toolkit from the base image. The Vulkan backend (wgpu) needs the host's NVIDIA Vulkan driver. The image sets `NVIDIA_DRIVER_CAPABILITIES=all` so the container runtime mounts it, and adds a Vulkan ICD that loads the driver through EGL, because the GLX one the runtime mounts does not work without an X server. `vulkan-tools` is installed, so `vulkaninfo --summary` shows what the pod can see.
 - **Rust in Jupyter**: [evcxr](https://github.com/evcxr/evcxr) is installed as a JupyterLab kernel.
 
@@ -21,10 +21,11 @@ cargo run --release           # both backends
 cargo run --release -- cuda   # or just one
 ```
 
-To start your own project on the persistent volume, copy the starter. The dependencies are already downloaded, but cargo compiles them again for the new project:
+To start your own project on the persistent volume, copy the starter's sources but not its `target/` directory, which holds several GB of build output. The dependencies are already downloaded, but cargo compiles them again for the new project:
 
 ```bash
-cp -r /opt/burn-starter /workspace/my-model
+mkdir -p /workspace/my-model
+cp -r /opt/burn-starter/{Cargo.toml,Cargo.lock,src} /workspace/my-model/
 cd /workspace/my-model
 cargo run --release
 ```

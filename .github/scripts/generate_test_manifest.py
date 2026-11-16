@@ -92,6 +92,7 @@ def render_yaml(groups: dict) -> str:
             "test_virtualenv",
             "test_python_path",
             "test_autoresearch",
+            "test_burn",
             "test_dcgm_exporter",
             "test_ray",
         ):
@@ -174,6 +175,7 @@ def build_groups(
     test_virtualenv: bool = False,
     test_python_path: bool = False,
     test_autoresearch: bool = False,
+    test_burn: bool = False,
     test_dcgm_exporter: bool = False,
     test_ray: bool = False,
     check_all_gpu: bool = False,
@@ -292,6 +294,8 @@ def build_groups(
             body["test_python_path"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
+        if test_burn:
+            body["test_burn"] = True
         if test_dcgm_exporter:
             body["test_dcgm_exporter"] = True
         if test_ray:
@@ -564,6 +568,15 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--test-burn",
+        action="store_true",
+        help=(
+            "Emit `test_burn: true`: run the Burn starter's matmul on the "
+            "CUDA and Vulkan backends and compare it with the CPU. For "
+            "runpod/burn only."
+        ),
+    )
+    ap.add_argument(
         "--test-dcgm-exporter",
         action="store_true",
         help=(
@@ -697,6 +710,7 @@ def main() -> int:
         test_virtualenv=args.test_virtualenv,
         test_python_path=args.test_python_path,
         test_autoresearch=args.test_autoresearch,
+        test_burn=args.test_burn,
         test_dcgm_exporter=args.test_dcgm_exporter,
         test_ray=args.test_ray,
         check_all_gpu=args.check_all_gpu,

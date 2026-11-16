@@ -727,6 +727,22 @@ def autoresearch_check_command(
     )
 
 
+def burn_check_command() -> str:
+    """Run the Burn starter's prebuilt GPU check: the same matmul on Burn's
+    CUDA and Vulkan backends, each compared with the CPU. Covers what the pod
+    boots fine without: the CUDA backend finding the toolkit (nvrtc), and the
+    Vulkan loader finding the NVIDIA driver through the EGL ICD the image adds.
+    `vulkaninfo --summary` goes first so a Vulkan failure shows what the loader
+    saw. The binary runs directly instead of through `cargo run`, so a stale
+    build fingerprint cannot turn the check into a multi-minute rebuild."""
+    return (
+        "set -e; "
+        "vulkaninfo --summary; "
+        "/opt/burn-starter/target/release/burn-starter; "
+        "echo 'burn starter ok'"
+    )
+
+
 # Series the Grafana dashboards resolve their template variables from
 # (`label_values(<series>, hostname)` in official-templates/pytorch-cluster/
 # config/dashboards). If one of these stops carrying a `hostname` label, the
