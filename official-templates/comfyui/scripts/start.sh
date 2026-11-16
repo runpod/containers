@@ -663,6 +663,11 @@ def release(version):
     return tuple(parts + [0] * (3 - len(parts)))
 
 
+def build(version):
+    # "2.2.0+torch2.10.0.cu128.sm90fix1" -> "torch2.10.0.cu128.sm90fix1"
+    return version.partition("+")[2]
+
+
 user, bundled = find(True), find(False)
 if user is None or bundled is None:
     sys.exit(0)
@@ -671,6 +676,11 @@ if release(user.version) < release(bundled.version):
     print(f"WARNING: SageAttention {user.version} installed in {os.environ['VENV_DIR']} overrides "
           f"the pre-installed {bundled.version}, which is newer and built for this image's "
           "PyTorch and CUDA.")
+    print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
+elif release(user.version) == release(bundled.version) and build(user.version) != build(bundled.version):
+    print(f"WARNING: SageAttention {user.version} installed in {os.environ['VENV_DIR']} overrides "
+          f"the pre-installed {bundled.version}: the same release, but built for a different "
+          "PyTorch or CUDA than this image, so it will likely fail to load.")
     print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
 elif user.version != bundled.version:
     print(f"NOTE: using SageAttention {user.version} installed in {os.environ['VENV_DIR']} "

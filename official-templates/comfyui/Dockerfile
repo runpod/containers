@@ -229,7 +229,14 @@ RUN go get \
     go build -trimpath \
         -ldflags "-s -w -X github.com/filebrowser/filebrowser/v2/version.Version=${FILEBROWSER_VERSION#v}" \
         -o /out/filebrowser . && \
-    /out/filebrowser version
+    /out/filebrowser version && \
+    fb_mod="$(go version -m /out/filebrowser | awk '$1 == "mod" { print $2, $3 }')" && \
+    echo "FileBrowser module stamp: ${fb_mod}" && \
+    case "${fb_mod}" in \
+        "github.com/filebrowser/filebrowser/v2 ${FILEBROWSER_VERSION}" | \
+        "github.com/filebrowser/filebrowser/v2 ${FILEBROWSER_VERSION}+dirty") ;; \
+        *) echo "FileBrowser's module version is not ${FILEBROWSER_VERSION}: scanners would not match its advisories" >&2; exit 1 ;; \
+    esac
 
 # ============================================================================
 # Stage 2: Runtime - Clean image with pre-installed packages
