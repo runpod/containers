@@ -62,7 +62,7 @@ def probe_comfyui_alive(
     return False, last_error
 
 
-def check_comfyui_requires_password(pod_id: str) -> tuple[bool, str]:
+def check_comfyui_refuses_anonymous(pod_id: str) -> tuple[bool, str]:
     """Through the public proxy, nothing may reach ComfyUI without the
     password: queueing a workflow, reading the UI, or a wrong password."""
     base = _base_url(pod_id)

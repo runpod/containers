@@ -47,7 +47,7 @@ from .checks import (
 )
 from .comfyui import (
     auth_headers as comfyui_auth_headers,
-    check_comfyui_requires_password,
+    check_comfyui_refuses_anonymous,
     probe_comfyui_alive,
     run_comfyui_check,
 )
@@ -506,7 +506,7 @@ def _run_comfyui_steps(
         dump_pod_logs(pod_id, image)
         return outcome
 
-    ok, detail = check_comfyui_requires_password(pod_id)
+    ok, detail = check_comfyui_refuses_anonymous(pod_id)
     log(f"ComfyUI password check: {detail}", indent=2)
     if not ok:
         dump_pod_logs(pod_id, image)

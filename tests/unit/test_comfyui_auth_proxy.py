@@ -361,12 +361,15 @@ class FailureBudgetTest(unittest.TestCase):
 @unittest.skipIf(aiohttp is None, "aiohttp is not installed")
 class StartupTest(unittest.TestCase):
     def test_refuses_to_start_without_a_password(self):
+        env = {"PATH": os.environ["PATH"], "COMFYUI_PROXY_PORT": "0"}
+        for name in ("HOME", "PYTHONUSERBASE"):
+            if name in os.environ:
+                env[name] = os.environ[name]
         result = subprocess.run(
-            [sys.executable, "-I", str(PROXY)],
-            env={"PATH": os.environ["PATH"], "COMFYUI_PROXY_PORT": "0"},
-            capture_output=True, text=True, timeout=30,
+            [sys.executable, str(PROXY)],
+            env=env, capture_output=True, text=True, timeout=30,
         )
-        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("COMFYUI_PASSWORD is empty", result.stderr)
 
 
