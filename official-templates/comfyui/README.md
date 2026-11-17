@@ -28,7 +28,9 @@ CUDA forward-compatibility layer by itself, and ComfyUI starts anyway. NVIDIA
 does not support this on consumer GPUs (e.g. RTX 3090, RTX 5090). The startup
 log says which case you are in on a `CUDA forward compat:` line; if it says
 `UNAVAILABLE`, redeploy on a host with a newer driver. Set
-`DISABLE_CUDA_COMPAT=1` to turn the layer off.
+`DISABLE_CUDA_COMPAT=1` to make startup leave CUDA setup alone: the image does
+not switch the layer on, and it also stops removing the layer when the host's
+container runtime switched it on by itself, even if CUDA fails with it.
 
 ## Upgrading from a previous version
 

@@ -41,7 +41,8 @@ variable "FILEBROWSER_SHA256" {
 # (e.g. a cu130 image on a 12.8/12.9 host). start.sh enables it only after a
 # cuInit() probe succeeds, so it is a no-op on newer drivers and on GPUs NVIDIA
 # does not support for forward compat (GeForce). 12.8 is off: no evidence of
-# sub-570 hosts, and it would add ~200 MB.
+# sub-570 hosts, and it would add ~300 MB (installed: cuda-compat-13-0 is
+# ~310 MB, cuda-compat-13-2 ~410 MB).
 #
 # SageAttention is compiled against one exact torch + CUDA pair, so each row
 # pins its own prebuilt wheel from https://github.com/runpod/sageattention
@@ -170,13 +171,10 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
-<<<<<<< HEAD
     INSTALL_CUDA_COMPAT = build.install_cuda_compat ? "true" : "false"
-=======
     SAGEATTENTION_VERSION   = build.sageattention_version
     SAGEATTENTION_WHEEL_URL = build.sageattention_wheel_url
     SAGEATTENTION_SHA256    = build.sageattention_sha256
->>>>>>> 89937499da3a6f5db35ab3b9bcb0641e30083b8f
   }
 
   tags = [
