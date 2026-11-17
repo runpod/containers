@@ -857,6 +857,84 @@ PY
     echo "============================================="
 }
 
+# The image ships SageAttention in the system site-packages, which the venv
+# reaches through --system-site-packages. A copy installed into the venv (pip
+# install, or a custom node's requirements) comes first on sys.path and is the
+# one ComfyUI and custom nodes import, so say so — and when it is older than
+# ours, how to drop it. Reads dist-info only: importing needs CUDA.
+log_sageattention_override() {
+    # Fail open: a crashed probe must not abort startup (set -e).
+    VENV_DIR="$VENV_DIR" python - <<'PY' || true
+import importlib.metadata as md
+import os
+import re
+import sys
+
+venv = os.path.realpath(sys.prefix) + os.sep
+
+
+def find(in_venv):
+    for entry in sys.path:
+        if not entry or not os.path.isdir(entry):
+            continue
+        if (os.path.realpath(entry) + os.sep).startswith(venv) != in_venv:
+            continue
+        for dist in md.distributions(path=[entry]):
+            if re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower() == "sageattention":
+                return dist
+    return None
+
+
+def release(version):
+    # "2.2.0+torch2.10.0.cu128.sm90fix1" -> (2, 2, 0); the local part is the build
+    parts = [int(n) for n in re.findall(r"\d+", version.split("+")[0])[:3]]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def build(version):
+    # "2.2.0+torch2.10.0.cu128.sm90fix1" -> ("2.10.0", "cu128"); None without
+    # a torch/CUDA build tag (a source build, or PyPI's 1.x). A suffix such as
+    # sm90fix1 is not part of it: same torch and CUDA means the same ABI.
+    m = re.search(r"\+torch(\d+(?:\.\d+)*)\.(cu\d+)", version)
+    return (m.group(1), m.group(2)) if m else None
+
+
+user, bundled = find(True), find(False)
+if user is None or bundled is None:
+    sys.exit(0)
+venv = os.environ["VENV_DIR"]
+pip = os.path.join(venv, "bin", "pip")
+ours = build(bundled.version)
+theirs = build(user.version)
+if release(user.version) < release(bundled.version):
+    print(f"WARNING: SageAttention {user.version} installed in {venv} overrides "
+          f"the pre-installed {bundled.version}, which is newer and built for this image's "
+          "PyTorch and CUDA.")
+    print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
+elif theirs != ours:
+    # The build tag, not the release, decides whether it loads: a wheel built
+    # for another torch or CUDA fails at import with an undefined symbol,
+    # whatever its release number.
+    if theirs is None:
+        why = ("it has no torch/CUDA build tag, so it may be built for a different "
+               "PyTorch or CUDA than this image and fail to load")
+    elif ours is None:
+        why = (f"it is built for torch {theirs[0]} {theirs[1]}, which may not match "
+               "this image's PyTorch and CUDA")
+    else:
+        why = (f"it is built for torch {theirs[0]} {theirs[1]}, this image has torch "
+               f"{ours[0]} {ours[1]}, so it will likely fail to load")
+    print(f"WARNING: SageAttention {user.version} installed in {venv} overrides "
+          f"the pre-installed {bundled.version}: {why}.")
+    print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
+elif user.version != bundled.version:
+    print(f"NOTE: using SageAttention {user.version} installed in {os.environ['VENV_DIR']} "
+          f"instead of the pre-installed {bundled.version}.")
+    print(f"  If it fails to load, uninstall it to use the pre-installed one: "
+          f"{pip} uninstall -y sageattention")
+PY
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                     #
 # ---------------------------------------------------------------------------- #
@@ -1099,6 +1177,7 @@ time python -m pip --version
 sync_comfyui_pinned_packages
 
 log_cuda_venv_diagnostics
+log_sageattention_override
 
 pin_manager_security
 
