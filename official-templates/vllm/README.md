@@ -48,6 +48,7 @@ The image always appends `--host 0.0.0.0 --port 8000` and its own `--middleware`
 
 - The vLLM version is in the image tag: `runpod/vllm-openai:<release>-vllm<vllm-version>`.
 - This image runs vLLM only. It has no SSH server or JupyterLab.
+- Mooncake is removed, so the Mooncake KV-transfer connectors (multi-node disaggregated serving) are not available.
 
 ### Links
 
