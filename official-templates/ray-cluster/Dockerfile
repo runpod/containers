@@ -73,6 +73,7 @@ COPY --chmod=755 post_start.sh /post_start.sh
 # base image's nginx (/start.sh starts it). The base nginx.conf has no include
 # directory, so splice one include into its http block.
 COPY config/nginx/ray-dashboard.conf /etc/nginx/ray-dashboard.conf
+COPY config/nginx/ray-dashboard-login.conf /etc/nginx/ray-dashboard-login.conf
 RUN sed -i 's|^http {$|&\n    include /etc/nginx/ray-dashboard.conf;|' /etc/nginx/nginx.conf && \
     grep -q 'include /etc/nginx/ray-dashboard.conf;' /etc/nginx/nginx.conf && \
     nginx -t

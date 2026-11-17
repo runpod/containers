@@ -6,12 +6,15 @@ $JUPYTER_PASSWORD, passes it as its token, and the console opens
 `...-8888.proxy.runpod.net/lab?token=<JUPYTER_PASSWORD>`. This reuses that SAME
 secret for Grafana:
 
-  1. Read the token from ?token= (or the session cookie).
-  2. Constant-time compare it to JUPYTER_PASSWORD (or GRAFANA_PASSWORD if set,
-     for a Grafana-specific override).
+  1. Read the token from ?token=, else the session cookie.
+  2. Constant-time compare the token to JUPYTER_PASSWORD (or GRAFANA_PASSWORD
+     if set, for a Grafana-specific override) and GRAFANA_CLUSTER_TOKEN, or the
+     cookie to this process's random session value.
   3. On match -> proxy to Grafana (loopback :3300) injecting the auth.proxy
-     identity header (X-WEBAUTH-User) and set an HttpOnly cookie so the browser
-     SPA's later (token-less) requests stay authenticated.
+     identity header (X-WEBAUTH-User); a valid ?token= also sets the HttpOnly
+     session cookie so the browser SPA's later (token-less) requests stay
+     authenticated. The cookie never holds the secret, and a proxy restart
+     ends every session (the stale cookie is purged; ?token= signs in again).
   4. No match / no secret set -> no header -> Grafana shows its login form.
 
 Client-supplied X-WEBAUTH-* is stripped so the identity can't be spoofed, and
@@ -20,24 +23,45 @@ Grafana binds loopback so nothing can reach it except this proxy.
 Env (all optional):
   JUPYTER_PASSWORD    the shared token (reused from Jupyter)
   GRAFANA_PASSWORD    optional override for a Grafana-specific token
+  GRAFANA_CLUSTER_TOKEN
+                      a second accepted token, alongside the one above (the
+                      ray-cluster head sets it to the Ray cluster token, so
+                      the dashboard's link signs Grafana in while the
+                      console's JUPYTER_PASSWORD link keeps working)
   PROXY_LISTEN_PORT   default 8889 (the public port Runpod maps)
   GRAFANA_UPSTREAM    default 127.0.0.1:3300
   GRAFANA_PROXY_USER  Grafana username to log in as (default: runpod)
   AUTH_COOKIE         cookie name (default: cluster_auth)
+  LOGIN_RETURN_URL    when set, GET /runpod-login?token= sets the session
+                      cookie (on a valid token) and redirects here, so another
+                      service's login can sign Grafana in on the way (the
+                      ray-cluster dashboard does, for its embedded panels).
+                      Fixed by the image, never taken from the request, so it
+                      can't be an open redirect.
 """
 import hmac
 import http.client
 import http.server
 import os
+import secrets
 import socketserver
 import urllib.parse
 
 LISTEN = int(os.environ.get("PROXY_LISTEN_PORT", "8889"))
 UPSTREAM = os.environ.get("GRAFANA_UPSTREAM", "127.0.0.1:3300")
 # Reuse Jupyter's shared secret; GRAFANA_PASSWORD overrides it if set.
-SECRET = os.environ.get("GRAFANA_PASSWORD") or os.environ.get("JUPYTER_PASSWORD", "")
+SECRETS = [
+    s.encode()
+    for s in (
+        os.environ.get("GRAFANA_PASSWORD") or os.environ.get("JUPYTER_PASSWORD", ""),
+        os.environ.get("GRAFANA_CLUSTER_TOKEN", ""),
+    )
+    if s
+]
 USER = os.environ.get("GRAFANA_PROXY_USER", "runpod")
 COOKIE = os.environ.get("AUTH_COOKIE", "cluster_auth")
+LOGIN_PATH = "/runpod-login"
+LOGIN_RETURN_URL = os.environ.get("LOGIN_RETURN_URL", "")
 
 # Hop-by-hop headers plus ones we set/strip ourselves.
 DROP = {
@@ -56,20 +80,45 @@ def cookie_value(header, name):
 
 
 def token_ok(token):
-    return bool(SECRET) and bool(token) and hmac.compare_digest(token, SECRET)
+    # Bytes, so a non-ASCII token is a mismatch rather than a TypeError.
+    token = (token or "").encode()
+    return bool(token) and any([hmac.compare_digest(token, s) for s in SECRETS])
+
+
+SESSION = secrets.token_urlsafe(32)
+SESSION_COOKIE = f"{COOKIE}={SESSION}; Path=/; HttpOnly; Secure; SameSite=Lax"
+
+
+def session_ok(cookie):
+    # Bytes, as in token_ok: a non-ASCII cookie must not raise.
+    cookie = (cookie or "").encode()
+    return bool(cookie) and hmac.compare_digest(cookie, SESSION.encode())
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    def _login(self, token):
+        # Back to LOGIN_RETURN_URL even on a bad token: that service shows its
+        # own prompt, and Grafana its login wall when next opened.
+        self.send_response(302)
+        self.send_header("Location", LOGIN_RETURN_URL)
+        if token_ok(token):
+            self.send_header("Set-Cookie", SESSION_COOKIE)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _proxy(self):
-        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        url = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(url.query)
         url_token = params.get("token", [None])[0]
+        if LOGIN_RETURN_URL and self.command == "GET" and url.path == LOGIN_PATH:
+            self._login(url_token)
+            return
         from_url = url_token is not None
-        cookie_token = cookie_value(self.headers.get("Cookie"), COOKIE)
-        had_cookie = cookie_token is not None
-        token = url_token or cookie_token
-        ok = token_ok(token)
+        cookie = cookie_value(self.headers.get("Cookie"), COOKIE)
+        had_cookie = cookie is not None
+        ok = token_ok(url_token) if url_token else session_ok(cookie)
 
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length) if length else None
@@ -97,13 +146,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header(k, v)
         if ok and from_url:
             # Fresh valid token in the URL -> (re)establish the session cookie.
-            self.send_header(
-                "Set-Cookie",
-                f"{COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax",
-            )
+            self.send_header("Set-Cookie", SESSION_COOKIE)
         elif not ok and (had_cookie or resp.status == 401):
-            # Stale/invalid token cookie (e.g. secret rotated on redeploy) -> purge
-            # it so the browser stops looping and the ?token= flow can recover.
+            # Stale/invalid session cookie (proxy restarted, or a secret-bearing
+            # cookie from an older image) -> purge it so the browser stops
+            # looping and the ?token= flow can recover.
             self.send_header(
                 "Set-Cookie",
                 f"{COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",

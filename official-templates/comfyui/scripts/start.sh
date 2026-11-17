@@ -7,6 +7,7 @@ BUNDLE_VERSION_FILE=".runpod-bundle-version"
 VENV_NAME="${COMFYUI_VENV_NAME:-.venv-cu128}"
 VENV_DIR="$COMFYUI_DIR/$VENV_NAME"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
+MIGRATION_MARKER=".runpod-migration-incomplete"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
 BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
@@ -221,23 +222,186 @@ find_previous_venv() {
     local candidate found=""
     for candidate in "$COMFYUI_DIR"/.venv "$COMFYUI_DIR"/.venv-cu*; do
         case "$candidate" in
-            "$VENV_DIR" | *.bak*) continue ;;
+            "$VENV_DIR" | *.bak* | *.broken*) continue ;;
         esac
-        if [ -x "$candidate/bin/python" ]; then
+        if [ -x "$candidate/bin/python" ] && [ ! -e "$candidate/$MIGRATION_MARKER" ]; then
             found="$candidate"
         fi
     done
     echo "$found"
 }
 
+# Name backstop for the .so check in list_cuda_bound_dists.
+CUDA_BUILT_PACKAGES_RE='^(torch|torchvision|torchaudio|xformers|triton|flash-attn|sageattention|nunchaku|onnxruntime-gpu|spconv.*|cupy-cuda.*|nvidia-.*)$'
+
+# Print the distribution count in site-packages $1, then each one that may be
+# built for another torch/CUDA: local version, URL/git install, name match, or
+# a .so linking libtorch/libc10/CUDA (C extensions under plain == versions,
+# which break on the torch 2.10 -> 2.13 ABI change on cu132).
+list_cuda_bound_dists() {
+    CUDA_BUILT_PACKAGES_RE="$CUDA_BUILT_PACKAGES_RE" python - "$1" <<'PY'
+import importlib.metadata as md
+import json
+import os
+import re
+import struct
+import sys
+
+name_re = re.compile(os.environ["CUDA_BUILT_PACKAGES_RE"])
+lib_re = re.compile(
+    r"^lib(torch[a-z_]*|c10[a-z_]*|cuda|cudart|cublas(Lt)?|cudnn[a-z_]*|cufft|"
+    r"curand|cusparse|cusolver|nvrtc|nvJitLink|nccl)\.so"
+)
+
+
+def needed(path):
+    """DT_NEEDED entries of a 64-bit ELF file; [] for anything else."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(64)
+            if len(h) < 64 or h[:4] != b"\x7fELF" or h[4] != 2:
+                return []
+            e = "<" if h[5] == 1 else ">"
+            phoff = struct.unpack_from(e + "Q", h, 0x20)[0]
+            phentsize, phnum = struct.unpack_from(e + "HH", h, 0x36)
+            f.seek(phoff)
+            ph = f.read(phentsize * phnum)
+            loads, dyn = [], None
+            for i in range(phnum):
+                p = struct.unpack_from(e + "IIQQQQQQ", ph, i * phentsize)
+                if p[0] == 1:  # PT_LOAD: vaddr, offset, filesz
+                    loads.append((p[3], p[2], p[5]))
+                elif p[0] == 2:  # PT_DYNAMIC: offset, filesz
+                    dyn = (p[2], p[5])
+            if dyn is None:
+                return []
+            f.seek(dyn[0])
+            d = f.read(dyn[1])
+            offs, strtab, strsz = [], None, 0
+            for i in range(0, len(d) - 15, 16):
+                tag, val = struct.unpack_from(e + "qQ", d, i)
+                if tag == 0:
+                    break
+                if tag == 1:
+                    offs.append(val)
+                elif tag == 5:
+                    strtab = val
+                elif tag == 10:
+                    strsz = val
+            if strtab is None:
+                return []
+            base = next((o + strtab - v for v, o, s in loads if v <= strtab < v + s), None)
+            if base is None:
+                return []
+            f.seek(base)
+            s = f.read(strsz)
+            return [s[n:s.find(b"\0", n)].decode(errors="replace") for n in offs if n < len(s)]
+    except (OSError, struct.error):
+        return []
+
+
+dists = list(md.distributions(path=[sys.argv[1]]))
+print(len(dists))
+for dist in dists:
+    raw = dist.metadata["Name"] or ""
+    if not raw:
+        continue
+    name = re.sub(r"[-_.]+", "-", raw).lower()
+    flagged = "+" in dist.version or bool(name_re.match(name))
+    if not flagged:
+        direct = dist.read_text("direct_url.json")
+        if direct:
+            try:
+                flagged = not json.loads(direct).get("dir_info", {}).get("editable", False)
+            except ValueError:
+                flagged = True
+    if not flagged:
+        for file in dist.files or ():
+            rel = str(file)
+            if (rel.endswith(".so") or ".so." in rel) and any(
+                lib_re.match(lib) for lib in needed(dist.locate_file(file))
+            ):
+                flagged = True
+                break
+    if flagged:
+        print(name)
+PY
+}
+
+# rm unlinks, so the old venv's hard-linked files are untouched.
+clear_site_packages() {
+    find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+
+# Hard-link the previous venv's packages into the active one (seconds instead
+# of re-downloading), then remove those built for another torch/CUDA.
+# rsync --link-dest, not cp: it never writes through a shared inode, so the old
+# venv stays intact (pip also unlinks before writing). pip/setuptools are left
+# out to keep pip off the volume, as --without-pip does.
+seed_venv_from_previous() {
+    local previous="$1" src dst listing total script
+    local dropped=()
+
+    src=$(compgen -G "$previous/lib/python3*/site-packages" | head -n 1)
+    dst=$(compgen -G "$VENV_DIR/lib/python3*/site-packages" | head -n 1)
+    # Compiled modules are tied to the interpreter's minor version.
+    if [ -z "$src" ] || [ -z "$dst" ] \
+        || [ "$(basename "$(dirname "$src")")" != "$(basename "$(dirname "$dst")")" ]; then
+        return 1
+    fi
+    echo "Copying packages from $(basename "$previous")"
+    if ! rsync -a --link-dest="$src" \
+        --exclude='/pip' --exclude='/pip-*.dist-info' \
+        --exclude='/setuptools' --exclude='/setuptools-*.dist-info' \
+        --exclude='/pkg_resources' --exclude='/_distutils_hack' \
+        --exclude='/distutils-precedence.pth' \
+        --exclude='/wheel' --exclude='/wheel-*.dist-info' \
+        "$src/" "$dst/"; then
+        clear_site_packages "$dst"
+        return 1
+    fi
+
+    # Repoint console-script shebangs at this venv.
+    for script in "$previous"/bin/*; do
+        case "$(basename "$script")" in
+            python* | activate* | Activate.ps1 | pip*) continue ;;
+        esac
+        [ -f "$script" ] && [ ! -e "$VENV_DIR/bin/$(basename "$script")" ] || continue
+        if head -n 1 "$script" | grep -q "^#!$previous/bin/python"; then
+            sed "1s|^#!$previous/bin/python[0-9.]*|#!$VENV_DIR/bin/python|" "$script" \
+                > "$VENV_DIR/bin/$(basename "$script")" \
+                && chmod +x "$VENV_DIR/bin/$(basename "$script")"
+        fi
+    done
+
+    if ! listing=$(list_cuda_bound_dists "$dst") || [ -z "$listing" ]; then
+        echo "  Could not inspect the copied packages."
+        clear_site_packages "$dst"
+        return 1
+    fi
+    total=$(head -n 1 <<< "$listing")
+    mapfile -t dropped < <(tail -n +2 <<< "$listing")
+    echo "Copied $total packages"
+    if [ "${#dropped[@]}" != "0" ]; then
+        echo "  Removing ones built for another torch/CUDA or installed from a URL: ${dropped[*]}"
+        if ! python -m pip uninstall --quiet -y "${dropped[@]}"; then
+            clear_site_packages "$dst"
+            return 1
+        fi
+    fi
+}
+
 # Baked nodes are skipped: their deps are in the image's system site-packages.
 # The old venv is left in place so going back to its own image still works.
+# Fast path: seed from the old venv, then one combined resolve. The per-node
+# loop is only the fallback.
 reinstall_user_node_deps() {
-    local previous="$1" req node count=0
+    local previous="$1" req node count=0 seeded=0 started=$SECONDS
+    local reqs=() nodes=() req_args=()
     echo "============================================="
     echo "  This volume was last used with $(basename "$previous")"
     echo "  Reinstalling custom node deps into $VENV_NAME"
-    echo "  This may take several minutes"
+    echo "  This may take a few minutes"
     echo "============================================="
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         [ -f "$req" ] || continue
@@ -245,12 +409,40 @@ reinstall_user_node_deps() {
         case " ${BAKED_NODES[*]} " in
             *" $node "*) continue ;;
         esac
-        count=$((count + 1))
-        echo "[$count] $node"
-        python -m pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+        reqs+=("$req")
+        nodes+=("$node")
+        req_args+=(-r "$req")
     done
-    echo "Done — $count user nodes processed."
-    echo "Packages you installed by hand were not carried over; list them with:"
+    count=${#reqs[@]}
+
+    if [ "$count" != "0" ] && seed_venv_from_previous "$previous"; then
+        seeded=1
+    fi
+    if [ "$seeded" = "1" ] \
+        && echo "Checking requirements of $count user nodes in one pass" \
+        && run_with_heartbeat "still resolving" \
+            python -m pip install --quiet "${req_args[@]}"; then
+        echo "Done — deps for $count user nodes in place after $((SECONDS - started))s."
+    else
+        if [ "$count" != "0" ]; then
+            echo "Fast path did not complete; installing node by node instead."
+        fi
+        local i
+        for i in "${!reqs[@]}"; do
+            echo "[$((i + 1))] ${nodes[$i]}"
+            python -m pip install -r "${reqs[$i]}" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+        done
+        echo "Done — $count user nodes processed in $((SECONDS - started))s."
+    fi
+    rm -f "$VENV_DIR/$MIGRATION_MARKER"
+    if [ "$seeded" = "1" ]; then
+        echo "Packages you installed by hand were copied, except CUDA-specific ones"
+        echo "(xformers, sageattention, nunchaku, ...), which need a build for this"
+        echo "image. The old venv's list:"
+    else
+        echo "Packages you installed by hand (not in a node's requirements.txt) were"
+        echo "not carried over; reinstall the ones you need. The old venv's list:"
+    fi
     echo "  $previous/bin/python -m pip freeze --local"
     if [ "$previous" = "$OLD_VENV_DIR" ]; then
         echo "$previous predates every current image, so nothing needs it."
@@ -578,7 +770,11 @@ fi
 
 # `python3.12 -m venv` has been seen leaving the directory behind without
 # bin/activate, and a directory test then passes for a venv nothing can source.
-venv_is_usable() { [ -f "$VENV_DIR/bin/activate" ]; }
+venv_has_activate() { [ -f "$VENV_DIR/bin/activate" ]; }
+# The marker is written before the venv is created and removed when the
+# migration finishes, so an interrupted migration is redone. Older venvs have
+# no marker and stay usable.
+venv_is_usable() { venv_has_activate && [ ! -e "$VENV_DIR/$MIGRATION_MARKER" ]; }
 
 # Setup ComfyUI if needed
 if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
@@ -605,18 +801,22 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
     if ! venv_is_usable; then
         cd "$COMFYUI_DIR"
         if [ -d "$VENV_DIR" ]; then
-            # Reached only with bin/activate missing. It is written last, so a
-            # venv that failed mid-creation holds nothing — but if one does,
-            # keep it.
+            # No bin/activate or an interrupted migration. Keep it aside if it
+            # holds packages.
             if [ -n "$(ls -A "$VENV_DIR"/lib/python*/site-packages 2>/dev/null)" ]; then
                 VENV_BROKEN="${VENV_DIR}.broken.$(date +%Y%m%d%H%M%S)"
-                echo "$VENV_DIR has no bin/activate but is not empty — moving it to $VENV_BROKEN"
+                echo "$VENV_DIR is incomplete (no bin/activate, or an interrupted"
+                echo "  migration) — moving it to $VENV_BROKEN and starting over."
                 echo "  Installed packages are kept there; delete it to free space."
                 mv "$VENV_DIR" "$VENV_BROKEN" || true
             else
-                echo "Discarding unusable $VENV_DIR (no bin/activate) and recreating it"
+                echo "Discarding unusable $VENV_DIR and recreating it"
                 rm -rf "$VENV_DIR"
             fi
+        fi
+        if [ -n "$PREVIOUS_VENV" ]; then
+            mkdir -p "$VENV_DIR"
+            touch "$VENV_DIR/$MIGRATION_MARKER"
         fi
         # --without-pip: pip stays in the image (local disk, bytecode compiled
         # at build) instead of on the network volume, where importing it can
@@ -625,7 +825,7 @@ if [ ! -d "$COMFYUI_DIR" ] || ! venv_is_usable; then
         python3.12 -m venv --system-site-packages --without-pip "$VENV_DIR" || true
         # Keep SSH/Jupyter/FileBrowser reachable instead of crash-looping on a
         # bare `source: No such file or directory`.
-        if ! venv_is_usable; then
+        if ! venv_has_activate; then
             echo "============================================="
             echo "  Could not create the Python environment at $VENV_DIR"
             echo "  (see the error above). ComfyUI was not started."
@@ -671,7 +871,10 @@ log_cuda_venv_diagnostics
 cd "$COMFYUI_DIR"
 
 # Array, not a string: argparse needs each flag as its own argv entry.
-COMFY_ARGS=(--listen 0.0.0.0 --port 8188 --enable-cors-header)
+# No --enable-cors-header: bare, it lets any website's page call this ComfyUI
+# from the visitor's browser. Owners who need it add it with their own origin
+# to comfyui_args.txt.
+COMFY_ARGS=(--listen 0.0.0.0 --port 8188)
 
 # One array element per word, since a line may hold `--foo bar`.
 if [ -s "$ARGS_FILE" ]; then
@@ -680,6 +883,31 @@ if [ -s "$ARGS_FILE" ]; then
             COMFY_ARGS+=("$word")
         fi
     done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
+fi
+
+# ComfyUI exits at import when --use-sage-attention is set and the package is
+# missing, so a volume moved to an image without it (an older tag, or a future
+# variant with no wheel) would otherwise leave ComfyUI dead. find_spec only
+# locates it: importing needs CUDA.
+if [[ " ${COMFY_ARGS[*]} " == *" --use-sage-attention "* ]]; then
+    if python -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("sageattention") is None)'; then
+        # Kernels exist for SM 8.0-9.0 and 12.0; elsewhere ComfyUI falls back
+        # to PyTorch attention but logs an error on every call.
+        compute_caps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | sort -u | tr '\n' ' ')
+        for cap in $compute_caps; do
+            case "$cap" in
+                8.0|8.6|8.9|9.0|12.0) ;;
+                *) echo "WARNING: SageAttention has no kernels for this GPU (compute capability $cap); ComfyUI will fall back to PyTorch attention." ;;
+            esac
+        done
+    else
+        echo "WARNING: --use-sage-attention is set but SageAttention is not installed in this image; starting ComfyUI without it."
+        filtered_args=()
+        for arg in "${COMFY_ARGS[@]}"; do
+            [ "$arg" = "--use-sage-attention" ] || filtered_args+=("$arg")
+        done
+        COMFY_ARGS=("${filtered_args[@]}")
+    fi
 fi
 
 # Startup is over: from here the crash banner below owns failures, and a live
