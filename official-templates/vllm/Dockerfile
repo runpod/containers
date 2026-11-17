@@ -30,19 +30,21 @@ assert u.find_spec("mooncake") is None, "mooncake still installed"; \
 assert m.version("PyNvVideoCodec") == "2.2.4", m.version("PyNvVideoCodec"); \
 assert m.version("dnspython") == "2.9.2", m.version("dnspython")'
 
-# Fail on any bundled (not apt-owned) FFmpeg below 9.0, naming the file, and
-# list every bundled copy found. Ubuntu's own FFmpeg is a deb, which Grype
-# tracks separately.
+# Fail on any bundled FFmpeg below 9.0, naming the file. Same files Grype's
+# ffmpeg rule reads (libav*, libswresample*, ffmpeg), minus apt-owned ones,
+# which Grype skips too. opencv's copies are listed but not failed on: no
+# opencv release ships FFmpeg newer than 8.1.2.
 RUN uv cache clean && \
     rm -rf /opt/uv/cache /opt/pip/cache /root/.cache/uv /root/.cache/pip && \
     stale="" && \
     while IFS= read -r -d '' f; do \
       dpkg -S "$f" >/dev/null 2>&1 && continue; \
-      v="$(grep -a -m1 -oE 'FFmpeg version [0-9]+(\.[0-9]+)*' "$f" | awk '{print $3}')" || true; \
+      v="$(grep -a -oE 'FFmpeg version [0-9]+\.[0-9]+(\.[0-9]+)?' "$f" | head -1 | awk '{print $3}')" || true; \
       echo "bundled FFmpeg: $f (${v:-no version string})"; \
+      case "$f" in */opencv_*.libs/*) continue ;; esac; \
       if [ -n "$v" ] && dpkg --compare-versions "$v" lt 9.0; then stale+="  $f ($v)"$'\n'; fi; \
-    done < <(find / -xdev -type f \( -name 'libav*.so*' -o -name 'libsw*.so*' -o -name 'libpostproc*.so*' \
-               -o -name 'ffmpeg' -o -name 'ffprobe' \) -not -path '*/opencv_python*.libs/*' -print0) && \
+    done < <(find / \( -path /proc -o -path /sys -o -path /dev -o -path /var/lib/dpkg \) -prune -o -type f \
+               \( -name 'libav*' -o -name 'libswresample*' -o -name 'ffmpeg' \) -print0) && \
     if [ -n "$stale" ]; then printf 'FFmpeg below 9.0 still in the image:\n%s' "$stale"; exit 1; fi
 
 COPY --chmod=0644 scripts/runpod_vllm_auth.py /opt/runpod/vllm/runpod_vllm_auth.py
