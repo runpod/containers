@@ -77,6 +77,14 @@ RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA
 RUN test "$(grep -c 'timeout=5)' ComfyUI-Manager/glob/manager_util.py)" = 2 && \
     sed -i 's/timeout=5)/timeout=30)/g' ComfyUI-Manager/glob/manager_util.py
 
+# ComfyUI listens on loopback behind the password proxy, and Manager loosens
+# its install gates on a loopback --listen. start.sh pins the config values
+# that close the gates in this Manager (see pin_manager_security). Newer
+# Manager releases add allow_flagged_nodepack_install, ORed with loopback, so
+# no config value closes it: fail here so a Manager bump decides about it.
+RUN if grep -rq 'allow_flagged_nodepack_install' ComfyUI-Manager --include='*.py'; then \
+        echo "ComfyUI-Manager gained allow_flagged_nodepack_install; review pin_manager_security in start.sh" >&2; exit 1; \
+    fi
 # Runpod fixes to the pinned sources: one patch per issue in patches/, paths
 # relative to the ComfyUI root, applied before the git commit below. git apply
 # refuses a patch whose context has moved, so a pin bump that touches patched
@@ -363,6 +371,13 @@ EXPOSE 8188 22 8888 8080
 
 # Copy start script
 COPY scripts/start.sh /start.sh
+
+# Password proxy in front of ComfyUI (see start.sh). It runs on the image's
+# interpreter with ComfyUI's own aiohttp, so the build fails here if that
+# stops importing rather than every pod failing at start.
+COPY scripts/auth_proxy.py /opt/comfyui-auth-proxy/auth_proxy.py
+RUN /usr/bin/python3.12 -I -c "import yarl; from aiohttp import web; web.AppKey" && \
+    /usr/bin/python3.12 -I -m py_compile /opt/comfyui-auth-proxy/auth_proxy.py
 
 # Set Python 3.12 as default
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
