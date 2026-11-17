@@ -30,21 +30,24 @@ RUN torch_before=$(python -c 'import torch; print(torch.__version__)') && \
     { [[ "$torch_after" == "$torch_before" ]] || { echo "vLLM replaced torch $torch_before with $torch_after"; exit 1; }; } && \
     { [[ "$ray_after" == "$RAY_CLUSTER_RAY_VERSION" ]] || { echo "vLLM replaced Ray $RAY_CLUSTER_RAY_VERSION with $ray_after"; exit 1; }; }
 
-COPY --chmod=644 runpod_vllm_auth.py wait_for_nodes.py /opt/runpod/inference/
+COPY --chmod=644 wait_for_nodes.py /opt/runpod/inference/
 COPY --chmod=755 start.sh /opt/runpod/inference/start
 
-# The auth middleware rides vLLM's --middleware hook; fail the build if this
-# vLLM no longer loads it, rather than serve with routes left open.
-RUN register="$(python -c 'import importlib.util as u; print(u.find_spec("vllm").submodule_search_locations[0])')" && \
-    register="$register/entrypoints/serve/middleware/register.py" && \
-    { grep -q 'for middleware in args.middleware' "$register" || \
-      { echo "vLLM no longer loads --middleware in $register"; exit 1; }; } && \
-    PYTHONPATH=/opt/runpod/inference python -c 'import runpod_vllm_auth'
+# The API front door on 8001: nginx checks the key, then proxies to vLLM on
+# 127.0.0.1:8000. Spliced into the base nginx.conf's http block like the Ray
+# dashboard's front door. The shipped key map accepts nothing; the start
+# script writes the real one, root-only.
+COPY --chmod=644 nginx/vllm-api.conf /etc/nginx/vllm-api.conf
+COPY --chmod=600 nginx/vllm-api-key.map /etc/nginx/vllm-api-key.map
+RUN sed -i 's|^http {$|&\n    include /etc/nginx/vllm-api.conf;|' /etc/nginx/nginx.conf && \
+    grep -q 'include /etc/nginx/vllm-api.conf;' /etc/nginx/nginx.conf && \
+    nginx -t
 
-# 8000 vLLM's OpenAI-compatible API on the head. Every route except /health,
-# /ping and /metrics needs VLLM_API_KEY (else JUPYTER_PASSWORD). Map this one
-# in the Runpod template.
-EXPOSE 8000
+# 8001 vLLM's OpenAI-compatible API on the head, through nginx. Every route
+#      except /health and /ping needs VLLM_API_KEY (else JUPYTER_PASSWORD).
+#      Map this one in the Runpod template. vLLM itself (8000) listens on
+#      127.0.0.1 only.
+EXPOSE 8001
 
 LABEL com.runpod.template.variant="ray-cluster-inference"
 

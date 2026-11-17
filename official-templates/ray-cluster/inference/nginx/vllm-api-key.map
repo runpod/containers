@@ -1,0 +1,5 @@
+# Which Authorization headers reach vLLM through the 8001 front door, included
+# into vllm-api.conf's map. /opt/runpod/inference/start rewrites it on the head
+# with the key, or with `default 1;` for VLLM_API_KEY=none. Until then, and on
+# every pod that doesn't serve, nothing gets through.
+default 0;

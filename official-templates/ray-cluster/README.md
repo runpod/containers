@@ -48,7 +48,7 @@ It also logs a warning if the installed Ray differs from the version the image w
 `runpod/ray-cluster:<version>-inference-cu1300-torch2130-ubuntu2404` (`inference/`) is this image plus vLLM 0.32.0, serving one Hugging Face model across the whole cluster with no image build. It keeps the entrypoint and contract v1 unchanged; only the CMD differs (`/opt/runpod/inference/start`):
 
 - **Worker:** joins Ray and runs nothing else.
-- **Head:** waits, with no deadline, until `NUM_NODES` nodes have joined Ray, then runs `vllm serve $MODEL_REPO` on port 8000 with the Ray executor, tensor parallelism set to the GPUs per node and pipeline parallelism set to the node count. Every node needs the same GPU count.
+- **Head:** waits, with no deadline, until `NUM_NODES` nodes have joined Ray, then runs `vllm serve $MODEL_REPO` with the Ray executor, tensor parallelism set to the GPUs per node and pipeline parallelism set to the node count. Every node needs the same GPU count.
 - **No `NODE_RANK`** (a plain pod): `vllm serve` on that pod's GPUs, without Ray.
 
 Configuration, all environment variables:
@@ -57,15 +57,15 @@ Configuration, all environment variables:
 |---|---|---|
 | `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`. Unset: the head logs an error and stays up for interactive use. |
 | `HF_TOKEN` | none | Token for gated or private models; vLLM reads it from the environment. |
-| `VLLM_API_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route except `/health`, `/ping` and `/metrics`. With neither set, the head logs an error and does not start vLLM. `none` turns authentication off. |
+| `VLLM_API_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route except `/health` and `/ping`. With neither set, the head logs an error and does not start vLLM. `none` turns authentication off. |
 | `MAX_MODEL_LENGTH` | vLLM's | Passed as `--max-model-len`. |
-| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `0.0.0.0` and `8000`. |
+| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `127.0.0.1` and `8000`. |
 
-Authentication is the `runpod_vllm_auth` middleware (`inference/runpod_vllm_auth.py`, shared with `official-templates/vllm`), loaded through `vllm serve --middleware`. It is an allowlist, because vLLM's own `--api-key` guards only `/v1`, `/v2`, `/inference` and `/cohere`, leaving routes such as `/invocations` open. The key falls back to the head's `JUPYTER_PASSWORD`, so the pod's console password works for the API too; set `VLLM_API_KEY` to use a separate key.
+The API is served on port **8001** by the base image's nginx (`inference/nginx/vllm-api.conf`), which checks the key before proxying to vLLM on `127.0.0.1:8000`; vLLM itself is not reachable from outside the head pod. nginx checks every route except `/health` and `/ping`, so routes vLLM's own `--api-key` leaves open, such as `/invocations` and `/metrics`, need the key too, as do routes a future vLLM adds. The start script writes the accepted header to `/etc/nginx/vllm-api-key.map` (root-only) and reloads nginx; the shipped map accepts nothing, so a pod that never sets a key never serves. The key falls back to the head's `JUPYTER_PASSWORD`, so the pod's console password works for the API too; set `VLLM_API_KEY` to use a separate key.
 
-vLLM runs beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if vLLM exits; restart the pod to serve again. vLLM opens port 8000 only once the model has loaded, so until then the Runpod proxy answers `502`; `/health` answers 200 once it can serve. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
+vLLM runs beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if vLLM exits; restart the pod to serve again. Until vLLM is listening (the model is loading, or vLLM was not started), 8001 answers `503`; `/health` answers 200 once it can serve. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
 
-vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray, or if vLLM stops loading `--middleware`.
+vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray.
 
 ## Ports
 
@@ -77,8 +77,9 @@ vLLM pins torch exactly, so the variant is built only on the Ray build whose tor
 | 20217 | Ray metrics (every node) | host scrape; the head's Prometheus |
 | 52365 | Ray dashboard agent (every node), token-authenticated | the head's dashboard, for jobs and logs |
 | 8889 | Grafana, token-authenticated (inherited from `pytorch-cluster`) | cluster owner's browser; map this in the Runpod template |
+| 8001 | vLLM API front door (nginx, head; inference variant only), key-authenticated | API clients; map this in the inference template. vLLM itself listens on `127.0.0.1:8000` |
 
-All except Grafana and the dashboard front door are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. Unauthenticated, the Ray dashboard's API is job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). Ray's own token authentication closes that: the UI asks for the token once and keeps it in an HttpOnly `ray-authentication-token` cookie; API clients send `Authorization: Bearer <token>`. Health checks (`/api/gcs_healthz`), the static UI and the login endpoint stay public. The same token gates every node's dashboard agent on 52365, which serves job submission and logs (Ray 2.54 added this; earlier versions left the agent open), apart from its `/api/healthz` and `/api/local_raylet_healthz`. The metrics port (20217) is not gated, so keep it and the agent port unmapped. **With `RAY_AUTH_MODE=disabled`, never map 8265 or 8266.**
+All except Grafana, the dashboard front door and the inference variant's API front door are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. Unauthenticated, the Ray dashboard's API is job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). Ray's own token authentication closes that: the UI asks for the token once and keeps it in an HttpOnly `ray-authentication-token` cookie; API clients send `Authorization: Bearer <token>`. Health checks (`/api/gcs_healthz`), the static UI and the login endpoint stay public. The same token gates every node's dashboard agent on 52365, which serves job submission and logs (Ray 2.54 added this; earlier versions left the agent open), apart from its `/api/healthz` and `/api/local_raylet_healthz`. The metrics port (20217) is not gated, so keep it and the agent port unmapped. **With `RAY_AUTH_MODE=disabled`, never map 8265 or 8266.**
 
 The front door on 8266 skips the token prompt, the way Jupyter's link does: the console opens `https://<pod>-8266.<proxy-base>/?token=<cluster token>`, and nginx (`config/nginx/ray-dashboard.conf`, started by `/start.sh`) answers with that token as Ray's `ray-authentication-token` cookie and a redirect to the same path without it. nginx holds no secret and checks nothing; every request it passes on is still checked by Ray, so a wrong token gets Ray's usual prompt. Only URL-safe tokens (`A-Z a-z 0-9 . _ ~ -`) are taken from the link; any other token falls back to the prompt. As with Jupyter, anyone holding the link holds the cluster token.
 
