@@ -16,7 +16,7 @@ Checks, in order, per node then cluster-wide:
   6. Grafana on the head through the public proxy (health, token login,
      no anonymous access, datasource query)
   7. image hygiene checks the group opted into, on the head only
-  8. container-log error scan, dwell, then SSH re-probe of every node
+  8. dwell, SSH re-probe of every node, then one container-log error scan
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from .cluster import (
     cluster_gpu_sizes,
     cluster_types_for,
     create_cluster,
+    node_price,
     pick_gpus_per_node,
     register_cluster,
     wait_for_nodes,
@@ -71,6 +72,8 @@ def _create_cluster_with_retries(
     deploys fine as another, so a refusal says something about the type, not
     only about capacity. The verdict is the last type's when all fail.
     """
+    if not _within_price_cap(gpu_id, gpus_per_node):
+        return None, "UNAVAILABLE", ""
     types = cluster_types_for(group)
     result: tuple[Optional[str], str, str] = (None, "CREATE_FAIL", "")
     for i, cluster_type in enumerate(types):
@@ -86,6 +89,30 @@ def _create_cluster_with_retries(
         if i + 1 < len(types):
             log(f"{cluster_type} refused, trying {types[i + 1]}", indent=2)
     return result
+
+
+def _within_price_cap(gpu_id: str, gpus_per_node: int) -> bool:
+    """False when CLUSTER_MAX_NODE_PRICE rules this GPU type out; the caller
+    then reports it as no capacity, the same as a full fleet."""
+    cap = config.CLUSTER_MAX_NODE_PRICE
+    if cap <= 0:
+        return True
+    per_node = node_price(gpu_id, gpus_per_node)
+    if per_node is None:
+        log(
+            f"skipped: node price unknown, cannot check it against "
+            f"CLUSTER_MAX_NODE_PRICE ${cap}/hr",
+            indent=2,
+        )
+        return False
+    if per_node > cap:
+        log(
+            f"skipped: ${per_node}/hr per node is over CLUSTER_MAX_NODE_PRICE "
+            f"${cap}/hr",
+            indent=2,
+        )
+        return False
+    return True
 
 
 def _create_one_type(
@@ -229,9 +256,10 @@ def _monitoring_steps(
 def _dwell_steps(
     nodes: list[ClusterNode], endpoints: dict[str, SshEndpoint], image: str,
 ) -> Optional[_Outcome]:
-    """One dwell for the whole cluster, then every node must still answer."""
+    """One dwell for the whole cluster, every node must still answer, then
+    the single container-log scan of every node."""
     if config.DWELL_SEC <= 0:
-        return None
+        return _log_scan_steps(nodes, image)
     log(f"dwelling {config.DWELL_SEC}s and re-probing every node...", indent=2)
     time.sleep(config.DWELL_SEC)
     for node in nodes:
@@ -320,9 +348,7 @@ def _run_cluster_checks(
     _mark_hygiene(group, head, outcome)
     if outcome is not None:
         return outcome
-    outcome = _log_scan_steps(nodes, image)
-    if outcome is not None:
-        return outcome
+    # The log scan runs once, at the end of the dwell (see _dwell_steps).
     outcome = _dwell_steps(nodes, endpoints, image)
     if outcome is not None:
         return outcome

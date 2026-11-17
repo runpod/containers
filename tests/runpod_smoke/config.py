@@ -339,6 +339,16 @@ CLUSTER_EXCLUDE_DATA_CENTERS = os.environ.get(
 # override a price lookup that is wrong or failing.
 CLUSTER_DEPLOY_COST = float(os.environ.get("CLUSTER_DEPLOY_COST", "0") or 0)
 
+# Highest per-node hourly price a cluster may cost; 0 (default) means no cap.
+# The catalog walk is cheapest first but has no other stop, so without a cap
+# a day when only B300 has room buys 2x8 B300 (~$173/hr). A GPU type over the
+# cap, or whose price cannot be read, counts as no capacity, so with
+# CLUSTER_POD_FALLBACK=1 the run falls back to a pod instead of buying a
+# pricier cluster.
+CLUSTER_MAX_NODE_PRICE = float(
+    os.environ.get("CLUSTER_MAX_NODE_PRICE", "0") or 0
+)
+
 # How long createCluster may take to materialise every member pod in the
 # cluster record. Booting them is then bounded by CLUSTER_BOOT_TIMEOUT.
 CLUSTER_PODS_TIMEOUT = int(os.environ.get("CLUSTER_PODS_TIMEOUT", "300"))

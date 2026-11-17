@@ -640,6 +640,7 @@ pytorch:
 | `MONITORING_WAIT_TIMEOUT` | `240` | Seconds for each monitoring wait on a node: supervisord programs, Grafana health, Prometheus scraping every node. |
 | `GRAFANA_PROXY_TIMEOUT` | `180` | Seconds for Grafana to answer `/api/health` through the public proxy. |
 | `CLUSTER_REQUIRE_DCGM` | `1` | `0` drops dcgm-exporter from the required programs and Prometheus jobs, for GPUs without DCGM support (some GeForce cards on dev). |
+| `CLUSTER_MAX_NODE_PRICE` | `0` | Highest per-node hourly cluster price to buy; `0` means no cap. A GPU type over it, or whose price can't be read, counts as no capacity (so `CLUSTER_POD_FALLBACK` takes over). CI sets `20`: only 8×A100 nodes on prod. |
 | `CLUSTER_POD_FALLBACK` | `0` | `1` re-tests a cluster group that found no Instant Cluster capacity (it ended SKIP after its retries) on a single ordinary GPU pod. The pod result replaces the SKIP and is marked "single-pod fallback"; multi-node checks (head node, Prometheus across nodes, Slurm) do not run. CI sets it. |
 | `CLUSTER_POD_FALLBACK_MAX_PRICE` / `CLUSTER_POD_FALLBACK_MIN_VRAM_GB` | `1.0` / `16` | Per-pod budget filters for the fallback's GPU candidates (cheapest first, Nvidia; the group's `exclude_instances` still apply). |
 | `SKIP_RETRY_BACKOFF` | `linear` | `linear`: retry round N waits N × `SKIP_RETRY_DELAY`; `fixed`: every round waits `SKIP_RETRY_DELAY`. Smoke-test action input `skip-retry-backoff`. |
@@ -853,7 +854,9 @@ It uses the same `TESTING_RUNPOD_API_KEY` / `TESTING_RUNPOD_SSH_PRIVATE_KEY`
 secrets as the pod smoke tests and skips with a warning without them.
 
 Prod cluster nodes are 8-GPU (2 nodes of A100 ≈ $34/hr and up) and are
-usually all reserved, so the job retries 5 times, 300 s apart
+usually all reserved. CI caps the node price at $20/hr
+(`CLUSTER_MAX_NODE_PRICE`, so only A100; a pricier type counts as no
+capacity), retries 5 times, 300 s apart
 (`skip-retry-backoff: fixed`, about 25 minutes, nothing billed), and then
 falls back to a single pod (`CLUSTER_POD_FALLBACK=1`, ≤ $1/hr). The image is
 still tested; a warning and the **SINGLE-POD FALLBACK** section of the

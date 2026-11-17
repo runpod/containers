@@ -118,10 +118,12 @@ targets, err = [], ''
 
 
 def healthy(job):
-    return sum(
-        1 for t in targets
+    # Distinct instances, not targets: two healthy scrapes of node-0 and none
+    # of node-1 must not count as two nodes.
+    return len({
+        t['labels'].get('instance') for t in targets
         if t['labels'].get('job') == job and t.get('health') == 'up'
-    )
+    })
 
 
 while True:

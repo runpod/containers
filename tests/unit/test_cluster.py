@@ -317,6 +317,12 @@ class PrometheusTargetCounter(unittest.TestCase):
         r = self._run(self._both("node", 9100, "down") + self._both("dcgm", 9400), 2)
         self.assertEqual(r.returncode, 1)
 
+    def test_two_scrapes_of_one_node_are_not_two_nodes(self):
+        twice = [self._t("node", "node-0:9100"), self._t("node", "node-0:9100")]
+        dcgm_twice = [self._t("dcgm", "node-0:9400"), self._t("dcgm", "node-0:9400")]
+        r = self._run(twice + dcgm_twice, 2)
+        self.assertEqual(r.returncode, 1, r.stdout)
+
 
 class GrafanaProxyCheck(unittest.TestCase):
     HEALTH = (200, '{"database": "ok", "version": "11"}')
@@ -454,6 +460,45 @@ class Reaper(unittest.TestCase):
             {"id": "d", "name": "my smoketest-1700000000-x"},
         ], now, 5400)
         self.assertEqual([s[0] for s in stale], ["a"])
+
+
+class ClusterPriceCap(unittest.TestCase):
+    """CLUSTER_MAX_NODE_PRICE: a GPU type over the cap is never created; it
+    reads as no capacity, so the run falls back instead of buying it."""
+
+    def _create(self, *, cap, price):
+        created = []
+
+        def fake(*_a, cluster_type, **_k):
+            created.append(cluster_type)
+            return "cl1", "", ""
+
+        with mock.patch.object(config, "CLUSTER_MAX_NODE_PRICE", cap), \
+             mock.patch.object(cluster_runner, "node_price", return_value=price), \
+             mock.patch.object(cluster_runner, "create_cluster", side_effect=fake), \
+             mock.patch.object(config, "CLUSTER_TYPES_OVERRIDE", ""):
+            out = cluster_runner._create_cluster_with_retries(
+                "img", "NVIDIA B300 SXM6 AC", "g", 2, 8,
+            )
+        return out, created
+
+    def test_over_the_cap_is_no_capacity_and_creates_nothing(self):
+        out, created = self._create(cap=20.0, price=86.304)
+        self.assertEqual(out, (None, "UNAVAILABLE", ""))
+        self.assertEqual(created, [])
+
+    def test_unknown_price_under_a_cap_is_not_bought(self):
+        out, created = self._create(cap=20.0, price=None)
+        self.assertEqual((out[1], created), ("UNAVAILABLE", []))
+
+    def test_under_the_cap_is_created(self):
+        out, created = self._create(cap=20.0, price=17.184)
+        self.assertEqual(out[0], "cl1")
+        self.assertTrue(created)
+
+    def test_no_cap_by_default(self):
+        out, _ = self._create(cap=0.0, price=86.304)
+        self.assertEqual(out[0], "cl1")
 
 
 if __name__ == "__main__":
