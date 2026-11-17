@@ -1,0 +1,15 @@
+# Pragmatic yamllint config. Extends the default rules but relaxes the
+# ones that fight normal GitHub Actions / Docker-compose style YAML.
+extends: default
+
+rules:
+  # GitHub Actions workflows use `on:` which yamllint's default flags as
+  # a truthy value; and long lines are common in run: blocks.
+  line-length: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  document-start: disable
