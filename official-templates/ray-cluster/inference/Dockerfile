@@ -43,6 +43,14 @@ RUN sed -i 's|^http {$|&\n    include /etc/nginx/vllm-api.conf;|' /etc/nginx/ngi
     grep -q 'include /etc/nginx/vllm-api.conf;' /etc/nginx/nginx.conf && \
     nginx -t
 
+# vLLM's metrics on the head's Prometheus + Grafana: this image's post-start
+# hook runs the Ray image's (renamed /post_start.ray.sh), then adds a scrape
+# job for 127.0.0.1:8000; vLLM's example dashboards load into a vLLM folder.
+RUN mv /post_start.sh /post_start.ray.sh
+COPY --chmod=755 post_start.sh /post_start.sh
+COPY config/provisioning/dashboards/vllm.yml /etc/grafana/provisioning/dashboards/vllm.yml
+COPY config/dashboards/ /opt/runpod/inference/grafana-dashboards/
+
 # 8001 vLLM's OpenAI-compatible API on the head, through nginx. Every route
 #      except /health and /ping needs VLLM_API_KEY (else JUPYTER_PASSWORD).
 #      Map this one in the Runpod template. vLLM itself (8000) listens on

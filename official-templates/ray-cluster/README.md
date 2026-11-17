@@ -65,6 +65,8 @@ The API is served on port **8001** by the base image's nginx (`inference/nginx/v
 
 vLLM runs beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if vLLM exits; restart the pod to serve again. Until vLLM is listening (the model is loading, or vLLM was not started), 8001 answers `503`; `/health` answers 200 once it can serve. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
 
+On the head, vLLM's metrics join the inherited monitoring: the variant's `/post_start.sh` runs the Ray image's hook (renamed `/post_start.ray.sh`), then adds a Prometheus `vllm` job that scrapes `127.0.0.1:8000/metrics` directly, with no key, since only nginx's 8001 is reachable from outside. Grafana loads vLLM's example dashboards (`vLLM`, `vLLM Performance Statistics`, `vLLM Query Statistics`, from vLLM's `examples/observability/` at the pinned version, in `inference/config/dashboards/`) into a **vLLM** folder. `RAY_CLUSTER_METRICS=0` leaves the job out with the rest of the head's stack. Re-vendor the dashboards when bumping `VLLM_VERSION`; their metric names follow vLLM's.
+
 vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray.
 
 ## Ports
