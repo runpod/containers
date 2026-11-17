@@ -7,12 +7,16 @@
 #   1. the contract label and ENTRYPOINT are present;
 #   2. a port override (env or RAY_START_EXTRA_ARGS) fails the boot with an
 #      error naming the variable;
-#   3. a pod with no NODE_RANK boots its CMD without Ray;
+#   3. a pod with no NODE_RANK boots its CMD without Ray; a CMD other than
+#      /start.sh gets /start.sh's services (nginx) alongside it unless
+#      RAY_CLUSTER_SERVICES=0, and a CMD that runs /start.sh again waits on
+#      the first run instead of starting them twice;
 #   4. a 2-node cluster forms from only the topology the image depends on
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
 #      passed-through PRIMARY_ADDR/NODE_ADDR/NODE_ROLE). The worker starts
 #      first, while node-0 is missing from its /etc/hosts (head not running),
-#      must run its CMD meanwhile, and must join once node-0 is added, as the
+#      must run its CMD meanwhile, with /start.sh's services but not Jupyter,
+#      and must join once node-0 is added, as the
 #      host's sync does. Then: the head dashboard's /api/gcs_healthz reports
 #      success and its State API node list ($NODES_PATH) has both nodes ALIVE
 #      at their addresses (what pkg/rayready polls and parses), and both serve
@@ -64,7 +68,7 @@ pass() { echo "ok: $*"; }
 
 run_id="raycontract-$$"
 cleanup() {
-    docker rm -f "$run_id-head" "$run_id-worker" > /dev/null 2>&1 || true
+    docker rm -f "$run_id-head" "$run_id-worker" "$run_id-chain" > /dev/null 2>&1 || true
     docker network rm "$run_id" > /dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -242,6 +246,26 @@ check_image() {
     [[ "$plain" == plain ]] || fail "a pod without NODE_RANK started Ray"
     pass "no NODE_RANK boots CMD without Ray"
 
+    # A custom CMD gets the packaged services without running /start.sh.
+    # shellcheck disable=SC2016 # expanded by the container's bash
+    local nginx_up='for _ in $(seq 1 60); do pgrep -x nginx > /dev/null && echo up && exit; sleep 1; done; echo down'
+    local services
+    services=$(docker run --rm "$image" bash -c "$nginx_up" | tail -n 1)
+    [[ "$services" == up ]] || fail "a custom CMD did not get /start.sh's services (nginx)"
+    services=$(docker run --rm -e RAY_CLUSTER_SERVICES=0 "$image" bash -c 'sleep 10; pgrep -x nginx > /dev/null && echo up || echo down' | tail -n 1)
+    [[ "$services" == down ]] || fail "RAY_CLUSTER_SERVICES=0 still started /start.sh's services"
+    pass "a custom CMD gets /start.sh's services, and RAY_CLUSTER_SERVICES=0 opts out"
+
+    # A CMD that chains into /start.sh itself, as before the entrypoint did it,
+    # waits on the entrypoint's run instead of starting the services again.
+    docker run -d --name "$run_id-chain" "$image" bash -c 'exec /start.sh' > /dev/null
+    chain_waiting() { docker logs "$run_id-chain" 2>&1 | grep -qF "/start.sh is already running"; }
+    wait_for "a chained /start.sh waiting on the first run" 60 chain_waiting
+    [[ $(docker inspect -f '{{.State.Running}}' "$run_id-chain") == true ]] ||
+        fail "a CMD that runs /start.sh exited"
+    docker rm -f "$run_id-chain" > /dev/null
+    pass "a CMD that runs /start.sh again waits instead of starting the services twice"
+
     # 4. Two-node formation. CMD is overridden so only Ray runs. Each pod gets
     # its node-<rank> hostname, as on Runpod (the inherited monitoring stack
     # keys the head off it).
@@ -268,6 +292,13 @@ check_image() {
     ! "${in_worker[@]}" grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' /proc/1/environ ||
         fail "the worker's CMD inherited the Jupyter env"
     pass "worker CMD runs without the Jupyter env"
+
+    # The CMD is `sleep infinity`, yet /start.sh's services run beside it,
+    # under the same env, so not Jupyter.
+    wait_for "nginx on the worker" 60 "${in_worker[@]}" pgrep -x nginx
+    sleep 5
+    ! "${in_worker[@]}" pgrep -f 'jupyter.lab' > /dev/null || fail "the worker's /start.sh started Jupyter"
+    pass "worker runs /start.sh's services alongside its CMD, without Jupyter"
 
     docker run -d --name "$run_id-head" --hostname node-0 --ip "$HEAD_IP" "${topo[@]}" \
         --add-host "node-0:$HEAD_IP" --add-host "node-1:$WORKER_IP" -e NODE_RANK=0 \
@@ -318,8 +349,9 @@ check_image() {
     pass "dashboard agent ($AGENT_PORT): job submission needs the token, health stays public"
 
     # The browser front door: nginx on 8266 turns ?token= into that cookie.
-    # The head's CMD is `sleep infinity`, so start nginx as /start.sh would.
-    docker exec "$run_id-head" nginx || fail "nginx did not start on the head"
+    # The head's CMD is `sleep infinity`; the entrypoint starts nginx beside it.
+    front_door_up() { "${in_worker[@]}" curl -s -o /dev/null "http://$HEAD_IP:$FRONT_PORT/"; }
+    wait_for "nginx's front door on the head" 60 front_door_up
     "${in_worker[@]}" curl -sS -o /dev/null -D /tmp/front-headers "http://$HEAD_IP:$FRONT_PORT/?token=$TOKEN" ||
         fail "the dashboard front door ($FRONT_PORT) is unreachable"
     "${in_worker[@]}" grep -qi '^HTTP/1.1 302' /tmp/front-headers || fail "?token= was not redirected"
@@ -338,7 +370,9 @@ check_image() {
     # answers these, so the head needs no Grafana.
     local locations
     locations=$(docker run --rm -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
-        -e RUNPOD_POD_ID=abc123 -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" bash -c "nginx && for p in / /jobs; do
+        -e RUNPOD_POD_ID=abc123 -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" bash -c "
+        for _ in \$(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:$FRONT_PORT/ && break; sleep 1; done
+        for p in / /jobs; do
             curl -sS -o /dev/null -w '%{redirect_url}\n' \"http://127.0.0.1:$FRONT_PORT\$p?token=$TOKEN\"; done" |
         tail -n 2) || fail "a head with RUNPOD_POD_ID did not boot"
     [[ "$locations" == "https://abc123-8889.proxy.runpod.net/runpod-login?token=$TOKEN"$'\n'*/jobs ]] ||

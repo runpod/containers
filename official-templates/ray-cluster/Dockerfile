@@ -6,7 +6,8 @@
 # Contract v1 with runpod/host: the host injects only topology env and observes
 # Ray from outside the container (dashboard 8265 for readiness/liveness, Ray
 # metrics on 20217). The image owns launch: the ENTRYPOINT starts Ray, then
-# execs the CMD. Customers extend it with `FROM runpod/ray-cluster:<tag>`,
+# execs the CMD, starting /start.sh's services alongside a customer CMD.
+# Customers extend it with `FROM runpod/ray-cluster:<tag>`, with any CMD,
 # keeping the ENTRYPOINT, the Ray version and the contract ports. See
 # README.md and runpod/host docs/ray-init-refactor.md.
 #
@@ -48,6 +49,12 @@ ENV RAY_CLUSTER_RAY_VERSION=${RAY_VERSION} \
     NCCL_NET_GDR_LEVEL=PHB
 
 COPY --chmod=755 ray/entrypoint.sh /opt/runpod/ray/entrypoint
+
+# The entrypoint starts /start.sh's services itself when the CMD is something
+# else, so a CMD that also runs /start.sh must not start them twice: the
+# inherited script moves aside and /start.sh runs it once per container.
+RUN mv /start.sh /start.base.sh
+COPY --chmod=755 ray/start-once.sh /start.sh
 
 # Head metrics stack: Ray's generated dashboards next to the inherited ones,
 # plus Runpod's Ray overview as Grafana's landing page (it links to the

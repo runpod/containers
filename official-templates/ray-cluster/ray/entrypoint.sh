@@ -14,9 +14,10 @@
 #   5. on a worker, do 3 and 4 in the background and keep rejoining there:
 #      its raylet exits with the head, and a restarted head is a new cluster
 #      nothing else rejoins;
-#   6. exec "$@" (the customer CMD, /start.sh by default); on a worker, at
-#      once, with the Jupyter env cleared so /start.sh leaves Jupyter to the
-#      head.
+#   6. exec "$@" (the customer CMD, /start.sh by default), with /start.sh's
+#      services started in the background when the CMD is something else; on
+#      a worker, at once, with the Jupyter env cleared so /start.sh leaves
+#      Jupyter to the head.
 #
 # The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
 # and the cluster membership in /etc/hosts (node-0 ... node-N). The other
@@ -44,12 +45,28 @@ die() {
 }
 
 [[ $# -gt 0 ]] || set -- /start.sh
+cmd=("$@")
+
+# handoff [<env(1) args>...]: exec the CMD under `env <args>`. /start.sh brings
+# up the packaged services: nginx (and with it the 8266 dashboard front door),
+# SSH, Jupyter, and the monitoring stack through /post_start.sh. A customer CMD
+# replaces it, so for any other CMD it is started first, in the background and
+# under the same env: a derived image or template sets its CMD without knowing
+# about /start.sh. RAY_CLUSTER_SERVICES=0 runs the CMD alone. The CMD still
+# becomes the main process, so the container lives as long as it does.
+handoff() {
+    if [[ "${cmd[0]}" != /start.sh && "${RAY_CLUSTER_SERVICES:-1}" != 0 ]]; then
+        log "starting the packaged services (/start.sh) alongside the CMD"
+        env "$@" /start.sh &
+    fi
+    exec env "$@" "${cmd[@]}"
+}
 
 # Not a cluster pod (no daemon-injected rank): run the CMD without Ray, so the
 # image still boots as a plain pod.
 if [[ -z "${NODE_RANK:-}" ]]; then
     log "NODE_RANK unset: not a Ray cluster pod, starting without Ray"
-    exec "$@"
+    handoff
 fi
 # Bounded so the arithmetic below can't overflow; canonical (no leading zeros)
 # and re-exported, so a rank of "00" is the head here and in /post_start.sh.
@@ -217,7 +234,7 @@ if [[ "$role" == head ]]; then
     wait_listening "$CONTRACT_DASHBOARD_PORT" "Ray dashboard"
     wait_listening "$CONTRACT_METRICS_PORT" "Ray metrics endpoint"
     log "Ray head started"
-    exec "$@"
+    handoff
 fi
 
 # --- 3. Worker: wait for the head GCS ----------------------------------- #
@@ -296,4 +313,4 @@ join_forever &
 # (any node can still ray.init() into the cluster). /start.sh starts Jupyter
 # only when one of these is set. Ray itself keeps the secret, as
 # RAY_AUTH_TOKEN, when it came from JUPYTER_PASSWORD.
-exec env -u JUPYTER_PASSWORD -u JUPYTER_DISABLE_AUTH "$@"
+handoff -u JUPYTER_PASSWORD -u JUPYTER_DISABLE_AUTH
