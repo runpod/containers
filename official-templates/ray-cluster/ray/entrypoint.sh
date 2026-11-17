@@ -17,7 +17,8 @@
 #   6. exec "$@" (the customer CMD, /start.sh by default), with /start.sh's
 #      services started in the background when the CMD is something else; on
 #      a worker, at once, with the Jupyter env cleared so /start.sh leaves
-#      Jupyter to the head.
+#      Jupyter to the head, and /start.sh in place of a customer CMD unless
+#      RAY_CLUSTER_CMD_NODES=all.
 #
 # The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
 # and the cluster membership in /etc/hosts (node-0 ... node-N). The other
@@ -72,6 +73,17 @@ fi
 # and re-exported, so a rank of "00" is the head here and in /post_start.sh.
 [[ "$NODE_RANK" =~ ^[0-9]{1,5}$ ]] || die "NODE_RANK '$NODE_RANK' is not a node rank"
 export NODE_RANK=$((10#$NODE_RANK))
+
+# Where a customer CMD runs. Most are once-per-cluster work (a driver, a Serve
+# deploy, a server), which on every node would run N times, and on a worker
+# would start before it has joined the head. So by default it runs on the head
+# only; RAY_CLUSTER_CMD_NODES=all runs it on every node, for per-node work.
+# Checked on every node, so a typo fails the whole cluster's boot, not only the
+# head's CMD placement.
+cmd_nodes=${RAY_CLUSTER_CMD_NODES:-head}
+cmd_nodes=${cmd_nodes,,}
+[[ "$cmd_nodes" == head || "$cmd_nodes" == all ]] ||
+    die "RAY_CLUSTER_CMD_NODES '$RAY_CLUSTER_CMD_NODES' is not 'head' or 'all'"
 
 # --- 1. Contract ports ------------------------------------------------------ #
 require_port() { # <var> <contract value>
@@ -313,4 +325,16 @@ join_forever &
 # (any node can still ray.init() into the cluster). /start.sh starts Jupyter
 # only when one of these is set. Ray itself keeps the secret, as
 # RAY_AUTH_TOKEN, when it came from JUPYTER_PASSWORD.
+#
+# A customer CMD is the head's unless RAY_CLUSTER_CMD_NODES=all: this worker
+# runs the packaged services instead (or, with RAY_CLUSTER_SERVICES=0, only
+# stays up), beside the join loop above.
+if [[ "${cmd[0]}" != /start.sh && "$cmd_nodes" == head ]]; then
+    log "the CMD runs on the head only (RAY_CLUSTER_CMD_NODES=head); this worker runs Ray and the packaged services"
+    if [[ "${RAY_CLUSTER_SERVICES:-1}" != 0 ]]; then
+        cmd=(/start.sh)
+    else
+        cmd=(sleep infinity)
+    fi
+fi
 handoff -u JUPYTER_PASSWORD -u JUPYTER_DISABLE_AUTH

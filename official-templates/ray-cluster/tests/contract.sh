@@ -10,7 +10,8 @@
 #   3. a pod with no NODE_RANK boots its CMD without Ray; a CMD other than
 #      /start.sh gets /start.sh's services (nginx) alongside it unless
 #      RAY_CLUSTER_SERVICES=0, and a CMD that runs /start.sh again waits on
-#      the first run instead of starting them twice;
+#      the first run instead of starting them twice; a custom CMD runs on
+#      the head only unless RAY_CLUSTER_CMD_NODES=all;
 #   4. a 2-node cluster forms from only the topology the image depends on
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
 #      passed-through PRIMARY_ADDR/NODE_ADDR/NODE_ROLE). The worker starts
@@ -209,6 +210,7 @@ check_image() {
         "rank overflow|is not a node rank|NODE_RANK=99999999999999999999"
         "rank command injection|is not a node rank|NODE_RANK=0; id"
         "no shared secret (fail closed)|Ray token authentication needs a shared secret"
+        "CMD placement not head or all|is not 'head' or 'all'|RAY_CLUSTER_CMD_NODES=workers|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "auth mode Ray might read as off|is not 'token' or 'disabled'|RAY_AUTH_MODE=off|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "missing token file|is not a non-empty file|RAY_AUTH_TOKEN_PATH=/nonexistent"
         "empty token file|is not a non-empty file|RAY_AUTH_TOKEN_PATH=/dev/null"
@@ -266,6 +268,18 @@ check_image() {
     docker rm -f "$run_id-chain" > /dev/null
     pass "a CMD that runs /start.sh again waits instead of starting the services twice"
 
+    # A custom CMD is the head's by default: a worker runs /start.sh instead.
+    # No node-0 here, so the worker never joins; only its CMD placement counts.
+    docker run -d --name "$run_id-chain" -e NODE_RANK=1 --add-host node-1:127.0.0.1 \
+        -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" sleep infinity > /dev/null
+    head_only_cmd() { docker logs "$run_id-chain" 2>&1 | grep -qF "the CMD runs on the head only"; }
+    wait_for "a worker leaving its CMD to the head" 60 head_only_cmd
+    wait_for "nginx on a worker without its CMD" 60 docker exec "$run_id-chain" pgrep -x nginx
+    [[ $(docker exec "$run_id-chain" cat /proc/1/comm) != sleep ]] ||
+        fail "a worker ran the CMD without RAY_CLUSTER_CMD_NODES=all"
+    docker rm -f "$run_id-chain" > /dev/null
+    pass "a custom CMD runs on the head only by default; a worker runs /start.sh instead"
+
     # 4. Two-node formation. CMD is overridden so only Ray runs. Each pod gets
     # its node-<rank> hostname, as on Runpod (the inherited monitoring stack
     # keys the head off it).
@@ -274,10 +288,11 @@ check_image() {
 
     # The worker starts while the head isn't running: node-0 is not in its
     # /etc/hosts yet. It must wait, not exit or start Ray, and run its CMD
-    # meanwhile (on Runpod that is /start.sh, which brings up sshd).
+    # meanwhile (on Runpod that is /start.sh, which brings up sshd). With
+    # RAY_CLUSTER_CMD_NODES=all, so the CMD is this worker's too.
     docker run -d --name "$run_id-worker" --hostname node-1 --ip "$WORKER_IP" "${topo[@]}" \
         --add-host "node-1:$WORKER_IP" -e NODE_RANK=1 -e JUPYTER_PASSWORD="$TOKEN" \
-        -e JUPYTER_DISABLE_AUTH=true "$image" sleep infinity > /dev/null
+        -e JUPYTER_DISABLE_AUTH=true -e RAY_CLUSTER_CMD_NODES=all "$image" sleep infinity > /dev/null
     wait_for "worker waiting for node-0" 120 worker_waiting_for_head
     sleep 10
     local running
