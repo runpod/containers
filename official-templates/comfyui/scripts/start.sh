@@ -664,23 +664,40 @@ def release(version):
 
 
 def build(version):
-    # "2.2.0+torch2.10.0.cu128.sm90fix1" -> "torch2.10.0.cu128.sm90fix1"
-    return version.partition("+")[2]
+    # "2.2.0+torch2.10.0.cu128.sm90fix1" -> ("2.10.0", "cu128"); None without
+    # a torch/CUDA build tag (a source build, or PyPI's 1.x). A suffix such as
+    # sm90fix1 is not part of it: same torch and CUDA means the same ABI.
+    m = re.search(r"\+torch(\d+(?:\.\d+)*)\.(cu\d+)", version)
+    return (m.group(1), m.group(2)) if m else None
 
 
 user, bundled = find(True), find(False)
 if user is None or bundled is None:
     sys.exit(0)
-pip = os.path.join(os.environ["VENV_DIR"], "bin", "pip")
+venv = os.environ["VENV_DIR"]
+pip = os.path.join(venv, "bin", "pip")
+ours = build(bundled.version)
+theirs = build(user.version)
 if release(user.version) < release(bundled.version):
-    print(f"WARNING: SageAttention {user.version} installed in {os.environ['VENV_DIR']} overrides "
+    print(f"WARNING: SageAttention {user.version} installed in {venv} overrides "
           f"the pre-installed {bundled.version}, which is newer and built for this image's "
           "PyTorch and CUDA.")
     print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
-elif release(user.version) == release(bundled.version) and build(user.version) != build(bundled.version):
-    print(f"WARNING: SageAttention {user.version} installed in {os.environ['VENV_DIR']} overrides "
-          f"the pre-installed {bundled.version}: the same release, but built for a different "
-          "PyTorch or CUDA than this image, so it will likely fail to load.")
+elif theirs != ours:
+    # The build tag, not the release, decides whether it loads: a wheel built
+    # for another torch or CUDA fails at import with an undefined symbol,
+    # whatever its release number.
+    if theirs is None:
+        why = ("it has no torch/CUDA build tag, so it may be built for a different "
+               "PyTorch or CUDA than this image and fail to load")
+    elif ours is None:
+        why = (f"it is built for torch {theirs[0]} {theirs[1]}, which may not match "
+               "this image's PyTorch and CUDA")
+    else:
+        why = (f"it is built for torch {theirs[0]} {theirs[1]}, this image has torch "
+               f"{ours[0]} {ours[1]}, so it will likely fail to load")
+    print(f"WARNING: SageAttention {user.version} installed in {venv} overrides "
+          f"the pre-installed {bundled.version}: {why}.")
     print(f"  To use the pre-installed one, uninstall yours: {pip} uninstall -y sageattention")
 elif user.version != bundled.version:
     print(f"NOTE: using SageAttention {user.version} installed in {os.environ['VENV_DIR']} "
