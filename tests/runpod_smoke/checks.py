@@ -1239,9 +1239,13 @@ def _proxy_status_ok(code: int) -> bool:
 
 
 def run_port_proxy_check(
-    pod_id: str, test_port: int, path: str = "/"
+    pod_id: str, test_port: int, path: str = "/",
+    headers: Optional[dict] = None,
 ) -> tuple[bool, str]:
-    """Probe a generic HTTP service through RunPod's public proxy."""
+    """Probe a generic HTTP service through Runpod's public proxy.
+
+    `headers` are added to the request, e.g. the password a service behind
+    an auth proxy needs before it answers 200."""
     url = f"{config.proxy_url(pod_id, test_port)}{path}"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
     lines = [f"GET {url}"]
@@ -1251,7 +1255,8 @@ def run_port_proxy_check(
         attempt += 1
         try:
             req = urllib.request.Request(
-                url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+                url,
+                headers={"User-Agent": "runpod-smoke-test/1.0", **(headers or {})},
             )
             with urllib.request.urlopen(req, timeout=10) as response:
                 code = response.status
