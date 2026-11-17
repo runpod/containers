@@ -33,7 +33,8 @@ assert m.version("dnspython") == "2.9.2", m.version("dnspython")'
 # Fail on any bundled FFmpeg below 9.0, naming the file. Same files Grype's
 # ffmpeg rule reads (libav*, libswresample*, ffmpeg), minus apt-owned ones,
 # which Grype skips too. opencv's copies are listed but not failed on: no
-# opencv release ships FFmpeg newer than 8.1.2.
+# released opencv wheel bundles FFmpeg >= 9 yet. See the opencv entry in
+# .github/actions/grype/ignore.yaml.
 RUN uv cache clean && \
     rm -rf /opt/uv/cache /opt/pip/cache /root/.cache/uv /root/.cache/pip && \
     stale="" && \
