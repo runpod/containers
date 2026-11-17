@@ -254,6 +254,33 @@ class ProxyTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await ws.receive_str(timeout=5), '{"type": "status"}')
                 await ws.close()
 
+    async def test_websocket_behind_the_runpod_proxy_passes(self):
+        """The handshake as captured inside a pod: Host is the node's internal
+        address and the public name is in X-Forwarded-Host. Comparing Origin
+        with Host refused every browser's socket on a live pod."""
+        ws = await self.client.ws_connect(self.base + "/ws", headers={
+            **BEARER,
+            "Host": "100.65.13.117:60526",
+            "X-Forwarded-Host": "abc-8188.proxy.runpod.net",
+            "X-Forwarded-Proto": "https",
+            "Origin": "https://abc-8188.proxy.runpod.net",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "websocket"})
+        self.assertEqual(await ws.receive_str(timeout=5), '{"type": "status"}')
+        await ws.close()
+
+    async def test_websocket_behind_the_runpod_proxy_from_another_origin_is_refused(self):
+        """The same forwarded headers with another site's Origin, and no
+        Fetch Metadata to catch it first."""
+        with self.assertRaises(aiohttp.WSServerHandshakeError) as caught:
+            await self.client.ws_connect(self.base + "/ws", headers={
+                **BEARER,
+                "Host": "100.65.13.117:60526",
+                "X-Forwarded-Host": "abc-8188.proxy.runpod.net",
+                "Origin": "https://evil.example"})
+        self.assertEqual(caught.exception.status, 403)
+        self.assertEqual(self.seen, [])
+
     async def test_upstream_down_is_502(self):
         self.proxy.UPSTREAM = "127.0.0.1:1"
         status, _, body = await self.call("GET", "/", headers=BEARER)

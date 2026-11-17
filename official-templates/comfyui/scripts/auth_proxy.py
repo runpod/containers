@@ -266,14 +266,20 @@ def sign_in_redirect(request):
 
 def foreign_origin(request):
     """True when a websocket upgrade's Origin names a host other than the one
-    it was sent to. A second check beside Sec-Fetch-Site: ComfyUI's own
-    Host/Origin check only runs when Host is loopback, and Host here is the
-    public proxy hostname. Ports are ignored, since the public proxy may add
-    or drop them."""
+    it was sent to. A second check beside Sec-Fetch-Site, for a client that
+    omits the Fetch Metadata headers.
+
+    The public hostname is X-Forwarded-Host: behind Runpod's proxy, Host is
+    the node's internal address (100.65.x.x:port), so comparing Origin with
+    Host refuses every browser's socket. The proxy sets X-Forwarded-Host, and
+    a client able to forge it is not a browser, so it has no Origin to
+    protect. Host is the fallback for a request that reaches the pod without
+    that proxy. Ports are ignored, since the proxy may add or drop them."""
     origin = request.headers.get("Origin")
     if not origin:
         return False
-    host = request.headers.get("Host", "")
+    forwarded = request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+    host = forwarded or request.headers.get("Host", "")
     split = urllib.parse.urlsplit
     return (split(origin).hostname or "") != (split("//" + host).hostname or "")
 
