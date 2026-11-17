@@ -1,6 +1,6 @@
 # === Version Pins (single source of truth) ===
 variable "COMFYUI_VERSION" {
-  default = "v0.35.0"
+  default = "v0.44.0"
 }
 variable "MANAGER_SHA" {
   default = "9d4cceea1351"
@@ -42,6 +42,12 @@ variable "FILEBROWSER_SHA256" {
 # cuInit() probe succeeds, so it is a no-op on newer drivers and on GPUs NVIDIA
 # does not support for forward compat (GeForce). 12.8 is off: no evidence of
 # sub-570 hosts, and it would add ~200 MB.
+#
+# SageAttention is compiled against one exact torch + CUDA pair, so each row
+# pins its own prebuilt wheel from https://github.com/runpod/sageattention
+# (release 0.2.0; every wheel there passed GPU tests on SM 8.0/8.6/8.9/9.0/12.0).
+# Leave the three fields empty for a variant that has no wheel: it then ships
+# without SageAttention.
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8",
@@ -50,7 +56,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchaudio_index_suffix = "cu128",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
-      torchaudio_version = "2.10.0+cu128"
+      torchaudio_version = "2.10.0+cu128",
+      sageattention_version = "2.2.0+torch2.10.0.cu128.sm90fix1",
+      sageattention_wheel_url = "https://github.com/runpod/sageattention/releases/download/0.2.0/sageattention-2.2.0%2Btorch2.10.0.cu128.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "e46dda74dd1ca41e231e33af03b8bdbe1f5f3de4802472ed86ea3162fb596fb0"
     },
     { cuda_version = "13.0",
       install_cuda_compat = true,
@@ -58,7 +67,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchaudio_index_suffix = "cu130",
       torch_version = "2.10.0",
       torchvision_version = "0.25.0",
-      torchaudio_version = "2.10.0+cu130"
+      torchaudio_version = "2.10.0+cu130",
+      sageattention_version = "2.2.0+torch2.10.0.cu130.sm90fix1",
+      sageattention_wheel_url = "https://github.com/runpod/sageattention/releases/download/0.2.0/sageattention-2.2.0%2Btorch2.10.0.cu130.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "4277a667b6ba5f8b33e20fb44cb2399d571b44a159225242db4aaf004f2498ce"
     },
     { cuda_version = "13.2",
       install_cuda_compat = true,
@@ -66,7 +78,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
       torchaudio_index_suffix = "cpu",
       torch_version = "2.13.0",
       torchvision_version = "0.28.0",
-      torchaudio_version = "2.11.0+cpu"
+      torchaudio_version = "2.11.0+cpu",
+      sageattention_version = "2.2.0+torch2.13.0.cu132.sm90fix1",
+      sageattention_wheel_url = "https://github.com/runpod/sageattention/releases/download/0.2.0/sageattention-2.2.0%2Btorch2.13.0.cu132.sm90fix1-cp312-cp312-linux_x86_64.whl",
+      sageattention_sha256 = "0e940815cb1e9bccffcde5303f095c324f2174e2fe0100eae7614c92dbd1050b"
     }
   ]
 }
@@ -84,6 +99,9 @@ variable "COMPATIBLE_BUILDS" {
           torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
           torchaudio_version = combination.torchaudio_version,
           install_cuda_compat = combination.install_cuda_compat,
+          sageattention_version = combination.sageattention_version,
+          sageattention_wheel_url = combination.sageattention_wheel_url,
+          sageattention_sha256 = combination.sageattention_sha256,
          },
       ]
     ]
@@ -152,7 +170,13 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
+<<<<<<< HEAD
     INSTALL_CUDA_COMPAT = build.install_cuda_compat ? "true" : "false"
+=======
+    SAGEATTENTION_VERSION   = build.sageattention_version
+    SAGEATTENTION_WHEEL_URL = build.sageattention_wheel_url
+    SAGEATTENTION_SHA256    = build.sageattention_sha256
+>>>>>>> 89937499da3a6f5db35ab3b9bcb0641e30083b8f
   }
 
   tags = [
