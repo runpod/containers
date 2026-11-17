@@ -34,36 +34,24 @@ for arg in "$@"; do
     esac
 done
 
-# A set key wins over VLLM_DISABLE_AUTH.
-if [ -n "$key" ]; then
-    export VLLM_API_KEY="$key"
-    if [ "${VLLM_DISABLE_AUTH:-}" = "true" ]; then
-        echo "VLLM_DISABLE_AUTH=true is ignored because VLLM_API_KEY is set."
-    fi
-    echo "Authentication on: every route except /health, /ping and /metrics"
-    echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
-    export PYTHONPATH="${AUTH_MODULE_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
-    AUTH_ARGS=(--middleware "$AUTH_MIDDLEWARE")
-elif [ "${VLLM_DISABLE_AUTH:-}" = "true" ]; then
-    unset VLLM_API_KEY
-    echo "WARNING: VLLM_DISABLE_AUTH=true -- starting vLLM with NO authentication."
-    echo "WARNING: anyone with this Pod's :${LISTEN_PORT} proxy URL can run the model"
-    echo "WARNING: on your GPU, and reach every route vLLM serves."
-    AUTH_ARGS=()
-else
+# There is no unauthenticated mode: without a key, vLLM does not start.
+if [ -z "$key" ]; then
     echo "============================================================"
     echo "  vLLM was NOT started: VLLM_API_KEY is not set."
     echo ""
     echo "  This image requires a key on every route of :${LISTEN_PORT}."
-    echo "  Redeploy the Pod with one of these environment variables:"
-    echo "    VLLM_API_KEY=<a long random secret>   (recommended)"
-    echo "    VLLM_DISABLE_AUTH=true                (no authentication;"
-    echo "                                           anyone with the URL can use it)"
+    echo "  Redeploy the Pod with the environment variable"
+    echo "    VLLM_API_KEY=<a long random secret>"
     echo "============================================================"
     hold_without_vllm
     exit 0
 fi
 
+export VLLM_API_KEY="$key"
+echo "Authentication on: every route except /health, /ping and /metrics"
+echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
+export PYTHONPATH="${AUTH_MODULE_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+
 echo "Starting vLLM on ${LISTEN_HOST}:${LISTEN_PORT}"
 # Last, so they override any --host/--port in CMD.
-exec vllm serve "$@" ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} --host "$LISTEN_HOST" --port "$LISTEN_PORT"
+exec vllm serve "$@" --middleware "$AUTH_MIDDLEWARE" --host "$LISTEN_HOST" --port "$LISTEN_PORT"

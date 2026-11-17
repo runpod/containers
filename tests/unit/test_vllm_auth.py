@@ -216,9 +216,8 @@ class StartScript(unittest.TestCase):
         self.assertEqual(env["ENV_KEY"], KEY)
 
     def test_the_key_never_reaches_the_logs(self):
-        for env in ({"VLLM_API_KEY": KEY}, {"VLLM_API_KEY": KEY, "VLLM_DISABLE_AUTH": "true"}):
-            out = self.start(env, "m")
-            self.assertNotIn(KEY, out.stdout + out.stderr)
+        out = self.start({"VLLM_API_KEY": KEY}, "m")
+        self.assertNotIn(KEY, out.stdout + out.stderr)
 
     def test_host_and_port_are_the_image_s(self):
         self.start({"VLLM_API_KEY": KEY}, "m", "--host", "127.0.0.1", "--port", "9000")
@@ -230,22 +229,9 @@ class StartScript(unittest.TestCase):
         _, env = self.recorded()
         self.assertEqual(env["ENV_KEY"], KEY)
 
-    def test_key_wins_over_the_opt_out(self):
-        out = self.start({"VLLM_API_KEY": KEY, "VLLM_DISABLE_AUTH": "true"}, "m")
-        args, _ = self.recorded()
-        self.assertIn("--middleware", args)
-        self.assertIn("VLLM_DISABLE_AUTH=true is ignored", out.stdout)
-
-    def test_opt_out_starts_vllm_without_auth_and_warns(self):
-        out = self.start({"VLLM_DISABLE_AUTH": "true", "VLLM_API_KEY": "  "}, "m")
-        args, env = self.recorded()
-        self.assertNotIn("--middleware", args)
-        self.assertEqual(env["ENV_KEY"], "<unset>")
-        self.assertIn("NO authentication", out.stdout)
-
-    def test_opt_out_must_be_exactly_true(self):
-        for value in ("1", "yes", "TRUE", ""):
-            self.assert_refuses({"VLLM_DISABLE_AUTH": value})
+    def test_there_is_no_unauthenticated_mode(self):
+        """The removed VLLM_DISABLE_AUTH opt-out must not start vLLM keyless."""
+        self.assert_refuses({"VLLM_DISABLE_AUTH": "true"})
 
     def test_neither_set_does_not_start_vllm_and_says_why(self):
         self.assert_refuses({})
@@ -268,7 +254,7 @@ class StartScript(unittest.TestCase):
         try:
             deadline = time.monotonic() + 10
             output = ""
-            while "VLLM_DISABLE_AUTH=true" not in output and time.monotonic() < deadline:
+            while "VLLM_API_KEY=<a long random secret>" not in output and time.monotonic() < deadline:
                 output += proc.stdout.readline()
             self.assertIn("vLLM was NOT started: VLLM_API_KEY is not set", output)
             time.sleep(0.3)

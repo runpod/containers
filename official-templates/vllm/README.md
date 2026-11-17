@@ -22,13 +22,7 @@ Any OpenAI SDK works, with `base_url="https://<pod-id>-8000.proxy.runpod.net/v1"
 
 ### Authentication
 
-| Pod environment                  | Result                                                                       |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| `VLLM_API_KEY=<secret>`          | vLLM starts. Every request needs `Authorization: Bearer <secret>`, except the probes below. |
-| `VLLM_DISABLE_AUTH=true`         | vLLM starts with **no authentication**. Anyone with the URL can use your GPU. |
-| Neither                          | vLLM does **not** start. The Logs tab says why, and the Pod stays up so you can fix the env and restart it. |
-
-If both are set, the key wins.
+`VLLM_API_KEY` is required. With it set, every request needs `Authorization: Bearer <VLLM_API_KEY>`, except the probes below. Without it, vLLM does **not** start: the Logs tab says why, and the Pod stays up so you can set the variable and restart it. There is no way to run this image without authentication.
 
 Open without a key: `/health`, `/ping` and `/metrics` (exact paths). Everything else returns `401`, including routes vLLM's own `--api-key` leaves open, such as `/invocations`, `/tokenize` and `/scale_elastic_ep`. A route added in a future vLLM release is closed by default.
 

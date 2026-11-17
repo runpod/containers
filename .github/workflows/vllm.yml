@@ -97,7 +97,7 @@ jobs:
           test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/start.sh"]'
           say entrypoint "/start.sh"
 
-          # No key, no opt-out: vLLM must not start.
+          # No key: vLLM must not start.
           cid=$(docker run -d "$IMAGE" Qwen/Qwen3-0.6B)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 20); do
@@ -107,11 +107,11 @@ jobs:
           logs=$(docker logs "$cid" 2>&1)
           grep -q 'vLLM was NOT started: VLLM_API_KEY is not set' <<< "$logs"
           if grep -q 'Starting vLLM' <<< "$logs"; then
-            echo "::error::vLLM started with neither VLLM_API_KEY nor VLLM_DISABLE_AUTH"
+            echo "::error::vLLM started without VLLM_API_KEY"
             exit 1
           fi
           test "$(docker inspect -f '{{.State.Running}}' "$cid")" = true
-          say gate "no key, no opt-out: held, vLLM not started"
+          say gate "no key: held, vLLM not started"
           docker rm -f "$cid" >/dev/null
 
           docker run --rm -e VLLM_API_KEY=ci-key \
