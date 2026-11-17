@@ -43,6 +43,30 @@ It also logs a warning if the installed Ray differs from the version the image w
 - **Override the CMD in the template** (for example a Ray Serve app on a network volume). The entrypoint still starts Ray first. Don't override the template's entrypoint: that skips Ray entirely.
 - **Build `FROM runpod/ray-cluster:<tag>`** only for heavy or compiled dependencies or a locked-down production image. Keep the `ENTRYPOINT`, the Ray version, and ports 8265 and 20217.
 
+## Inference variant
+
+`runpod/ray-cluster:<version>-inference-cu1300-torch2130-ubuntu2404` (`inference/`) is this image plus vLLM 0.32.0, serving one Hugging Face model across the whole cluster with no image build. It keeps the entrypoint and contract v1 unchanged; only the CMD differs (`/opt/runpod/inference/start`):
+
+- **Worker:** joins Ray and runs nothing else.
+- **Head:** waits, with no deadline, until `NUM_NODES` nodes have joined Ray, then runs `vllm serve $MODEL_REPO` on port 8000 with the Ray executor, tensor parallelism set to the GPUs per node and pipeline parallelism set to the node count. Every node needs the same GPU count.
+- **No `NODE_RANK`** (a plain pod): `vllm serve` on that pod's GPUs, without Ray.
+
+Configuration, all environment variables:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`. Unset: the head logs an error and stays up for interactive use. |
+| `HF_TOKEN` | none | Token for gated or private models; vLLM reads it from the environment. |
+| `VLLM_API_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route except `/health`, `/ping` and `/metrics`. With neither set, the head logs an error and does not start vLLM. `none` turns authentication off. |
+| `MAX_MODEL_LENGTH` | vLLM's | Passed as `--max-model-len`. |
+| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `0.0.0.0` and `8000`. |
+
+Authentication is the `runpod_vllm_auth` middleware (`inference/runpod_vllm_auth.py`, shared with `official-templates/vllm`), loaded through `vllm serve --middleware`. It is an allowlist, because vLLM's own `--api-key` guards only `/v1`, `/v2`, `/inference` and `/cohere`, leaving routes such as `/invocations` open. The key falls back to the head's `JUPYTER_PASSWORD`, so the pod's console password works for the API too; set `VLLM_API_KEY` to use a separate key.
+
+vLLM runs beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if vLLM exits; restart the pod to serve again. vLLM opens port 8000 only once the model has loaded, so until then the Runpod proxy answers `502`; `/health` answers 200 once it can serve. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
+
+vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray, or if vLLM stops loading `--middleware`.
+
 ## Ports
 
 | Port | Service | Who reaches it |
