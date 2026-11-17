@@ -44,17 +44,19 @@ concurrency:
 
 jobs:
   # A PR into main publishes release candidates to the PUBLIC repos, so only
-  # develop and hotfix branches may open one. Checked here as well as in
-  # branch-policy.yml (the required check) so a rejected PR builds nothing:
-  # plan waits on this, and the build jobs wait on plan.
-  pr-source:
+  # develop and hotfix branches may open one. The required check is
+  # `pr-source` in branch-policy.yml, which runs on every PR; this one is a
+  # build gate and carries a different name so the two can't be confused:
+  # plan waits on it, and the build jobs wait on plan.
+  pr-source-gate:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          fetch-depth: 1
+          # The hotfix check walks main and develop back to their merge base.
+          fetch-depth: 0
 
       - uses: ./.github/actions/check-pr-source
         with:
@@ -62,13 +64,14 @@ jobs:
             develop
             hotfix/*
             revert-*
+          integration-branch: develop
 
   # Which families this event touches, plus everything that builds FROM them.
   # One mechanism for PRs, pushes and manual runs: the family graph.
   plan:
-    needs: pr-source
+    needs: pr-source-gate
     # Skipped on a push or a PR into develop, where the gate does not apply.
-    if: "!cancelled() && needs.pr-source.result != 'failure'"
+    if: "!cancelled() && needs.pr-source-gate.result != 'failure'"
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       families: ${{ steps.p.outputs.families }}

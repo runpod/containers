@@ -249,7 +249,7 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml`, `k3s-node.yml` | **Reusable**. One family each. |
 | `.github/actions/prepull-base-images/action.yml` | Pulls each target's `BASE_IMAGE` with crane into an OCI layout and hands bake an override file, because BuildKit's own pull of multi-GB bases intermittently fails mid-layer. Resolves the same bake files as the build step, so the parent variables live on the **job**, not on either step. |
 | `.github/workflows/branch-policy.yml`            | Fails a PR into `main` from anything but `develop`, `hotfix/*` or `revert-*`. No `paths:` filter, so it is the check to require. |
-| `.github/actions/check-pr-source/action.yml`     | The rule itself, called by both `branch-policy.yml` and the orchestrator's `pr-source` job. |
+| `.github/actions/check-pr-source/action.yml`     | The rule itself: allowed source branches, the fork check, and the proof that a `hotfix/*` branch really was cut off `main`. Called by `branch-policy.yml` and by the orchestrator's `pr-source-gate` job. |
 | `.github/workflows/cleanup.yml`, `cleanup-closed-pr.yml` | Sweep aged-out `-rc.`/`-dev.` tags from the public and the `-dev` repos. |
 | `.github/scripts/release_notes.py`               | Builds a family's release body from the commits that touched it since its previous tag. |
 | `.github/workflows/manual-release.yml`           | Break-glass: tags one family from an earlier run's commit when its release never happened. |
@@ -293,12 +293,12 @@ Key behaviours:
   family's last release tag, not from the push diff, so a family whose build
   failed — or whose run was dropped from the queue — is planned again on the
   next push.
-- **The RC version on a `develop → main` PR is not the release version.** A
-  PR's bump comes from its own title, and the release PR is titled `chore:
-  release …`, so its RC images keep the current version. The real per-family
-  bumps are computed on the merge, from the individual commits the merge
-  commit brings in. On a PR into `develop` the two do match, because the title
-  is the commit that lands.
+- **Where a PR's bump comes from depends on how it will be merged.** A PR into
+  `develop` is squashed, so its title becomes the commit and the bump is read
+  from the title. A PR into `main` is merged with a merge commit, so its title
+  never lands: the bump is read from the commit range, exactly as the merge
+  will read it. Without that, a `develop → main` PR titled `chore: release …`
+  would publish public RC images at a version that is already released.
 - **Pipeline-only changes don't build.** The orchestrator triggers only on
   `official-templates/**` and `container-template/**`, so a PR that only edits
   workflow/action files (a `ci:` change) does not trigger image builds — the
@@ -376,7 +376,7 @@ either.
 - **On a PR:** RC images `X.Y.Z-rc.<PR#>` are built automatically. A PR into
   `develop` publishes them to `runpod/<repo>-dev`, so pulling them needs
   credentials for the private repos; only a PR into `main` puts them in the
-  public ones.
+  public ones, at the version that merge will release.
 - **Pipeline changes:** trigger the orchestrator manually
   (Actions → *Build and Release* → **Run workflow**). It builds every family
   with `-dev` images and never releases. (The per-family workflows are reusable
@@ -475,12 +475,15 @@ either.
   `main` is a **merge commit** (see [Branches and environments](#branches-and-environments)).
 - **Who may target `main`:** `branch-policy.yml` fails any PR into `main` whose
   source branch is not `develop`, `hotfix/*` or `revert-*` (GitHub's Revert
-  button), or that comes from a fork. It
-  has no `paths:` filter so it runs on every such PR and can be a required
-  check. `release.yml` repeats the check (both call
-  `.github/actions/check-pr-source`) and gates `plan` on it, so a rejected PR
-  builds no images at all. Add `pr-source` to the required checks on `main`:
-  until then the PR only goes red, it is not blocked.
+  button), or that comes from a fork. A branch that only *looks* like a hotfix
+  is rejected too: anything other than `develop` must carry none of develop's
+  unreleased commits, so renaming a feature branch to `hotfix/x` does not get
+  the pending batch in. `branch-policy.yml` has no `paths:` filter, so it runs
+  on every such PR and is the one to require. `release.yml` repeats the check
+  in its `pr-source-gate` job (both call `.github/actions/check-pr-source`)
+  and gates `plan` on it, so a rejected PR builds no images at all. Add
+  `pr-source` to the required checks on `main`: until then the PR only goes
+  red, it is not blocked.
 - **Branch protection:** `develop` needs the same required checks as `main`.
 - **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
   (`docker-setup`) so they cannot poison the keys used by main/release; pushes
@@ -496,7 +499,7 @@ either.
 | -------------------------------------------------- | --------------------------------------------------------------------------- |
 | Merged a PR into `develop` but no release was created | Expected: `develop` never releases. It happens when `develop` reaches `main`. |
 | Merged `develop → main` but no release was created | None of the commits in the batch was `feat`/`fix`/`perf`/breaking, or the merge was squashed so only the release PR's title counted. |
-| RC image shows an unexpected version               | A PR's RC version comes from that PR's own title. On a `develop → main` PR the title is a `chore:`, so the RC keeps the current version and the real bump happens on the merge. |
+| RC image shows an unexpected version               | For a PR into `develop` the version comes from the PR title: check its Conventional Commit type. For a PR into `main` it comes from the commits the merge would bring in, so check the `versions` job log for the range it read. |
 | A family did not get a new version                 | Either nothing under its `paths` changed since its last tag (expected), or its build failed — open the *Build and Release* run and check that family's job. It will be planned again on the next push. |
 | Version didn't increment as expected               | Check that family's latest `<family>-vX.Y.Z` tag — the bump is relative to it, not to the image tags in Docker Hub, and not to another family's version. |
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |

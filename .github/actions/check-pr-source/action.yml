@@ -10,6 +10,14 @@ inputs:
       Newline-separated shell glob patterns the PR's head branch may match,
       e.g. `develop` and `hotfix/*`.
     required: true
+  integration-branch:
+    description: >-
+      Branch that normally feeds the base. A head branch that matches a
+      pattern but is NOT this branch must carry none of its unreleased
+      commits, so renaming a feature branch to `hotfix/x` cannot smuggle the
+      whole batch in. Empty skips that check.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -18,6 +26,7 @@ runs:
       shell: bash
       env:
         ALLOWED: ${{ inputs.allowed }}
+        INTEGRATION: ${{ inputs.integration-branch }}
         BASE_REF: ${{ github.base_ref }}
         HEAD_REF: ${{ github.head_ref }}
         # A fork can carry a branch named `develop`, so the name alone is not
@@ -55,13 +64,37 @@ runs:
           [ -n "${p}" ] && patterns+=("${p}")
         done <<< "${ALLOWED}"
 
+        allowed_list="$(IFS=,; printf '%s' "${patterns[*]}" | sed 's/,/, /g')"
+        matched=""
         for p in "${patterns[@]}"; do
           # shellcheck disable=SC2254
           case "${HEAD_REF}" in
-            ${p}) echo "${HEAD_REF} may target ${BASE_REF} (matched '${p}')"; exit 0 ;;
+            ${p}) matched="${p}"; break ;;
           esac
         done
+        [ -n "${matched}" ] || \
+          reject "the only branches allowed there are ${allowed_list}"
+        echo "${HEAD_REF} matched '${matched}'"
 
-        allowed_list="$(IFS=,; printf '%s' "${patterns[*]}" | sed 's/,/, /g')"
-        reject "the only branches allowed there are ${allowed_list}"
+        # The name alone proves nothing: a branch off `develop` renamed to
+        # `hotfix/x` would carry the whole pending batch into a release that
+        # is supposed to carry one fix.
+        if [ -z "${INTEGRATION}" ] || [ "${HEAD_REF}" = "${INTEGRATION}" ]; then
+          exit 0
+        fi
+        if ! git fetch --no-tags --quiet origin \
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" \
+            "+refs/heads/${INTEGRATION}:refs/remotes/origin/${INTEGRATION}"; then
+          echo "::warning::could not fetch ${BASE_REF} and ${INTEGRATION}; skipping the ancestry check"
+          exit 0
+        fi
+        # Commits waiting on the integration branch, and how many of them this
+        # PR does NOT contain. A branch cut off ${BASE_REF} contains none.
+        pending="$(git rev-list --count "origin/${INTEGRATION}" "^origin/${BASE_REF}")"
+        outside="$(git rev-list --count "origin/${INTEGRATION}" "^origin/${BASE_REF}" ^HEAD)"
+        if [ "${pending}" != "${outside}" ]; then
+          reject "it carries $(( pending - outside )) commit(s) that are on ${INTEGRATION} but not on ${BASE_REF}, so it was cut off ${INTEGRATION} rather than ${BASE_REF}"
+        fi
+        echo "carries none of ${INTEGRATION}'s ${pending} pending commit(s)"
+
 

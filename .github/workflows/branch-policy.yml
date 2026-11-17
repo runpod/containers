@@ -17,12 +17,13 @@ concurrency:
 
 jobs:
   pr-source:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          fetch-depth: 1
+          # The hotfix check walks main and develop back to their merge base.
+          fetch-depth: 0
 
       - uses: ./.github/actions/check-pr-source
         with:
@@ -30,3 +31,4 @@ jobs:
             develop
             hotfix/*
             revert-*
+          integration-branch: develop
