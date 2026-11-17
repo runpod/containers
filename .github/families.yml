@@ -105,6 +105,14 @@ families:
     image_repo: runpod/comfyui
     workflow: comfyui
 
+  vllm:
+    paths:
+      - official-templates/vllm/**
+      - official-templates/shared/**
+    depends_on: []
+    image_repo: runpod/vllm-openai
+    workflow: vllm
+
   sandbox-ubuntu:
     paths:
       - official-templates/sandbox-ubuntu/**
