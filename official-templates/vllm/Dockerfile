@@ -30,6 +30,18 @@ assert u.find_spec("mooncake") is None, "mooncake still installed"; \
 assert m.version("PyNvVideoCodec") == "2.2.4", m.version("PyNvVideoCodec"); \
 assert m.version("dnspython") == "2.9.2", m.version("dnspython")'
 
+# Package caches left in the image still hold the old FFmpeg 8.1.1 libraries.
+# Then fail on any bundled FFmpeg below 9.0 left anywhere, naming the file.
+RUN uv cache clean && \
+    rm -rf /opt/uv/cache /opt/pip/cache /root/.cache/uv /root/.cache/pip && \
+    stale="" && \
+    while IFS= read -r -d '' f; do \
+      v="$(grep -a -m1 -oE 'FFmpeg version [0-9]+(\.[0-9]+)*' "$f" | awk '{print $3}')" || true; \
+      if [ -n "$v" ] && dpkg --compare-versions "$v" lt 9.0; then stale+="  $f ($v)"$'\n'; fi; \
+    done < <(find / -xdev -type f \( -name 'libavcodec*' -o -name 'libavformat*' -o -name 'ffmpeg' \) \
+               -not -path '*/opencv_python*.libs/*' -print0) && \
+    if [ -n "$stale" ]; then printf 'FFmpeg below 9.0 still in the image:\n%s' "$stale"; exit 1; fi
+
 COPY --chmod=0644 scripts/runpod_vllm_auth.py /opt/runpod/vllm/runpod_vllm_auth.py
 COPY --chmod=0755 scripts/start.sh /start.sh
 
