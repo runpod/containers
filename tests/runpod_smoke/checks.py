@@ -523,9 +523,10 @@ def run_cuda_check(
         return True, "(no GPU check for this image)"
     # First sageattn call JIT-compiles its Triton quantisation kernel.
     timeout = 180 if _image_ships_sageattention(image) else 90
-    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        # run_ssh, not a command on the ssh line: the proxy endpoint ignores
+        # that and the check would sit in an idle shell until the timeout.
+        r = run_ssh(endpoint, cmd, timeout)
     except subprocess.TimeoutExpired:
         return False, f"cuda check timed out after {timeout}s"
     except FileNotFoundError:

@@ -126,6 +126,16 @@ class CommandsOverAnInteractiveProxy(unittest.TestCase):
             (False, "FAIL: nope"),
         )
 
+    def test_cuda_check_runs_over_the_proxy(self):
+        # A merge once put run_cuda_check back on `ssh host <cmd>`: every
+        # proxy-only pod then "failed" CUDA with a 90s timeout.
+        with mock.patch.object(checks, "cuda_check_command",
+                               return_value="echo gpu ok; exit 0"):
+            self.assertEqual(
+                self._run(checks.run_cuda_check, "runpod/pytorch:x-cu1281"),
+                (True, "gpu ok"),
+            )
+
     def test_typed_echo_is_not_mistaken_for_the_result(self):
         rc, out = checks._pty_result(
             'echo "__SMOKE_""BEGIN__"; bash -c "$(echo eA== | base64 -d)"; '
