@@ -244,8 +244,13 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/scripts/plan_families.py`               | Turns a diff (or each family's last tag) into the families to build, in dependency order. Also answers which workflows to call and which repos we publish to. |
 | `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, plans the families (`plan` job), calls only the build workflows it needs, and creates one `<family>-vX.Y.Z` tag + Release per family. |
 | `.github/actions/compute-version/action.yml`     | For one family: its next version, suffix, `previous-version`, and the `should-build` / `should-release` flags, from its own tag series + the commit type. |
-| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch; builds the ones in the plan. |
-| `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml` | **Reusable** (`workflow_call`). One family each. |
+| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, filebrowser; builds the ones in the plan. |
+| `.github/workflows/sandbox.yml`                  | **Reusable**. Covers sandbox-ubuntu, sandbox-openclaw, sandbox-harbor, sandbox-browser. |
+| `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml`, `k3s-node.yml` | **Reusable**. One family each. |
+| `.github/actions/prepull-base-images/action.yml` | Pulls each target's `BASE_IMAGE` with crane into an OCI layout and hands bake an override file, because BuildKit's own pull of multi-GB bases intermittently fails mid-layer. Resolves the same bake files as the build step, so the parent variables live on the **job**, not on either step. |
+| `.github/workflows/branch-policy.yml`            | Fails a PR into `main` from anything but `develop`, `hotfix/*` or `revert-*`. No `paths:` filter, so it is the check to require. |
+| `.github/actions/check-pr-source/action.yml`     | The rule itself, called by both `branch-policy.yml` and the orchestrator's `pr-source` job. |
+| `.github/workflows/cleanup.yml`, `cleanup-closed-pr.yml` | Sweep aged-out `-rc.`/`-dev.` tags from the public and the `-dev` repos. |
 | `.github/scripts/release_notes.py`               | Builds a family's release body from the commits that touched it since its previous tag. |
 | `.github/workflows/manual-release.yml`           | Break-glass: tags one family from an earlier run's commit when its release never happened. |
 | `.github/workflows/release-plan.yml`             | Guards the graph: unit tests, plus a check that every template directory appears in it. |
@@ -260,7 +265,10 @@ Key behaviours:
 - **`compute-version`** finds the latest `<family>-vX.Y.Z` tag that is
   **reachable from HEAD** (skipping any tag on the current commit, to stay
   stable during the release step, and any tag not in HEAD's history, so
-  re-running an older commit doesn't pick up a newer unrelated tag).
+  re-running an older commit doesn't pick up a newer unrelated tag). On the
+  **dev env** reachability is dropped and the highest tag of the series wins:
+  releases are tagged on main's merge commits, which `develop` never contains,
+  so the reachable rule would fall back to whatever predates the branch.
 - **The bump covers everything unreleased.** On `main` it is the highest type
   among the commits between that tag and HEAD that touched the family's paths
   **or the paths of a family it builds FROM** — so a feature that arrived in a
@@ -285,6 +293,12 @@ Key behaviours:
   family's last release tag, not from the push diff, so a family whose build
   failed — or whose run was dropped from the queue — is planned again on the
   next push.
+- **The RC version on a `develop → main` PR is not the release version.** A
+  PR's bump comes from its own title, and the release PR is titled `chore:
+  release …`, so its RC images keep the current version. The real per-family
+  bumps are computed on the merge, from the individual commits the merge
+  commit brings in. On a PR into `develop` the two do match, because the title
+  is the commit that lands.
 - **Pipeline-only changes don't build.** The orchestrator triggers only on
   `official-templates/**` and `container-template/**`, so a PR that only edits
   workflow/action files (a `ci:` change) does not trigger image builds — the
@@ -359,8 +373,10 @@ either.
 
 ### Test a change without releasing
 
-- **On a PR:** RC images `X.Y.Z-rc.<PR#>` are built automatically — pull and test
-  those.
+- **On a PR:** RC images `X.Y.Z-rc.<PR#>` are built automatically. A PR into
+  `develop` publishes them to `runpod/<repo>-dev`, so pulling them needs
+  credentials for the private repos; only a PR into `main` puts them in the
+  public ones.
 - **Pipeline changes:** trigger the orchestrator manually
   (Actions → *Build and Release* → **Run workflow**). It builds every family
   with `-dev` images and never releases. (The per-family workflows are reusable
@@ -390,7 +406,18 @@ either.
 1. Add its directory under `official-templates/`, its build job in the right
    reusable workflow, and its entry in `.github/families.yml`. The *Release
    Plan* check fails if the graph and the directories disagree.
-2. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
+2. Wire it into the dev env, or it will publish to the **public** repo from a
+   develop build. Every item is easy to miss and none of them fails loudly:
+   - every tag in its `docker-bake.hcl` is `runpod/<name>${REPO_SUFFIX}:…`;
+   - if it builds FROM another family, its `BASE_IMAGE` carries that parent's
+     own `*_REPO_SUFFIX` variable, and the build job passes both the parent's
+     version and suffix, keyed on `needs.build-<parent>.result == 'success'`;
+   - the build job's `dockerhub-oidc` picks `DOCKERHUB_DEV_OIDC_CONNECTIONID`
+     when `needs.versions.outputs.env == 'dev'`;
+   - the smoke test passes `registry-auth-name`, or its pod cannot pull the
+     private image;
+   - a private `runpod/<name>-dev` repo exists on Docker Hub.
+3. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
 
 ### Seed a family that already has published images
 
@@ -437,12 +464,23 @@ either.
 - **Required status checks:** builds run under the orchestrator, so checks
   appear as `Build and Release / <workflow> / <job>` (e.g.
   `Build and Release / base / build-base`). A family not in the plan reports
-  as skipped, and the `release` job is a matrix (`release (comfyui)`), so keep
-  branch-protection required checks to ones that always run — `plan`, and the
-  lint/test workflows.
+  as skipped, and the `release` job is a matrix (`release (comfyui)`), so only
+  require checks that run on **every** PR. `plan` is not one of them:
+  `release.yml` is filtered to `official-templates/**` and
+  `container-template/**`, so a docs-only PR never starts it and a required
+  `plan` would sit on "Expected" forever. `pr-source` from `branch-policy.yml`
+  has no such filter, and so do the lint/test workflows.
 - **Merge strategy:** **squash merge** into `develop` — the PR title is what
   drives the version, so keep it Conventional-Commit compliant. `develop` →
   `main` is a **merge commit** (see [Branches and environments](#branches-and-environments)).
+- **Who may target `main`:** `branch-policy.yml` fails any PR into `main` whose
+  source branch is not `develop`, `hotfix/*` or `revert-*` (GitHub's Revert
+  button), or that comes from a fork. It
+  has no `paths:` filter so it runs on every such PR and can be a required
+  check. `release.yml` repeats the check (both call
+  `.github/actions/check-pr-source`) and gates `plan` on it, so a rejected PR
+  builds no images at all. Add `pr-source` to the required checks on `main`:
+  until then the PR only goes red, it is not blocked.
 - **Branch protection:** `develop` needs the same required checks as `main`.
 - **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
   (`docker-setup`) so they cannot poison the keys used by main/release; pushes
@@ -456,8 +494,9 @@ either.
 
 | Symptom                                            | Cause / fix                                                                 |
 | -------------------------------------------------- | --------------------------------------------------------------------------- |
-| Merged a PR but no release was created             | The PR title was not `feat`/`fix`/`perf`/breaking (bump = none). Rename future PRs accordingly, or push a tag manually. |
-| RC image shows an unexpected version               | The version previews the *merge* result based on the PR title. Check the title's Conventional Commit type. |
+| Merged a PR into `develop` but no release was created | Expected: `develop` never releases. It happens when `develop` reaches `main`. |
+| Merged `develop → main` but no release was created | None of the commits in the batch was `feat`/`fix`/`perf`/breaking, or the merge was squashed so only the release PR's title counted. |
+| RC image shows an unexpected version               | A PR's RC version comes from that PR's own title. On a `develop → main` PR the title is a `chore:`, so the RC keeps the current version and the real bump happens on the merge. |
 | A family did not get a new version                 | Either nothing under its `paths` changed since its last tag (expected), or its build failed — open the *Build and Release* run and check that family's job. It will be planned again on the next push. |
 | Version didn't increment as expected               | Check that family's latest `<family>-vX.Y.Z` tag — the bump is relative to it, not to the image tags in Docker Hub, and not to another family's version. |
 | Pipeline (`ci:`) PR didn't build images            | Expected: workflow-file-only changes don't trigger builds. Use `workflow_dispatch` to test. |
@@ -465,4 +504,6 @@ either.
 | A family released at a higher bump than the merge  | Expected: the bump covers everything the family still had unreleased, so an older `feat:` outranks today's `fix:`. |
 | Dev smoke test fails with `CREATE_FAIL` / `unauthorized` | The pod could not pull the private `-dev` image: the `TESTING_REGISTRY_AUTH_NAME` variable is unset, or its credential cannot read `runpod/*-dev`. |
 | A release merged from develop got a lower bump than expected | `develop → main` was squash-merged, so only the release PR's title counted. Use a merge commit. |
-| PR checks are stuck "Expected"/pending             | Branch-protection required checks likely still reference the old workflow names. Update them to the `Build and Release / …` check names. |
+| PR checks are stuck "Expected"/pending             | A required check that does not run on this PR. `release.yml` is filtered to `official-templates/**` and `container-template/**`, so none of its jobs can be required; require `pr-source` and the lint/test workflows instead. |
+| PR into `main` fails on "does not follow the release process" | Its source branch is not `develop`, `hotfix/*` or `revert-*`. Retarget it to `develop`, or cut `hotfix/<name>` off `main` if it cannot wait. |
+| A develop build pushed to the **public** repo      | That family's `docker-bake.hcl` is missing `${REPO_SUFFIX}` in a tag, or its job does not pass it. See *Add a new template*. |
