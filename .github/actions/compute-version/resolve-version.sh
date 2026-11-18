@@ -24,6 +24,48 @@ latest_release_tag() {
   done < <(git tag --list "${prefix}v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname)
 }
 
+# Highest release tag of one series, reachable or not; empty when the series
+# has no release yet. For the dev env: releases are tagged on main's merge
+# commits, which develop (and branches cut from it) never contain, so
+# latest_release_tag would fall back to whatever predates the branch. Tags
+# exist only on main, so the highest one is the last release. Tags ON HEAD
+# are still skipped.
+newest_release_tag() {
+  local prefix="${1:-}" head_sha tag
+  head_sha="$(git rev-parse HEAD)"
+  while IFS= read -r tag; do
+    [ -z "$tag" ] && continue
+    [ "$(git rev-list -n1 "$tag")" = "$head_sha" ] && continue
+    printf '%s\n' "$tag"
+    return 0
+  done < <(git tag --list "${prefix}v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname)
+}
+
+# Which set of Docker Hub repos an event publishes to: `prod` (the public
+# `runpod/<repo>`) only for what targets the release branch — PRs into it and
+# runs on it; `dev` (the private `runpod/<repo>-dev`) for everything else —
+# develop, and also a PR from one feature branch into another, so nothing that
+# is not headed for main can reach the public repos.
+env_for() {
+  local event="${1:-}" ref="${2:-}" base_ref="${3:-}" release_branch="${4:-main}"
+  if [ "$event" = "pull_request" ]; then
+    [ "$base_ref" = "$release_branch" ] && { printf 'prod\n'; return 0; }
+  elif [ "$ref" = "refs/heads/${release_branch}" ]; then
+    printf 'prod\n'
+    return 0
+  fi
+  printf 'dev\n'
+}
+
+# PR number from a squash-merge subject, which GitHub ends with ` (#123)`;
+# empty for anything else (a direct push, a merge commit's subject).
+pr_from_subject() {
+  local subject="${1:-}"
+  if [[ "$subject" =~ \(#([0-9]+)\)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
 # Where a family starts when it has never been released. The bump level is
 # deliberately ignored for that first release — otherwise a `feat:` would
 # publish 1.1.0 and 1.0.0 would never exist.
