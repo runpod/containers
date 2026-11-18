@@ -41,6 +41,6 @@ target "k3s-node" {
 
   # The k3s version without its build suffix: v1.37.1+k3s1 -> k3s-v1.37.1.
   tags = [
-    "runpod/k3s-node:${RELEASE_VERSION}${RELEASE_SUFFIX}-k3s-${split("+", K3S_VERSION)[0]}",
+    "runpod/k3s-node${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-k3s-${split("+", K3S_VERSION)[0]}",
   ]
 }
