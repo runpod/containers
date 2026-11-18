@@ -244,6 +244,12 @@ class CommandShapeTests(unittest.TestCase):
         # The binary itself, not `cargo run`, so the check never rebuilds.
         self.assertIn("/opt/burn-starter/target/release/burn-starter", command)
         self.assertNotIn("cargo", command)
+        # Each thing the image adds is asserted from output, not exit codes.
+        self.assertIn("deviceName.*nvidia", command)
+        self.assertIn("'^cuda: OK'", command)
+        self.assertIn("'^vulkan: OK'", command)
+        self.assertIn("jupyter kernelspec list", command)
+        self.assertIn("grep -qw rust", command)
 
     def test_dcgm_check_requires_the_dashboard_labels(self):
         command = checks.dcgm_exporter_check_command()

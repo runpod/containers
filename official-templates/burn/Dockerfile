@@ -4,9 +4,11 @@ FROM ${BASE_IMAGE}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Burn's Vulkan backend (wgpu) needs the NVIDIA container toolkit to inject the
-# graphics driver and its Vulkan ICD, which only happens with the `graphics`
-# capability. CUDA images default to `compute,utility`.
-ENV NVIDIA_DRIVER_CAPABILITIES=all
+# graphics driver (libEGL_nvidia, libGLX_nvidia) and its Vulkan ICD, which only
+# happens with the `graphics` capability. CUDA images default to
+# `compute,utility`, which the CUDA backend and nvidia-smi need. `video` and
+# `display` are left out: nothing here uses them.
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 # Rust toolchain, installed system-wide. Both homes live in /opt, not
 # /workspace, so a network volume mounted over /workspace does not hide them.
@@ -16,10 +18,18 @@ ENV RUSTUP_HOME=/opt/rustup \
 
 # rustup-init is pinned by version and checksum; the toolchain by version.
 # Burn 0.22 needs Rust 1.95 or later.
+# The checksum is for the x86_64 rustup-init, the only platform the bake file
+# builds (linux/amd64). The arch check makes an arm64 build fail here with a
+# clear message instead of at the checksum.
+ARG TARGETARCH
 ARG RUSTUP_VERSION=1.29.3
 ARG RUSTUP_SHA256=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
 ARG RUST_VERSION=1.100.0
-RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/rustup-init \
+RUN if [ "${TARGETARCH:-amd64}" != "amd64" ]; then \
+        echo "Only linux/amd64 is supported (RUSTUP_SHA256 is for x86_64), got ${TARGETARCH}" >&2; \
+        exit 1; \
+    fi && \
+    wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 -O /tmp/rustup-init \
         "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" && \
     echo "${RUSTUP_SHA256}  /tmp/rustup-init" | sha256sum -c - && \
     chmod +x /tmp/rustup-init && \

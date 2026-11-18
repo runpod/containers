@@ -519,7 +519,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/burn-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: burn-refs-${{ matrix.cuda }}
           path: /tmp/burn-refs/refs.json
@@ -541,7 +541,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs for ${{ matrix.cuda }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: burn-refs-${{ matrix.cuda }}
           path: /tmp/burn-refs
@@ -571,7 +571,9 @@ jobs:
           # Run the prebuilt starter: a matmul on the CUDA and Vulkan
           # backends, each checked against the CPU.
           test-burn: true
-          min-vram-gb: "24"
+          # A 1024x1024 matmul needs well under 1 GB; the floor only keeps out
+          # tiny slices. A low one widens the GPU pool and shortens the queue.
+          min-vram-gb: "8"
           create-timeout: "1200"
           # Blackwell stays in: Burn's CUDA backend JIT-compiles through
           # nvrtc and every CUDA column here (12.8+) targets sm_100/sm_120.

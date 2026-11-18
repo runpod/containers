@@ -23,6 +23,13 @@ fn check(name: &str, device: Device, lhs: &TensorData, rhs: &TensorData, expecte
 
 fn main() {
     let only = std::env::args().nth(1);
+    if let Some(backend) = only.as_deref()
+        && backend != "cuda"
+        && backend != "vulkan"
+    {
+        eprintln!("unknown backend {backend:?}: expected `cuda`, `vulkan`, or nothing for both");
+        std::process::exit(2);
+    }
     let cpu = Device::flex();
     let lhs = Tensor::<2>::random([SIZE, SIZE], Distribution::Default, &cpu).into_data();
     let rhs = Tensor::<2>::random([SIZE, SIZE], Distribution::Default, &cpu).into_data();
