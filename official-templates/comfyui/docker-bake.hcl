@@ -14,11 +14,14 @@ variable "CIVICOMFY_SHA" {
 variable "RUNPODDIRECT_SHA" {
   default = "9e32b1a09577"
 }
+# FileBrowser is archived upstream (2026-09-01); v2.63.23 is its last release.
+# The Dockerfile builds it from source with a current Go and patched modules.
+# FILEBROWSER_COMMIT is the commit the tag points to; the build checks it.
 variable "FILEBROWSER_VERSION" {
-  default = "v2.59.0"
+  default = "v2.63.23"
 }
-variable "FILEBROWSER_SHA256" {
-  default = "8cd8c3baecb086028111b912f252a6e3169737fa764b5c510139e81f9da87799"
+variable "FILEBROWSER_COMMIT" {
+  default = "e8a388f840173580116f2743813d03b22286e44e"
 }
 
 # The 13.2 image is the only one on the newer stack: the cu132 index has no
@@ -164,7 +167,7 @@ target "comfyui-matrix" {
     CIVICOMFY_SHA       = CIVICOMFY_SHA
     RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
     FILEBROWSER_VERSION = FILEBROWSER_VERSION
-    FILEBROWSER_SHA256  = FILEBROWSER_SHA256
+    FILEBROWSER_COMMIT  = FILEBROWSER_COMMIT
     TORCH_VERSION       = build.torch_version
     TORCHVISION_VERSION = build.torchvision_version
     TORCHAUDIO_VERSION  = build.torchaudio_version
@@ -178,6 +181,6 @@ target "comfyui-matrix" {
   }
 
   tags = [
-    "runpod/comfyui:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
+    "runpod/comfyui${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
   ]
 }
