@@ -45,7 +45,12 @@ from .checks import (
     uv_check_command,
     virtualenv_check_command,
 )
-from .comfyui import probe_comfyui_alive, run_comfyui_check
+from .comfyui import (
+    auth_headers as comfyui_auth_headers,
+    check_comfyui_refuses_anonymous,
+    probe_comfyui_alive,
+    run_comfyui_check,
+)
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log, set_worker_context
 from .pod import (
@@ -441,14 +446,14 @@ def _run_jupyter_steps(
 
 def _check_port_proxy_first(
     endpoint: SshEndpoint, pod_id: str, test_port: int, label: str,
-    path: str = "/",
+    path: str = "/", headers: Optional[dict] = None,
 ) -> Optional[_Outcome]:
     """Check public reachability first; use SSH only to diagnose failure."""
     log(
         f"running {label} check (public proxy) for pod {pod_id}...",
         indent=2,
     )
-    ok, output = run_port_proxy_check(pod_id, test_port, path)
+    ok, output = run_port_proxy_check(pod_id, test_port, path, headers=headers)
     for line in output.splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -497,10 +502,17 @@ def _run_comfyui_steps(
         return None
     outcome = _check_port_proxy_first(
         endpoint, pod_id, config.COMFYUI_PORT, "ComfyUI reachability",
+        headers=comfyui_auth_headers(),
     )
     if outcome is not None:
         dump_pod_logs(pod_id, image)
         return outcome
+
+    ok, detail = check_comfyui_refuses_anonymous(pod_id)
+    log(f"ComfyUI password check: {detail}", indent=2)
+    if not ok:
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"ComfyUI answered without its password: {detail[:160]}"
     if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
         return None
 

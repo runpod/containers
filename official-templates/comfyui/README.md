@@ -36,10 +36,20 @@ onnxruntime-gpu, nunchaku) are built for one CUDA version, so the variants
 cannot share them.
 
 When you switch a volume to a different tag, the first start creates that
-tag's venv and reinstalls the requirements of your custom nodes into it.
-Packages you installed by hand are not carried over; the startup log prints
-the command that lists them. The previous venv is left in place so you can go
-back. If you are not going back, delete it to free space.
+tag's venv and fills it from the previous one: the packages are copied over at
+the versions you had (hard links on the same volume, so it takes seconds and
+no extra space), then your custom nodes' requirements are checked in one pass.
+CUDA-specific packages (the ones above) and packages installed from a URL or
+local path are removed from the copy. Node requirements that list them get
+builds that match the new tag; ones you installed by hand need installing
+again, and the startup log prints the command that lists them. The previous
+venv is left in place so you can go back. If you are not going back, delete it
+to free space.
+
+This runs on every start where the tag's venv is missing. If you restore
+`/workspace` from your own snapshot instead of using a network volume, take
+the snapshot after one start on the new tag so that it includes the new venv.
+Otherwise every pod repeats the migration.
 
 If you used the `-cuda13.0` image before it had its own venv, your
 `.venv-cu128` holds packages built for CUDA 13.0. Delete
@@ -48,10 +58,65 @@ If you used the `-cuda13.0` image before it had its own venv, your
 
 ## Access
 
-- `8188`: ComfyUI web UI
-- `8080`: FileBrowser (admin / `FILEBROWSER_PASSWORD`, default: `adminadmin12`)
-- `8888`: JupyterLab, rooted at `/workspace`. `JUPYTER_PASSWORD` is the login token; deploying with "Start Jupyter notebook" enabled sets it for you. Unset, JupyterLab does not start — same as the pytorch and base templates. `JUPYTER_DISABLE_AUTH=true` runs it with no password and takes precedence over `JUPYTER_PASSWORD`; the `:8888` proxy URL is public, so anyone with it gets a root shell.
+Every `/http` port is reachable by anyone who has the pod's proxy URL, so
+each one needs a password. ComfyUI and FileBrowser always require one: set the
+password variable and the service requires it; leave it unset and the service
+does not start, and the pod log says why. There is no way to run either of
+them without a password. Passwords are never written to the pod log.
+
+| port | service | password variable | without a password |
+|---|---|---|---|
+| `8188` | ComfyUI | `COMFYUI_PASSWORD` (12+ characters) | not started |
+| `8080` | FileBrowser, rooted at `/workspace` | `FILEBROWSER_PASSWORD` (12+ characters) | not started |
+| `8888` | JupyterLab, rooted at `/workspace` | `JUPYTER_PASSWORD` | not started, unless `JUPYTER_DISABLE_AUTH=true` |
+
 - `22`: SSH, key only (set `PUBLIC_KEY`, or add an SSH key to your Runpod account). No root password is generated or logged.
+
+### ComfyUI (`8188`)
+
+ComfyUI has no login of its own, so it listens only inside the pod, and port
+8188 is served by a small proxy that asks for `COMFYUI_PASSWORD` on every
+request, including the websocket the UI uses. The password must be at least 12
+characters; a shorter one counts as not set, and ComfyUI does not start.
+
+- **Browser:** open the `:8188` URL. The browser asks for a username and
+  password. Any username works; the password is `COMFYUI_PASSWORD`. You can
+  also open `https://<pod-id>-8188.proxy.runpod.net/?token=<COMFYUI_PASSWORD>`
+  once to sign in without the prompt.
+- **API clients:** send the password as `Authorization: Bearer <COMFYUI_PASSWORD>`
+  or as an HTTP Basic password with any username, for example to
+  `https://<pod-id>-8188.proxy.runpod.net/system_stats`.
+  A request without it gets `401`.
+- **Wrong passwords:** after 10 wrong passwords in a row, the proxy stops
+  checking passwords and answers `429` until attempts slow to one a second.
+  Browsers that are already signed in keep working.
+- Web pages on another site cannot call this ComfyUI from a visitor's browser,
+  even while that visitor is signed in. Opening a link to the UI from another
+  site still works. Clients that are not browsers are not affected.
+
+`--listen` and `--port` in `comfyui_args.txt` are ignored, with a warning in
+the log, because the start script sets them.
+
+ComfyUI-Manager's security settings are written on every start:
+`security_level = normal`, `allow_git_url_install = False` and
+`allow_pip_install = False`. Installing node packs from the registry works.
+Installing from a git URL or a pip package name does not.
+
+### FileBrowser (`8080`)
+
+Sign in as `admin` with `FILEBROWSER_PASSWORD`. Without it, FileBrowser does
+not start. FileBrowser requires at least 12 characters and rejects common
+passwords. If yours is rejected, the log says so and FileBrowser does not
+start. The admin password is reset to
+`FILEBROWSER_PASSWORD` on every start. This also replaces the `adminadmin12`
+default that older versions of this image created.
+
+### JupyterLab (`8888`)
+
+`JUPYTER_PASSWORD` is the login token; deploying with "Start Jupyter notebook"
+enabled sets it for you. This is the same behaviour as the pytorch and base
+templates. With `JUPYTER_DISABLE_AUTH=true`, anyone with the URL gets a root
+shell.
 
 ## Pre-installed custom nodes
 
@@ -72,6 +137,32 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 --max-batch-size 8
 --preview-method auto
 ```
+
+ComfyUI starts without CORS headers, so pages on other websites cannot call it
+from a browser. If your own site needs to, add
+`--enable-cors-header https://your.site` here.
+
+## SageAttention
+
+The `-cuda12.8`, `-cuda13.0` and `-cuda13.2` images ship [SageAttention](https://github.com/thu-ml/SageAttention) 2.2.0, prebuilt for their exact PyTorch and CUDA by [runpod/sageattention](https://github.com/runpod/sageattention), so there is nothing to compile. It is off by default; to turn it on, add this line to `comfyui_args.txt` and restart the pod:
+
+```
+--use-sage-attention
+```
+
+It has kernels for these GPUs:
+
+| compute capability | GPUs |
+|---|---|
+| 8.0 | A100 |
+| 8.6 | A40, RTX A6000, RTX 3090 |
+| 8.9 | L40S, L4, RTX 4090, RTX 6000 Ada |
+| 9.0 | H100, H200 |
+| 12.0 | RTX 5090, RTX PRO 6000 Blackwell |
+
+On any other GPU (B200, B300, V100, T4…) ComfyUI falls back to PyTorch attention, and the startup log warns about it. On an image without SageAttention, startup drops the flag with a warning rather than letting ComfyUI exit.
+
+Do not `pip install sageattention` on top: the PyPI package is the older 1.x release, and it would shadow the prebuilt one. A SageAttention installed in the ComfyUI venv (by hand or by a custom node) always takes precedence over the pre-installed one; the startup log names it, and when it is older, gives the `pip uninstall` command that brings the pre-installed one back.
 
 ## Directory Structure
 

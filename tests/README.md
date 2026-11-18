@@ -130,7 +130,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 4 | **Image hygiene checks** (each opt-in) — `pip check`, `virtualenv`, `uv`, system CA store, certifi bundle, in that order. See [Hygiene checks](#hygiene-checks) | `FAIL` (named per check — a conflicting pin, a CA upgrade that did nothing, a shadowing uv) |
 | 5 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 6 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
-| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
+| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first, sending the pod's `COMFYUI_PASSWORD`; SSH diagnoses a failed proxy check. Then, through the proxy, `POST /prompt`, `GET /` and `GET /system_stats` without the password, and with a wrong one, must all return `401` | `FAIL` (ComfyUI unavailable, incorrectly exposed, or answering without its password) |
 | 8 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
 | 9 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
 | 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
@@ -670,6 +670,8 @@ pytorch:
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `1800` | Maximum wait for each functional-test model download. |
 | `COMFYUI_GEN_TIMEOUT` | `600` | Maximum wait for workflow execution and its image output. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Directory where validated ComfyUI PNGs are retained for artifact upload. |
+
+Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`) and `FILEBROWSER_PASSWORD=smoke-filebrowser-password` (`config.FILEBROWSER_TEST_PASSWORD`), since the image starts neither ComfyUI nor FileBrowser (probed on 8080) without one.
 
 
 ## Functional check
