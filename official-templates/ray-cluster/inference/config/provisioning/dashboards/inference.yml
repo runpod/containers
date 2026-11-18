@@ -1,0 +1,22 @@
+apiVersion: 1
+
+# The inference stack's example Grafana dashboards, vendored at the image's
+# pinned versions, retitled and with their export ids cleared, otherwise
+# unchanged. They pick the Prometheus datasource through their DS_PROMETHEUS
+# variable and read the head's `vllm` and `litellm` scrape jobs (post_start.sh).
+#   - vllm*.json: vllm-project/vllm examples/observability/ (prometheus_grafana/
+#     grafana.json and dashboards/grafana/*.json) at VLLM_VERSION;
+#   - litellm.json: BerriAI/litellm cookbook/litellm_proxy_server/
+#     grafana_dashboard/dashboard_v2/grafana_dashboard.json at the version in
+#     litellm/requirements.in.
+providers:
+  - name: inference-dashboards
+    orgId: 1
+    folder: Inference
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /opt/runpod/inference/grafana-dashboards
+      foldersFromFilesStructure: false

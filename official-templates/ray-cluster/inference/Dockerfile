@@ -1,7 +1,7 @@
 # The `ray-cluster` inference variant: the ray-cluster image plus vLLM, serving
-# one Hugging Face model across every node of the cluster, configured only
-# with environment variables (MODEL_REPO, HF_TOKEN, VLLM_API_KEY,
-# MAX_MODEL_LENGTH, VLLM_EXTRA_ARGS). See README.md.
+# one Hugging Face model across every node of the cluster behind LiteLLM's
+# proxy, configured only with environment variables (MODEL_REPO, HF_TOKEN,
+# LITELLM_MASTER_KEY, MAX_MODEL_LENGTH, VLLM_EXTRA_ARGS). See README.md.
 #
 # Built FROM the ray-cluster target of the same bake run (the `ray-cluster`
 # context, see docker-bake.hcl), so it keeps contract v1 with runpod/host
@@ -33,28 +33,46 @@ RUN torch_before=$(python -c 'import torch; print(torch.__version__)') && \
 COPY --chmod=644 wait_for_nodes.py /opt/runpod/inference/
 COPY --chmod=755 start.sh /opt/runpod/inference/start
 
-# The API front door on 8001: nginx checks the key, then proxies to vLLM on
-# 127.0.0.1:8000. Spliced into the base nginx.conf's http block like the Ray
-# dashboard's front door. The shipped key map accepts nothing; the start
-# script writes the real one, root-only.
-COPY --chmod=644 nginx/vllm-api.conf /etc/nginx/vllm-api.conf
-COPY --chmod=600 nginx/vllm-api-key.map /etc/nginx/vllm-api-key.map
-RUN sed -i 's|^http {$|&\n    include /etc/nginx/vllm-api.conf;|' /etc/nginx/nginx.conf && \
-    grep -q 'include /etc/nginx/vllm-api.conf;' /etc/nginx/nginx.conf && \
-    nginx -t
+# The base nginx.conf proxies 8001 to localhost:8000 (a VS Code server slot).
+# Here 8000 is vLLM, so that block would serve vLLM on 8001 with no key, and
+# it would hold the port LiteLLM needs. Remove it, and fail the build if any
+# nginx server still listens on 8001.
+RUN python3 - <<'EOF'
+import re
+path = "/etc/nginx/nginx.conf"
+conf = open(path).read()
+# The base's server blocks nest one level of braces (location), and the 8001
+# one is preceded by a comment line.
+block = re.compile(r"\n[ \t]*(#[^\n]*\n[ \t]*)?server \{(?:[^{}]|\{[^{}]*\})*?listen 8001;(?:[^{}]|\{[^{}]*\})*?\n[ \t]*\}")
+conf, n = block.subn("", conf)
+assert n == 1, f"expected one 8001 server block in {path}, found {n}"
+open(path, "w").write(conf)
+EOF
+RUN ! grep -rqE 'listen[[:space:]]+8001' /etc/nginx/ && nginx -t
 
-# vLLM's metrics on the head's Prometheus + Grafana: this image's post-start
-# hook runs the Ray image's (renamed /post_start.ray.sh), then adds a scrape
-# job for 127.0.0.1:8000; vLLM's example dashboards load into a vLLM folder.
+# LiteLLM's proxy, the API on 8001 in front of vLLM (which listens on
+# 127.0.0.1:8000 only), in its own venv so its pins never touch vLLM's, Ray's
+# or torch's. Hash-locked: every package is checked against litellm/
+# requirements.txt, whose hashes were taken when the lock was made.
+COPY litellm/requirements.txt /tmp/litellm-requirements.txt
+RUN python -m venv /opt/litellm && \
+    /opt/litellm/bin/pip install --no-cache-dir --require-hashes -r /tmp/litellm-requirements.txt && \
+    rm /tmp/litellm-requirements.txt && \
+    /opt/litellm/bin/python -c 'import litellm.proxy.proxy_server, prometheus_client'
+
+# vLLM's and LiteLLM's metrics on the head's Prometheus + Grafana: this
+# image's post-start hook runs the Ray image's (renamed /post_start.ray.sh),
+# then adds their scrape jobs; their example dashboards load into an Inference
+# folder.
 RUN mv /post_start.sh /post_start.ray.sh
 COPY --chmod=755 post_start.sh /post_start.sh
-COPY config/provisioning/dashboards/vllm.yml /etc/grafana/provisioning/dashboards/vllm.yml
+COPY config/provisioning/dashboards/inference.yml /etc/grafana/provisioning/dashboards/inference.yml
 COPY config/dashboards/ /opt/runpod/inference/grafana-dashboards/
 
-# 8001 vLLM's OpenAI-compatible API on the head, through nginx. Every route
-#      except /health and /ping needs VLLM_API_KEY (else JUPYTER_PASSWORD).
-#      Map this one in the Runpod template. vLLM itself (8000) listens on
-#      127.0.0.1 only.
+# 8001 the OpenAI-compatible API on the head: LiteLLM, in front of vLLM.
+#      Every route except LiteLLM's health checks needs LITELLM_MASTER_KEY
+#      (else JUPYTER_PASSWORD). Map this one in the Runpod template. vLLM
+#      itself (8000) listens on 127.0.0.1 only.
 EXPOSE 8001
 
 LABEL com.runpod.template.variant="ray-cluster-inference"

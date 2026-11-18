@@ -45,29 +45,33 @@ It also logs a warning if the installed Ray differs from the version the image w
 
 ## Inference variant
 
-`runpod/ray-cluster:<version>-inference-cu1300-torch2130-ubuntu2404` (`inference/`) is this image plus vLLM 0.32.0, serving one Hugging Face model across the whole cluster with no image build. It keeps the entrypoint and contract v1 unchanged; only the CMD differs (`/opt/runpod/inference/start`):
+`runpod/ray-cluster:<version>-inference-cu1300-torch2130-ubuntu2404` (`inference/`) is this image plus vLLM 0.32.0 behind LiteLLM's proxy, serving one Hugging Face model across the whole cluster with no image build. It keeps the entrypoint and contract v1 unchanged; only the CMD differs (`/opt/runpod/inference/start`):
 
 - **Worker:** joins Ray and runs nothing else.
-- **Head:** waits, with no deadline, until `NUM_NODES` nodes have joined Ray, then runs `vllm serve $MODEL_REPO` with the Ray executor, tensor parallelism set to the GPUs per node and pipeline parallelism set to the node count. Every node needs the same GPU count.
-- **No `NODE_RANK`** (a plain pod): `vllm serve` on that pod's GPUs, without Ray.
+- **Head:** waits, with no deadline, until `NUM_NODES` nodes have joined Ray, then runs `vllm serve $MODEL_REPO` on `127.0.0.1:8000` with the Ray executor, tensor parallelism set to the GPUs per node and pipeline parallelism set to the node count (every node needs the same GPU count), and LiteLLM's proxy on **8001** in front of it.
+- **No `NODE_RANK`** (a plain pod): the same on that pod's GPUs, without Ray.
 
 Configuration, all environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`. Unset: the head logs that it is skipping vLLM and stays up for interactive use. |
+| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`; also the model name clients send. Unset: the head logs that it is skipping vLLM and stays up for interactive use. |
 | `HF_TOKEN` | none | Token for gated or private models; vLLM reads it from the environment. |
-| `VLLM_API_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route except `/health` and `/ping`. With neither set, the head logs an error and does not start vLLM. `none` turns authentication off. |
+| `LITELLM_MASTER_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route on 8001 except LiteLLM's health checks (`/health/liveliness`, `/health/readiness`), `/metrics` included. With neither set, the head logs an error and starts neither. `none` turns authentication off. |
 | `MAX_MODEL_LENGTH` | vLLM's | Passed as `--max-model-len`. |
-| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `127.0.0.1` and `8000`. |
+| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `127.0.0.1` and `8000`; `--api-key` is refused (LiteLLM can't send it). |
 
-The API is served on port **8001** by the base image's nginx (`inference/nginx/vllm-api.conf`), which checks the key before proxying to vLLM on `127.0.0.1:8000`; vLLM itself is not reachable from outside the head pod. nginx checks every route except `/health` and `/ping`, so routes vLLM's own `--api-key` leaves open, such as `/invocations` and `/metrics`, need the key too, as do routes a future vLLM adds. The start script writes the accepted header to `/etc/nginx/vllm-api-key.map` (root-only) and reloads nginx; the shipped map accepts nothing, so a pod that never sets a key never serves. The key falls back to the head's `JUPYTER_PASSWORD`, so the pod's console password works for the API too; set `VLLM_API_KEY` to use a separate key.
+The API on 8001 is LiteLLM's proxy (`/opt/litellm`, its own venv, hash-locked in `inference/litellm/requirements.txt`; LTS line, 1.108.11), configured with one model, `MODEL_REPO`, served by vLLM. vLLM listens on `127.0.0.1:8000` only, so it is not reachable from outside the head pod; the inference image also removes the base nginx's 8001 server, which proxied to `localhost:8000` with no auth and would otherwise have exposed vLLM. LiteLLM runs with only a master key and no database:
 
-vLLM runs beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if vLLM exits; restart the pod to serve again. Until vLLM is listening (the model is loading, or vLLM was not started), 8001 answers `503`; `/health` answers 200 once it can serve. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
+- the master key is `LITELLM_MASTER_KEY`, else the head's `JUPYTER_PASSWORD`, so the pod's console password works for the API too. Any string works (no `sk-` prefix needed), except a publicly known default such as `sk-1234`, which LiteLLM refuses to start with;
+- a missing key gets `401`; a wrong key gets LiteLLM's `400 "No connected db."` (it looks keys up in a database it doesn't have), still refused;
+- the admin UI is disabled (`DISABLE_ADMIN_UI`; it needs the database), and LiteLLM uses its bundled model price map instead of fetching one.
 
-On the head, vLLM's metrics join the inherited monitoring: the variant's `/post_start.sh` runs the Ray image's hook (renamed `/post_start.ray.sh`), then adds a Prometheus `vllm` job that scrapes `127.0.0.1:8000/metrics` directly, with no key, since only nginx's 8001 is reachable from outside. Grafana loads vLLM's example dashboards (`vLLM`, `vLLM Performance Statistics`, `vLLM Query Statistics`, from vLLM's `examples/observability/` at the pinned version, in `inference/config/dashboards/`) into a **vLLM** folder. `RAY_CLUSTER_METRICS=0` leaves the job out with the rest of the head's stack. Re-vendor the dashboards when bumping `VLLM_VERSION`; their metric names follow vLLM's.
+vLLM and LiteLLM run beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if either exits; restart the pod to serve again. Until vLLM has loaded the model, requests get LiteLLM's `500` with an upstream connection error. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
 
-vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray.
+On the head, both join the inherited monitoring: the variant's `/post_start.sh` runs the Ray image's hook (renamed `/post_start.ray.sh`), then adds two Prometheus jobs: `vllm` scrapes `127.0.0.1:8000/metrics` with no key, and `litellm` scrapes `127.0.0.1:8001/metrics/`, sending the master key from `/etc/litellm/master_key` (root-only, written by the start script). LiteLLM's `hashed_api_key` label is excluded: it records a rejected key as sent. Grafana loads the inference dashboards (`inference/config/dashboards/`: vLLM's three from its `examples/observability/`, and LiteLLM's "Prod v2" from its `cookbook/`, each at the pinned version) into an **Inference** folder. `RAY_CLUSTER_METRICS=0` leaves the jobs out with the rest of the head's stack. Re-vendor the dashboards when bumping vLLM or LiteLLM.
+
+vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray, or if any nginx server still listens on 8001.
 
 ## Ports
 
@@ -79,7 +83,7 @@ vLLM pins torch exactly, so the variant is built only on the Ray build whose tor
 | 20217 | Ray metrics (every node) | host scrape; the head's Prometheus |
 | 52365 | Ray dashboard agent (every node), token-authenticated | the head's dashboard, for jobs and logs |
 | 8889 | Grafana, token-authenticated (inherited from `pytorch-cluster`) | cluster owner's browser; map this in the Runpod template |
-| 8001 | vLLM API front door (nginx, head; inference variant only), key-authenticated | API clients; map this in the inference template. vLLM itself listens on `127.0.0.1:8000` |
+| 8001 | Inference API: LiteLLM's proxy in front of vLLM (head; inference variant only), key-authenticated | API clients; map this in the inference template. vLLM itself listens on `127.0.0.1:8000` |
 
 All except Grafana, the dashboard front door and the inference variant's API front door are host-internal: the daemon reaches them on the docker bridge and leaves them unmapped. Unauthenticated, the Ray dashboard's API is job submission, which is remote code execution in the cluster (ShadowRay, CVE-2023-48022). Ray's own token authentication closes that: the UI asks for the token once and keeps it in an HttpOnly `ray-authentication-token` cookie; API clients send `Authorization: Bearer <token>`. Health checks (`/api/gcs_healthz`), the static UI and the login endpoint stay public. The same token gates every node's dashboard agent on 52365, which serves job submission and logs (Ray 2.54 added this; earlier versions left the agent open), apart from its `/api/healthz` and `/api/local_raylet_healthz`. The metrics port (20217) is not gated, so keep it and the agent port unmapped. **With `RAY_AUTH_MODE=disabled`, never map 8265 or 8266.**
 
