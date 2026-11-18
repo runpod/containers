@@ -84,8 +84,8 @@ characters; a shorter one counts as not set, and ComfyUI does not start.
   also open `https://<pod-id>-8188.proxy.runpod.net/?token=<COMFYUI_PASSWORD>`
   once to sign in without the prompt.
 - **API clients:** send the password as `Authorization: Bearer <COMFYUI_PASSWORD>`
-  or as an HTTP Basic password, for example
-  `curl -u any:$COMFYUI_PASSWORD https://<pod-id>-8188.proxy.runpod.net/system_stats`.
+  or as an HTTP Basic password with any username, for example to
+  `https://<pod-id>-8188.proxy.runpod.net/system_stats`.
   A request without it gets `401`.
 - **Wrong passwords:** after 10 wrong passwords in a row, the proxy stops
   checking passwords and answers `429` until attempts slow to one a second.
