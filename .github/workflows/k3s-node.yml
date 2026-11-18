@@ -34,6 +34,7 @@ jobs:
       env: ${{ steps.k3s-node.outputs.env }}
       repo-suffix: ${{ steps.k3s-node.outputs.repo-suffix }}
       k3s-node: ${{ steps.k3s-node.outputs.version }}
+      k3s-node-build: ${{ steps.k3s-node.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -49,7 +50,9 @@ jobs:
 
   build-k3s-node:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'k3s-node')
+    if: >-
+      contains(fromJSON(inputs.families), 'k3s-node')
+      && needs.versions.outputs.k3s-node-build == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
