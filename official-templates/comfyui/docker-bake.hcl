@@ -102,7 +102,7 @@ variable "COMPATIBLE_BUILDS" {
       [
         for combination in CUDA_TORCH_COMBINATIONS:
           { comfyui_version = comfyui.version,
-            # v0.35.0 -> 0350, for target and group names
+            # v0.45.0 -> 0450, for target and group names
             comfyui_version_code = replace(replace(comfyui.version, "v", ""), ".", ""),
             manager_version = comfyui.manager_version,
             cuda_version = combination.cuda_version,

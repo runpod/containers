@@ -16,11 +16,11 @@ runpod/comfyui:<release>-comfyui<comfyui version>-cuda<cuda version>
 
 | tag contains | ComfyUI |
 |---|---|
-| `-comfyuiv0.41.0` | 0.41.0 |
-| `-comfyuiv0.35.0` | 0.35.0 |
+| `-comfyuiv0.45.0` | 0.45.0 |
+| `-comfyuiv0.44.0` | 0.44.0 |
 
 Both are published and maintained side by side, with the same custom nodes and
-the same PyTorch. Pick `v0.41.0` for a new pod. `v0.35.0` is there for workflows
+the same PyTorch. Pick `v0.45.0` for a new pod. `v0.44.0` is there for workflows
 and custom nodes that have not caught up with the newer release.
 
 Rather than updating ComfyUI inside a running pod, redeploy it on the tag you

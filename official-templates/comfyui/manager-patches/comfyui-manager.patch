@@ -78,3 +78,82 @@
      # get json data
      json_data = await request.json()
  
+--- a/legacy/manager_server.py
++++ b/legacy/manager_server.py
+@@ -1450,6 +1450,11 @@ async def _install_custom_node(json_data):
+     git_url = None
+ 
+     selected_version = json_data.get('selected_version')
++    # Runpod image: refuse malformed node specs. Both halves are interpolated
++    # into "<id>@<version>" below, so an '@' in either one resolves to a
++    # target the caller did not name.
++    if '@' in str(cnr_id) or '@' in str(selected_version):
++        return web.Response(status=400, text="Invalid installation request")
+     if json_data['version'] != 'unknown' and selected_version != 'unknown':
+         if skip_post_install:
+             if cnr_id in core.unified_manager.nightly_inactive_nodes or cnr_id in core.unified_manager.cnr_inactive_nodes:
+@@ -1621,6 +1626,8 @@ async def _update_custom_node(json_data):
+ 
+ @routes.post("/v2/manager/queue/update_comfyui")
+ async def update_comfyui(request):
++    # Runpod image: disabled; the image pins the ComfyUI version.
++    return web.Response(status=403, text="Updating ComfyUI is disabled on this image")
+     rejection = manager_security.reject_simple_form_post(request)
+     if rejection is not None:
+         return rejection
+@@ -1642,6 +1649,8 @@ async def comfyui_versions(request):
+ 
+ @routes.post("/v2/comfyui_manager/comfyui_switch_version")
+ async def comfyui_switch_version(request):
++    # Runpod image: disabled; the image pins the ComfyUI version.
++    return web.Response(status=403, text="Switching the ComfyUI version is disabled on this image")
+     # Body-reading handler — Content-Type gate omitted per
+     # comfyui_manager/common/manager_security.py module policy: a cross-origin
+     # <form method=POST> cannot forge a valid application/json body because
+--- a/legacy/share_3rdparty.py
++++ b/legacy/share_3rdparty.py
+@@ -136,6 +136,8 @@ def set_youml_settings(settings):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/get_openart_auth")
+ async def api_get_openart_auth(request):
++    # Runpod image: disabled; it hands the stored key back over HTTP.
++    return web.Response(status=403)
+     # print("Getting stored Matrix credentials...")
+     openart_key = get_openart_auth()
+     if not openart_key:
+@@ -154,6 +156,8 @@ async def api_set_openart_auth(request):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/get_matrix_auth")
+ async def api_get_matrix_auth(request):
++    # Runpod image: disabled; it hands the stored password back over HTTP.
++    return web.Response(status=403)
+     # print("Getting stored Matrix credentials...")
+     matrix_auth = get_matrix_auth()
+     if not matrix_auth:
+@@ -163,6 +167,8 @@ async def api_get_matrix_auth(request):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/youml/settings")
+ async def api_get_youml_settings(request):
++    # Runpod image: disabled; it hands the stored API token back over HTTP.
++    return web.Response(status=403)
+     youml_settings = get_youml_settings()
+     if not youml_settings:
+         return web.Response(status=404)
+@@ -178,6 +184,8 @@ async def api_set_youml_settings(request):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/get_comfyworkflows_auth")
+ async def api_get_comfyworkflows_auth(request):
++    # Runpod image: disabled; it hands the stored share key back over HTTP.
++    return web.Response(status=403)
+     # Check if the user has provided Matrix credentials in a file called 'matrix_accesstoken'
+     # in the same directory as the ComfyUI base folder
+     # print("Getting stored Comfyworkflows.com auth...")
+@@ -233,6 +241,8 @@ def has_provided_comfyworkflows_auth(comfyworkflows_sharekey):
+ 
+ @PromptServer.instance.routes.post("/v2/manager/share")
+ async def share_art(request):
++    # Runpod image: disabled.
++    return web.Response(status=403)
+     # get json data
+     json_data = await request.json()
+ 

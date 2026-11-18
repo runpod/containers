@@ -105,44 +105,6 @@ A PR into `main` is rejected unless it comes from `develop`, `hotfix/*` or
 
 ---
 
-## Branches and environments
-
-Changes go `feature → develop → main`. The target branch picks the
-**env**, and the env picks the Docker Hub repos. Only what targets
-`main` is prod; everything else is dev, so nothing that is not headed for
-`main` can reach the public repos:
-
-| Event                 | Env     | Repos                              | Tag suffix    | Tag + Release |
-| --------------------- | ------- | ---------------------------------- | ------------- | ------------- |
-| PR into `develop`, or any branch other than `main` | dev | `runpod/<repo>-dev` (private) | `-rc.<PR#>` | no |
-| Push to `develop`     | dev     | `runpod/<repo>-dev` (private)      | `-dev.<PR#>`, or `-dev.<sha7>` for a direct push | no |
-| PR into `main`        | prod    | `runpod/<repo>` (public)           | `-rc.<PR#>`   | no            |
-| Push to `main`        | prod    | `runpod/<repo>` (public)           | none          | yes           |
-| `workflow_dispatch`   | prod from `main`, else dev | as for the env | `-dev` | no |
-
-- The dev repo of a family is its `image_repo` plus `-dev`
-  (`runpod/ubuntu` → `runpod/ubuntu-dev`); `plan_families.py --image-repos
-  --include-dev` lists both sets.
-- The dev env logs in to Docker Hub through its own OIDC connection
-  (`DOCKERHUB_DEV_OIDC_CONNECTIONID`). Smoke tests run on the same RunPod
-  account as prod; their pods pull the private images with the registry
-  RunPod registry credential named by the repo variable
-  `TESTING_REGISTRY_AUTH_NAME`, resolved by name on the testing account.
-- A family rebuilt in the same dev run is layered on its parent's `-dev`
-  image (`runpod/base-dev:1.4.0-rc.12-…`); otherwise on the parent's last
-  public release, exactly as on prod.
-- **Merge `feature → develop` with squash** (the PR title is the Conventional
-  Commit, as before). **Merge `develop → main` with a merge commit, not
-  squash**: the release bump and notes are computed from the individual
-  commits, and a squash would fold every `feat:` into the release PR's title.
-- Releases are tagged on main's merge commits, which develop never contains.
-  The dev env therefore takes a family's newest tag by version, not the
-  newest reachable one, and a push to develop plans from
-  `git diff origin/main...HEAD` — everything not on main yet. Merging main
-  back into develop (after a hotfix, say) is fine but not required by CI.
-
----
-
 ## Versioning rules
 
 A family's next version is **its own** latest tag plus a bump. The bump is the

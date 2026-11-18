@@ -14,12 +14,6 @@ variable "BASE_REPO_SUFFIX" {
   default = ""
 }
 
-# Repo suffix of that runpod/base: "-dev" when CI built it in this run on the
-# dev env (runpod/base-dev), else empty — a published base is public.
-variable "BASE_REPO_SUFFIX" {
-  default = ""
-}
-
 variable "AUTORESEARCH_BUILDS" {
   default = flatten([
     for cuda in CUDA_VERSIONS : [

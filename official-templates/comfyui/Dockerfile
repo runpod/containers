@@ -165,13 +165,16 @@ RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirna
 # the image's pinned ComfyUI version, the ones on share and on the four routes
 # that read a stored credential (openart, matrix, youml, comfyworkflows) keep
 # Manager from handing those back over HTTP, and the '@' check refuses a node
-# spec that would resolve to a target the caller did not name. git apply
-# refuses a patch whose context has moved, so a MANAGER_VERSION bump that
-# touches this code fails the build instead of shipping without the fixes.
+# spec that would resolve to a target the caller did not name.
+# Every one lands twice. __init__.py imports either glob/ or legacy/ depending
+# on --enable-manager-legacy-ui, which this template documents, and the two
+# carry the same routes; patching only glob/ would leave the legacy UI open.
+# git apply refuses a patch whose context has moved, so a MANAGER_VERSION bump
+# that touches this code fails the build instead of shipping without the fixes.
 COPY manager-patches/ /tmp/manager-patches/
 RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin))')" && \
     git -C "$MANAGER_PKG" apply --verbose -p1 /tmp/manager-patches/*.patch && \
-    python3.12 -m compileall -q "$MANAGER_PKG/glob"
+    python3.12 -m compileall -q "$MANAGER_PKG"
 
 # SageAttention needs a compile per torch + CUDA pair, so it comes as a pinned
 # wheel rather than through the lock. --no-deps keeps it from touching the
