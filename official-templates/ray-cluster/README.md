@@ -61,7 +61,7 @@ Configuration, all environment variables:
 | `MAX_MODEL_LENGTH` | vLLM's | Passed as `--max-model-len`. |
 | `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `127.0.0.1` and `8000`; `--api-key` is refused (LiteLLM can't send it). |
 
-The API on 4000 is LiteLLM's proxy (`/opt/litellm`, its own venv, hash-locked in `inference/litellm/requirements.txt`; LTS line, 1.108.11), configured with one model, `MODEL_REPO`, served by vLLM. vLLM listens on `127.0.0.1:8000` only, so it is not reachable from outside the head pod; the inference image also removes the base nginx's 8001 server, which proxies to `localhost:8000` with no auth and would otherwise expose vLLM to anything that reaches 8001. LiteLLM runs with only a master key and no database:
+The API on 4000 is LiteLLM's proxy (`/opt/litellm`, its own venv, hash-locked in `inference/litellm/requirements.txt`; LTS line, 1.108.11), configured with one model, `MODEL_REPO`, served by vLLM. vLLM listens on `127.0.0.1:8000` only, so it is not reachable from outside the head pod (once the base no longer carries its unused 8001 → `localhost:8000` nginx relay, #248). LiteLLM runs with only a master key and no database:
 
 - the master key is `LITELLM_MASTER_KEY`, else the head's `JUPYTER_PASSWORD`, so the pod's console password works for the API too. Any string works (no `sk-` prefix needed), except a publicly known default such as `sk-1234`, which LiteLLM refuses to start with;
 - a missing key gets `401`; a wrong key gets LiteLLM's `400 "No connected db."` (it looks keys up in a database it doesn't have), still refused;
@@ -71,7 +71,7 @@ vLLM and LiteLLM run beside `/start.sh`, so SSH, Jupyter, the dashboard front do
 
 On the head, both join the inherited monitoring: the variant's `/post_start.sh` runs the Ray image's hook (renamed `/post_start.ray.sh`), then adds two Prometheus jobs: `vllm` scrapes `127.0.0.1:8000/metrics` with no key, and `litellm` scrapes `127.0.0.1:4000/metrics/`, sending the master key from `/etc/litellm/master_key` (root-only, written by the start script). LiteLLM's `hashed_api_key` label is excluded: it records a rejected key as sent. Grafana loads the inference dashboards (`inference/config/dashboards/`: vLLM's three from its `examples/observability/`, and LiteLLM's "Prod v2" from its `cookbook/`, each at the pinned version) into an **Inference** folder. `RAY_CLUSTER_METRICS=0` leaves the jobs out with the rest of the head's stack. Re-vendor the dashboards when bumping vLLM or LiteLLM.
 
-vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray, or if any nginx server still listens on 8001.
+vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray.
 
 ## Ports
 
