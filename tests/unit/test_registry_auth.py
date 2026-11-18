@@ -1,6 +1,6 @@
 """A credential must never be attached unless it was asked for by name.
 
-Auto-picking `registries[0]` made the run depend on whatever the RunPod
+Auto-picking `registries[0]` made the run depend on whatever the Runpod
 account happened to list first. After an account switch that entry held a
 stale Docker Hub login, and every pod died in ~12s with `unauthorized:
 incorrect username or password` — on a public image that needs no login

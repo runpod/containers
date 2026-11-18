@@ -1,4 +1,4 @@
-"""RunPod REST API v2 client.
+"""Runpod REST API v2 client.
 
 Replaces the `runpodctl` subprocess calls. One place for the API key,
 request plumbing and the mapping from HTTP status + `ErrorResponse` onto
@@ -70,7 +70,7 @@ def request(
     """
     api_key = load_api_key()
     if not api_key:
-        return _TRANSPORT_ERROR, {"detail": "no RunPod API key available"}
+        return _TRANSPORT_ERROR, {"detail": "no Runpod API key available"}
 
     url = f"{BASE_URL}{path}"
     if params:
@@ -219,15 +219,15 @@ def api_available() -> tuple[bool, str]:
     do; the SSH-keys endpoint is the smallest one that needs no arguments."""
     if not load_api_key():
         return False, (
-            "no RunPod API key — set RUNPOD_API_KEY or log in so "
+            "no Runpod API key — set RUNPOD_API_KEY or log in so "
             "~/.runpod/config.toml has one"
         )
     status, data = request("GET", "/account/ssh-keys", timeout=20)
     if 200 <= status < 300:
         return True, ""
     if status in (401, 403):
-        return False, f"RunPod API rejected the key ({error_detail(status, data)})"
-    return False, f"RunPod API unreachable ({error_detail(status, data)})"
+        return False, f"Runpod API rejected the key ({error_detail(status, data)})"
+    return False, f"Runpod API unreachable ({error_detail(status, data)})"
 
 
 def log_error(context: str, status: int, data: object, indent: int = 1) -> None:

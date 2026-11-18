@@ -2,6 +2,21 @@
 
 This repository contains the Dockerfiles for the Runpod containers used for our official templates. Built containers are available on the [Docker Hub](https://hub.docker.com/u/runpod).
 
+<!-- runpod-agent-setup:start -->
+**For AI agents:** setup instructions for the Runpod skills and MCP server are at https://agents.runpod.io/
+<!-- runpod-agent-setup:end -->
+
+## Contributing
+
+Work goes `feature → develop → main`. **Open your pull request against
+`develop`**, not `main`: a PR into `main` is rejected unless it comes from
+`develop` or a `hotfix/*` branch, because merging one releases to the public
+image repos. The PR title must be a Conventional Commit (`feat:`, `fix:`, …),
+since that is what drives the version.
+
+[docs/RELEASE.md](docs/RELEASE.md) has the full flow, the hotfix route and
+what a new template has to wire up.
+
 ## Container Requirements
 
 ### Dependencies
@@ -12,7 +27,7 @@ The following dependencies are required for all images for Runpod platform funct
 - `openssh-server`: Required for SSH access to the container.
 - `jupyterlab`: Required for JupyterLab access to the container.
 
-Sandbox images (`official-templates/sandbox-*`) are the exception: commands reach them through the Sandbox API rather than through a service in the container, so they ship none of the three on purpose.
+Sandbox images (`official-templates/sandbox-*`) are the exception: commands reach them through the Sandbox API rather than through a service in the container, so they ship none of the three on purpose. The k3s node image (`official-templates/k3s-node`) is not a user template either: it runs a k3s agent, and users reach the cluster through `kubectl`.
 
 ### README
 
@@ -33,7 +48,7 @@ Use it like this:
 ./bake.sh base
 
 # Build a specific target or group of targets
-./bake.sh base cuda-ubuntu2204-1290
+./bake.sh base cuda-ubuntu2404-1290
 
 # Build the default targets and load them to the local Docker daemon
 ./bake.sh base --load

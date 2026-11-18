@@ -1,0 +1,100 @@
+name: Check PR source branch
+description: >-
+  Fail unless the pull request comes from an allowed branch of this
+  repository. Used to keep `main` reachable only through `develop` or a
+  hotfix branch, so nothing unreviewed publishes to the public image repos.
+
+inputs:
+  allowed:
+    description: >-
+      Newline-separated shell glob patterns the PR's head branch may match,
+      e.g. `develop` and `hotfix/*`.
+    required: true
+  integration-branch:
+    description: >-
+      Branch that normally feeds the base. A head branch that matches a
+      pattern but is NOT this branch must carry none of its unreleased
+      commits, so renaming a feature branch to `hotfix/x` cannot smuggle the
+      whole batch in. Empty skips that check.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check the source branch
+      shell: bash
+      env:
+        ALLOWED: ${{ inputs.allowed }}
+        INTEGRATION: ${{ inputs.integration-branch }}
+        BASE_REF: ${{ github.base_ref }}
+        HEAD_REF: ${{ github.head_ref }}
+        # A fork can carry a branch named `develop`, so the name alone is not
+        # enough to tell this repository's develop from someone else's.
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      run: |
+        set -euo pipefail
+
+        # Printed in the job log, the error annotation and the run summary, so
+        # the reason is visible without opening the logs.
+        reject() {
+          {
+            echo "### This pull request does not follow the release process"
+            echo
+            echo "\`${HEAD_REF}\` cannot target \`${BASE_REF}\`: $1"
+            echo
+            echo "**Change the target branch of this PR to \`develop\`.**"
+            echo "It reaches \`main\` with the next release."
+            echo
+            echo "Only an urgent fix that cannot wait goes straight to"
+            echo "\`${BASE_REF}\`, and then from a \`hotfix/<name>\` branch cut off"
+            echo "\`${BASE_REF}\`, not from a feature branch. GitHub's own Revert"
+            echo "button is allowed too, it opens from \`revert-*\`."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "::error::This PR does not follow the release process: ${HEAD_REF} cannot target ${BASE_REF} ($1). Retarget it to develop, or branch it as hotfix/<name> off ${BASE_REF}."
+          exit 1
+        }
+
+        if [ "${HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]; then
+          reject "it comes from ${HEAD_REPO}, not ${GITHUB_REPOSITORY}"
+        fi
+
+        patterns=()
+        while IFS= read -r p; do
+          [ -n "${p}" ] && patterns+=("${p}")
+        done <<< "${ALLOWED}"
+
+        allowed_list="$(IFS=,; printf '%s' "${patterns[*]}" | sed 's/,/, /g')"
+        matched=""
+        for p in "${patterns[@]}"; do
+          # shellcheck disable=SC2254
+          case "${HEAD_REF}" in
+            ${p}) matched="${p}"; break ;;
+          esac
+        done
+        [ -n "${matched}" ] || \
+          reject "the only branches allowed there are ${allowed_list}"
+        echo "${HEAD_REF} matched '${matched}'"
+
+        # The name alone proves nothing: a branch off `develop` renamed to
+        # `hotfix/x` would carry the whole pending batch into a release that
+        # is supposed to carry one fix.
+        if [ -z "${INTEGRATION}" ] || [ "${HEAD_REF}" = "${INTEGRATION}" ]; then
+          exit 0
+        fi
+        if ! git fetch --no-tags --quiet origin \
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" \
+            "+refs/heads/${INTEGRATION}:refs/remotes/origin/${INTEGRATION}"; then
+          echo "::warning::could not fetch ${BASE_REF} and ${INTEGRATION}; skipping the ancestry check"
+          exit 0
+        fi
+        # Commits waiting on the integration branch, and how many of them this
+        # PR does NOT contain. A branch cut off ${BASE_REF} contains none.
+        pending="$(git rev-list --count "origin/${INTEGRATION}" "^origin/${BASE_REF}")"
+        outside="$(git rev-list --count "origin/${INTEGRATION}" "^origin/${BASE_REF}" ^HEAD)"
+        if [ "${pending}" != "${outside}" ]; then
+          reject "it carries $(( pending - outside )) commit(s) that are on ${INTEGRATION} but not on ${BASE_REF}, so it was cut off ${INTEGRATION} rather than ${BASE_REF}"
+        fi
+        echo "carries none of ${INTEGRATION}'s ${pending} pending commit(s)"
+
+

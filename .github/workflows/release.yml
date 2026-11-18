@@ -30,20 +30,49 @@ permissions:
   id-token: write
   pull-requests: read
 
-# PR: cancel superseded runs (per ref). Push: SERIALIZE per branch — a
-# constant group with cancel-in-progress:false makes a 2nd merge wait for the
-# 1st to finish (and create its tag), so two merges landing close together
-# can't both compute the same next version and race. main's group stays
-# `main-release`: manual-release.yml joins it by that name.
+# PR: cancel superseded runs (per ref). Push to main: SERIALIZE — a constant
+# group with cancel-in-progress:false makes a 2nd merge wait for the 1st to
+# finish (and create its tag), so two merges landing close together can't both
+# compute the same next version and race. main's group stays `main-release`:
+# manual-release.yml joins it by that name.
+# Push to develop: cancel instead. A develop run plans everything not yet on
+# main, so a newer run rebuilds whatever the cancelled one would have, and no
+# tags are at stake.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && format('{0}-release', github.ref_name) || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
 
 jobs:
+  # A PR into main publishes release candidates to the PUBLIC repos, so only
+  # develop and hotfix branches may open one. The required check is
+  # `pr-source` in branch-policy.yml, which runs on every PR; this one is a
+  # build gate and carries a different name so the two can't be confused:
+  # plan waits on it, and the build jobs wait on plan.
+  pr-source-gate:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # The hotfix check walks main and develop back to their merge base.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/check-pr-source
+        with:
+          allowed: |
+            develop
+            hotfix/*
+            revert-*
+          integration-branch: develop
+
   # Which families this event touches, plus everything that builds FROM them.
   # One mechanism for PRs, pushes and manual runs: the family graph.
   plan:
-    runs-on: ubuntu-latest
+    needs: pr-source-gate
+    # Skipped on a push or a PR into develop, where the gate does not apply.
+    if: "!cancelled() && needs.pr-source-gate.result != 'failure'"
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       families: ${{ steps.p.outputs.families }}
       workflows: ${{ steps.p.outputs.workflows }}
@@ -100,6 +129,7 @@ jobs:
     needs: plan
     if: >-
       !cancelled()
+      && needs.plan.result == 'success'
       && contains(fromJSON(needs.plan.outputs.workflows), 'base')
     uses: ./.github/workflows/base.yml
     secrets: inherit
@@ -110,6 +140,7 @@ jobs:
     needs: plan
     if: >-
       !cancelled()
+      && needs.plan.result == 'success'
       && contains(fromJSON(needs.plan.outputs.workflows), 'nvidia')
     uses: ./.github/workflows/nvidia.yml
     secrets: inherit
@@ -120,6 +151,7 @@ jobs:
     needs: plan
     if: >-
       !cancelled()
+      && needs.plan.result == 'success'
       && contains(fromJSON(needs.plan.outputs.workflows), 'rocm')
     uses: ./.github/workflows/rocm.yml
     secrets: inherit
@@ -130,6 +162,7 @@ jobs:
     needs: plan
     if: >-
       !cancelled()
+      && needs.plan.result == 'success'
       && contains(fromJSON(needs.plan.outputs.workflows), 'comfyui')
     uses: ./.github/workflows/comfyui.yml
     secrets: inherit
@@ -141,8 +174,20 @@ jobs:
     needs: plan
     if: >-
       !cancelled()
+      && needs.plan.result == 'success'
       && contains(fromJSON(needs.plan.outputs.workflows), 'sandbox')
     uses: ./.github/workflows/sandbox.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
+  k3s-node:
+    needs: plan
+    if: >-
+      !cancelled()
+      && needs.plan.result == 'success'
+      && contains(fromJSON(needs.plan.outputs.workflows), 'k3s-node')
+    uses: ./.github/workflows/k3s-node.yml
     secrets: inherit
     with:
       families: ${{ needs.plan.outputs.families }}
@@ -153,14 +198,14 @@ jobs:
   # Each family waits only on its own build: a scan that fails on one image
   # must not keep the others unreleased while their images are already pushed.
   release:
-    needs: [plan, base, nvidia, rocm, comfyui, sandbox]
+    needs: [plan, base, nvidia, rocm, comfyui, sandbox, k3s-node]
     if: >-
       !cancelled()
       && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.plan.result == 'success'
       && needs.plan.outputs.families != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     permissions:
       contents: write
     strategy:

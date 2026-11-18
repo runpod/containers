@@ -27,7 +27,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(DCGM_FI_DEV_FB_USED, Hostname)",
+        "query": "label_values(DCGM_FI_DEV_FB_USED, hostname)",
         "refresh": 2,
         "sort": 1,
         "includeAll": true,
@@ -47,7 +47,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(DCGM_FI_DEV_FB_USED{Hostname=~\"$Hostname\"}, gpu)",
+        "query": "label_values(DCGM_FI_DEV_FB_USED{hostname=~\"$Hostname\"}, gpu)",
         "refresh": 2,
         "sort": 1,
         "includeAll": true,
@@ -110,7 +110,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_FB_USED{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} / DCGM_FI_DEV_FB_TOTAL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
+          "expr": "avg(DCGM_FI_DEV_FB_USED{hostname=~\"$Hostname\", gpu=~\"$gpu\"} / DCGM_FI_DEV_FB_TOTAL{hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
         }
       ],
       "gridPos": {
@@ -168,7 +168,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_POWER_USAGE{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} / DCGM_FI_DEV_ENFORCED_POWER_LIMIT{Hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
+          "expr": "avg(DCGM_FI_DEV_POWER_USAGE{hostname=~\"$Hostname\", gpu=~\"$gpu\"} / DCGM_FI_DEV_ENFORCED_POWER_LIMIT{hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
         }
       ],
       "gridPos": {
@@ -226,7 +226,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(DCGM_FI_DEV_GPU_TEMP{Hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
+          "expr": "max(DCGM_FI_DEV_GPU_TEMP{hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
         }
       ],
       "gridPos": {
@@ -270,7 +270,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
+          "expr": "avg(DCGM_FI_DEV_MEM_COPY_UTIL{hostname=~\"$Hostname\", gpu=~\"$gpu\"})"
         }
       ],
       "gridPos": {
@@ -323,8 +323,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_FB_USED{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1048576",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} used"
+          "expr": "DCGM_FI_DEV_FB_USED{hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1048576",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} used"
         },
         {
           "refId": "B",
@@ -332,8 +332,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_FB_RESERVED{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1048576",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} reserved"
+          "expr": "DCGM_FI_DEV_FB_RESERVED{hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1048576",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} reserved"
         },
         {
           "refId": "C",
@@ -341,8 +341,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_BAR1_USED{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1048576",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} BAR1"
+          "expr": "DCGM_FI_DEV_BAR1_USED{hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1048576",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} BAR1"
         }
       ],
       "gridPos": {
@@ -391,8 +391,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_POWER_USAGE{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} draw"
+          "expr": "DCGM_FI_DEV_POWER_USAGE{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} draw"
         },
         {
           "refId": "B",
@@ -400,8 +400,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_ENFORCED_POWER_LIMIT{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} limit"
+          "expr": "DCGM_FI_DEV_ENFORCED_POWER_LIMIT{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} limit"
         }
       ],
       "gridPos": {
@@ -470,8 +470,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_GPU_TEMP{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} core"
+          "expr": "DCGM_FI_DEV_GPU_TEMP{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} core"
         },
         {
           "refId": "B",
@@ -479,8 +479,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_MEMORY_TEMP{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} mem"
+          "expr": "DCGM_FI_DEV_MEMORY_TEMP{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} mem"
         }
       ],
       "gridPos": {
@@ -529,8 +529,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_SM_CLOCK{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1000000",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} sm"
+          "expr": "DCGM_FI_DEV_SM_CLOCK{hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1000000",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} sm"
         },
         {
           "refId": "B",
@@ -538,8 +538,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_MEM_CLOCK{Hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1000000",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} mem"
+          "expr": "DCGM_FI_DEV_MEM_CLOCK{hostname=~\"$Hostname\", gpu=~\"$gpu\"} * 1000000",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} mem"
         }
       ],
       "gridPos": {
@@ -588,8 +588,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} memcpy"
+          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} memcpy"
         },
         {
           "refId": "B",
@@ -597,8 +597,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_ENC_UTIL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} enc"
+          "expr": "DCGM_FI_DEV_ENC_UTIL{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} enc"
         },
         {
           "refId": "C",
@@ -606,8 +606,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_DEC_UTIL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} dec"
+          "expr": "DCGM_FI_DEV_DEC_UTIL{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} dec"
         }
       ],
       "gridPos": {
@@ -656,8 +656,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_FAN_SPEED{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "DCGM_FI_DEV_FAN_SPEED{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "gridPos": {
@@ -708,8 +708,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_PSTATE{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "DCGM_FI_DEV_PSTATE{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "description": "NVIDIA performance state (P0 = max performance, higher = more idle).",
@@ -759,8 +759,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(DCGM_FI_DEV_POWER_VIOLATION{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} power"
+          "expr": "rate(DCGM_FI_DEV_POWER_VIOLATION{hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} power"
         },
         {
           "refId": "B",
@@ -768,8 +768,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(DCGM_FI_DEV_THERMAL_VIOLATION{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} thermal"
+          "expr": "rate(DCGM_FI_DEV_THERMAL_VIOLATION{hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} thermal"
         }
       ],
       "description": "Microseconds/sec the GPU was throttled. Sustained >0 means it can't run at full clocks.",
@@ -835,8 +835,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(DCGM_FI_DEV_PCIE_REPLAY_COUNTER{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "rate(DCGM_FI_DEV_PCIE_REPLAY_COUNTER{hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "gridPos": {
@@ -901,8 +901,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "increase(DCGM_FI_DEV_ECC_SBE_AGG_TOTAL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} ECC SBE"
+          "expr": "increase(DCGM_FI_DEV_ECC_SBE_AGG_TOTAL{hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} ECC SBE"
         },
         {
           "refId": "B",
@@ -910,8 +910,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "increase(DCGM_FI_DEV_ECC_DBE_AGG_TOTAL{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} ECC DBE"
+          "expr": "increase(DCGM_FI_DEV_ECC_DBE_AGG_TOTAL{hostname=~\"$Hostname\", gpu=~\"$gpu\"}[5m])",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} ECC DBE"
         },
         {
           "refId": "C",
@@ -919,8 +919,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} remap (corr)"
+          "expr": "DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} remap (corr)"
         },
         {
           "refId": "D",
@@ -928,8 +928,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} remap (uncorr)"
+          "expr": "DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} remap (uncorr)"
         },
         {
           "refId": "E",
@@ -937,8 +937,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "DCGM_FI_DEV_ROW_REMAP_PENDING{Hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}} remap pending"
+          "expr": "DCGM_FI_DEV_ROW_REMAP_PENDING{hostname=~\"$Hostname\", gpu=~\"$gpu\"}",
+          "legendFormat": "{{hostname}}/gpu{{gpu}} remap pending"
         }
       ],
       "gridPos": {

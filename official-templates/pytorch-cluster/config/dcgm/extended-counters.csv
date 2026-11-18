@@ -67,7 +67,7 @@ DCGM_FI_DEV_PSTATE,    gauge, Performance state (P0-P15).
 DCGM_FI_DEV_FAN_SPEED, gauge, Fan speed (in %).
 
 # NVLink
-DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,              counter, Total NVLink bandwidth (in KB/s).
+DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,              gauge,   Total NVLink bandwidth (in MB/s).
 DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL,   counter, Total NVLink flow-control CRC errors.
 DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL,   counter, Total NVLink data CRC errors.
 DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,     counter, Total NVLink replay errors.

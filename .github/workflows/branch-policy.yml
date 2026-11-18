@@ -1,0 +1,34 @@
+name: Branch Policy
+
+# `main` is only reachable through `develop` or a hotfix branch: a PR into it
+# builds release candidates into the PUBLIC image repos, and merging it
+# releases. No `paths:` filter — a required check that does not run on some
+# pull requests leaves the merge button stuck on "Expected" forever.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-source:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # The hotfix check walks main and develop back to their merge base.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/check-pr-source
+        with:
+          allowed: |
+            develop
+            hotfix/*
+            revert-*
+          integration-branch: develop

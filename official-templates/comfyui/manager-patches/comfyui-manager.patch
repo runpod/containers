@@ -1,0 +1,71 @@
+--- a/glob/manager_server.py
++++ b/glob/manager_server.py
+@@ -823,6 +823,12 @@ async def task_worker():
+         mode = params.mode
+         skip_post_install = params.skip_post_install
+ 
++        # Runpod image: refuse malformed node specs. Both halves are
++        # interpolated into "<id>@<version>" below, so an '@' in either one
++        # resolves to a target the caller did not name.
++        if '@' in str(node_id) or '@' in str(node_version):
++            return "Invalid installation request"
++
+         logging.debug(
+             "[ComfyUI-Manager] Installing node: id=%s, version=%s, channel=%s, mode=%s",
+             node_id,
+@@ -1829,6 +1835,8 @@ async def queue_start(request):
+ @routes.post("/v2/manager/queue/update_comfyui")
+ async def update_comfyui(request):
+     """Queue a ComfyUI update based on the configured update policy."""
++    # Runpod image: disabled; the image pins the ComfyUI version.
++    return web.Response(status=403, text="Updating ComfyUI is disabled on this image")
+     rejection = security_utils.reject_simple_form_post(request)
+     if rejection is not None:
+         return rejection
+@@ -1880,6 +1888,8 @@ async def comfyui_versions(request):
+ 
+ @routes.post("/v2/comfyui_manager/comfyui_switch_version")
+ async def comfyui_switch_version(request):
++    # Runpod image: disabled; the image pins the ComfyUI version.
++    return web.Response(status=403, text="Switching the ComfyUI version is disabled on this image")
+     # Body-reading handler — Content-Type gate omitted per
+     # comfyui_manager/common/manager_security.py module policy: a cross-origin
+     # <form method=POST> cannot forge a valid application/json body because
+--- a/glob/share_3rdparty.py
++++ b/glob/share_3rdparty.py
+@@ -136,6 +136,8 @@ def set_youml_settings(settings):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/get_openart_auth")
+ async def api_get_openart_auth(request):
++    # Runpod image: disabled.
++    return web.Response(status=403)
+     # print("Getting stored Matrix credentials...")
+     openart_key = get_openart_auth()
+     if not openart_key:
+@@ -154,6 +156,8 @@ async def api_set_openart_auth(request):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/get_matrix_auth")
+ async def api_get_matrix_auth(request):
++    # Runpod image: disabled.
++    return web.Response(status=403)
+     # print("Getting stored Matrix credentials...")
+     matrix_auth = get_matrix_auth()
+     if not matrix_auth:
+@@ -178,6 +182,8 @@ async def api_set_youml_settings(request):
+ 
+ @PromptServer.instance.routes.get("/v2/manager/get_comfyworkflows_auth")
+ async def api_get_comfyworkflows_auth(request):
++    # Runpod image: disabled.
++    return web.Response(status=403)
+     # Check if the user has provided Matrix credentials in a file called 'matrix_accesstoken'
+     # in the same directory as the ComfyUI base folder
+     # print("Getting stored Comfyworkflows.com auth...")
+@@ -233,6 +239,8 @@ def has_provided_comfyworkflows_auth(comfyworkflows_sharekey):
+ 
+ @PromptServer.instance.routes.post("/v2/manager/share")
+ async def share_art(request):
++    # Runpod image: disabled.
++    return web.Response(status=403)
+     # get json data
+     json_data = await request.json()
+ 
