@@ -31,12 +31,17 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # Listing a parent's private dev repo needs a registry token, which only
+      # the OIDC connection can mint.
+      id-token: write
     outputs:
       suffix: ${{ steps.ubuntu.outputs.suffix }}
       env: ${{ steps.ubuntu.outputs.env }}
       repo-suffix: ${{ steps.ubuntu.outputs.repo-suffix }}
       ubuntu: ${{ steps.ubuntu.outputs.version }}
       ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
+      ubuntu-parent: ${{ steps.ubuntu-parent.outputs.version }}
+      ubuntu-parent-suffix: ${{ steps.ubuntu-parent.outputs.repo-suffix }}
       openclaw: ${{ steps.openclaw.outputs.version }}
       harbor: ${{ steps.harbor.outputs.version }}
       browser: ${{ steps.browser.outputs.version }}
@@ -64,6 +69,18 @@ jobs:
         uses: ./.github/actions/compute-version
         with:
           family: sandbox-harbor
+
+      # Which published sandbox-ubuntu harbor and browser layer on when it is
+      # NOT rebuilt in this run. On dev that is develop's newest -dev.<N>.
+      - name: sandbox-ubuntu parent
+        id: ubuntu-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: sandbox-ubuntu
+          env: ${{ steps.ubuntu.outputs.env }}
+          published-version: ${{ steps.ubuntu.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
 
       - name: sandbox-browser
         id: browser
@@ -423,8 +440,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.harbor }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
-          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-parent }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.ubuntu-parent-suffix }}
         with:
           source: .
           files: |
@@ -546,8 +563,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
-          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
-          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-parent }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.ubuntu-parent-suffix }}
         with:
           source: .
           files: |

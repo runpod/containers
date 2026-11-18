@@ -80,8 +80,16 @@ Changes go `feature → develop → main`. The target branch picks the
   RunPod registry credential named by the repo variable
   `TESTING_REGISTRY_AUTH_NAME`, resolved by name on the testing account.
 - A family rebuilt in the same dev run is layered on its parent's `-dev`
-  image (`runpod/base-dev:1.4.0-rc.12-…`); otherwise on the parent's last
-  public release, exactly as on prod.
+  image (`runpod/base-dev:1.4.0-rc.12-…`). When the parent is **not** rebuilt,
+  dev layers on the newest `-dev.<N>` in the parent's private repo, which is
+  the state of `develop`: the last public release can predate fixes that
+  `develop` already carries, and a build on it would be scanned against
+  vulnerabilities we have already closed. Only `-dev.<N>` counts, so an open
+  PR's `-rc.<N>` is never a parent. The newest is taken by version and then by
+  `<N>`, not by push time: re-running an older develop commit republishes an
+  older tag today, and push time would then pick up stale content. With no
+  such tag yet it falls back to the public release. Prod always uses the
+  public release.
 - **Merge `feature → develop` with squash** (the PR title is the Conventional
   Commit, as before). **Merge `develop → main` with a merge commit, not
   squash**: the release bump and notes are computed from the individual
@@ -251,6 +259,8 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/workflows/branch-policy.yml`            | Fails a PR into `main` from anything but `develop`, `hotfix/*` or `revert-*`. No `paths:` filter, so it is the check to require. |
 | `.github/actions/check-pr-source/action.yml`     | The rule itself: allowed source branches, the fork check, and the proof that a `hotfix/*` branch really was cut off `main`. Called by `branch-policy.yml` and by the orchestrator's `pr-source-gate` job. |
 | `.github/workflows/cleanup.yml`, `cleanup-closed-pr.yml` | Sweep aged-out `-rc.`/`-dev.` tags from the public and the `-dev` repos. |
+| `.github/scripts/latest_dev_version.py`          | Newest `-dev.<N>` among the tag names on stdin (`crane ls`), ordered by version then `<N>`: what a dev build layers on when that family is not rebuilt in the same run. |
+| `.github/actions/resolve-parent-image/action.yml` | Picks a parent image for the not-rebuilt case: the dev tag above, the public release on prod, and the public release as the dev fallback. |
 | `.github/scripts/release_notes.py`               | Builds a family's release body from the commits that touched it since its previous tag. |
 | `.github/workflows/manual-release.yml`           | Break-glass: tags one family from an earlier run's commit when its release never happened. |
 | `.github/workflows/release-plan.yml`             | Guards the graph: unit tests, plus a check that every template directory appears in it. |
@@ -455,7 +465,14 @@ either.
   (`registry auth '…' not found`).
 - **Docker Hub:** the `runpod/<repo>-dev` repos exist and are **private**; the
   dev OIDC connection accepts PR refs and `refs/heads/develop` and can push to
-  all of them.
+  all of them. It also needs **read on the public `runpod/<repo>` repos** for
+  the fallback case, where a parent has no `-dev.<N>` tag yet. Public repos
+  pull anonymously, but once the job has logged in with the dev connection
+  Docker Hub answers `401 access token has insufficient scopes` instead of
+  falling back. Listing a private repo to find that tag goes through the
+  registry with a token from the **dev OIDC connection**, which already has
+  access since it pushes there; the `versions` jobs therefore need
+  `id-token: write`. The Hub API and `DOCKERHUB_TOKEN` are not involved.
 - **Permissions:** the orchestrator grants `id-token: write` (for Cosign
   signing in the reusable builds) and its `release` job uses `contents: write`
   to create tags and Releases. Ensure GitHub Actions is allowed to create
@@ -510,3 +527,5 @@ either.
 | PR checks are stuck "Expected"/pending             | A required check that does not run on this PR. `release.yml` is filtered to `official-templates/**` and `container-template/**`, so none of its jobs can be required; require `pr-source` and the lint/test workflows instead. |
 | PR into `main` fails on "does not follow the release process" | Its source branch is not `develop`, `hotfix/*` or `revert-*`. Retarget it to `develop`, or cut `hotfix/<name>` off `main` if it cannot wait. |
 | A develop build pushed to the **public** repo      | That family's `docker-bake.hcl` is missing `${REPO_SUFFIX}` in a tag, or its job does not pass it. See *Add a new template*. |
+| A dev build fails pulling its parent with `401 … insufficient scopes` | The parent has no `-dev.<N>` tag yet, so the build fell back to its last public release, and the dev OIDC connection has no read on the public repos. Grant it; this is not a suffix bug. |
+| A dev build layered on an older parent than expected | It takes the newest `-dev.<N>`, which is the last push to `develop` that built that family. A change sitting in an open PR is deliberately not a parent. |
