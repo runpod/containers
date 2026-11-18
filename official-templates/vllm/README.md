@@ -38,10 +38,13 @@ meta-llama/Llama-3.1-8B-Instruct --max-model-len 16384 --gpu-memory-utilization 
 
 The image always appends `--host 0.0.0.0 --port 8000` and its own `--middleware`, so a `--host` or `--port` in the start command has no effect. For gated models, set `HF_TOKEN` in the Pod environment.
 
+With an empty start command vLLM is not started (it would exit with no model); the Logs tab says so and the Pod stays up.
+
 ### Notes
 
 - The vLLM version is in the image tag: `runpod/vllm-openai:<release>-vllm<vllm-version>`.
-- This image runs vLLM only. It has no SSH server or JupyterLab.
+- SSH: the Pod's **Connect** button works with a key from your Runpod account (`PUBLIC_KEY`), password login is disabled. SSH sessions do not see the Pod's environment variables, so `VLLM_API_KEY` stays out of shells. There is no JupyterLab.
+- Models are cached in `HF_HOME=/workspace/.huggingface`, on the Pod volume, so a restart does not download them again.
 - Mooncake is removed, so the Mooncake KV-transfer connectors (multi-node disaggregated serving) are not available.
 
 ### Links

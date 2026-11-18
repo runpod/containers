@@ -237,15 +237,25 @@ class StartScript(unittest.TestCase):
         self.assert_refuses({})
         self.assert_refuses({"VLLM_API_KEY": "   "})
 
+    def test_empty_start_command_does_not_start_vllm(self):
+        """`vllm serve` with no model exits at once: a restart loop on Runpod."""
+        self.assert_refuses({"VLLM_API_KEY": KEY}, cmd=(),
+                            reason="the container start command is empty")
+
+    def test_ssh_setup_is_skipped_when_not_root(self):
+        out = self.start({"VLLM_API_KEY": KEY}, "m")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertNotIn("sshd", out.stdout + out.stderr)
+
     def test_api_key_on_cmd_is_flagged(self):
         out = self.start({"VLLM_API_KEY": KEY}, "m", "--api-key", "other")
         self.assertIn("--api-key is set in the container command", out.stdout)
 
-    def assert_refuses(self, env):
+    def assert_refuses(self, env, cmd=("m",), reason="VLLM_API_KEY is not set"):
         if self.record.exists():
             self.record.unlink()
         proc = subprocess.Popen(
-            ["bash", str(START), "m"],
+            ["bash", str(START), *cmd],
             env={**self.base_env, **env},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -254,9 +264,9 @@ class StartScript(unittest.TestCase):
         try:
             deadline = time.monotonic() + 10
             output = ""
-            while "VLLM_API_KEY=<a long random secret>" not in output and time.monotonic() < deadline:
+            while output.count("=" * 60) < 2 and time.monotonic() < deadline:
                 output += proc.stdout.readline()
-            self.assertIn("vLLM was NOT started: VLLM_API_KEY is not set", output)
+            self.assertIn(f"vLLM was NOT started: {reason}", output)
             time.sleep(0.3)
             self.assertIsNone(proc.poll(), "start.sh exited; Runpod would restart it in a loop")
             proc.send_signal(signal.SIGTERM)

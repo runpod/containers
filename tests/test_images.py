@@ -391,6 +391,13 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
                 f"group '{grp}': test_comfyui=true "
                 f"(proxy-first reachability on :{config.COMFYUI_PORT})"
             )
+        if _normalize_bool(contents.get("test_vllm")):
+            config.GROUP_TEST_VLLM[grp] = True
+            log(
+                f"group '{grp}': test_vllm=true (auth gate and one "
+                f"completion on :{config.VLLM_PORT}, model "
+                f"{config.VLLM_TEST_MODEL})"
+            )
 
 
 def _resolve_all_instances(manifest: dict[str, dict]) -> dict[str, list[str]]:

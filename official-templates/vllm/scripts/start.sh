@@ -18,6 +18,38 @@ hold_without_vllm() {
     done
 }
 
+refuse() {
+    echo "============================================================"
+    echo "  vLLM was NOT started: $1"
+    echo ""
+    shift
+    printf '  %s\n' "$@"
+    echo "============================================================"
+    hold_without_vllm
+    exit 0
+}
+
+# sshd daemonizes, so vLLM below stays PID 1 and gets SIGTERM. The container
+# environment is deliberately not exported to SSH sessions: it holds the key.
+# A failure here only costs SSH, never the model server.
+setup_ssh() {
+    mkdir -p /run/sshd ~/.ssh && chmod 700 ~/.ssh || return 1
+    if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+        ssh-keygen -A -q || return 1
+    fi
+    if [ -n "${PUBLIC_KEY:-}" ]; then
+        printf '%s\n' "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+    else
+        echo "PUBLIC_KEY is not set: direct SSH to port 22 is refused."
+    fi
+    /usr/sbin/sshd
+}
+
+if [ "$(id -u)" -eq 0 ] && [ -x /usr/sbin/sshd ]; then
+    setup_ssh || echo "WARNING: sshd did not start; continuing without SSH."
+fi
+
 # Trim pasted whitespace; vLLM's own /v1 check reads the exported value too.
 key="${VLLM_API_KEY:-}"
 key="${key#"${key%%[![:space:]]*}"}"
@@ -36,15 +68,17 @@ done
 
 # There is no unauthenticated mode: without a key, vLLM does not start.
 if [ -z "$key" ]; then
-    echo "============================================================"
-    echo "  vLLM was NOT started: VLLM_API_KEY is not set."
-    echo ""
-    echo "  This image requires a key on every route of :${LISTEN_PORT}."
-    echo "  Redeploy the Pod with the environment variable"
-    echo "    VLLM_API_KEY=<a long random secret>"
-    echo "============================================================"
-    hold_without_vllm
-    exit 0
+    refuse "VLLM_API_KEY is not set." \
+        "This image requires a key on every route of :${LISTEN_PORT}." \
+        "Redeploy the Pod with the environment variable" \
+        "  VLLM_API_KEY=<a long random secret>"
+fi
+
+# Without a model, `vllm serve` exits at once and Runpod restarts it in a loop.
+if [ "$#" -eq 0 ]; then
+    refuse "the container start command is empty." \
+        "Set it to the model and serving flags, for example" \
+        "  Qwen/Qwen3-8B --max-model-len 16384"
 fi
 
 export VLLM_API_KEY="$key"

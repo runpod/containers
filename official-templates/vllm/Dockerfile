@@ -6,6 +6,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN . /etc/os-release && \
     printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg snapshot=no] %s %s main universe\n' \
+      http://archive.ubuntu.com/ubuntu "${VERSION_CODENAME}" \
       http://archive.ubuntu.com/ubuntu "${VERSION_CODENAME}-updates" \
       http://security.ubuntu.com/ubuntu "${VERSION_CODENAME}-security" > /tmp/fixes.list && \
     apt_fix=(-o Dir::Etc::SourceList=/tmp/fixes.list -o Dir::Etc::SourceParts=-) && \
@@ -13,10 +14,16 @@ RUN . /etc/os-release && \
     apt-get "${apt_fix[@]}" install --yes --only-upgrade --no-install-recommends \
       openssl libssl3t64 apt apt-utils libapt-pkg6.0t64 \
       dirmngr gnupg gnupg-utils gnupg2 gpg gpg-agent gpgconf gpgsm gpgv keyboxd && \
+    DEBIAN_FRONTEND=noninteractive apt-get "${apt_fix[@]}" install --yes --no-install-recommends \
+      openssh-server openssh-client && \
     rm -rf /tmp/fixes.list /var/lib/apt/lists/* && \
+    sed -i 's/^#*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    grep -q '^PasswordAuthentication no$' /etc/ssh/sshd_config && \
+    mkdir -p /run/sshd && \
+    ssh-keygen -A -q && /usr/sbin/sshd -t && rm -f /etc/ssh/ssh_host_* && \
     for fix in libssl3t64:3.0.13-0ubuntu3.16 libapt-pkg6.0t64:2.8.4ubuntu0.1 gpgv:2.4.4-2ubuntu17.4; do \
-      cur="$(dpkg-query -W -f='${Version}' "${fix%%:*}")" && \
-      dpkg --compare-versions "$cur" ge "${fix#*:}" || { echo "${fix%%:*} $cur < ${fix#*:}"; exit 1; }; \
+      cur="$(dpkg-query -W -f='${Version}' "${fix%%:*}")"; \
+      if ! dpkg --compare-versions "$cur" ge "${fix#*:}"; then echo "${fix%%:*} $cur < ${fix#*:}"; exit 1; fi; \
     done
 
 # mooncake: Go etcd wrapper with critical stdlib/x/net CVEs; only used for
@@ -56,6 +63,9 @@ RUN register="$(python3 -c 'import importlib.util as u; print(u.find_spec("vllm"
     { grep -q 'for middleware in args.middleware' "$register" || \
       { echo "vLLM no longer loads --middleware in $register"; exit 1; }; } && \
     PYTHONPATH=/opt/runpod/vllm python3 -c 'import runpod_vllm_auth'
+
+# Models download to the Pod volume, not the small container disk.
+ENV HF_HOME=/workspace/.huggingface
 
 EXPOSE 8000
 

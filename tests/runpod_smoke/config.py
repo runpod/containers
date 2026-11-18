@@ -229,6 +229,17 @@ COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900")
 COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
 COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
 
+# runpod/vllm-openai: `test_vllm` boots the image with VLLM_API_KEY and a
+# small model as the start command, exposes VLLM_PORT as <port>/http, and
+# checks the auth gate and one completion through the public proxy. The key
+# is not a secret: it guards a throwaway pod for a few minutes.
+VLLM_PORT = int(os.environ.get("VLLM_PORT", "8000"))
+VLLM_TEST_API_KEY = "smoke-vllm-api-key"
+VLLM_TEST_MODEL = os.environ.get("VLLM_TEST_MODEL", "Qwen/Qwen3-0.6B")
+VLLM_TEST_CMD = [VLLM_TEST_MODEL, "--max-model-len", "4096"]
+# Model download plus load and CUDA-graph capture, after SSH is up.
+VLLM_WAIT_TIMEOUT = int(os.environ.get("VLLM_WAIT_TIMEOUT", "900"))
+
 
 # ---------------------------------------------------------------------------
 # CPU groups + candidates
@@ -425,6 +436,9 @@ GROUP_TEST_COMFYUI: dict[str, bool] = {}
 # End-to-end ComfyUI generation test. It implies GROUP_TEST_COMFYUI so the
 # public reachability check always runs before model provisioning.
 GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
+
+# runpod/vllm-openai auth gate and completion, through the public proxy.
+GROUP_TEST_VLLM: dict[str, bool] = {}
 
 # Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
 # rather than stopping after the first passing candidate.

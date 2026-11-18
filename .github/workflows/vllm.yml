@@ -3,9 +3,6 @@ name: vLLM Image Build
 # Reusable building block invoked by the release orchestrator (release.yml),
 # which passes in the families it planned. Not triggered on its own — the
 # orchestrator owns triggers, concurrency and release.
-#
-# No sshd in this image, so the pod smoke test doesn't apply; the auth gate is
-# checked on the runner before the push instead.
 on:
   workflow_call:
     inputs:
@@ -22,9 +19,14 @@ permissions:
 jobs:
   versions:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.v.outputs.version }}
       suffix: ${{ steps.v.outputs.suffix }}
+      env: ${{ steps.v.outputs.env }}
+      repo-suffix: ${{ steps.v.outputs.repo-suffix }}
       should-build: ${{ steps.v.outputs.should-build }}
     steps:
       - name: Checkout
@@ -59,7 +61,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/vllm
 
       - name: Build vllm image
@@ -69,6 +71,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.version }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -91,11 +94,15 @@ jobs:
           set -euo pipefail
           say() { printf "  %-14s %s\n" "$1" "$2"; }
 
-          IMAGE=$(jq -er '.[] | select(contains("runpod/vllm-openai:"))' <<< "$REFS")
+          IMAGE=$(jq -er '.[] | select(contains("runpod/vllm-openai"))' <<< "$REFS")
           echo "Verifying $IMAGE"
 
           test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/start.sh"]'
           say entrypoint "/start.sh"
+
+          docker run --rm --entrypoint bash "$IMAGE" -c \
+            'ssh-keygen -A -q && /usr/sbin/sshd -t && test "$HF_HOME" = /workspace/.huggingface'
+          say sshd "installed, config valid; HF_HOME on /workspace"
 
           # No key: vLLM must not start.
           cid=$(docker run -d "$IMAGE" Qwen/Qwen3-0.6B)
@@ -114,26 +121,12 @@ jobs:
           say gate "no key: held, vLLM not started"
           docker rm -f "$cid" >/dev/null
 
-          docker run --rm -e VLLM_API_KEY=ci-key \
-            -e PYTHONPATH=/opt/runpod/vllm --entrypoint python3 "$IMAGE" -c '
-          from fastapi import FastAPI
-          from fastapi.testclient import TestClient
-          import runpod_vllm_auth
-
-          app = FastAPI()
-          for p in ("/health", "/ping", "/metrics", "/invocations", "/tokenize",
-                    "/scale_elastic_ep", "/v1/chat/completions"):
-              app.add_api_route(p, lambda: {"ok": True}, methods=["GET", "POST"])
-          app.add_middleware(runpod_vllm_auth.BearerAuth)
-          c = TestClient(app)
-          for p in ("/health", "/ping", "/metrics"):
-              assert c.get(p).status_code == 200, p
-          for p in ("/invocations", "/tokenize", "/scale_elastic_ep", "/v1/chat/completions"):
-              assert c.post(p).status_code == 401, p
-              assert c.post(p, headers={"Authorization": "Bearer nope"}).status_code == 401, p
-              assert c.post(p, headers={"Authorization": "Bearer ci-key"}).status_code == 200, p
-          '
-          say middleware "401 without the key on /invocations, /tokenize, /v1; probes open"
+          # vLLM's real app, built through its own --middleware hook: every
+          # route it registers must answer our 401 without the key.
+          docker run --rm -e PYTHONPATH=/opt/runpod/vllm \
+            -v "$PWD/.github/scripts/vllm_route_sweep.py:/tmp/vllm_route_sweep.py:ro" \
+            --entrypoint python3 "$IMAGE" -W ignore /tmp/vllm_route_sweep.py
+          say routes "every route of vLLM's app needs the key; probes open"
 
       - name: Grype scan
         uses: ./.github/actions/grype
@@ -155,3 +148,63 @@ jobs:
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/vllm-refs
+          printf '%s\n' "$REFS" > /tmp/vllm-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: vllm-refs
+          path: /tmp/vllm-refs/refs.json
+          retention-days: 3
+          if-no-files-found: error
+
+  test-vllm:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [versions, build-vllm]
+    if: needs.build-vllm.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vllm-refs
+          path: /tmp/vllm-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/vllm-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
+          on-skip: "warn"
+          manufacturer: "NVIDIA"
+          budget-usd-per-hour: "1.5"
+          min-vram-gb: "24"
+          # The tag carries no CUDA marker; upstream vLLM is built on CUDA 13.0.
+          min-cuda-version: "13.0"
+          create-timeout: "1200"
+          test-vllm: "true"

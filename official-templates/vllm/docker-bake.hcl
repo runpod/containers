@@ -23,6 +23,6 @@ target "vllm" {
   }
 
   tags = [
-    "runpod/vllm-openai:${RELEASE_VERSION}${RELEASE_SUFFIX}-vllm${VLLM_VERSION}"
+    "runpod/vllm-openai${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-vllm${VLLM_VERSION}"
   ]
 }
