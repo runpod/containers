@@ -65,7 +65,7 @@ it — installing and updating custom nodes now happens in the Nodes Manager, re
 from **Extensions** in the top bar.
 
 Two things are not where they used to be. **Update ComfyUI** moved from the Manager to
-the help menu — the **?** icon at the bottom of the sidebar. The image refuses it either
+the help menu (the **?** icon at the bottom of the sidebar). The image refuses it either
 way, as it always has: the ComfyUI version belongs to the tag, and you change it by
 starting a pod on a different one. Snapshots have no screen at all in the new interface;
 the files and the API endpoints are still there, and the old interface still reads
@@ -88,10 +88,11 @@ Two smaller changes worth knowing about:
   `allow_git_url_install` and `allow_pip_install` in
   `ComfyUI/user/__manager/config.ini`, both off by default. If you had lowered
   `security_level` to use those features, set the flag you need instead.
-- `network_mode` is set to `personal_cloud` on first boot. Manager 4.x refuses to
-  install anything when ComfyUI listens on a public address, which a pod always does,
-  and this is the setting that tells it the machine is yours. A value you chose
-  yourself is left alone.
+- `network_mode` is left at Manager's default. ComfyUI runs on loopback behind the
+  password proxy, so Manager already treats the pod as a local machine and
+  `security_level` alone decides what may be installed. Pods created by an older image
+  have `network_mode = personal_cloud` in `config.ini`; it no longer changes anything
+  either way, and it is left alone.
 
 ## Virtual environments on the volume
 

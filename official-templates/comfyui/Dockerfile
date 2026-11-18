@@ -162,12 +162,12 @@ RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirna
 # Runpod fixes to Manager itself. Manager is a pip package, not part of the
 # ComfyUI tree, so its patches live apart from patches/ and are applied to the
 # installed package: the 403s on update_comfyui and comfyui_switch_version keep
-# the image's pinned ComfyUI version, the ones on share and the three
-# get_*_auth routes keep Manager from handing out stored third-party
-# credentials, and the '@' check refuses a node spec that would resolve to a
-# target the caller did not name. git apply refuses a patch whose context has
-# moved, so a MANAGER_VERSION bump that touches this code fails the build
-# instead of shipping without the fixes.
+# the image's pinned ComfyUI version, the ones on share and on the four routes
+# that read a stored credential (openart, matrix, youml, comfyworkflows) keep
+# Manager from handing those back over HTTP, and the '@' check refuses a node
+# spec that would resolve to a target the caller did not name. git apply
+# refuses a patch whose context has moved, so a MANAGER_VERSION bump that
+# touches this code fails the build instead of shipping without the fixes.
 COPY manager-patches/ /tmp/manager-patches/
 RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin))')" && \
     git -C "$MANAGER_PKG" apply --verbose -p1 /tmp/manager-patches/*.patch && \

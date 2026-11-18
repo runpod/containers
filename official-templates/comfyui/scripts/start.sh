@@ -728,17 +728,17 @@ run_with_heartbeat() {
     wait "$pid"
 }
 
-# ComfyUI-Manager 4.x refuses its install endpoints unless ComfyUI listens on
-# loopback or the config says the listener is trusted, and this pod serves
-# 0.0.0.0. A pod is a single-tenant machine behind an authenticated proxy,
-# which is what Manager calls `personal_cloud`; without it the Manager UI loads
-# but cannot install a thing. Volumes from an older image carry a config.ini
-# written by Manager 3.x, which has no such gate and left network_mode on its
-# default of `public`.
-# Only that default is rewritten, so a hand-set `private` or `offline` is kept,
-# and the marker stops a hand-set `public` from being reset on the next boot.
+# ComfyUI-Manager installs packages through its own pip wrapper, which reaches
+# for uv when the config says so, and this image removes uv on purpose. On a
+# config.ini that has a [default] section without the key, Manager defaults
+# use_uv to True, so it is written out once here.
+# network_mode is deliberately left at Manager's default: every gate that reads
+# it ORs it with a loopback listener, and ComfyUI always listens on loopback
+# behind the password proxy, so `personal_cloud` would buy nothing now and
+# would loosen those gates if the listener ever moved. Older images of this
+# template wrote it; the value is inert, so it is left alone.
 configure_manager_config() {
-    local marker="$MANAGER_DIR/.runpod-network-mode-applied"
+    local marker="$MANAGER_DIR/.runpod-manager-config-applied"
     local tmp="$MANAGER_CONFIG.tmp"
     local failed=0
 
@@ -749,31 +749,27 @@ configure_manager_config() {
 
     if [ ! -f "$MANAGER_CONFIG" ] || ! grep -q '^\[default\]' "$MANAGER_CONFIG"; then
         # The leading newline keeps the section off the end of a last line that
-        # has none. use_uv is spelled out because the image removes uv on purpose.
+        # has none. security_level is pin_manager_security's, not written here.
         if [ -s "$MANAGER_CONFIG" ]; then
             printf '\n' >> "$MANAGER_CONFIG" || failed=1
         fi
-        printf '[default]\nnetwork_mode = personal_cloud\nsecurity_level = normal\nuse_uv = False\n' \
-            >> "$MANAGER_CONFIG" || failed=1
-    elif ! grep -qE '^[[:space:]]*network_mode[[:space:]]*=' "$MANAGER_CONFIG"; then
-        awk '{ print } /^\[default\]/ && !seen { print "network_mode = personal_cloud"; seen = 1 }' \
-            "$MANAGER_CONFIG" > "$tmp" && mv "$tmp" "$MANAGER_CONFIG" || failed=1
-    elif grep -qE '^[[:space:]]*network_mode[[:space:]]*=[[:space:]]*public[[:space:]]*$' "$MANAGER_CONFIG"; then
-        awk '/^[ \t]*network_mode[ \t]*=[ \t]*public[ \t]*$/ { print "network_mode = personal_cloud"; next } { print }' \
+        printf '[default]\nuse_uv = False\n' >> "$MANAGER_CONFIG" || failed=1
+    elif ! grep -qE '^[[:space:]]*use_uv[[:space:]]*=' "$MANAGER_CONFIG"; then
+        awk '{ print } /^\[default\]/ && !seen { print "use_uv = False"; seen = 1 }' \
             "$MANAGER_CONFIG" > "$tmp" && mv "$tmp" "$MANAGER_CONFIG" || failed=1
     else
-        # Already personal_cloud, or set to something else on purpose.
+        # Already False, or set to True on purpose.
         touch "$marker"
         return
     fi
 
     if [ "$failed" = "1" ]; then
         rm -f "$tmp"
-        echo "WARNING: could not write $MANAGER_CONFIG — ComfyUI-Manager may refuse to install nodes."
+        echo "WARNING: could not write $MANAGER_CONFIG — ComfyUI-Manager may try to install packages with uv, which this image does not ship."
         return
     fi
 
-    echo "ComfyUI-Manager: network_mode = personal_cloud"
+    echo "ComfyUI-Manager: use_uv = False"
     touch "$marker"
 }
 
