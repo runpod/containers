@@ -134,16 +134,19 @@ log "starting vLLM on 127.0.0.1:$VLLM_PORT: ${cmd[*]}"
     env -u LITELLM_MASTER_KEY "${cmd[@]}"
     log "vLLM exited with status $?; the pod stays up. Restart the pod to serve again."
 ) &
+vllm_job=$!
 
 # --- LiteLLM ------------------------------------------------------------------ #
 # One model, MODEL_REPO, under its own name, so clients use the same model id
 # as with vLLM directly. Written as JSON (valid YAML), so no model name can
-# break the config. Until vLLM has loaded, requests fail with LiteLLM's
-# upstream connection error (500). Prometheus metrics on /metrics. No admin UI
-# (it needs a database this pod doesn't have) and no fetch of the model price
-# map. Without a database, a key other than the master key gets LiteLLM's 400
-# "No connected db." rather than a 401: still refused. LiteLLM also refuses to
-# start on a publicly known master key, such as sk-1234.
+# break the config. LiteLLM starts only once vLLM answers /health, so while the
+# model loads nothing listens on the API port (the Runpod proxy answers 502)
+# instead of LiteLLM failing every request with a 500 and a logged traceback.
+# If vLLM exits first, LiteLLM is not started. Prometheus metrics on /metrics.
+# No admin UI (it needs a database this pod doesn't have) and no fetch of the
+# model price map. Without a database, a key other than the master key gets
+# LiteLLM's 400 "No connected db." rather than a 401: still refused. LiteLLM
+# also refuses to start on a publicly known master key, such as sk-1234.
 if ! python3 - "$MODEL_REPO" "$VLLM_PORT" > "$LITELLM_DIR/config.json" << 'EOF'
 import json, sys
 
@@ -169,8 +172,16 @@ then
     log "error: could not write $LITELLM_DIR/config.json (see above), so LiteLLM was not started"
     services
 fi
-log "starting LiteLLM on $API_PORT for $MODEL_REPO"
+log "LiteLLM will start on $API_PORT for $MODEL_REPO once vLLM has loaded the model"
 (
+    until curl -sf -o /dev/null "http://127.0.0.1:$VLLM_PORT/health"; do
+        if ! kill -0 "$vllm_job" 2> /dev/null; then
+            log "vLLM exited before it was ready, so LiteLLM was not started"
+            exit 0
+        fi
+        sleep 5
+    done
+    log "vLLM is ready; starting LiteLLM on $API_PORT"
     env "${litellm_env[@]}" "$LITELLM" --config "$LITELLM_DIR/config.json" --host 0.0.0.0 --port "$API_PORT"
     log "LiteLLM exited with status $?; the pod stays up. Restart the pod to serve again."
 ) &
