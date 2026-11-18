@@ -6,7 +6,8 @@
 #   - Head: wait until NUM_NODES nodes have joined Ray, then `vllm serve
 #     $MODEL_REPO` across the whole cluster: tensor parallelism is the GPUs per
 #     node, pipeline parallelism the node count. vLLM listens on
-#     127.0.0.1:8000 only; the API on 8001 is LiteLLM's proxy in front of it,
+#     127.0.0.1:8000 only; the API on 4000 (LiteLLM's default) is LiteLLM's
+#     proxy in front of it,
 #     which checks the key.
 #   - No NODE_RANK (a plain pod): the same on this pod's GPUs, without Ray.
 #
@@ -21,7 +22,7 @@ readonly INFERENCE_DIR=/opt/runpod/inference
 readonly LITELLM=/opt/litellm/bin/litellm
 readonly LITELLM_DIR=/etc/litellm
 readonly VLLM_PORT=8000
-readonly API_PORT=8001
+readonly API_PORT=4000
 
 log() { echo "[ray-inference] $*"; }
 services() { exec /start.sh; }

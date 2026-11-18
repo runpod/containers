@@ -34,9 +34,9 @@ COPY --chmod=644 wait_for_nodes.py /opt/runpod/inference/
 COPY --chmod=755 start.sh /opt/runpod/inference/start
 
 # The base nginx.conf proxies 8001 to localhost:8000 (a VS Code server slot).
-# Here 8000 is vLLM, so that block would serve vLLM on 8001 with no key, and
-# it would hold the port LiteLLM needs. Remove it, and fail the build if any
-# nginx server still listens on 8001.
+# Here 8000 is vLLM, so that block would serve vLLM with no key to anything
+# that reaches 8001 (a template mapping it, another node). Remove it, and fail
+# the build if any nginx server still listens on 8001.
 RUN python3 - <<'EOF'
 import re
 path = "/etc/nginx/nginx.conf"
@@ -50,7 +50,7 @@ open(path, "w").write(conf)
 EOF
 RUN ! grep -rqE 'listen[[:space:]]+8001' /etc/nginx/ && nginx -t
 
-# LiteLLM's proxy, the API on 8001 in front of vLLM (which listens on
+# LiteLLM's proxy, the API on 4000 (LiteLLM's default) in front of vLLM (which listens on
 # 127.0.0.1:8000 only), in its own venv so its pins never touch vLLM's, Ray's
 # or torch's. Hash-locked: every package is checked against litellm/
 # requirements.txt, whose hashes were taken when the lock was made.
@@ -69,11 +69,11 @@ COPY --chmod=755 post_start.sh /post_start.sh
 COPY config/provisioning/dashboards/inference.yml /etc/grafana/provisioning/dashboards/inference.yml
 COPY config/dashboards/ /opt/runpod/inference/grafana-dashboards/
 
-# 8001 the OpenAI-compatible API on the head: LiteLLM, in front of vLLM.
+# 4000 the OpenAI-compatible API on the head: LiteLLM, in front of vLLM.
 #      Every route except LiteLLM's health checks needs LITELLM_MASTER_KEY
 #      (else JUPYTER_PASSWORD). Map this one in the Runpod template. vLLM
 #      itself (8000) listens on 127.0.0.1 only.
-EXPOSE 8001
+EXPOSE 4000
 
 LABEL com.runpod.template.variant="ray-cluster-inference"
 

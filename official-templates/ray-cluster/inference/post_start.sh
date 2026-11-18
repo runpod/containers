@@ -8,7 +8,7 @@
 # for the inference stack:
 #   - vllm: 127.0.0.1:8000, vLLM's engine metrics, with no key (vLLM is
 #     reachable only from this pod);
-#   - litellm: 127.0.0.1:8001/metrics, the API's request metrics, sending the
+#   - litellm: 127.0.0.1:4000/metrics, the API's request metrics, sending the
 #     master key from /etc/litellm/master_key (root-only, written by
 #     /opt/runpod/inference/start), as LiteLLM requires it on /metrics.
 # Until they are up, the targets are simply down.
@@ -33,7 +33,7 @@ if [[ ! -f "$PROM_CONFIG" ]]; then
 elif grep -q "job_name: vllm" "$PROM_CONFIG"; then
     log "inference scrape jobs already present"
 else
-    log "adding vLLM (127.0.0.1:8000) and LiteLLM (127.0.0.1:8001) scrape jobs"
+    log "adding vLLM (127.0.0.1:8000) and LiteLLM (127.0.0.1:4000) scrape jobs"
     {
         echo "  - job_name: vllm"
         echo "    static_configs:"
@@ -43,7 +43,7 @@ else
         echo "    authorization:"
         echo "      credentials_file: /etc/litellm/master_key"
         echo "    static_configs:"
-        echo "      - targets: ['127.0.0.1:8001']"
+        echo "      - targets: ['127.0.0.1:4000']"
     } >> "$PROM_CONFIG"
     # Prometheus runs without --web.enable-lifecycle, so restart to reload.
     supervisorctl restart prometheus > /dev/null 2>&1
