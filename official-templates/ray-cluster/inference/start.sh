@@ -38,8 +38,10 @@ if [[ -n "${NODE_RANK:-}" && "$NODE_RANK" != 0 ]]; then
     services
 fi
 
+# Not set is a choice (an interactive pod), not a failure, so it's worded like
+# start.sh's "JUPYTER_PASSWORD is not set; skipping JupyterLab".
 if [[ -z "${MODEL_REPO:-}" ]]; then
-    log "error: MODEL_REPO is not set, so vLLM was not started. Set it to a Hugging Face model, such as Qwen/Qwen3-235B-A22B, and restart the pod. The pod stays up for interactive use."
+    log "MODEL_REPO is not set; skipping vLLM. To serve a model, set it to a Hugging Face model, such as Qwen/Qwen3-235B-A22B, and restart the pod. The pod stays up for interactive use."
     services
 fi
 

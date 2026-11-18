@@ -55,7 +55,7 @@ Configuration, all environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`. Unset: the head logs an error and stays up for interactive use. |
+| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`. Unset: the head logs that it is skipping vLLM and stays up for interactive use. |
 | `HF_TOKEN` | none | Token for gated or private models; vLLM reads it from the environment. |
 | `VLLM_API_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route except `/health` and `/ping`. With neither set, the head logs an error and does not start vLLM. `none` turns authentication off. |
 | `MAX_MODEL_LENGTH` | vLLM's | Passed as `--max-model-len`. |
