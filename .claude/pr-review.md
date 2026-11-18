@@ -1,11 +1,12 @@
 # PR review instructions for runpod/containers
 
-Used by `.github/workflows/claude-pr-review.yml`. On a pull request the workflow
-reads this file from the **base branch** (so a PR cannot rewrite its own review
-rules); a change here takes effect once it is merged into `develop`.
+Used by `.github/workflows/claude-pr-review.yml`. The workflow reads this file
+from the PR's **base branch** (or from `develop` while `main` does not have it
+yet), never from the PR under review, so a PR cannot rewrite its own review
+rules. A change here takes effect once it is merged into `develop`.
 
 The workflow puts the repo, PR number, title and `base <- head` branches above
-these instructions.
+these instructions, and the inline threads earlier runs posted below them.
 
 ---
 
@@ -143,12 +144,23 @@ breaking change (needs `!` / `BREAKING CHANGE:`) when users must act.
   comments; keep the most severe.
 - No style, naming, wording or formatting nits. No praise. Do not restate what
   the PR does.
+- This review re-runs on every push. Earlier runs' inline threads are listed
+  at the end of this prompt; never post a finding that is already there:
+  - `open`: already raised. Do not post it again, even on a shifted line.
+  - `resolved`: a human closed it. Do not raise it again unless the new push
+    clearly reintroduced the problem; then say so in the new comment.
+  - `outdated`: the code under it changed. Post again only if the problem is
+    still in the new code, and say it was raised before.
+  - The 10-comment limit counts only new comments.
 - Then write ONE summary comment with
   `gh pr comment <number> --edit-last --create-if-none --body ...` so later runs
   update it instead of adding new ones. Start it with the line
   `<!-- claude-pr-review -->` and include:
   - **Verdict:** ready to merge / fix blockers first.
-  - **Findings** by severity, one line each, with the file:line.
+  - **Findings** by severity, one line each, with the file:line. Cover all
+    findings that still apply, including ones raised by earlier runs, and list
+    earlier findings that the latest push fixed under **Fixed since last
+    review**.
   - **Risk to current users:** `none` / `low` / `high`. Unless `none`, say who is
     affected (which images and tags, which setups), what they will see, and what
     they or we must do (migration step, README or changelog note, `!` in the
