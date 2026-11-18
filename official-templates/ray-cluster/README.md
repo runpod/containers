@@ -55,11 +55,11 @@ Configuration, all environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`; also the model name clients send. Unset: the head logs that it is skipping vLLM and stays up for interactive use. |
+| `MODEL_REPO` | none | Hugging Face model to serve, such as `Qwen/Qwen3-235B-A22B`; also the model name clients send. Unset: the head logs that it is skipping vLLM and stays up for interactive use. A value starting with `-` is refused. |
 | `HF_TOKEN` | none | Token for gated or private models; vLLM reads it from the environment. |
 | `LITELLM_MASTER_KEY` | `JUPYTER_PASSWORD` | Bearer token required on every route on 4000 except LiteLLM's health checks (`/health/liveliness`, `/health/readiness`), `/metrics` included. With neither set, the head logs an error and starts neither. `none` turns authentication off. |
 | `MAX_MODEL_LENGTH` | vLLM's | Passed as `--max-model-len`. |
-| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. `--host` and `--port` are always `127.0.0.1` and `8000`; `--api-key` is refused (LiteLLM can't send it). |
+| `VLLM_EXTRA_ARGS` | none | Appended to `vllm serve`, after the derived parallelism, so it can override it. Split like a shell command line, so quote a value with spaces (`--speculative-config '{"method": "ngram"}'`); nothing in it is expanded or run. `--host` and `--port` are always `127.0.0.1` and `8000`; `--api-key` (or `--api_key`) is refused (LiteLLM can't send it). |
 
 The API on 4000 is LiteLLM's proxy (`/opt/litellm`, its own venv, hash-locked in `inference/litellm/requirements.txt`; LTS line, 1.108.11), configured with one model, `MODEL_REPO`, served by vLLM. vLLM listens on `127.0.0.1:8000` only, so it is not reachable from outside the head pod (once the base no longer carries its unused 8001 → `localhost:8000` nginx relay, #248). LiteLLM runs with only a master key and no database:
 
@@ -69,9 +69,9 @@ The API on 4000 is LiteLLM's proxy (`/opt/litellm`, its own venv, hash-locked in
 
 vLLM and LiteLLM run beside `/start.sh`, so SSH, Jupyter, the dashboard front door and monitoring come up as on the base image, and the pod stays up if either exits; restart the pod to serve again. LiteLLM starts only once vLLM answers `/health`, so while the model loads (on a multi-node cluster, a minute or more even for a small model) nothing listens on 4000 and the Runpod proxy answers `502`; the head logs `vLLM is ready; starting LiteLLM on 4000` when it can serve. If vLLM exits before it's ready, LiteLLM is not started. Each node downloads its own copy of the weights into the Hugging Face cache on its container disk.
 
-On the head, both join the inherited monitoring: the variant's `/post_start.sh` runs the Ray image's hook (renamed `/post_start.ray.sh`), then adds two Prometheus jobs: `vllm` scrapes `127.0.0.1:8000/metrics` with no key, and `litellm` scrapes `127.0.0.1:4000/metrics/`, sending the master key from `/etc/litellm/master_key` (root-only, written by the start script). LiteLLM's `hashed_api_key` label is excluded: it records a rejected key as sent. Grafana loads the inference dashboards (`inference/config/dashboards/`: vLLM's three from its `examples/observability/`, and LiteLLM's "Prod v2" from its `cookbook/`, each at the pinned version) into an **Inference** folder. `RAY_CLUSTER_METRICS=0` leaves the jobs out with the rest of the head's stack. Re-vendor the dashboards when bumping vLLM or LiteLLM.
+On the head, both join the inherited monitoring: the variant's `/post_start.sh` runs the Ray image's hook (renamed `/post_start.ray.sh`), then adds two Prometheus jobs: `vllm` scrapes `127.0.0.1:8000/metrics` with no key, and `litellm` scrapes `127.0.0.1:4000/metrics/`, sending the master key from `/etc/litellm/master_key` (root-only, written by the start script). LiteLLM's `hashed_api_key` label is excluded: it records a rejected key as sent. Grafana loads the inference dashboards (`inference/config/dashboards/`: vLLM's three from its `examples/observability/`, and LiteLLM's "Prod v2" from its `cookbook/`, each at the pinned version) into an **Inference** folder. `RAY_CLUSTER_METRICS=0` leaves the jobs out with the rest of the head's stack, and an unset `MODEL_REPO` leaves out just these two. Re-vendor the dashboards when bumping vLLM or LiteLLM.
 
-vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray.
+vLLM pins torch exactly, so the variant is built only on the Ray build whose torch matches it (`INFERENCE_BASE` in `docker-bake.hcl`), FROM that target in the same bake run. The build fails if installing vLLM would replace torch or Ray. vLLM's ranged dependencies are pinned in `inference/requirements.txt`, as `requirements.txt` pins Ray's; re-resolve it on a vLLM bump.
 
 ## Ports
 

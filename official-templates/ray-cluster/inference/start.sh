@@ -38,6 +38,11 @@ if [[ -z "${MODEL_REPO:-}" ]]; then
     log "MODEL_REPO is not set; skipping vLLM. To serve a model, set it to a Hugging Face model, such as Qwen/Qwen3-235B-A22B, and restart the pod. The pod stays up for interactive use."
     services
 fi
+# vllm serve would read a leading dash as an option, not the model.
+if [[ "$MODEL_REPO" == -* ]]; then
+    log "error: MODEL_REPO '$MODEL_REPO' starts with '-', so it is not a model, and vLLM was not started"
+    services
+fi
 
 # --- Authentication --------------------------------------------------------- #
 # LiteLLM's master key is LITELLM_MASTER_KEY (LiteLLM's own variable), else the
@@ -79,6 +84,37 @@ fi
 # vLLM reads VLLM_API_KEY itself, and LiteLLM sends it none.
 unset VLLM_API_KEY
 
+# --- vLLM arguments ----------------------------------------------------------- #
+# Checked before the wait for the cluster, so a bad setting is reported at once.
+model_args=()
+[[ -n "${MAX_MODEL_LENGTH:-}" ]] && model_args+=(--max-model-len "$MAX_MODEL_LENGTH")
+
+# Split like a shell command line, so a quoted argument (a JSON config with
+# spaces, say) stays one argument; nothing in it is expanded or run.
+mapfile -d '' -t extra_args < <(python3 -c '
+import shlex, sys
+try:
+    args = shlex.split(sys.argv[1])
+except ValueError as e:
+    sys.exit(f"[ray-inference] VLLM_EXTRA_ARGS: {e}")
+sys.stdout.write("".join(a + "\0" for a in args))
+' "${VLLM_EXTRA_ARGS:-}")
+if ! wait $!; then
+    log "error: VLLM_EXTRA_ARGS can't be split into arguments (see above), so vLLM was not started"
+    services
+fi
+for arg in "${extra_args[@]}"; do
+    # vLLM takes --api_key as --api-key.
+    opt=${arg%%=*}
+    case "${opt//_/-}" in
+        --api-key)
+            log "error: VLLM_EXTRA_ARGS sets --api-key, which LiteLLM can't send, and vLLM would print it to the pod logs at startup. Remove it (LiteLLM checks LITELLM_MASTER_KEY on $API_PORT) and restart the pod. vLLM was not started."
+            services
+            ;;
+        *) ;;
+    esac
+done
+
 # --- Shape -------------------------------------------------------------------- #
 parallel_args=()
 if [[ -n "${NODE_RANK:-}" ]]; then
@@ -111,20 +147,6 @@ fi
 parallel_args+=(--tensor-parallel-size "$gpus")
 
 # --- vLLM --------------------------------------------------------------------- #
-model_args=()
-[[ -n "${MAX_MODEL_LENGTH:-}" ]] && model_args+=(--max-model-len "$MAX_MODEL_LENGTH")
-
-read -ra extra_args <<< "${VLLM_EXTRA_ARGS:-}"
-for arg in "${extra_args[@]}"; do
-    case "$arg" in
-        --api-key | --api-key=*)
-            log "error: VLLM_EXTRA_ARGS sets --api-key, which LiteLLM can't send, and vLLM prints its arguments at startup, so that key is now in the pod logs. Remove it (LiteLLM checks LITELLM_MASTER_KEY on $API_PORT) and restart the pod. vLLM was not started."
-            services
-            ;;
-        *) ;;
-    esac
-done
-
 # VLLM_EXTRA_ARGS follows the derived settings so it can override them; the
 # listen address is last, so vLLM stays reachable only from this pod.
 cmd=(vllm serve "$MODEL_REPO" "${parallel_args[@]}" "${model_args[@]}" "${extra_args[@]}"
@@ -174,7 +196,7 @@ then
 fi
 log "LiteLLM will start on $API_PORT for $MODEL_REPO once vLLM has loaded the model"
 (
-    until curl -sf -o /dev/null "http://127.0.0.1:$VLLM_PORT/health"; do
+    until curl -sf --max-time 5 -o /dev/null "http://127.0.0.1:$VLLM_PORT/health"; do
         if ! kill -0 "$vllm_job" 2> /dev/null; then
             log "vLLM exited before it was ready, so LiteLLM was not started"
             exit 0
