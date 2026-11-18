@@ -9,7 +9,7 @@ This directory contains utility scripts for managing Runpod container templates.
 Regenerates `official-templates/base/cuda-dev/<cuda>.txt`, the CUDA dev
 packages the CUDA base images install on top of `nvidia/cuda:*-cudnn-runtime`.
 The list is what NVIDIA's `-cudnn-devel` image adds over `-cudnn-runtime`, at
-the exact versions it ships, minus Nsight Compute. Run it whenever a CUDA
+the exact versions it ships. Run it whenever a CUDA
 version is added to `official-templates/shared/versions.hcl`; the base build
 fails for a CUDA version without a list.
 

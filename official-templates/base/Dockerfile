@@ -42,14 +42,11 @@ RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 # add the dev packages here. They are the exact packages and versions the
 # devel image adds (cuda-dev/<CUDA_VERSION>.txt, from
 # scripts/gen-cuda-dev-lock.sh), so nvcc, headers, every shared library, the
-# cuDNN/NCCL dev files and LIBRARY_PATH match the devel image, with two
-# exceptions that cost 1.7-2.8 GB compressed and that pods rarely use:
-#  - the static libraries (*_static*.a, ~1.3-2.4 GB) are not unpacked.
-#    libcudart_static.a stays: nvcc links it by default. They return with
-#    `apt-get install --reinstall <package>=<installed version>`; without
-#    the version apt upgrades the library to the newest patch instead.
-#  - Nsight Compute (ncu, ~0.4 GB) is not installed:
-#    `apt-get install cuda-nsight-compute-12-8` adds it.
+# cuDNN/NCCL dev files, Nsight Compute and LIBRARY_PATH match the devel image.
+# The static libraries (*_static*.a, ~1.3-2.4 GB compressed) are not unpacked.
+# libcudart_static.a stays: nvcc links it by default. They return with
+# `apt-get install --reinstall <package>=<installed version>`; without the
+# version apt upgrades the library to the newest patch instead.
 # Also skipped: cuda-gdb TUIs for Python 3.8-3.10 (not installed) and CUPTI docs.
 # The dpkg filter is removed afterwards so it does not affect later installs.
 # The -dev holds mirror the devel image, which holds cuBLAS-dev and NCCL-dev.
@@ -126,6 +123,8 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # build. The build itself does not need it (deadsnakes is added by hand below).
 # release_pkgs and nvidia_holds are split on purpose: they are lists of
 # package names.
+# apt and apt-utils are named explicitly so a security bump to them edits this
+# line: `apt-get upgrade` alone is served from the cached layer (CVE-2026-109518).
 #
 # Every NVIDIA package is held for the upgrade. NVIDIA itself only holds
 # cuBLAS, NCCL and cuDNN, so a plain `apt-get upgrade` re-installed the rest of
@@ -134,6 +133,9 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # on CUDA 12.9, 13.0 and 13.2), and the image shipped a newer toolkit than its
 # tag names. The holds added here are lifted again, so `apt-get upgrade` in a
 # pod behaves as before, and the build fails if an NVIDIA package still moved.
+# cuda-compat is held on purpose too: the upgraded forward-compat driver libs
+# broke CUDA init on GeForce hosts with a newer driver (seen on 580.178). Grype
+# reports Medium CVEs for the parent's cuda-compat; they are the parent's.
 #
 # Static archives of the media and BLAS -dev packages are skipped (~90 MB);
 # `apt-get install --reinstall <package>` restores one.

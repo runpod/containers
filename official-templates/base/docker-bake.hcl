@@ -64,8 +64,8 @@ target "cuda-matrix" {
   ]
   
   # -cudnn-runtime plus the devel image's dev packages (the cuda-dev stage), not
-  # -cudnn-devel: same toolchain without the static libraries and Nsight
-  # Compute. See the cuda-dev stage in the Dockerfile.
+  # -cudnn-devel: same toolchain without the static libraries. See the cuda-dev
+  # stage in the Dockerfile.
   args = {
     BASE_IMAGE = "nvidia/cuda:${combo.cuda_version}-cudnn-runtime-ubuntu${combo.ubuntu_version}"
     ROOT_STAGE = "cuda-dev"
