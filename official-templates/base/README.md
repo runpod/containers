@@ -23,7 +23,7 @@ The Runpod Base images provide a clean, developer friendly environment for every
 > - **Static libraries** (`lib*_static.a`, 1.3–2.4 GB; `libcudart_static.a` is kept). To get one back, reinstall its package at the installed version, e.g. `apt-get install --reinstall "libcufft-dev-12-8=$(dpkg-query -W -f='${Version}' libcufft-dev-12-8)"`. Without the `=version`, apt moves the library to the newest patch release instead.
 > - **Nsight Compute** (`ncu`). To install it: `apt-get install cuda-nsight-compute-12-8` (use your CUDA version).
 >
-> Also left out: the `cuda-gdb` TUI builds for Python 3.8–3.10 (not installed in the image; the 3.11/3.12 builds stay) and the CUPTI HTML docs. In every image, the static archives of the FFmpeg, x264/Xvid, BLAS/LAPACK/ATLAS and HDF5 `-dev` packages are not unpacked either; `apt-get install --reinstall <package>` brings one back.
+> Also left out: the `cuda-gdb` TUI builds for Python 3.8–3.10 (not installed in the image; the 3.11/3.12 builds stay) and the CUPTI HTML docs. In every image, the static archives of the FFmpeg, x264/Xvid and BLAS/LAPACK/ATLAS `-dev` packages are not unpacked either; `apt-get install --reinstall <package>` brings one back.
 >
 > CUDA packages also no longer move to a newer patch release than the tag names (12.9.0 used to ship parts of 12.9.1).
 

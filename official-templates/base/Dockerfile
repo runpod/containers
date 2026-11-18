@@ -132,7 +132,7 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # tag names. The holds added here are lifted again, so `apt-get upgrade` in a
 # pod behaves as before, and the build fails if an NVIDIA package still moved.
 #
-# Static archives of the media/BLAS/HDF5 -dev packages are skipped (~100 MB);
+# Static archives of the media and BLAS -dev packages are skipped (~90 MB);
 # `apt-get install --reinstall <package>` restores one.
 # hadolint ignore=SC2086
 RUN printf '%s\n' \
@@ -141,7 +141,6 @@ RUN printf '%s\n' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libpostproc.a' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libx264.a' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libxvidcore.a' \
-      'path-exclude=/usr/lib/x86_64-linux-gnu/libhdf5*.a' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/liblapack*.a' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libatlas.a' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libcblas.a' \
