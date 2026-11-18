@@ -795,16 +795,14 @@
     "list": [
       {
         "current": {
-          "selected": false,
-          "text": "prometheus",
-          "value": "edx8memhpd9tsb"
+          "text": "Prometheus",
+          "value": "prometheus"
         },
         "hide": 0,
         "includeAll": false,
         "label": "datasource",
         "multi": false,
         "name": "DS_PROMETHEUS",
-        "options": [],
         "query": "prometheus",
         "queryValue": "",
         "refresh": 1,

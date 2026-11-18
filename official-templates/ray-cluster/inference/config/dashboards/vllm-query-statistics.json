@@ -1181,11 +1181,10 @@
       {
         "current": {
           "text": "Prometheus",
-          "value": "4184fc20-68a7-483a-8d9b-7caa59c680dd"
+          "value": "prometheus"
         },
         "label": "datasource",
         "name": "DS_PROMETHEUS",
-        "options": [],
         "query": "prometheus",
         "refresh": 1,
         "type": "datasource"
@@ -1267,10 +1266,7 @@
         "type": "custom"
       },
       {
-        "current": {
-          "text": "",
-          "value": ""
-        },
+        "current": {},
         "hide": 2,
         "name": "query0",
         "options": [],

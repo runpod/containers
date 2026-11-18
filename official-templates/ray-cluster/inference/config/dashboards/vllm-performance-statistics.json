@@ -1370,10 +1370,10 @@
       {
         "current": {
           "text": [
-            "granite-33-2b-instruct"
+            "All"
           ],
           "value": [
-            "granite-33-2b-instruct"
+            "$__all"
           ]
         },
         "definition": "label_values(vllm:generation_tokens_total,model_name)",
