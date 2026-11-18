@@ -168,7 +168,7 @@ RUN printf '%s\n' \
     apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
-    build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
+    apt apt-utils build-essential ca-certificates cifs-utils cmake curl dirmngr dnsutils ffmpeg \
     file gfortran git gpg gpg-agent inetutils-traceroute inotify-tools iputils-ping jq \
     libcap2-bin lsb-release libavcodec-dev libavfilter-dev libavformat-dev libblas-dev libffi-dev \
     libgl1 libhdf5-dev libjpeg-dev liblapack-dev libnuma-dev libpng-dev ${release_pkgs} \

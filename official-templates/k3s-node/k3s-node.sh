@@ -81,12 +81,20 @@ if [ "${1:-}" = agent ] && { [ -z "${K3S_TOKEN:-}" ] || [ -z "${K3S_URL:-}${WG_E
   exec sleep infinity
 fi
 
+# K3S_TOKEN is k3s's secure form, K10<CA hash>::node:<agent token>: the agent checks the server's CA
+# against the hash (runpod/k3s-controlplane E-4020). The WireGuard keys and the node password derive
+# from the bare agent token, the part after the last colon, so they match the servers' wg sidecar.
+# A bare token has no colon and stays as it is.
+if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ]; then
+  AGENT_TOKEN="${K3S_TOKEN##*:}"
+fi
+
 # WireGuard to the servers: the cluster has three (slots 0-2), and the agent tunnels to each.
 # Server slot lives at s<slot>.<cluster host> (from WG_ENDPOINT, the API name), with the tunnel
-# address 10.200.100.1+slot and the key "wireguard-server-<slot>". Every key follows from
-# K3S_TOKEN, as in the servers' wg sidecar (runpod/k3s-controlplane images/k3s-wireguard): the
-# node's (and its tunnel address 10.200.0.2+rank) from NODE_RANK. So every node pod has the same
-# env, and nothing hands out keys.
+# address 10.200.100.1+slot and the key "wireguard-server-<slot>". Every key follows from the
+# agent token (AGENT_TOKEN, above), as in the servers' wg sidecar (runpod/k3s-controlplane
+# images/k3s-wireguard): the node's (and its tunnel address 10.200.0.2+rank) from NODE_RANK. So
+# every node pod has the same env, and nothing hands out keys.
 # A slot record at 127.0.0.1 means its task has not registered yet: no peer. A restarted server
 # task has a new public IP, and a slot's record comes alive later: re-resolve every 5 s.
 # The agent joins through the first server with a handshake (K3S_URL); it then learns every
@@ -106,10 +114,10 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
   # The keys live in /etc/wireguard: Ubuntu 26.04 hosts confine /usr/bin/wg with an AppArmor
   # profile that, under sysbox, also applies in this container, and allows only that directory.
   ( umask 077; mkdir -p /etc/wireguard && printf 'wireguard-node-%s' "$NODE_RANK" \
-      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 > /etc/wireguard/wg0.key )
+      | openssl dgst -sha256 -hmac "$AGENT_TOKEN" -binary | base64 > /etc/wireguard/wg0.key )
   for slot in $(seq 0 $((WG_SERVERS - 1))); do
     printf 'wireguard-server-%s' "$slot" \
-      | openssl dgst -sha256 -hmac "$K3S_TOKEN" -binary | base64 | wg pubkey \
+      | openssl dgst -sha256 -hmac "$AGENT_TOKEN" -binary | base64 | wg pubkey \
       > "/etc/wireguard/server-$slot.pub"
   done
   ip link del wg0 2>/dev/null || true
@@ -152,7 +160,7 @@ fi
 # The node password: k3s stores a random one in /etc/rancher/node/password on the first join, and
 # the server keeps it per node name (secret <node>.node-password.k3s). A recreated node pod (image
 # bump, pod edit, host reboot) has a new container filesystem, so a new password, and the server
-# rejects it ("Node password rejected"). Derive it from K3S_TOKEN and NODE_RANK instead
+# rejects it ("Node password rejected"). Derive it from the agent token and NODE_RANK instead
 # (PBKDF2-HMAC-SHA256): the same node rank always presents the same password. If the derivation
 # fails, the node does not start.
 if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ] && [ -n "${NODE_RANK:-}" ]; then
@@ -163,7 +171,7 @@ if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ] && [ -n "${NODE_RANK:-}" ]; t
     node_password=$(
       openssl kdf -keylen 32 \
         -kdfopt digest:SHA256 \
-        -kdfopt "pass:$K3S_TOKEN" \
+        -kdfopt "pass:$AGENT_TOKEN" \
         -kdfopt "salt:node-password-$NODE_RANK" \
         -kdfopt iter:600000 \
         PBKDF2
@@ -182,12 +190,19 @@ fi
 # address (NODE_ADDR, e.g. 10.65.0.3/24) on a VXLAN between the hosts. The node registers with it,
 # and flannel sends pod traffic over it: node to node directly, not through the server's tunnel.
 # Without it, every node has the host's container address (the same on every host).
+# The overlay is always on ens1. NODE_ADDR may be an IP or a hostname; a hostname resolves to its
+# first IPv4 address, retried for up to a minute since the record may not exist yet at start.
 if [ "${1:-}" = agent ] && [ -n "${NODE_ADDR:-}" ]; then
-  node_ip="${NODE_ADDR%/*}"
-  node_iface="$(ip -o -4 addr show | awk -v ip="$node_ip" '{ split($4, a, "/") } a[1] == ip { print $2; exit }')"
-  if [ -z "$node_iface" ]; then
-    echo "k3s-node: no interface has NODE_ADDR $NODE_ADDR" >&2; exit 1
-  fi
+  node_host="${NODE_ADDR%/*}"
+  node_iface=ens1
+  tries=0
+  until node_ip="$(getent ahostsv4 "$node_host" | awk '{ print $1; exit }')" && [ -n "$node_ip" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 30 ]; then
+      echo "k3s-node: NODE_ADDR $NODE_ADDR does not resolve" >&2; exit 1
+    fi
+    echo "k3s-node: waiting for NODE_ADDR $node_host to resolve" >&2; sleep 2
+  done
   shift
   set -- agent --node-ip="$node_ip" --flannel-iface="$node_iface" "$@"
   echo "k3s-node: cluster network $node_ip on $node_iface" >&2

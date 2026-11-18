@@ -88,7 +88,8 @@ Jupyter takes a shared secret from `$JUPYTER_PASSWORD` and the console opens
 Setup (nothing new — same secret as Jupyter):
 1. The pod already has **`JUPYTER_PASSWORD`** (the Jupyter secret). Omit it → no
    auto-login, Grafana shows its login form. Set `GRAFANA_PASSWORD` only if you
-   want a Grafana-specific token instead.
+   want a Grafana-specific token instead. `GRAFANA_CLUSTER_TOKEN` is a second
+   token the proxy also accepts (`ray-cluster` sets it to the Ray cluster token).
 2. The console opens `https://<pod>-8889.<proxy-base>/?token=<JUPYTER_PASSWORD>`.
 
 Notes:

@@ -1630,8 +1630,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_GPU_UTIL)",
-          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
+          "expr": "max by (hostname, gpu) (DCGM_FI_DEV_GPU_UTIL)",
+          "legendFormat": "{{hostname}} / gpu{{gpu}}"
         }
       ],
       "gridPos": {
@@ -1681,8 +1681,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg by (Hostname) (DCGM_FI_DEV_GPU_UTIL)",
-          "legendFormat": "{{Hostname}}"
+          "expr": "avg by (hostname) (DCGM_FI_DEV_GPU_UTIL)",
+          "legendFormat": "{{hostname}}"
         }
       ],
       "gridPos": {
@@ -1797,8 +1797,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL)",
-          "legendFormat": "{{Hostname}} / gpu{{gpu}}"
+          "expr": "max by (hostname, gpu) (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL)",
+          "legendFormat": "{{hostname}} / gpu{{gpu}}"
         }
       ],
       "gridPos": {

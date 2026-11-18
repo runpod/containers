@@ -12,7 +12,7 @@ notebook==7.6.3
 onnx==1.21.0
 pillow==13.0.0
 protobuf==6.33.5
-soupsieve==4.0.0
+soupsieve==4.1.1
 tornado==6.5.10
 urllib3==2.8.0
 wheel==0.46.2

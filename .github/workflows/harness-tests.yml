@@ -15,6 +15,10 @@ on:
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      # test_grafana_auth_proxy runs the real proxy.
+      - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
+      # test_comfyui_auth_proxy runs the real proxy.
+      - 'official-templates/comfyui/scripts/auth_proxy.py'
       # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
       # blocks against what these bake files build.
       - '.github/workflows/base.yml'
@@ -22,12 +26,16 @@ on:
       - 'official-templates/pytorch/docker-bake.hcl'
       - 'official-templates/pytorch-cluster/docker-bake.hcl'
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      # test_grafana_auth_proxy runs the real proxy.
+      - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
+      # test_comfyui_auth_proxy runs the real proxy.
+      - 'official-templates/comfyui/scripts/auth_proxy.py'
       # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
       # blocks against what these bake files build.
       - '.github/workflows/base.yml'
@@ -46,9 +54,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install aiohttp
+        run: python3 -m pip install --user aiohttp==3.12.15
+
       - name: Run unit tests
         shell: bash
         working-directory: tests
+        env:
+          CI: "true"
         run: python3 -m unittest discover -s unit -t . -v
 
       # The generator is what turns CI inputs into a manifest, and its
