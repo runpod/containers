@@ -39,12 +39,16 @@ jobs:
       env: ${{ steps.ubuntu.outputs.env }}
       repo-suffix: ${{ steps.ubuntu.outputs.repo-suffix }}
       ubuntu: ${{ steps.ubuntu.outputs.version }}
+      ubuntu-build: ${{ steps.ubuntu.outputs.should-build }}
       ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
       ubuntu-parent: ${{ steps.ubuntu-parent.outputs.version }}
       ubuntu-parent-suffix: ${{ steps.ubuntu-parent.outputs.repo-suffix }}
       openclaw: ${{ steps.openclaw.outputs.version }}
+      openclaw-build: ${{ steps.openclaw.outputs.should-build }}
       harbor: ${{ steps.harbor.outputs.version }}
+      harbor-build: ${{ steps.harbor.outputs.should-build }}
       browser: ${{ steps.browser.outputs.version }}
+      browser-build: ${{ steps.browser.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -90,7 +94,9 @@ jobs:
 
   build-sandbox-ubuntu:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'sandbox-ubuntu')
+    if: >-
+      contains(fromJSON(inputs.families), 'sandbox-ubuntu')
+      && needs.versions.outputs.ubuntu-build == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -237,7 +243,9 @@ jobs:
 
   build-sandbox-openclaw:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'sandbox-openclaw')
+    if: >-
+      contains(fromJSON(inputs.families), 'sandbox-openclaw')
+      && needs.versions.outputs.openclaw-build == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -413,6 +421,7 @@ jobs:
     needs: [versions, build-sandbox-ubuntu]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'sandbox-harbor')
+      && needs.versions.outputs.harbor-build == 'true'
       && (needs.build-sandbox-ubuntu.result == 'success'
           || needs.build-sandbox-ubuntu.result == 'skipped')
     permissions:
@@ -536,6 +545,7 @@ jobs:
     needs: [versions, build-sandbox-ubuntu]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'sandbox-browser')
+      && needs.versions.outputs.browser-build == 'true'
       && (needs.build-sandbox-ubuntu.result == 'success'
           || needs.build-sandbox-ubuntu.result == 'skipped')
     permissions:

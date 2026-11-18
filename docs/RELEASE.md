@@ -71,6 +71,9 @@ Changes go `feature → develop → main`. The target branch picks the
 | Push to `main`        | prod    | `runpod/<repo>` (public)           | none          | yes           |
 | `workflow_dispatch`   | prod from `main`, else dev | as for the env | `-dev` | no |
 
+A PR into `main` is rejected unless it comes from `develop`, `hotfix/*` or
+`revert-*` (see [Repository requirements](#repository-requirements)).
+
 - The dev repo of a family is its `image_repo` plus `-dev`
   (`runpod/ubuntu` → `runpod/ubuntu-dev`); `plan_families.py --image-repos
   --include-dev` lists both sets.
@@ -106,9 +109,11 @@ Changes go `feature → develop → main`. The target branch picks the
 
 A family's next version is **its own** latest tag plus a bump. The bump is the
 highest Conventional Commit type among the commits that touched that family
-and are not yet released:
+and are not yet released. On a PR into `develop` that is the PR title, since
+the squash makes it the commit; everywhere else it is read from the commits
+themselves:
 
-| Commit type (PR title)                    | Example                          | Bump   | `1.0.7` becomes |
+| Commit type                               | Example                          | Bump   | `1.0.7` becomes |
 | ----------------------------------------- | -------------------------------- | ------ | --------------- |
 | `feat:`                                   | `feat: add comfyui template`     | minor  | `1.1.0`         |
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
@@ -168,9 +173,11 @@ it.
 - Plans against the branch the PR targets, builds **release-candidate** images
   for the planned families, tagged `X.Y.Z-rc.<PR#>` — each family at its own
   `X.Y.Z`.
-- `X.Y.Z` is the version the merge *would* produce. If the PR is not releasable
-  (`ci:`/`chore:`), the family's current version is kept (e.g. `1.3.2-rc.42`) —
-  no phantom bump.
+- `X.Y.Z` is the version the merge *would* produce. For a PR into `develop`
+  that comes from the PR title, because the squash makes the title the commit:
+  a `ci:`/`chore:` PR keeps the family's current version (e.g. `1.3.2-rc.42`),
+  no phantom bump. For a PR into `main` the title never lands, so it is read
+  from the commits the merge would bring in.
 - No git tag or GitHub Release is created.
 - The RC tag is reused on every push to the same PR (always the latest build).
 - A PR into `develop` (or between two feature branches) publishes into
@@ -179,9 +186,13 @@ it.
 ### On push to `develop`
 
 - Plans from `git diff origin/main...HEAD`: **everything not yet on `main`**,
-  not just what this push changed. A merge therefore rebuilds the whole
-  outstanding batch, so the private repos always hold the complete set that
-  the next release will publish, with every family's parents consistent.
+  not just what this push changed, so the private repos hold the set the next
+  release will publish rather than one family at a time.
+- Being in the plan is not enough to be built: a family whose unreleased
+  commits are all `ci:`/`chore:`/`docs:` has `bump=none` and is skipped, the
+  same rule as on `main`. A pipeline-only merge into `develop` therefore
+  publishes no dev images at all, and the families it skipped keep whatever
+  `-dev.<N>` they had.
 - Published as `X.Y.Z-dev.<PR#>` into `runpod/<repo>-dev`, where `<PR#>` is
   the PR this push merged. The number names the state of `develop`, not the
   family that changed, so one number pulls a matching set.
