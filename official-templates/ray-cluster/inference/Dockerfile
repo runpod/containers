@@ -33,10 +33,12 @@ RUN torch_before=$(python -c 'import torch; print(torch.__version__)') && \
 COPY --chmod=644 wait_for_nodes.py /opt/runpod/inference/
 COPY --chmod=755 start.sh /opt/runpod/inference/start
 
-# The base nginx.conf proxies 8001 to localhost:8000 (a VS Code server slot).
-# Here 8000 is vLLM, so that block would serve vLLM with no key to anything
-# that reaches 8001 (a template mapping it, another node). Remove it, and fail
-# the build if any nginx server still listens on 8001.
+# Base nginx.conf releases before #248 proxy 8001 to localhost:8000 (a
+# leftover VS Code server slot). Here 8000 is vLLM, so that block would serve
+# vLLM with no key to anything that reaches 8001 (a template mapping it,
+# another node). Remove it if the base still has it, and fail the build if any
+# nginx server still listens on 8001. Drop this step once the Ray base is on a
+# base release without the block; the guard after it stays.
 RUN python3 - <<'EOF'
 import re
 path = "/etc/nginx/nginx.conf"
@@ -45,7 +47,7 @@ conf = open(path).read()
 # one is preceded by a comment line.
 block = re.compile(r"\n[ \t]*(#[^\n]*\n[ \t]*)?server \{(?:[^{}]|\{[^{}]*\})*?listen 8001;(?:[^{}]|\{[^{}]*\})*?\n[ \t]*\}")
 conf, n = block.subn("", conf)
-assert n == 1, f"expected one 8001 server block in {path}, found {n}"
+assert n <= 1, f"expected at most one 8001 server block in {path}, found {n}"
 open(path, "w").write(conf)
 EOF
 RUN ! grep -rqE 'listen[[:space:]]+8001' /etc/nginx/ && nginx -t
