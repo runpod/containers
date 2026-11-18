@@ -208,6 +208,8 @@ jobs:
     runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     permissions:
       contents: write
+      # The gate reads this run's jobs to find the family's own build.
+      actions: read
     strategy:
       # Independent tags, so one family failing must not hide the others.
       fail-fast: false
@@ -226,22 +228,58 @@ jobs:
         with:
           family: ${{ matrix.family }}
       # The job-level `if` can't see `matrix`, so the per-family gate lives
-      # here: release this family only if the workflow that builds it passed.
+      # here: release this family only if its own build-/test- jobs passed.
+      # Not `needs.<workflow>.result` — base.yml and sandbox.yml build several
+      # families, and that result fails them all when one of them fails.
       - name: Check this family's build
         id: gate
         env:
-          RESULTS: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
           FAMILY: ${{ matrix.family }}
           RELEASABLE: ${{ steps.v.outputs.should-release }}
         run: |
           set -euo pipefail
-          WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
-          RESULT="$(printf '%s' "${RESULTS}" | jq -r --arg w "${WORKFLOW}" '.[$w].result')"
-          echo "${FAMILY} is built by '${WORKFLOW}': ${RESULT}"
           if [ "${RELEASABLE}" != "true" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "${FAMILY} has nothing releasable outstanding"
-          elif [ "${RESULT}" = "success" ]; then
+            exit 0
+          fi
+
+          WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
+          BUILD="${WORKFLOW} / build-${FAMILY}"
+          TEST="${WORKFLOW} / test-${FAMILY}"
+
+          found=0
+          RESULT="success"
+          while IFS=$'\t' read -r name conclusion; do
+            [ -z "$name" ] && continue
+            # Matrix legs are named "<job> (cu1281)".
+            case "$name" in
+              "$BUILD"|"$BUILD "\(*) ;;
+              "$TEST"|"$TEST "\(*) ;;
+              *) continue ;;
+            esac
+            found=$((found + 1))
+            echo "  ${name}: ${conclusion}"
+            if [ "$conclusion" = "failure" ]; then
+              RESULT="failure"
+            elif [ "$conclusion" != "success" ] && [ "$RESULT" = "success" ]; then
+              RESULT="${conclusion:-unknown}"
+            fi
+          done < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
+              --jq '.jobs[] | [.name, .conclusion] | @tsv'
+          )
+
+          # A releasable family always has a build job; none means the job
+          # names and families.yml have drifted apart.
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no '${BUILD}' job in this run — cannot tell whether ${FAMILY} was built"
+            exit 1
+          fi
+
+          echo "${FAMILY} is built by '${WORKFLOW}': ${RESULT}"
+          if [ "${RESULT}" = "success" ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
