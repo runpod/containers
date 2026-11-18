@@ -14,7 +14,8 @@
 #      the first run instead of starting them twice; a custom CMD runs on
 #      the head only unless RAY_CLUSTER_CMD_NODES=all; on a cluster node a
 #      CMD that exits 0 leaves the container up (and `docker stop` still ends
-#      it promptly), and a failing one ends it with its exit code;
+#      it promptly), a CMD gets to finish its own shutdown on `docker stop`,
+#      and a failing one ends it with its exit code;
 #   4. a 2-node cluster forms from only the topology the image depends on
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
 #      passed-through PRIMARY_ADDR/NODE_ADDR/NODE_ROLE). The worker starts
@@ -251,6 +252,22 @@ check_image() {
     ((SECONDS - started < 20)) || fail "docker stop took $((SECONDS - started))s; SIGTERM was not handled"
     docker rm -f "$run_id-chain" > /dev/null
     pass "docker stop ends a cluster node promptly"
+
+    # On docker stop the CMD gets SIGTERM and the time to act on it: the
+    # entrypoint waits for it instead of dying first and taking tini, and with
+    # it the CMD, down. A worker with the CMD on every node, so no head is
+    # needed.
+    docker run -d --name "$run_id-chain" -e NODE_RANK=1 --add-host node-1:127.0.0.1 \
+        -e RAY_DASHBOARD_PASSWORD="$TOKEN" -e RAY_CLUSTER_CMD_NODES=all -e RAY_CLUSTER_SERVICES=0 "$image" \
+        bash -c 'trap "sleep 2; echo graceful-stop; exit 0" TERM; while :; do sleep 1; done' > /dev/null
+    cmd_running() { docker exec "$run_id-chain" pgrep -f 'graceful-stop' > /dev/null; }
+    wait_for "the CMD running" 60 cmd_running
+    docker stop -t 30 "$run_id-chain" > /dev/null
+    docker logs "$run_id-chain" 2>&1 | grep -qx graceful-stop || fail "docker stop cut the CMD's shutdown short"
+    [[ $(docker inspect -f '{{.State.ExitCode}}' "$run_id-chain") == 0 ]] ||
+        fail "a CMD that shut down cleanly left exit code $(docker inspect -f '{{.State.ExitCode}}' "$run_id-chain")"
+    docker rm -f "$run_id-chain" > /dev/null
+    pass "docker stop lets the CMD shut down gracefully"
 
     # A failing CMD still ends the container, with its exit code.
     local rc=0

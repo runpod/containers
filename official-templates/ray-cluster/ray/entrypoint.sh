@@ -77,15 +77,35 @@ handoff() {
         { env "$@" /start.sh || log "warn: the packaged services (/start.sh) exited with $?; SSH, Jupyter or the monitoring stack may be missing"; } &
     fi
     [[ -n "${NODE_RANK:-}" ]] || exec env "$@" "${cmd[@]}"
+    # On `docker stop`, tini -g sends SIGTERM to the CMD itself. The traps
+    # keep this shell from dying with it: tini exits with its direct child,
+    # and the kernel then SIGKILLs whatever is left, which would cut the CMD's
+    # own shutdown short. The CMD stays in the foreground, so bash runs the
+    # trap only once it has exited, and it keeps SIGINT (a background job
+    # here would ignore it).
+    local signal=""
+    trap 'signal=TERM' TERM
+    trap 'signal=INT' INT
     env "$@" "${cmd[@]}"
     local rc=$?
+    if [[ -n "$signal" ]]; then
+        log "SIG$signal: the CMD exited with $rc; stopping the container"
+        exit "$rc"
+    fi
     ((rc == 0)) || {
         log "the CMD exited with $rc; stopping the container"
         exit "$rc"
     }
     log "the CMD exited 0; keeping the container up for Ray and the packaged services"
-    # Not exec'd: this shell reaps the background /start.sh if it exits.
-    while :; do sleep infinity; done
+    # Not exec'd: this shell reaps the background /start.sh if it exits. The
+    # sleep is waited on, not run in the foreground, so a signal ends it at
+    # once even without tini.
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+    while :; do
+        sleep infinity &
+        wait $!
+    done
 }
 
 # Not a cluster pod (no daemon-injected rank): run the CMD without Ray, so the
