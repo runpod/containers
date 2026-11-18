@@ -21,6 +21,12 @@ variable "CLUSTER_BASE_VERSION" {
   default = "1.4.1"
 }
 
+# `-dev` when the cluster image this builds FROM was built into the private
+# repos in the same run; empty when it comes from the public ones.
+variable "CLUSTER_BASE_REPO_SUFFIX" {
+  default = ""
+}
+
 variable "RAY_VERSION" {
   # Ray >= 2.54 so token authentication covers the dashboard agent too. The
   # host's parsers (pkg/rayready, pkg/raymetrics) are validated against this
@@ -103,13 +109,13 @@ target "ray-cluster-matrix" {
     # Build FROM the published runpod/pytorch-cluster image CI picked (see
     # CLUSTER_BASE_VERSION): the in-run cluster tag when pytorch-cluster was
     # rebuilt in this run, else the last released one.
-    BASE_IMAGE   = "runpod/pytorch-cluster:${CLUSTER_BASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
+    BASE_IMAGE   = "runpod/pytorch-cluster${CLUSTER_BASE_REPO_SUFFIX}:${CLUSTER_BASE_VERSION}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}"
     RAY_VERSION  = "${RAY_VERSION}"
   }
 
   # The Ray image's OWN tag keeps RELEASE_SUFFIX so dev/PR builds don't clobber
   # the released tag. Published under runpod/ray-cluster.
   tags = [
-    "runpod/ray-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
+    "runpod/ray-cluster${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }
