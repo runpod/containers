@@ -13,6 +13,12 @@ variable "UBUNTU_BASE_VERSION" {
   default = "1.0.0"
 }
 
+# Repo suffix of that runpod/ubuntu: "-dev" when CI built it in this run on
+# the dev env (runpod/ubuntu-dev), else empty — a published one is public.
+variable "UBUNTU_BASE_REPO_SUFFIX" {
+  default = ""
+}
+
 group "default" {
   targets = ["sandbox-browser"]
 }
@@ -23,11 +29,11 @@ target "sandbox-browser" {
   platforms  = ["linux/amd64"]
 
   args = {
-    BASE_IMAGE         = "runpod/ubuntu:${UBUNTU_BASE_VERSION}-sandbox-ubuntu2604"
+    BASE_IMAGE         = "runpod/ubuntu${UBUNTU_BASE_REPO_SUFFIX}:${UBUNTU_BASE_VERSION}-sandbox-ubuntu2604"
     PLAYWRIGHT_VERSION = PLAYWRIGHT_VERSION
   }
 
   tags = [
-    "runpod/browser:${RELEASE_VERSION}${RELEASE_SUFFIX}-sandbox-playwright${PLAYWRIGHT_VERSION}",
+    "runpod/browser${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-sandbox-playwright${PLAYWRIGHT_VERSION}",
   ]
 }

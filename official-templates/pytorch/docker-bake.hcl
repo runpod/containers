@@ -7,6 +7,12 @@ variable "BASE_VERSION" {
   default = "1.0.7"
 }
 
+# Repo suffix of that runpod/base: "-dev" when CI built it in this run on the
+# dev env (runpod/base-dev), else empty — a published base is public.
+variable "BASE_REPO_SUFFIX" {
+  default = ""
+}
+
 variable "TORCH_META" {
   default = {
     "2.6.0" = {
@@ -200,7 +206,7 @@ target "pytorch-matrix" {
   inherits = ["pytorch-base"]
   
   args = {
-    BASE_IMAGE = "runpod/base:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
+    BASE_IMAGE = "runpod/base${BASE_REPO_SUFFIX}:${BASE_VERSION}-cuda${build.cuda_code}-${build.ubuntu_name}"
     WHEEL_SRC = build.wheel_src
     TORCH = "torch==${build.torch}${build.torch_vision != "" ? " torchvision==${build.torch_vision}" : ""}"
     TORCHAUDIO = build.torch_audio != "" ? "torchaudio==${build.torch_audio}" : ""
@@ -210,6 +216,6 @@ target "pytorch-matrix" {
   }
   
   tags = [
-    "runpod/pytorch:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
+    "runpod/pytorch${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
   ]
 }
