@@ -1,0 +1,61 @@
+# vLLM's direct dependencies that it leaves unpinned or ranged (the ones it
+# pins exactly need nothing here), pinned so the image ships known versions
+# instead of whatever satisfied vLLM's ranges when the build cache last
+# refreshed the layer, as ../requirements.txt does for Ray. Left out, because a
+# lower layer already pins a version vLLM accepts: torch and its companions
+# (the pytorch base), filelock (the base image), and pydantic, aiohttp and the
+# rest of ../requirements.txt. fastapi is the exception: vLLM needs <0.137, so
+# this pin replaces Ray's.
+#
+# Bump deliberately, and re-resolve on a vLLM bump: resolve vLLM together with
+# the base's torch and Ray for the image's platform, for example
+#   printf 'vllm==0.32.0\ntorch==2.13.0\nray[default,serve]==2.59.0\n' |
+#     uv pip compile - --python-version 3.12 \
+#       --python-platform x86_64-manylinux_2_28 --no-annotate
+# and take from the result the versions of vLLM's ranged requirements, minus
+# the ones left out above.
+anthropic==2.10.0
+blake3==1.0.11
+cachetools==8.0.2
+cbor2==6.3.0
+cloudpickle==3.1.3
+einops==0.8.2
+fastapi==0.136.3
+fastsafetensors==0.5.0
+huggingface-hub==2.4.0
+ijson==3.6.0
+instanttensor==0.2.3
+llguidance==1.7.6
+mcp==2.3.0
+mistral-common==1.13.1
+model-hosting-container-standards==0.1.16
+msgspec==0.22.0
+ninja==1.13.2
+numpy==2.3.5
+nvidia-cudnn-frontend==1.33.0
+openai==3.55.1
+opencv-python-headless==5.1.0.95
+opentelemetry-api==1.45.2
+opentelemetry-exporter-otlp==1.45.2
+opentelemetry-semantic-conventions-ai==0.5.1
+oss-harmony==0.0.12
+partial-json-parser==0.2.1.1.post7
+pillow==13.0.0
+prometheus-fastapi-instrumentator==8.1.0
+psutil==7.2.2
+py-cpuinfo==9.0.0
+pybase64==1.5.2
+python-json-logger==4.2.0
+pyzmq==27.3.0
+regex==2026.11.19
+safetensors==0.8.0
+sentencepiece==0.2.3
+setproctitle==1.3.8
+setuptools==80.10.2
+six==1.17.0
+tiktoken==0.14.0
+tokenizers==0.23.3
+tqdm==4.70.1
+transformers==5.19.0
+typing-extensions==4.16.0
+watchfiles==1.3.0

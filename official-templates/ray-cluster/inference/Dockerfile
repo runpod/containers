@@ -19,12 +19,15 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # build the base chose, and the host's parsers are pinned to the base's Ray.
 # vLLM needs a newer PyJWT than the base's, which is Debian's python3-jwt and
 # has no RECORD for pip to uninstall: install the pinned one beside it first
-# (pip's copy shadows Debian's on sys.path).
+# (pip's copy shadows Debian's on sys.path). vLLM's ranged dependencies are
+# pinned in requirements.txt; re-resolve it on a vLLM bump.
 ARG VLLM_VERSION=0.32.0
 ARG PYJWT_VERSION=2.15.1
+COPY requirements.txt /tmp/vllm-requirements.txt
 RUN torch_before=$(python -c 'import torch; print(torch.__version__)') && \
     python -m pip install --no-cache-dir --ignore-installed "PyJWT==${PYJWT_VERSION}" && \
-    python -m pip install --no-cache-dir "vllm==${VLLM_VERSION}" && \
+    python -m pip install --no-cache-dir "vllm==${VLLM_VERSION}" -r /tmp/vllm-requirements.txt && \
+    rm /tmp/vllm-requirements.txt && \
     torch_after=$(python -c 'import torch; print(torch.__version__)') && \
     ray_after=$(python -c 'import ray; print(ray.__version__)') && \
     { [[ "$torch_after" == "$torch_before" ]] || { echo "vLLM replaced torch $torch_before with $torch_after"; exit 1; }; } && \
