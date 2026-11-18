@@ -259,9 +259,11 @@ check_image() {
     # needed.
     docker run -d --name "$run_id-chain" -e NODE_RANK=1 --add-host node-1:127.0.0.1 \
         -e RAY_DASHBOARD_PASSWORD="$TOKEN" -e RAY_CLUSTER_CMD_NODES=all -e RAY_CLUSTER_SERVICES=0 "$image" \
-        bash -c 'trap "sleep 2; echo graceful-stop; exit 0" TERM; while :; do sleep 1; done' > /dev/null
-    cmd_running() { docker exec "$run_id-chain" pgrep -f 'graceful-stop' > /dev/null; }
-    wait_for "the CMD running" 60 cmd_running
+        bash -c 'trap "sleep 2; echo graceful-stop; exit 0" TERM; echo cmd-ready; while :; do sleep 1; done' > /dev/null
+    # Its own line, printed once its trap is set: tini's and the entrypoint's
+    # command lines carry the CMD too, so pgrep would match them before it runs.
+    cmd_ready() { docker logs "$run_id-chain" 2>&1 | grep -qx cmd-ready; }
+    wait_for "the CMD running with its TERM trap" 60 cmd_ready
     docker stop -t 30 "$run_id-chain" > /dev/null
     docker logs "$run_id-chain" 2>&1 | grep -qx graceful-stop || fail "docker stop cut the CMD's shutdown short"
     [[ $(docker inspect -f '{{.State.ExitCode}}' "$run_id-chain") == 0 ]] ||
