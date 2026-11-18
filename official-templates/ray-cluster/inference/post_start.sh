@@ -23,8 +23,9 @@ PROM_CONFIG=/etc/prometheus/prometheus.yml
 
 /post_start.ray.sh
 
-# The head is rank 0, as for Ray's hook; vLLM serves only there.
-if [[ "${NODE_RANK:-}" != "0" || "${RAY_CLUSTER_METRICS:-1}" == "0" ]]; then
+# The head is rank 0, as for Ray's hook; vLLM serves only there, and only with
+# a MODEL_REPO (without one, the targets would only ever be down).
+if [[ "${NODE_RANK:-}" != "0" || "${RAY_CLUSTER_METRICS:-1}" == "0" || -z "${MODEL_REPO:-}" ]]; then
     exit 0
 fi
 

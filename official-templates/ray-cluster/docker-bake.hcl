@@ -59,19 +59,19 @@ group "default" {
 # Per-CUDA-major groups so CI can shard the matrix across separate runners
 # (mirrors pytorch-cluster).
 group "cu1281" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1281"
-  ]
+  ], inference_targets("1281"))
 }
 
 group "cu1290" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1290"
-  ]
+  ], inference_targets("1290"))
 }
 
 group "cu1300" {
@@ -79,15 +79,15 @@ group "cu1300" {
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1300"
-  ], ["ray-cluster-inference"])
+  ], inference_targets("1300"))
 }
 
 group "cu1320" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1320"
-  ]
+  ], inference_targets("1320"))
 }
 
 target "ray-cluster-base" {
@@ -126,6 +126,13 @@ target "ray-cluster-matrix" {
 # and published under the same repo with an -inference tag.
 variable "INFERENCE_BASE" {
   default = { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" }
+}
+
+# The inference target, for the CUDA group of INFERENCE_BASE only: that group
+# builds the target it is FROM.
+function "inference_targets" {
+  params = [cuda_code]
+  result = cuda_code == INFERENCE_BASE.cuda_code ? ["ray-cluster-inference"] : []
 }
 
 target "ray-cluster-inference" {
