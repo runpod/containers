@@ -4,14 +4,17 @@
 # topology env, the way the host daemon would, and checks the parts runpod/host
 # depends on.
 #
-#   1. the contract label and ENTRYPOINT are present;
+#   1. the contract label and ENTRYPOINT (the entrypoint under tini) are
+#      present;
 #   2. a port override (env or RAY_START_EXTRA_ARGS) fails the boot with an
 #      error naming the variable;
 #   3. a pod with no NODE_RANK boots its CMD without Ray; a CMD other than
 #      /start.sh gets /start.sh's services (nginx) alongside it unless
 #      RAY_CLUSTER_SERVICES=0, and a CMD that runs /start.sh again waits on
 #      the first run instead of starting them twice; a custom CMD runs on
-#      the head only unless RAY_CLUSTER_CMD_NODES=all;
+#      the head only unless RAY_CLUSTER_CMD_NODES=all; on a cluster node a
+#      CMD that exits 0 leaves the container up (and `docker stop` still ends
+#      it promptly), and a failing one ends it with its exit code;
 #   4. a 2-node cluster forms from only the topology the image depends on
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
 #      passed-through PRIMARY_ADDR/NODE_ADDR/NODE_ROLE). The worker starts
@@ -115,12 +118,8 @@ run_rows() {
 
 # Runs a command in the worker container (reaches the head over the bridge).
 in_worker=(docker exec "$run_id-worker")
-# The worker's CMD is `sleep infinity`; PID 1 is that once the entrypoint execs.
-worker_pid1_is_cmd() {
-    local comm
-    comm=$("${in_worker[@]}" cat /proc/1/comm) || return 1
-    [[ "$comm" == sleep ]]
-}
+# The worker's CMD is `sleep 1d`, told apart from /start.sh's `sleep infinity`.
+worker_cmd_pid() { "${in_worker[@]}" pgrep -fx 'sleep 1d'; }
 
 wait_for() { # <description> <timeout_s> <cmd...>
     local what=$1 timeout=$2
@@ -180,7 +179,8 @@ check_image() {
     label=$(docker image inspect -f '{{index .Config.Labels "com.runpod.ray-cluster.contract"}}' "$image")
     [[ "$label" == "$CONTRACT" ]] || fail "label com.runpod.ray-cluster.contract != $CONTRACT"
     entrypoint=$(docker image inspect -f '{{json .Config.Entrypoint}}' "$image")
-    [[ "$entrypoint" == '["/opt/runpod/ray/entrypoint"]' ]] || fail "ENTRYPOINT is not /opt/runpod/ray/entrypoint"
+    [[ "$entrypoint" == '["/usr/bin/tini","-g","--","/opt/runpod/ray/entrypoint"]' ]] ||
+        fail "ENTRYPOINT is not /opt/runpod/ray/entrypoint under tini -g: $entrypoint"
     pass "contract label $CONTRACT and ENTRYPOINT"
 
     # The inherited monitoring bringup (pytorch-cluster after 1.4.1) picks the
@@ -233,13 +233,31 @@ check_image() {
     run_rows expect_boot_log "$image" "${accepts[@]}"
 
     # The explicit opt-out boots, with the dashboard reporting auth disabled.
+    # Its CMD exits 0 at once, which leaves a cluster node up.
+    docker run -d --name "$run_id-chain" -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
+        -e RAY_AUTH_MODE=disabled "$image" true > /dev/null
+    kept_up() { docker logs "$run_id-chain" 2>&1 | grep -qF "the CMD exited 0; keeping the container up"; }
+    wait_for "a head kept up after its CMD exited 0" 120 kept_up
     local mode
-    mode=$(docker run --rm -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
-        -e RAY_AUTH_MODE=disabled "$image" \
-        curl -fsS "http://127.0.0.1:$DASHBOARD_PORT/api/authentication_mode" 2> /dev/null | tail -n 1) ||
+    mode=$(docker exec "$run_id-chain" curl -fsS "http://127.0.0.1:$DASHBOARD_PORT/api/authentication_mode") ||
         fail "RAY_AUTH_MODE=disabled did not boot"
     [[ "$mode" == *'"disabled"'* ]] || fail "RAY_AUTH_MODE=disabled: dashboard reports $mode"
     pass "RAY_AUTH_MODE=disabled opts out of token auth"
+    pass "a head whose CMD exits 0 stays up"
+
+    # tini passes SIGTERM on, so a stop doesn't wait out the grace period.
+    local started=$SECONDS
+    docker stop -t 30 "$run_id-chain" > /dev/null
+    ((SECONDS - started < 20)) || fail "docker stop took $((SECONDS - started))s; SIGTERM was not handled"
+    docker rm -f "$run_id-chain" > /dev/null
+    pass "docker stop ends a cluster node promptly"
+
+    # A failing CMD still ends the container, with its exit code.
+    local rc=0
+    docker run --rm -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
+        -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" bash -c 'exit 3' > /dev/null 2>&1 || rc=$?
+    ((rc == 3)) || fail "a head whose CMD exits 3 ended with $rc"
+    pass "a failing CMD ends the container with its exit code"
 
     # 3. Not a cluster pod: CMD runs, Ray does not.
     local plain
@@ -271,11 +289,11 @@ check_image() {
     # A custom CMD is the head's by default: a worker runs /start.sh instead.
     # No node-0 here, so the worker never joins; only its CMD placement counts.
     docker run -d --name "$run_id-chain" -e NODE_RANK=1 --add-host node-1:127.0.0.1 \
-        -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" sleep infinity > /dev/null
+        -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" sleep 1d > /dev/null
     head_only_cmd() { docker logs "$run_id-chain" 2>&1 | grep -qF "the CMD runs on the head only"; }
     wait_for "a worker leaving its CMD to the head" 60 head_only_cmd
     wait_for "nginx on a worker without its CMD" 60 docker exec "$run_id-chain" pgrep -x nginx
-    [[ $(docker exec "$run_id-chain" cat /proc/1/comm) != sleep ]] ||
+    ! docker exec "$run_id-chain" pgrep -fx 'sleep 1d' > /dev/null ||
         fail "a worker ran the CMD without RAY_CLUSTER_CMD_NODES=all"
     docker rm -f "$run_id-chain" > /dev/null
     pass "a custom CMD runs on the head only by default; a worker runs /start.sh instead"
@@ -292,23 +310,25 @@ check_image() {
     # RAY_CLUSTER_CMD_NODES=all, so the CMD is this worker's too.
     docker run -d --name "$run_id-worker" --hostname node-1 --ip "$WORKER_IP" "${topo[@]}" \
         --add-host "node-1:$WORKER_IP" -e NODE_RANK=1 -e JUPYTER_PASSWORD="$TOKEN" \
-        -e JUPYTER_DISABLE_AUTH=true -e RAY_CLUSTER_CMD_NODES=all "$image" sleep infinity > /dev/null
+        -e JUPYTER_DISABLE_AUTH=true -e RAY_CLUSTER_CMD_NODES=all "$image" sleep 1d > /dev/null
     wait_for "worker waiting for node-0" 120 worker_waiting_for_head
     sleep 10
     local running
     running=$(docker inspect -f '{{.State.Running}}' "$run_id-worker")
     [[ "$running" == true ]] || fail "the worker exited while node-0 was missing"
     ! "${in_worker[@]}" test -e /tmp/ray/session_latest || fail "the worker started Ray with no head to join"
-    worker_pid1_is_cmd || fail "the worker's CMD is not running while it waits for the head"
+    worker_cmd_pid > /dev/null || fail "the worker's CMD is not running while it waits for the head"
     pass "worker waits while node-0 is missing from /etc/hosts, with its CMD running"
 
-    # Jupyter is head-only: the worker's CMD (PID 1 after the entrypoint's
-    # exec) must not inherit the Jupyter env, or /start.sh would start it.
-    ! "${in_worker[@]}" grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' /proc/1/environ ||
+    # Jupyter is head-only: the worker's CMD must not inherit the Jupyter env,
+    # or /start.sh would start it.
+    local cmd_pid
+    cmd_pid=$(worker_cmd_pid) || fail "the worker's CMD is not running"
+    ! "${in_worker[@]}" grep -qzE '^(JUPYTER_PASSWORD|JUPYTER_DISABLE_AUTH)=' "/proc/$cmd_pid/environ" ||
         fail "the worker's CMD inherited the Jupyter env"
     pass "worker CMD runs without the Jupyter env"
 
-    # The CMD is `sleep infinity`, yet /start.sh's services run beside it,
+    # The CMD is `sleep 1d`, yet /start.sh's services run beside it,
     # under the same env, so not Jupyter.
     wait_for "nginx on the worker" 60 "${in_worker[@]}" pgrep -x nginx
     sleep 5
@@ -384,12 +404,15 @@ check_image() {
     # sign in the Metrics tab's panels; a deep link keeps its path. Only nginx
     # answers these, so the head needs no Grafana.
     local locations
-    locations=$(docker run --rm -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
-        -e RUNPOD_POD_ID=abc123 -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" bash -c "
-        for _ in \$(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:$FRONT_PORT/ && break; sleep 1; done
+    docker run -d --name "$run_id-chain" -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
+        -e RUNPOD_POD_ID=abc123 -e RAY_DASHBOARD_PASSWORD="$TOKEN" "$image" sleep infinity > /dev/null
+    pod_front_door_up() { docker exec "$run_id-chain" curl -s -o /dev/null "http://127.0.0.1:$FRONT_PORT/"; }
+    wait_for "nginx's front door on a head with RUNPOD_POD_ID" 120 pod_front_door_up
+    locations=$(docker exec "$run_id-chain" bash -c "
         for p in / /jobs; do
-            curl -sS -o /dev/null -w '%{redirect_url}\n' \"http://127.0.0.1:$FRONT_PORT\$p?token=$TOKEN\"; done" |
-        tail -n 2) || fail "a head with RUNPOD_POD_ID did not boot"
+            curl -sS -o /dev/null -w '%{redirect_url}\n' \"http://127.0.0.1:$FRONT_PORT\$p?token=$TOKEN\"; done") ||
+        fail "a head with RUNPOD_POD_ID did not answer on $FRONT_PORT"
+    docker rm -f "$run_id-chain" > /dev/null
     [[ "$locations" == "https://abc123-8889.proxy.runpod.net/runpod-login?token=$TOKEN"$'\n'*/jobs ]] ||
         fail "RUNPOD_POD_ID front door: want / to bounce through Grafana's /runpod-login and /jobs to stay, got: $locations"
     pass "dashboard front door on Runpod: / bounces through Grafana's login, a deep link keeps its path"

@@ -14,11 +14,16 @@
 #   5. on a worker, do 3 and 4 in the background and keep rejoining there:
 #      its raylet exits with the head, and a restarted head is a new cluster
 #      nothing else rejoins;
-#   6. exec "$@" (the customer CMD, /start.sh by default), with /start.sh's
+#   6. run "$@" (the customer CMD, /start.sh by default), with /start.sh's
 #      services started in the background when the CMD is something else; on
 #      a worker, at once, with the Jupyter env cleared so /start.sh leaves
 #      Jupyter to the head, and /start.sh in place of a customer CMD unless
-#      RAY_CLUSTER_CMD_NODES=all.
+#      RAY_CLUSTER_CMD_NODES=all. A CMD that exits 0 leaves the node up; one
+#      that fails ends the container with its exit code.
+#
+# tini is PID 1 (the image's ENTRYPOINT runs this script under `tini -g`): it
+# reaps the orphans Ray and the CMD leave behind, and passes SIGTERM to this
+# script, the CMD and the services alike.
 #
 # The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
 # and the cluster membership in /etc/hosts (node-0 ... node-N). The other
@@ -48,19 +53,39 @@ die() {
 [[ $# -gt 0 ]] || set -- /start.sh
 cmd=("$@")
 
-# handoff [<env(1) args>...]: exec the CMD under `env <args>`. /start.sh brings
-# up the packaged services: nginx (and with it the 8266 dashboard front door),
-# SSH, Jupyter, and the monitoring stack through /post_start.sh. A customer CMD
-# replaces it, so for any other CMD it is started first, in the background and
-# under the same env: a derived image or template sets its CMD without knowing
-# about /start.sh. RAY_CLUSTER_SERVICES=0 runs the CMD alone. The CMD still
-# becomes the main process, so the container lives as long as it does.
+# handoff [<env(1) args>...]: run the CMD under `env <args>`; never returns.
+# /start.sh brings up the packaged services: nginx (and with it the 8266
+# dashboard front door), SSH, Jupyter, and the monitoring stack through
+# /post_start.sh. A customer CMD replaces it, so for any other CMD it is
+# started first, in the background and under the same env: a derived image or
+# template sets its CMD without knowing about /start.sh. RAY_CLUSTER_SERVICES=0
+# runs the CMD alone. Only the exact path /start.sh counts as the default: any
+# other spelling (`bash /start.sh`) gets the services started here too, and
+# /start.sh's run-once lock makes its own run wait on that one.
+#
+# Nothing else watches the background /start.sh, so a failure there (it exits
+# on the first error) is logged: the CMD keeps running without the rest.
+#
+# On a cluster node, a CMD that exits 0 (`serve deploy`, a driver that
+# finished) leaves the container up: on the head it would otherwise take the
+# whole cluster down with it. A failing CMD still ends the container, with its
+# exit code. A pod with no NODE_RANK has no cluster to keep, so there the CMD
+# is exec'd and the container lives as long as it does.
 handoff() {
     if [[ "${cmd[0]}" != /start.sh && "${RAY_CLUSTER_SERVICES:-1}" != 0 ]]; then
         log "starting the packaged services (/start.sh) alongside the CMD"
-        env "$@" /start.sh &
+        { env "$@" /start.sh || log "warn: the packaged services (/start.sh) exited with $?; SSH, Jupyter or the monitoring stack may be missing"; } &
     fi
-    exec env "$@" "${cmd[@]}"
+    [[ -n "${NODE_RANK:-}" ]] || exec env "$@" "${cmd[@]}"
+    env "$@" "${cmd[@]}"
+    local rc=$?
+    ((rc == 0)) || {
+        log "the CMD exited with $rc; stopping the container"
+        exit "$rc"
+    }
+    log "the CMD exited 0; keeping the container up for Ray and the packaged services"
+    # Not exec'd: this shell reaps the background /start.sh if it exits.
+    while :; do sleep infinity; done
 }
 
 # Not a cluster pod (no daemon-injected rank): run the CMD without Ray, so the
@@ -291,8 +316,10 @@ join_head() {
 # with no members, so without the rejoin the worker stays out of the cluster
 # until its pod is restarted. Never exits: a failed join is retried on the
 # next pass.
-# A dead raylet can linger as a zombie: it is reparented to PID 1, which a CMD
-# like `sleep infinity` never reaps. So match the state field, not just the name.
+# A dead raylet can linger as a zombie: it is reparented to PID 1, which tini
+# reaps, but a derived image that drops tini from the ENTRYPOINT leaves a CMD
+# like `sleep infinity` there, which never does. So match the state field, not
+# just the name.
 raylet_running() {
     local stat line
     for stat in /proc/[0-9]*/stat; do

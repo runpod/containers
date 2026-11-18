@@ -28,7 +28,7 @@ jobs:
           - dockerfile: official-templates/pytorch-cluster/Dockerfile
             ignore: "DL3008"
           - dockerfile: official-templates/ray-cluster/Dockerfile
-            ignore: ""
+            ignore: "DL3008"
           - dockerfile: official-templates/comfyui/Dockerfile
             ignore: "DL3008"
           - dockerfile: official-templates/filebrowser/Dockerfile

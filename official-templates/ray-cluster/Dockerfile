@@ -6,7 +6,7 @@
 # Contract v1 with runpod/host: the host injects only topology env and observes
 # Ray from outside the container (dashboard 8265 for readiness/liveness, Ray
 # metrics on 20217). The image owns launch: the ENTRYPOINT starts Ray, then
-# execs the CMD, starting /start.sh's services alongside a customer CMD.
+# runs the CMD, starting /start.sh's services alongside a customer CMD.
 # Customers extend it with `FROM runpod/ray-cluster:<tag>`, with any CMD,
 # keeping the ENTRYPOINT, the Ray version and the contract ports. See
 # README.md and runpod/host docs/ray-init-refactor.md.
@@ -48,6 +48,13 @@ ENV RAY_CLUSTER_RAY_VERSION=${RAY_VERSION} \
     NCCL_DEBUG=WARN \
     NCCL_NET_GDR_LEVEL=PHB
 
+# tini runs as PID 1 in front of the entrypoint: it reaps what Ray and the CMD
+# orphan, and with -g passes SIGTERM to the entrypoint, the CMD and the
+# services alike, so `docker stop` doesn't wait out its grace period.
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends tini && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 COPY --chmod=755 ray/entrypoint.sh /opt/runpod/ray/entrypoint
 
 # The entrypoint starts /start.sh's services itself when the CMD is something
@@ -105,5 +112,5 @@ EXPOSE 8266 8265 20217 52365 6379
 LABEL com.runpod.template.variant="ray-cluster" \
       com.runpod.ray-cluster.contract="v1"
 
-ENTRYPOINT ["/opt/runpod/ray/entrypoint"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/opt/runpod/ray/entrypoint"]
 CMD ["/start.sh"]
