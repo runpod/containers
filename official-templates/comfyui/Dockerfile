@@ -126,7 +126,8 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
         fi; \
     done && \
     echo "GitPython" >> requirements.in && \
-    echo "opencv-python" >> requirements.in && \
+    echo "opencv-python>=5.1.0.95" >> requirements.in && \
+    echo "opencv-python-headless>=5.1.0.95" >> requirements.in && \
     echo "jupyter" >> requirements.in && \
     echo "jupyter-resource-usage" >> requirements.in && \
     echo "jupyterlab-nvdashboard" >> requirements.in && \
