@@ -207,4 +207,7 @@ jobs:
           # The tag carries no CUDA marker; upstream vLLM is built on CUDA 13.0.
           min-cuda-version: "13.0"
           create-timeout: "1200"
+          exclude-instances: |
+            *MIG*
+            RTX 2000 Ada
           test-vllm: "true"
