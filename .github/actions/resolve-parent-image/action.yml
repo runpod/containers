@@ -1,0 +1,107 @@
+name: Resolve parent image
+description: >-
+  Which published image of a parent family a build should layer on when that
+  parent is NOT rebuilt in the same run. On prod it is the parent's last
+  release. On dev it is the newest `-dev.<N>` in the parent's private repo,
+  which is the state of develop: the last public release can predate fixes
+  develop already carries, and a build on it is then scanned against
+  vulnerabilities we have closed. Falls back to the public release when the
+  dev repo has no such tag yet.
+
+inputs:
+  family:
+    description: Parent family, e.g. `base` or `pytorch`.
+    required: true
+  env:
+    description: "`dev` or `prod`, from compute-version."
+    required: true
+  published-version:
+    description: >-
+      The parent's last released version (compute-version's
+      `previous-version`), used on prod and as the dev fallback.
+    required: true
+  dockerhub-username:
+    description: Docker Hub user, for reading the private dev repo.
+    required: false
+    default: ""
+  dockerhub-oidc:
+    description: >-
+      Dev OIDC connection id. Listing a private repo needs a registry token,
+      and the OIDC connection is the only credential that has one.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: Version to put in the bake file's `*_BASE_VERSION`.
+    value: ${{ steps.r.outputs.version }}
+  repo-suffix:
+    description: "`-dev` when that version lives in the private repo, else empty."
+    value: ${{ steps.r.outputs.repo_suffix }}
+
+runs:
+  using: composite
+  steps:
+    - name: Docker login
+      if: inputs.env == 'dev'
+      uses: docker/login-action@783ae9cac559640a24c9212dfa6cd9e998252f9a
+      env:
+        DOCKERHUB_OIDC_CONNECTIONID: ${{ inputs.dockerhub-oidc }}
+        DOCKERHUB_OIDC_EXPIREIN: 900
+      with:
+        username: ${{ inputs.dockerhub-username }}
+
+    - name: Install crane
+      if: inputs.env == 'dev'
+      shell: bash
+      env:
+        CRANE_VERSION: v0.22.1
+        CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+      run: |
+        set -euo pipefail
+        if command -v crane > /dev/null; then
+          crane version
+          exit 0
+        fi
+        curl -fsSL \
+          "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+          -o /tmp/crane.tar.gz
+        echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+        tar xz -C /tmp -f /tmp/crane.tar.gz crane
+        sudo mv /tmp/crane /usr/local/bin/crane
+        crane version
+
+    - id: r
+      shell: bash
+      env:
+        FAMILY: ${{ inputs.family }}
+        TARGET_ENV: ${{ inputs.env }}
+        PUBLISHED: ${{ inputs.published-version }}
+      run: |
+        set -euo pipefail
+        SCRIPTS="${GITHUB_ACTION_PATH}/../../scripts"
+        VERSION="${PUBLISHED}"
+        SUFFIX=""
+
+        if [ "${TARGET_ENV}" = "dev" ]; then
+          REPO="$(python3 "${SCRIPTS}/plan_families.py" --image-repo "${FAMILY}")-dev"
+          # A repo with no tags yet 404s; that is the fallback, not a failure.
+          if TAGS="$(crane ls "${REPO}" 2>&1)"; then
+            DEV="$(printf '%s\n' "${TAGS}" | python3 "${SCRIPTS}/latest_dev_version.py")"
+          else
+            echo "::warning::could not list ${REPO}: ${TAGS}"
+            DEV=""
+          fi
+          if [ -n "${DEV}" ]; then
+            VERSION="${DEV}"
+            SUFFIX="-dev"
+          else
+            echo "::warning::${REPO} has no -dev.<N> tag; layering on the public ${PUBLISHED}"
+          fi
+        fi
+
+        {
+          echo "version=${VERSION}"
+          echo "repo_suffix=${SUFFIX}"
+        } >> "$GITHUB_OUTPUT"
+        echo "${FAMILY} parent (${TARGET_ENV}): ${VERSION}${SUFFIX:+ in the private repo}"

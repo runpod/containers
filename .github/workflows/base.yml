@@ -35,11 +35,20 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # Listing a parent's private dev repo needs a registry token, which only
+      # the OIDC connection can mint.
+      id-token: write
     outputs:
       suffix: ${{ steps.base.outputs.suffix }}
       env: ${{ steps.base.outputs.env }}
       repo-suffix: ${{ steps.base.outputs.repo-suffix }}
       base: ${{ steps.base.outputs.version }}
+      base-parent: ${{ steps.base-parent.outputs.version }}
+      base-parent-suffix: ${{ steps.base-parent.outputs.repo-suffix }}
+      pytorch-parent: ${{ steps.pytorch-parent.outputs.version }}
+      pytorch-parent-suffix: ${{ steps.pytorch-parent.outputs.repo-suffix }}
+      cluster-parent: ${{ steps.cluster-parent.outputs.version }}
+      cluster-parent-suffix: ${{ steps.cluster-parent.outputs.repo-suffix }}
       base-published: ${{ steps.base.outputs.previous-version }}
       base-build: ${{ steps.base.outputs.should-build }}
       pytorch: ${{ steps.pytorch.outputs.version }}
@@ -96,6 +105,39 @@ jobs:
         uses: ./.github/actions/compute-version
         with:
           family: filebrowser
+
+      # Which published parent a family layers on when that parent is NOT
+      # rebuilt in this run. On dev that is develop's newest -dev.<N>, not the
+      # public release, which can predate fixes develop already carries.
+      - name: base parent
+        id: base-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: base
+          env: ${{ steps.base.outputs.env }}
+          published-version: ${{ steps.base.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
+
+      - name: pytorch parent
+        id: pytorch-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: pytorch
+          env: ${{ steps.base.outputs.env }}
+          published-version: ${{ steps.pytorch.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
+
+      - name: pytorch-cluster parent
+        id: cluster-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: pytorch-cluster
+          env: ${{ steps.base.outputs.env }}
+          published-version: ${{ steps.cluster.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
 
   build-base:
     needs: versions
@@ -254,8 +296,8 @@ jobs:
     # Job-level on purpose: the pre-pull step resolves the same bake
     # files, and a second copy would be free to drift from this one.
     env:
-      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
-      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -435,8 +477,8 @@ jobs:
     # Job-level on purpose: the pre-pull step resolves the same bake
     # files, and a second copy would be free to drift from this one.
     env:
-      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
-      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
     # Ubuntu 24.04 only: a CPU image plus one CUDA image (FileBrowser does not
     # use the GPU; the CUDA variant is for pods that want GPU tooling alongside).
     steps:
@@ -612,8 +654,8 @@ jobs:
     # Job-level on purpose: the pre-pull step resolves the same bake
     # files, and a second copy would be free to drift from this one.
     env:
-      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
-      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -819,8 +861,8 @@ jobs:
     # Job-level on purpose: the pre-pull step resolves the same bake
     # files, and a second copy would be free to drift from this one.
     env:
-      PYTORCH_BASE_VERSION: ${{ needs.build-pytorch.result == 'success' && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
-      PYTORCH_BASE_REPO_SUFFIX: ${{ needs.build-pytorch.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+      PYTORCH_BASE_VERSION: ${{ needs.build-pytorch.result == 'success' && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-parent }}
+      PYTORCH_BASE_REPO_SUFFIX: ${{ needs.build-pytorch.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.pytorch-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -1004,8 +1046,8 @@ jobs:
     # Job-level on purpose: the pre-pull step resolves the same bake
     # files, and a second copy would be free to drift from this one.
     env:
-      CLUSTER_BASE_VERSION: ${{ needs.build-pytorch-cluster.result == 'success' && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
-      CLUSTER_BASE_REPO_SUFFIX: ${{ needs.build-pytorch-cluster.result == 'success' && needs.versions.outputs.repo-suffix || '' }}
+      CLUSTER_BASE_VERSION: ${{ needs.build-pytorch-cluster.result == 'success' && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-parent }}
+      CLUSTER_BASE_REPO_SUFFIX: ${{ needs.build-pytorch-cluster.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.cluster-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0

@@ -1,0 +1,109 @@
+name: Probe dev parent
+
+# TEMPORARY. Checks that a dev build can find its parent image before any
+# real build depends on it, and prints what it found. Builds nothing, pushes
+# nothing, changes nothing. Delete this file once the first dev build has
+# resolved its parent for real.
+#
+# Runs on the pull request that changes the resolution itself, because a
+# workflow_dispatch is only offered for workflows already on the default
+# branch — which this one is not, and is not meant to become.
+# A PR into anything but main gives env=dev, the case under test.
+on:
+  pull_request:
+    paths:
+      - ".github/actions/resolve-parent-image/**"
+      - ".github/scripts/latest_dev_version.py"
+      - ".github/workflows/probe-dev-parent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every family that another family builds FROM.
+        family: [base, pytorch, pytorch-cluster, sandbox-ubuntu]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Version
+        id: v
+        uses: ./.github/actions/compute-version
+        with:
+          family: ${{ matrix.family }}
+
+      # The real thing, end to end: login, crane ls, pick a tag, fall back.
+      - name: Resolve parent
+        id: parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: ${{ matrix.family }}
+          env: ${{ steps.v.outputs.env }}
+          published-version: ${{ steps.v.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
+
+      # The action warns and falls back when it cannot list, which is right
+      # for a build and useless for a probe: here a listing failure is THE
+      # finding, so fail on it and show the tags when it works.
+      - name: Report
+        env:
+          FAMILY: ${{ matrix.family }}
+          TARGET_ENV: ${{ steps.v.outputs.env }}
+          PUBLISHED: ${{ steps.v.outputs.previous-version }}
+          CHOSEN: ${{ steps.parent.outputs.version }}
+          CHOSEN_SUFFIX: ${{ steps.parent.outputs.repo-suffix }}
+        run: |
+          set -euo pipefail
+          if [ "${TARGET_ENV}" != "dev" ]; then
+            echo "env is ${TARGET_ENV}; nothing to probe. Run this from develop."
+            exit 0
+          fi
+          REPO="$(python3 .github/scripts/plan_families.py --image-repo "${FAMILY}")-dev"
+
+          if ! TAGS="$(crane ls "${REPO}" 2>&1)"; then
+            echo "::error::cannot list ${REPO}: ${TAGS}"
+            echo "The dev OIDC connection cannot read its own repo, or the repo does not exist." \
+              >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+
+          TOTAL="$(printf '%s\n' "${TAGS}" | grep -c . || echo 0)"
+          DEVN="$(printf '%s\n' "${TAGS}" | grep -c -- '-dev\.' || echo 0)"
+          PICKED="$(printf '%s\n' "${TAGS}" | python3 .github/scripts/latest_dev_version.py)"
+
+          {
+            echo "### ${FAMILY} (env ${TARGET_ENV})"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| dev repo | \`${REPO}\` |"
+            echo "| tags listed | ${TOTAL} |"
+            echo "| of them \`-dev.<N>\` | ${DEVN} |"
+            echo "| newest \`-dev.<N>\` | \`${PICKED:-none}\` |"
+            echo "| last public release | \`${PUBLISHED:-none}\` |"
+            echo "| **would build FROM** | \`runpod/${FAMILY}${CHOSEN_SUFFIX}:${CHOSEN}\` |"
+            echo
+            if [ -z "${PICKED}" ]; then
+              echo "No \`-dev.<N>\` yet, so this falls back to the public release"
+              echo "and needs read on the public repos."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "::group::every tag in ${REPO}"
+          printf '%s\n' "${TAGS}"
+          echo "::endgroup::"
