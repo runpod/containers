@@ -16,6 +16,7 @@ ARG SLURM_VERSION
 ARG SLURM_SHA256
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 # mk-build-deps installs the build deps from debian/control; debuild --no-lintian builds the .debs into /usr/src.
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
@@ -33,6 +34,8 @@ RUN mk-build-deps --install \
     cp /usr/src/*.deb /slurm-debs/
 
 FROM ${BASE_IMAGE} AS parent
+
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 
 # ── CUDA dev toolchain ───
 # The CUDA bases start from nvidia/cuda:*-cudnn-runtime, not -cudnn-devel, and
