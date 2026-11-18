@@ -7,12 +7,23 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all
 ARG WHEEL_SRC
 ARG TORCH
 
+# pip steps run through pip-install-layer.sh so identical packages give an
+# identical layer. Keep LAYER_EPOCH constant. Mounts live under /tmp or /mnt:
+# a mount point BuildKit must create would leave a timestamped dir in the layer.
+ARG LAYER_EPOCH=1767225600
+# Symlink torch's pip CUDA libs to the base's copies where safe.
+ARG DEDUPE_CUDA=true
+
 # TORCH is a space-separated list of pip specs (e.g. "torch==2.8.0
 # torchvision==0.23.0"). `read -ra` splits it into a real bash array so pip receives
 # one argument per package instead of a single mashed-together string.
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=tmpfs,target=/tmp \
+    --mount=type=cache,id=/root/.cache/pip,target=/tmp/pip-cache,sharing=locked \
+    --mount=type=bind,source=.,target=/mnt \
     read -ra TORCH_PKGS <<< "${TORCH}" && \
-    PIP_CACHE_DIR=/root/.cache/pip python -m pip install \
+    dedupe=() && if [ "${DEDUPE_CUDA}" = true ]; then dedupe=(--dedupe-cuda); fi && \
+    LAYER_EPOCH="${LAYER_EPOCH}" PIP_CACHE_DIR=/tmp/pip-cache \
+    bash /mnt/pip-install-layer.sh "${dedupe[@]}" \
         --timeout 1000 \
         --retries 10 \
         --resume-retries 5 \
@@ -26,9 +37,12 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # build's.
 ARG TORCHAUDIO
 ARG AUDIO_INDEX
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=tmpfs,target=/tmp \
+    --mount=type=cache,id=/root/.cache/pip,target=/tmp/pip-cache,sharing=locked \
+    --mount=type=bind,source=.,target=/mnt \
     if [ -n "${TORCHAUDIO}" ]; then \
-        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHAUDIO}" \
+        LAYER_EPOCH="${LAYER_EPOCH}" PIP_CACHE_DIR=/tmp/pip-cache \
+        bash /mnt/pip-install-layer.sh --no-deps "${TORCHAUDIO}" \
             --index-url "https://download.pytorch.org/whl/${AUDIO_INDEX}"; \
     fi
 
@@ -37,13 +51,19 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # docker-bake.hcl); --no-deps so it can never pull a different torch.
 ARG TORCHCODEC
 ARG CODEC_SRC
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=tmpfs,target=/tmp \
+    --mount=type=cache,id=/root/.cache/pip,target=/tmp/pip-cache,sharing=locked \
+    --mount=type=bind,source=.,target=/mnt \
     if [ -n "${TORCHCODEC}" ]; then \
-        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHCODEC}" \
+        LAYER_EPOCH="${LAYER_EPOCH}" PIP_CACHE_DIR=/tmp/pip-cache \
+        bash /mnt/pip-install-layer.sh --no-deps "${TORCHCODEC}" \
             --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
     fi
 
 # Patched pins for packages that Grype reports as HIGH in the layers above.
 COPY --from=requirements requirements.txt /requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    PIP_CACHE_DIR=/root/.cache/pip python -m pip install --upgrade -r /requirements.txt
+RUN --mount=type=tmpfs,target=/tmp \
+    --mount=type=cache,id=/root/.cache/pip,target=/tmp/pip-cache,sharing=locked \
+    --mount=type=bind,source=.,target=/mnt \
+    LAYER_EPOCH="${LAYER_EPOCH}" PIP_CACHE_DIR=/tmp/pip-cache \
+    bash /mnt/pip-install-layer.sh --upgrade -r /requirements.txt

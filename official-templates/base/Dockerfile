@@ -47,6 +47,7 @@ FROM ${BASE_IMAGE} AS parent
 #    the version apt upgrades the library to the newest patch instead.
 #  - Nsight Compute (ncu, ~0.4 GB) is not installed:
 #    `apt-get install cuda-nsight-compute-12-8` adds it.
+# Also skipped: cuda-gdb TUIs for Python 3.8-3.10 (not installed) and CUPTI docs.
 # The dpkg filter is removed afterwards so it does not affect later installs.
 # The -dev holds mirror the devel image, which holds cuBLAS-dev and NCCL-dev.
 # pkgs and holds are split on purpose: they are lists of package specs.
@@ -63,6 +64,10 @@ RUN --mount=type=bind,source=cuda-dev,target=/tmp/cuda-dev \
       'path-exclude=/usr/local/cuda-*/targets/*/lib/*_static*.a' \
       'path-include=/usr/local/cuda-*/targets/*/lib/libcudart_static.a' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libnccl_static.a' \
+      'path-exclude=/usr/local/cuda-*/bin/cuda-gdb-python3.8-tui' \
+      'path-exclude=/usr/local/cuda-*/bin/cuda-gdb-python3.9-tui' \
+      'path-exclude=/usr/local/cuda-*/bin/cuda-gdb-python3.10-tui' \
+      'path-exclude=/usr/local/cuda-*/extras/CUPTI/doc/*' \
       > /etc/dpkg/dpkg.cfg.d/zz-runpod-no-cuda-static && \
     pkgs="$(grep -v '^#' "${lock}")" && \
     apt-get update --yes && \
@@ -126,8 +131,27 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # on CUDA 12.9, 13.0 and 13.2), and the image shipped a newer toolkit than its
 # tag names. The holds added here are lifted again, so `apt-get upgrade` in a
 # pod behaves as before, and the build fails if an NVIDIA package still moved.
+#
+# Static archives of the media/BLAS/HDF5 -dev packages are skipped (~100 MB);
+# `apt-get install --reinstall <package>` restores one.
 # hadolint ignore=SC2086
-RUN . /etc/os-release && \
+RUN printf '%s\n' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libav*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libsw*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libpostproc.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libx264.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libxvidcore.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libhdf5*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/liblapack*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libatlas.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libcblas.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libf77blas.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/atlas/*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/lapack/*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/blas/*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/openblas-pthread/*.a' \
+      > /etc/dpkg/dpkg.cfg.d/zz-runpod-no-static && \
+    . /etc/os-release && \
     case "${VERSION_ID}" in \
       24.04) release_pkgs="libatlas-base-dev libpostproc-dev software-properties-common" ;; \
       *) release_pkgs="libopenblas-dev" ;; \
@@ -156,6 +180,7 @@ RUN . /etc/os-release && \
       echo "NVIDIA packages changed during the upgrade:" >&2; \
       diff <(printf '%s\n' "${nvidia_before}") <(nvidia_pkgs) >&2; exit 1; \
     fi && \
+    rm /etc/dpkg/dpkg.cfg.d/zz-runpod-no-static && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
 
