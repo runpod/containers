@@ -33,6 +33,17 @@ def gpus_per_alive_node() -> list[int]:
     ]
 
 
+def shape_error(gpus: list[int], want: int) -> str | None:
+    """Why the alive nodes' GPU counts can't be `want` equal pipeline stages,
+    or None when they can."""
+    if len(gpus) != want:
+        return f"{len(gpus)} nodes are in Ray but NUM_NODES is {want}"
+    if min(gpus) == 0 or len(set(gpus)) != 1:
+        return (f"GPUs per node differ or are missing ({gpus}); pipeline "
+                "stages need the same GPU count on every node")
+    return None
+
+
 def main() -> int:
     want = int(sys.argv[1])
     # The entrypoint exported RAY_AUTH_TOKEN, so this joins as an authenticated
@@ -51,12 +62,9 @@ def main() -> int:
             next_log += LOG_EVERY_S
         time.sleep(POLL_S)
 
-    if len(gpus) > want:
-        log(f"{len(gpus)} nodes are in Ray but NUM_NODES is {want}")
-        return EXIT_SHAPE
-    if min(gpus) == 0 or len(set(gpus)) != 1:
-        log(f"GPUs per node differ or are missing ({gpus}); pipeline stages "
-            "need the same GPU count on every node")
+    error = shape_error(gpus, want)
+    if error:
+        log(error)
         return EXIT_SHAPE
     log(f"all {want} nodes joined, {gpus[0]} GPUs each")
     print(gpus[0])

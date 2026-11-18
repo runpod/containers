@@ -15,6 +15,9 @@ on:
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      - 'official-templates/ray-cluster/inference/start.sh'
+      - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
+      - 'official-templates/ray-cluster/inference/post_start.sh'
       # test_grafana_auth_proxy runs the real proxy.
       - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
       # test_comfyui_auth_proxy runs the real proxy.
@@ -32,6 +35,9 @@ on:
       - '.github/scripts/generate_test_manifest.py'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      - 'official-templates/ray-cluster/inference/start.sh'
+      - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
+      - 'official-templates/ray-cluster/inference/post_start.sh'
       # test_grafana_auth_proxy runs the real proxy.
       - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
       # test_comfyui_auth_proxy runs the real proxy.
