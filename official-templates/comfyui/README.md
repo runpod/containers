@@ -77,11 +77,13 @@ written to the pod log.
 ComfyUI has no login of its own, so it listens only inside the pod, and port
 8188 is served by a small proxy that checks every request, including the
 websocket the UI uses. On a fresh volume, open the `:8188` URL, read the
-one-time setup code from the pod logs, and choose a password of at least 12
+one-time setup code from the pod logs (look for a line starting
+`ComfyUI first-run setup code:`), and choose a password of at least 12
 characters. ComfyUI stays closed until setup completes. Only a salted password
 hash is saved at `/workspace/runpod-slim/.comfyui-auth` (mode `0600`); on a
 network volume it survives redeployment with the same volume. A fresh volume
-requires setup again. Never share the setup code or the pod logs containing it.
+requires setup again. If the code line has been trimmed from the logs, restart
+the pod to generate a new one. Never share the setup code or the pod logs containing it.
 
 Existing deployments can keep using `COMFYUI_PASSWORD`. It takes precedence
 over a saved hash. A configured password shorter than 12 characters is refused
