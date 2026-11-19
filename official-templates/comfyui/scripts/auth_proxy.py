@@ -194,11 +194,51 @@ def matches(candidate):
 
 
 def setup_page(error=""):
-    message = f'<p role="alert">{html.escape(error)}</p>' if error else ""
-    page = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up ComfyUI</title>
-<style>body{{font:16px system-ui;background:#181818;color:#eee;max-width:28rem;margin:8vh auto;padding:1rem}}input,button{{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0 1rem;font:inherit}}button{{cursor:pointer}}p[role=alert]{{color:#ff9999}}</style>
-<h1>Set up ComfyUI access</h1><p>Find the one-time setup code in this pod's Runpod logs. Choose a password of at least 12 characters.</p>{message}
-<form method="post" action="/__runpod/setup"><label>Setup code<input name="code" required autocomplete="one-time-code"></label><label>New password<input type="password" name="password" minlength="12" required autocomplete="new-password"></label><label>Confirm password<input type="password" name="confirm" minlength="12" required autocomplete="new-password"></label><button type="submit">Set password</button></form></html>'''
+    message = f'<p class="error" role="alert">{html.escape(error)}</p>' if error else ""
+    page = '''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up ComfyUI | Runpod</title>
+<style>
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #050505; color: #f7f7f8; }
+.layout { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.main { display: flex; align-items: center; justify-content: center; padding: 48px 32px; }
+.content { width: min(100%, 420px); }
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; color: #fff; font-weight: 700; font-size: 18px; letter-spacing: -.03em; }
+.brand svg { width: 38px; height: 38px; }
+.eyebrow { color: #9b82ff; font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: clamp(29px, 3vw, 38px); line-height: 1.12; letter-spacing: -.04em; margin: 0 0 14px; font-weight: 600; }
+.intro { color: #a4a3ab; line-height: 1.55; margin: 0 0 30px; font-size: 15px; }
+.error { background: #351b24; border: 1px solid #8b344d; border-radius: 8px; color: #ffb5c3; padding: 12px 14px; margin: 0 0 20px; }
+label { display: block; font-size: 13px; font-weight: 500; margin: 0 0 17px; }
+input { display: block; width: 100%; height: 46px; margin-top: 8px; padding: 0 14px; border: 1px solid #34343a; border-radius: 6px; background: #09090b; color: #fff; font: inherit; outline: none; }
+input::placeholder { color: #696971; }
+input:focus { border-color: #8064ef; box-shadow: 0 0 0 2px #8064ef55; }
+button { width: 100%; height: 46px; margin-top: 9px; border: 0; border-radius: 6px; background: #4c28b3; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+button:hover { background: #6239d6; }
+button:focus-visible { outline: 2px solid #ae9aff; outline-offset: 3px; }
+.note { color: #8e8d97; font-size: 12px; line-height: 1.5; margin-top: 22px; }
+.side { position: relative; display: flex; flex-direction: column; justify-content: center; overflow: hidden; padding: clamp(36px, 7vw, 110px); background: radial-gradient(circle at 78% 18%, #43208d 0, transparent 35%), linear-gradient(145deg, #171125, #130e1f 52%, #08070d); border-left: 1px solid #292334; }
+.side::before { content: ""; position: absolute; inset: 0; opacity: .28; background-image: linear-gradient(#9b82ff18 1px, transparent 1px), linear-gradient(90deg, #9b82ff18 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(to bottom, transparent, black 22%, black 80%, transparent); }
+.side-inner { position: relative; max-width: 500px; }
+.side-mark { display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin-bottom: 34px; border: 1px solid #a58cff77; border-radius: 18px; background: #9b82ff24; color: #c5b6ff; font-size: 32px; }
+.side h2 { margin: 0 0 18px; font-size: clamp(32px, 4vw, 52px); line-height: 1.08; letter-spacing: -.045em; font-weight: 600; }
+.side p { color: #bcb5ca; line-height: 1.6; font-size: 16px; max-width: 400px; }
+.steps { display: flex; gap: 9px; margin-top: 38px; }
+.steps span { height: 4px; width: 44px; border-radius: 4px; background: #a889ff; }
+.steps span + span { background: #77679855; }
+@media (max-width: 760px) { .layout { display: block; } .main { min-height: 100vh; padding: 34px 22px; } .brand { margin-bottom: 38px; } .side { display: none; } }
+</style></head><body><div class="layout"><main class="main"><div class="content">
+<div class="brand"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M20 3 35 11.5v17L20 37 5 28.5v-17L20 3Z M5 11.5 20 20l15-8.5M20 20v17M12 7l15 9" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>runpod</span></div>
+<p class="eyebrow">ComfyUI · First-time setup</p><h1>Secure your workspace</h1>
+<p class="intro">Enter the one-time setup code from your pod logs, then create a password to access ComfyUI.</p>
+__ERROR__
+<form method="post" action="/__runpod/setup"><label for="code">Setup code<input id="code" name="code" required autocomplete="one-time-code" placeholder="Code from your pod logs"></label>
+<label for="password">New password<input id="password" type="password" name="password" minlength="12" required autocomplete="new-password" placeholder="At least 12 characters"></label>
+<label for="confirm">Confirm password<input id="confirm" type="password" name="confirm" minlength="12" required autocomplete="new-password" placeholder="Enter your password again"></label>
+<button type="submit">Set password and continue</button></form>
+<p class="note">Your password is stored as a hash on this pod's volume. Keep the setup code private.</p>
+</div></main><aside class="side"><div class="side-inner"><div class="side-mark" aria-hidden="true">✦</div><h2>Your workspace,<br>your access.</h2><p>One password protects the ComfyUI interface and its API. With a network volume, your setup follows you to the next pod.</p><div class="steps" aria-hidden="true"><span></span><span></span><span></span></div></div></aside></div></body></html>'''.replace("__ERROR__", message)
     return web.Response(text=page, content_type="text/html", headers={"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"})
 
 
