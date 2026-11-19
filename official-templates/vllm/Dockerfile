@@ -27,21 +27,23 @@ RUN . /etc/os-release && \
     done
 
 # mooncake: Go etcd wrapper with critical stdlib/x/net CVEs; only used for
-# multi-node KV transfer, which a single Pod never does. PyNvVideoCodec 2.0.4
-# and opencv-python-headless 5.0.0.93 bundle FFmpeg 8.1.1; PyNvVideoCodec
-# 2.2.4 bundles 9.0.1 and opencv 5.1.0.95 bundles 9.0.2 (needs numpy>=2).
-RUN mooncake="$(python3 -c 'import importlib.metadata as m; print(" ".join(d.metadata["Name"] for d in m.distributions() if d.metadata["Name"].lower().startswith("mooncake")))')" && \
-    if [ -n "$mooncake" ]; then read -ra pkgs <<< "$mooncake" && uv pip uninstall --system "${pkgs[@]}"; fi && \
-    env -u UV_OVERRIDE uv pip install --system --no-cache PyNvVideoCodec==2.2.4 dnspython==2.9.2 \
+# multi-node KV transfer, which a single Pod never does. PyNvVideoCodec: its
+# newest release (2.2.4) bundles FFmpeg 9.0.1 with HIGH CVEs fixed in 9.0.2;
+# vLLM imports it only for the opt-in pynvvideocodec video backend (default is
+# opencv). opencv-python-headless 5.0.0.93 bundles FFmpeg 8.1.1; 5.1.0.95
+# bundles 9.0.2 and needs numpy>=2.
+RUN drop="$(python3 -c 'import importlib.metadata as m; print(" ".join(d.metadata["Name"] for d in m.distributions() if d.metadata["Name"].lower().startswith(("mooncake", "pynvvideocodec"))))')" && \
+    if [ -n "$drop" ]; then read -ra pkgs <<< "$drop" && uv pip uninstall --system "${pkgs[@]}"; fi && \
+    env -u UV_OVERRIDE uv pip install --system --no-cache dnspython==2.9.2 \
       opencv-python-headless==5.1.0.95 && \
     python3 -c 'import importlib.metadata as m, importlib.util as u; \
 assert u.find_spec("mooncake") is None, "mooncake still installed"; \
-assert m.version("PyNvVideoCodec") == "2.2.4", m.version("PyNvVideoCodec"); \
+assert u.find_spec("PyNvVideoCodec") is None, "PyNvVideoCodec still installed"; \
 assert m.version("dnspython") == "2.9.2", m.version("dnspython"); \
 assert m.version("opencv-python-headless") == "5.1.0.95", m.version("opencv-python-headless"); \
 import cv2, numpy; assert int(numpy.__version__.split(".")[0]) >= 2, numpy.__version__'
 
-# Fail on any bundled FFmpeg below 9.0, naming the file. Same files Grype's
+# Fail on any bundled FFmpeg below 9.0.2, naming the file. Same files Grype's
 # ffmpeg rule reads (libav*, libswresample*, ffmpeg), minus apt-owned ones,
 # which Grype skips too.
 RUN uv cache clean && \
@@ -51,10 +53,10 @@ RUN uv cache clean && \
       dpkg -S "$f" >/dev/null 2>&1 && continue; \
       v="$(grep -a -oE 'FFmpeg version [0-9]+\.[0-9]+(\.[0-9]+)?' "$f" | head -1 | awk '{print $3}')" || true; \
       echo "bundled FFmpeg: $f (${v:-no version string})"; \
-      if [ -n "$v" ] && dpkg --compare-versions "$v" lt 9.0; then stale+="  $f ($v)"$'\n'; fi; \
+      if [ -n "$v" ] && dpkg --compare-versions "$v" lt 9.0.2; then stale+="  $f ($v)"$'\n'; fi; \
     done < <(find / \( -path /proc -o -path /sys -o -path /dev -o -path /var/lib/dpkg \) -prune -o -type f \
                \( -name 'libav*' -o -name 'libswresample*' -o -name 'ffmpeg' \) -print0) && \
-    if [ -n "$stale" ]; then printf 'FFmpeg below 9.0 still in the image:\n%s' "$stale"; exit 1; fi
+    if [ -n "$stale" ]; then printf 'FFmpeg below 9.0.2 still in the image:\n%s' "$stale"; exit 1; fi
 
 COPY --chmod=0644 scripts/runpod_vllm_auth.py /opt/runpod/vllm/runpod_vllm_auth.py
 COPY --chmod=0755 scripts/start.sh /start.sh

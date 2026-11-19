@@ -46,6 +46,7 @@ With an empty start command vLLM is not started (it would exit with no model); t
 - SSH: the Pod's **Connect** button works with a key from your Runpod account (`PUBLIC_KEY`), password login is disabled. SSH sessions do not see the Pod's environment variables, so `VLLM_API_KEY` stays out of shells. There is no JupyterLab.
 - Models are cached in `HF_HOME=/workspace/.huggingface`, on the Pod volume, so a restart does not download them again.
 - Mooncake is removed, so the Mooncake KV-transfer connectors (multi-node disaggregated serving) are not available.
+- PyNvVideoCodec is removed, so `VLLM_VIDEO_LOADER_BACKEND=pynvvideocodec` (GPU video decoding) is not available. The default `opencv` video backend is unaffected.
 
 ### Links
 
