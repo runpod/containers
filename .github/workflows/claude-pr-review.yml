@@ -1,0 +1,132 @@
+name: Claude PR Review
+
+# Automatic Claude review on every PR into `develop` (feature/fix) and every
+# hotfix PR into `main`. Release PRs (develop -> main) and back-merges
+# (main -> develop) are skipped: their commits were already reviewed one by one.
+# Advisory only — do NOT add this to the ruleset's required status checks
+# (fork and Dependabot PRs skip it, and a skipped required check blocks merge).
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# Comments are posted with this job's GITHUB_TOKEN (as github-actions[bot]):
+# scoped to these permissions and this repo, gone when the job ends, and no
+# GitHub App install needed.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
+      !(github.base_ref == 'develop' && github.head_ref == 'main')
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 1
+
+      # The instructions live in .claude/pr-review.md and never come from the
+      # PR under review once any branch has them, so a PR cannot rewrite the
+      # rules it is reviewed by. Order: the base branch, then develop (hotfix
+      # PRs into main before the file has been released to main), and the PR's
+      # own copy only when neither has it, i.e. for the PR that adds the file.
+      # The header above the first `---` is for humans and is dropped.
+      - name: Load review instructions
+        id: instructions
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          file=.claude/pr-review.md
+          from_branch() {
+            git fetch --no-tags --depth=1 origin "$1" &&
+              git cat-file -e "FETCH_HEAD:$file" 2>/dev/null &&
+              text="$(git show "FETCH_HEAD:$file")"
+          }
+          if from_branch "$BASE_REF"; then
+            echo "Using $file from $BASE_REF"
+          elif [[ "$BASE_REF" != develop ]] && from_branch develop; then
+            echo "::notice::$file is not on $BASE_REF yet; using develop's copy"
+          elif [[ -f "$file" ]]; then
+            echo "::notice::$file is on no branch yet; using the PR's copy (the PR that adds it)"
+            text="$(cat "$file")"
+          else
+            echo "::error::$file not found on $BASE_REF, develop or in the PR"
+            exit 1
+          fi
+          eof="EOF_$(openssl rand -hex 8)"
+          {
+            echo "text<<$eof"
+            printf '%s\n' "$text" | awk 'body; /^---$/ { body = 1 }'
+            echo "$eof"
+          } >> "$GITHUB_OUTPUT"
+
+      # Earlier runs' inline threads, so a re-run on a new push does not post
+      # the same findings again. Fetched here rather than giving Claude
+      # `gh api`, and GraphQL because REST has no resolved/outdated state.
+      - name: Load earlier review threads
+        id: threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # shellcheck disable=SC2016 # $owner etc. are GraphQL variables
+          list="$(gh api graphql -F owner="$OWNER" -F name="$REPO" -F pr="$PR" -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      isResolved isOutdated path line originalLine
+                      comments(first: 1) { nodes { author { login } body } }
+                    }
+                  }
+                }
+              }
+            }' --jq '
+            .data.repository.pullRequest.reviewThreads.nodes[]
+            | select(.comments.nodes[0].author.login | test("^github-actions"))
+            | (if .isResolved then "resolved" elif .isOutdated then "outdated" else "open" end) as $s
+            | "- [\($s)] \(.path):\(.line // .originalLine // "?") \(.comments.nodes[0].body | gsub("\\s+"; " ") | .[0:400])"')"
+          echo "Earlier threads: $(printf '%s' "$list" | grep -c . || true)"
+          eof="EOF_$(openssl rand -hex 8)"
+          {
+            echo "list<<$eof"
+            printf '%s\n' "${list:-none}"
+            echo "$eof"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1.0.282
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allow_fork_prs: "false"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR TITLE: ${{ github.event.pull_request.title }}
+            BASE <- HEAD: ${{ github.base_ref }} <- ${{ github.head_ref }}
+
+            ${{ steps.instructions.outputs.text }}
+
+            ## Inline threads already posted by earlier runs on this PR
+            Format: [open|outdated|resolved] path:line first 400 chars.
+            ${{ steps.threads.outputs.list }}
+          claude_args: |
+            --model claude-opus-5-5
+            --max-turns 60
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
