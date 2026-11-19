@@ -259,9 +259,33 @@ class StartScript(unittest.TestCase):
     def test_api_key_on_cmd_does_not_start_vllm(self):
         """vLLM's /v1 check would take this key and the middleware VLLM_API_KEY:
         with two different keys, neither opens /v1."""
-        for cmd in (("m", "--api-key", "other"), ("m", "--api-key=other")):
+        for cmd in (
+            ("m", "--api-key", "other"),
+            ("m", "--api-key=other"),
+            ("m", "--api_key", "other"),
+            ("m", "--api-ke", "other"),
+            ("m", "--api-k=other"),
+        ):
             self.assert_refuses({"VLLM_API_KEY": KEY}, cmd=cmd,
                                 reason="--api-key is set in the container start command")
+
+    def test_vllm_parser_finding_a_key_does_not_start_vllm(self):
+        """E.g. api-key in a --config file: only vLLM's own parser sees it."""
+        self.fake_python3(exit_code=3)
+        self.assert_refuses({"VLLM_API_KEY": KEY}, cmd=("m", "--config", "c.yaml"),
+                            reason="--api-key is set in the container start command")
+
+    def test_vllm_parser_failing_leaves_the_decision_to_vllm(self):
+        self.fake_python3(exit_code=1)
+        out = self.start({"VLLM_API_KEY": KEY}, "m")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        args, _ = self.recorded()
+        self.assertEqual(args[:2], ["serve", "m"])
+
+    def fake_python3(self, exit_code):
+        fake = self.tmp / "bin" / "python3"
+        fake.write_text(f"#!/bin/bash\nexit {exit_code}\n")
+        fake.chmod(0o755)
 
     def assert_refuses(self, env, cmd=("m",), reason="VLLM_API_KEY is not set"):
         if self.record.exists():

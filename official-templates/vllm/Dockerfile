@@ -59,6 +59,7 @@ RUN uv cache clean && \
     if [ -n "$stale" ]; then printf 'FFmpeg below 9.0.2 still in the image:\n%s' "$stale"; exit 1; fi
 
 COPY --chmod=0644 scripts/runpod_vllm_auth.py /opt/runpod/vllm/runpod_vllm_auth.py
+COPY --chmod=0644 scripts/runpod_vllm_cmdcheck.py /opt/runpod/vllm/runpod_vllm_cmdcheck.py
 COPY --chmod=0755 scripts/start.sh /start.sh
 
 RUN register="$(python3 -c 'import importlib.util as u; print(u.find_spec("vllm").submodule_search_locations[0])')" && \

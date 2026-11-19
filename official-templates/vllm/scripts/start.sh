@@ -57,14 +57,18 @@ key="${key%"${key##*[![:space:]]}"}"
 
 # vLLM's own /v1 check would use this key and the middleware VLLM_API_KEY, so
 # with two different keys no key opens /v1. vLLM also logs its CLI args.
+refuse_api_key() {
+    refuse "--api-key is set in the container start command." \
+        "Remove it (and any api-key in a --config file) and set the" \
+        "VLLM_API_KEY environment variable instead. If it held a real key," \
+        "rotate it: the start command is visible in the Pod settings."
+}
+
+# Fast path for the usual spellings; vLLM's parser below covers the rest.
 for arg in "$@"; do
-    case "$arg" in
-        --api-key | --api-key=*)
-            refuse "--api-key is set in the container start command." \
-                "Remove it and set the VLLM_API_KEY environment variable instead." \
-                "If it held a real key, rotate it: the start command is visible" \
-                "in the Pod settings."
-            ;;
+    name="${arg%%=*}"
+    case "${name//_/-}" in
+        --api-k | --api-ke | --api-key) refuse_api_key ;;
     esac
 done
 
@@ -83,11 +87,21 @@ if [ "$#" -eq 0 ]; then
         "  Qwen/Qwen3-8B --max-model-len 16384"
 fi
 
+# Last, so they override any --host/--port in CMD.
+serve_args=("$@" --middleware "$AUTH_MIDDLEWARE" --host "$LISTEN_HOST" --port "$LISTEN_PORT")
+
+# vLLM's own parser on the exact serve args: abbreviations, --config files.
+# Only exit 3 means a key; anything vLLM rejects is left for it to report.
+rc=0
+python3 "${AUTH_MODULE_DIR}/runpod_vllm_cmdcheck.py" "${serve_args[@]}" || rc=$?
+if [ "$rc" -eq 3 ]; then
+    refuse_api_key
+fi
+
 export VLLM_API_KEY="$key"
 echo "Authentication on: every route except /health, /ping and /metrics"
 echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
 export PYTHONPATH="${AUTH_MODULE_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 
 echo "Starting vLLM on ${LISTEN_HOST}:${LISTEN_PORT}"
-# Last, so they override any --host/--port in CMD.
-exec vllm serve "$@" --middleware "$AUTH_MIDDLEWARE" --host "$LISTEN_HOST" --port "$LISTEN_PORT"
+exec vllm serve "${serve_args[@]}"

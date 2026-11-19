@@ -128,6 +128,20 @@ jobs:
             --entrypoint python3 "$IMAGE" -W ignore /tmp/vllm_route_sweep.py
           say routes "every route of vLLM's app needs the key; probes open"
 
+          # start.sh asks vLLM's own parser whether the start command sets
+          # --api-key; 3 means yes, 0 means no.
+          check() {
+            docker run --rm --entrypoint bash "$IMAGE" -c \
+              'printf "api-key: x\n" > /tmp/c.yaml; python3 /opt/runpod/vllm/runpod_vllm_cmdcheck.py "$@"; echo $?' _ "$@"
+          }
+          for cmd in "m --api-key x" "m --api_key x" "m --api-ke=x" "m --config /tmp/c.yaml"; do
+            # shellcheck disable=SC2086
+            test "$(check $cmd)" = 3 || { echo "::error::cmdcheck missed: $cmd"; exit 1; }
+          done
+          test "$(check m --max-model-len 4096 --api-server-count 1)" = 0 \
+            || { echo "::error::cmdcheck flagged a start command without a key"; exit 1; }
+          say cmdcheck "--api-key found in any spelling and in --config; not flagged otherwise"
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:

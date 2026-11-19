@@ -26,7 +26,7 @@ Any OpenAI SDK works, with `base_url="https://<pod-id>-8000.proxy.runpod.net/v1"
 
 Open without a key: `/health`, `/ping` and `/metrics` (exact paths). Everything else returns `401`, including routes vLLM's own `--api-key` leaves open, such as `/invocations`, `/tokenize` and `/scale_elastic_ep`. A route added in a future vLLM release is closed by default.
 
-The key is never printed to the Pod logs. Do not pass `--api-key` in the container start command: vLLM prints its arguments at startup, so the key would show up in the logs. The image warns if you do.
+The key is never printed to the Pod logs. Do not set `--api-key` in the container start command, in any spelling or in a `--config` file: vLLM's own `/v1` check would then use a second key, and it prints its arguments at startup. If you do, vLLM is not started and the Logs tab says why.
 
 ### Container start command
 
