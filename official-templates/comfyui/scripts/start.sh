@@ -773,6 +773,49 @@ configure_manager_config() {
     touch "$marker"
 }
 
+# comfyui_manager is patched in the image (manager-patches/ in the Dockerfile)
+# and lives in the system site-packages the venv reaches through
+# --system-site-packages. A copy inside the venv comes first on sys.path and
+# would shadow it, running a Manager without the 403s on update_comfyui,
+# comfyui_switch_version, share and the credential routes. So: drop any such
+# copy, and when the workspace ComfyUI asks for another version, say so rather
+# than install it. The fixes travel with the image, not with the workspace.
+pin_image_manager() {
+    local pinned have
+
+    # Fail open: a crashed probe must not abort startup (set -e).
+    if python - <<'PY'
+import importlib.metadata as md
+import os
+import sys
+
+venv = os.path.realpath(sys.prefix) + os.sep
+for dist in md.distributions():
+    name = (dist.metadata["Name"] or "").lower().replace("_", "-")
+    if name != "comfyui-manager":
+        continue
+    where = os.path.realpath(str(dist.locate_file("")))
+    if (where + os.sep).startswith(venv):
+        print(f"ComfyUI-Manager: a copy in {where} shadows the image's patched one; removing it.")
+        sys.exit(0)
+sys.exit(1)
+PY
+    then
+        python -m pip uninstall -y comfyui_manager > /dev/null 2>&1 \
+            || echo "WARNING: could not remove it; ComfyUI-Manager runs without the Runpod fixes."
+    fi
+
+    [ -f "$COMFYUI_DIR/manager_requirements.txt" ] || return 0
+    pinned=$(tr -d '\r' < "$COMFYUI_DIR/manager_requirements.txt" \
+        | grep -oE '^comfyui[-_]manager==[^[:space:];#]+' | head -1 | cut -d= -f3)
+    have=$(python -c 'import importlib.metadata as m; print(m.version("comfyui_manager"))' 2>/dev/null || true)
+    if [ -n "$pinned" ] && [ -n "$have" ] && [ "$pinned" != "$have" ]; then
+        echo "WARNING: the workspace ComfyUI asks for ComfyUI-Manager $pinned; this image ships $have."
+        echo "         The image's Manager carries the Runpod fixes, so it is the one that runs."
+        echo "         Redeploy on a tag whose ComfyUI pins $pinned if you need that version."
+    fi
+}
+
 # ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
 # to exact versions, and the workspace checkout can move away from the image via
 # Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
@@ -780,20 +823,13 @@ configure_manager_config() {
 # workflow-templates sub-packages; PIP_CONSTRAINT keeps torch where it is.
 sync_comfyui_pinned_packages() {
     local requirements="$COMFYUI_DIR/requirements.txt"
-    # ComfyUI loads the Manager from the comfyui_manager package and pins the
-    # version it expects in manager_requirements.txt, so that pin is checked
-    # with the rest.
-    local manager_requirements="$COMFYUI_DIR/manager_requirements.txt"
     local installed pins spec name have
-    local missing=() sources=()
+    local missing=()
 
-    if [ -f "$requirements" ]; then
-        sources+=("$requirements")
-    fi
-    if [ -f "$manager_requirements" ]; then
-        sources+=("$manager_requirements")
-    fi
-    if [ "${#sources[@]}" = "0" ]; then
+    # manager_requirements.txt is deliberately not read here: comfyui_manager is
+    # patched in the image and installing it would put an unpatched copy in the
+    # venv, ahead of the patched one on sys.path. pin_image_manager owns it.
+    if [ ! -f "$requirements" ]; then
         return
     fi
 
@@ -808,10 +844,10 @@ sync_comfyui_pinned_packages() {
 
     # Only exact pins; every other line in the file is a range we leave alone.
     # torch and friends are kept aligned by /opt/comfyui-runtime-constraints.txt.
-    pins=$(cat "${sources[@]}" | tr -d '\r' \
+    pins=$(tr -d '\r' < "$requirements" \
         | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==[^[:space:];#]+$' \
         | tr 'A-Z_' 'a-z-' \
-        | grep -vE '^(torch|torchvision|torchaudio)==' || true)
+        | grep -vE '^(torch|torchvision|torchaudio|comfyui-manager)==' || true)
 
     while read -r spec; do
         if [ -z "$spec" ] || grep -qxF "$spec" <<< "$installed"; then
@@ -1432,6 +1468,7 @@ printf 'if [ -f "%s/bin/activate" ]; then . "%s/bin/activate"; fi\n' \
 echo "Warming up pip (Manager timeout is 30s)..."
 time python -m pip --version
 
+pin_image_manager
 sync_comfyui_pinned_packages
 
 log_cuda_venv_diagnostics

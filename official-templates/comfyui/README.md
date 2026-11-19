@@ -61,15 +61,17 @@ If you have an existing pod created with an older version of this template (CUDA
 
 ComfyUI-Manager 4.x replaces the old Manager interface with the Nodes Manager built
 into ComfyUI. The familiar **Manager** button is gone, and so are the screens behind
-it — installing and updating custom nodes now happens in the Nodes Manager, reached
-from **Extensions** in the top bar.
+it — installing and updating custom nodes now happens in the Nodes Manager, which
+opens from the **Extensions** button at the top right of the canvas, next to the
+sidebar toggle. It is an icon, and the name shows on hover.
 
 Two things are not where they used to be. **Update ComfyUI** moved from the Manager to
 the help menu (the **?** icon at the bottom of the sidebar). The image refuses it either
 way, as it always has: the ComfyUI version belongs to the tag, and you change it by
-starting a pod on a different one. Snapshots have no screen at all in the new interface;
-the files and the API endpoints are still there, and the old interface still reads
-snapshots you saved before.
+starting a pod on a different one, which leaves your models, outputs, settings and
+installed custom nodes on the volume untouched. Snapshots have no screen at all in the
+new interface; the files and the API endpoints are still there, and the old interface
+still reads snapshots you saved before.
 
 To get the old interface back, add this to `/workspace/runpod-slim/comfyui_args.txt` and
 restart the pod:
