@@ -30,8 +30,12 @@ from typing import Optional
 # our package imports work regardless of how the script was launched.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from runpod_smoke import api, config
+from runpod_smoke import api, cluster_report, config
+from runpod_smoke.cluster import (
+    cluster_catalog, cluster_types_for, parse_cluster_types,
+)
 from runpod_smoke.instances import (
+    _apply_exclude_filter,
     cuda_axis_for,
     cuda_versions_offered,
     discover_gpu_catalog,
@@ -47,7 +51,7 @@ from runpod_smoke.manifest import (
     parse_manifest,
 )
 from runpod_smoke.pod import list_registries
-from runpod_smoke.runner import test_image
+from runpod_smoke.runner import pod_run, test_image
 
 
 # Each entry: (image, group, instances-to-try, cuda_pin, cloud). One pod is
@@ -87,6 +91,16 @@ def _check_prereqs(manifest_path: Path) -> Optional[int]:
     if not manifest_path.is_file():
         log(f"Images manifest not found: {manifest_path}")
         return 1
+    if config.RUNPOD_ENV not in config.VALID_ENVS:
+        log(
+            f"RUNPOD_ENV={config.RUNPOD_ENV!r} is not one of "
+            f"{', '.join(config.VALID_ENVS)}"
+        )
+        return 1
+    log(
+        f"target: RUNPOD_ENV={config.RUNPOD_ENV} (API {config.API_ORIGIN}, "
+        f"proxy *.{config.PROXY_DOMAIN})"
+    )
     ok, detail = api.api_available()
     if not ok:
         log(detail)
@@ -321,6 +335,60 @@ def _apply_cuda_axis(group: str, raw: object) -> None:
         )
 
 
+def _positive_int(raw: object, field: str, group: str, default: int) -> int:
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(
+            f"group '{group}': {field} must be a positive integer, got {raw!r}"
+        )
+    return value
+
+
+def _apply_cluster_flags(grp: str, contents: dict) -> None:
+    """`cluster: true` runs the group as an Instant Cluster (cluster_runner).
+
+    Jupyter is part of the cluster contract, so it is switched on rather
+    than left to `test_jupyter`. Refuses to run outside dev unless
+    ALLOW_PROD_CLUSTERS=1 — see config.ALLOW_PROD_CLUSTERS."""
+    if not _normalize_bool(contents.get("cluster")):
+        return
+    if config.RUNPOD_ENV != "dev" and not config.ALLOW_PROD_CLUSTERS:
+        raise ValueError(
+            f"group '{grp}' is a cluster group but RUNPOD_ENV={config.RUNPOD_ENV}; "
+            "prod clusters are billed per node, so set ALLOW_PROD_CLUSTERS=1 to "
+            "confirm, or use RUNPOD_ENV=dev with a dev API key."
+        )
+    config.GROUP_CLUSTER[grp] = True
+    config.GROUP_TEST_JUPYTER[grp] = True
+    nodes = _positive_int(
+        contents.get("cluster_nodes"), "cluster_nodes", grp,
+        config.DEFAULT_CLUSTER_NODES,
+    )
+    config.GROUP_CLUSTER_NODES[grp] = nodes
+    gpus = _positive_int(
+        contents.get("cluster_gpus_per_node"), "cluster_gpus_per_node", grp, 0,
+    )
+    if gpus:
+        config.GROUP_CLUSTER_GPUS_PER_NODE[grp] = gpus
+    if contents.get("cluster_types") is not None:
+        config.GROUP_CLUSTER_TYPES[grp] = parse_cluster_types(
+            contents["cluster_types"], f"group '{grp}' cluster_types",
+        )
+    types = cluster_types_for(grp)
+    ignored = [k for k in ("check_all_gpu", "cuda_versions") if contents.get(k)]
+    log(
+        f"group '{grp}': cluster=true ({nodes} nodes x "
+        f"{gpus or 'smallest offered'} GPU(s); SSH + Jupyter on every node, "
+        f"Grafana on node-0 :{config.GRAFANA_PORT}; types {' -> '.join(types)})"
+        + (f" — ignoring {', '.join(ignored)}" if ignored else "")
+    )
+
+
 def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     """Populate the per-group dicts on `config` that `pod.create_pod` and
     `runner.test_pair` consult at run-time: `GROUP_MIN_CUDA` (fallback
@@ -367,6 +435,8 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
                 "(expose as <port>/http, probe public proxy first)"
             )
     for grp, contents in manifest.items():
+        _apply_cluster_flags(grp, contents)
+    for grp, contents in manifest.items():
         _apply_hygiene_flags(grp, contents)
     for grp, contents in manifest.items():
         _apply_cuda_axis(grp, contents.get("cuda_versions"))
@@ -396,8 +466,31 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
 def _resolve_all_instances(manifest: dict[str, dict]) -> dict[str, list[str]]:
     """Per-group instance lookup — done up-front so we can warn about
     typos / empty lists once, instead of per-job."""
-    return {grp: resolve_instances(grp, contents)
-            for grp, contents in manifest.items()}
+    return {
+        grp: (
+            _resolve_cluster_instances(grp, contents)
+            if config.GROUP_CLUSTER.get(grp)
+            else resolve_instances(grp, contents)
+        )
+        for grp, contents in manifest.items()
+    }
+
+
+def _resolve_cluster_instances(group: str, contents: dict) -> list[str]:
+    """Cluster groups take their explicit `instances:` as given; without
+    them, every GPU type Instant Clusters offer, cheapest node first. The
+    per-pod budget/vRAM filters don't apply — cluster pricing differs."""
+    if contents.get("instances"):
+        return resolve_instances(group, contents)
+    catalog = cluster_catalog() or []
+    names = [gpu.gpu_id for gpu in catalog]
+    names = _apply_exclude_filter(
+        names, list(contents.get("exclude_instances") or []), group_name=group,
+    )
+    log(
+        f"group '{group}': cluster GPU candidates: {', '.join(names) or '(none)'}"
+    )
+    return names
 
 
 def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
@@ -409,6 +502,8 @@ def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
         for instances in resolved.values()
         for inst in instances
         if not config.is_cpu_instance(inst) and not is_known_gpu(inst)
+        # Cluster candidates from the cluster catalog are gpu ids.
+        and inst not in config.GPU_ID_MAP.values()
     })
     if not unmapped:
         return
@@ -468,6 +563,10 @@ def _build_jobs(
             continue
         if group in config.CPU_GROUP_NAMES and not first_pass:
             continue
+        # Clusters are one tier with no CUDA axis: plan them once.
+        is_cluster = config.GROUP_CLUSTER.get(group, False)
+        if is_cluster and not first_pass:
+            continue
         instances = resolved.get(group, [])
         if not instances:
             if not first_pass:
@@ -488,7 +587,9 @@ def _build_jobs(
             or config.GROUP_CUDA_VERSIONS.get(group)
         )
         for img in contents.get("images", []):
-            if cuda_axis and check_all:
+            if is_cluster:
+                jobs.append((img, group, instances, "", cloud))
+            elif cuda_axis and check_all:
                 jobs.extend(
                     _cuda_matrix_jobs(img, group, instances, results, cloud)
                 )
@@ -732,7 +833,9 @@ def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
         pending = [i for i, r in enumerate(final) if r[1] in _RETRYABLE]
         if not pending:
             break
-        delay = config.SKIP_RETRY_DELAY * attempt
+        delay = config.SKIP_RETRY_DELAY * (
+            1 if config.SKIP_RETRY_BACKOFF == "fixed" else attempt
+        )
         print()
         log(
             f"::notice::{len(pending)} job(s) ended SKIP/UNVERIFIED (no "
@@ -940,6 +1043,31 @@ def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
         log(f"warn: could not write results JSON: {exc}")
 
 
+def _print_cluster_reports() -> None:
+    """One check-by-node table per cluster created, under the result lines."""
+    if not cluster_report.REPORTS:
+        return
+    print()
+    print(" CLUSTER CHECKS ".center(84, "-"))
+    for report in cluster_report.REPORTS:
+        print()
+        for line in report.render_text():
+            print(line)
+
+
+def _print_fallback_reports() -> None:
+    """For every cluster image tested on a single pod instead: why, where,
+    and each check's result, with the cluster-only checks shown as not run."""
+    if not cluster_report.FALLBACK_REPORTS:
+        return
+    print()
+    print(" SINGLE-POD FALLBACK ".center(84, "-"))
+    for report in cluster_report.FALLBACK_REPORTS:
+        print()
+        for line in report.render_text():
+            print(line)
+
+
 def _print_summary(results: list[Result]) -> int:
     """Print the SUMMARY block and return the exit code.
 
@@ -987,6 +1115,8 @@ def _print_summary(results: list[Result]) -> int:
             )
             if line is not None:
                 print(line)
+    _print_cluster_reports()
+    _print_fallback_reports()
 
     _emit_step_summary(results, counts)
     _write_results_json(results, counts)
@@ -1064,9 +1194,117 @@ def main() -> int:
 
     results: list[Result] = []
     jobs = _plan_all_clouds(manifest, group_filter, results)
+    started = time.monotonic()
     _run_jobs(jobs, results)
+    _run_cluster_pod_fallback(
+        manifest, group_filter, results, waited_s=time.monotonic() - started,
+    )
 
     return _print_summary(results)
+
+
+FALLBACK_NOTE = (
+    "single-pod fallback, no Instant Cluster capacity; multi-node checks "
+    "not run (see SINGLE-POD FALLBACK)"
+)
+
+
+def _cluster_pod_fallback_jobs(
+    manifest: dict[str, dict],
+    group_filter: Optional[str],
+    results: list[Result],
+    waited_s: float = 0.0,
+) -> tuple[list[Job], list[int], list[cluster_report.FallbackReport]]:
+    """Pod jobs for every cluster-group image that ended SKIP, and the
+    indexes of the SKIP rows they replace. Flips those groups to pod groups.
+
+    A cluster group only SKIPs when no candidate had capacity, after every
+    retry. Its manifest carries no per-pod budget (cluster pricing differs),
+    so the candidates come from the CLUSTER_POD_FALLBACK_* filters."""
+    jobs: list[Job] = []
+    replaced: list[int] = []
+    reports: list[cluster_report.FallbackReport] = []
+    cloud = config.CLOUD_TYPES[0]
+    rounds = 1 + (config.SKIP_RETRIES if config.ON_SKIP != "pass" else 0)
+    for group, contents in manifest.items():
+        if group_filter and group != group_filter:
+            continue
+        if not config.GROUP_CLUSTER.get(group, False):
+            continue
+        images = set(contents.get("images", []))
+        skipped = [
+            i for i, r in enumerate(results) if r[0] in images and r[1] == "SKIP"
+        ]
+        if not skipped:
+            continue
+        pod_config = {
+            key: value for key, value in contents.items()
+            if key not in ("instances", "check_all_gpu")
+        }
+        pod_config.update(
+            max_price_per_hour=config.CLUSTER_POD_FALLBACK_MAX_PRICE,
+            min_vram_gb=config.CLUSTER_POD_FALLBACK_MIN_VRAM_GB,
+            manufacturer=contents.get("manufacturer") or "Nvidia",
+        )
+        config.GROUP_CLUSTER[group] = False
+        instances = resolve_instances(group, pod_config)
+        if not instances:
+            config.GROUP_CLUSTER[group] = True
+            log(
+                f"::warning::group '{group}': no Instant Cluster capacity and no "
+                "pod GPU matches the fallback filters "
+                f"(<= ${config.CLUSTER_POD_FALLBACK_MAX_PRICE}/hr, "
+                f">= {config.CLUSTER_POD_FALLBACK_MIN_VRAM_GB} GB)"
+            )
+            continue
+        types = cluster_types_for(group)
+        nodes = config.GROUP_CLUSTER_NODES.get(group, config.DEFAULT_CLUSTER_NODES)
+        log(
+            f"::warning::group '{group}': no {nodes}-node Instant Cluster "
+            f"({', '.join(types)}) in {rounds} round(s) over "
+            f"{waited_s / 60:.0f} min; testing {len(skipped)} image(s) on ONE "
+            f"pod instead, cheapest first ({', '.join(instances[:4])}"
+            f"{', ...' if len(instances) > 4 else ''}). Head node, Grafana, "
+            "Prometheus across nodes and Slurm are NOT verified by this run."
+        )
+        for i in skipped:
+            jobs.append((results[i][0], group, instances, "", cloud))
+            replaced.append(i)
+            reports.append(cluster_report.FallbackReport(
+                results[i][0], tried=results[i][3], cluster_types=types,
+                node_count=nodes, rounds=rounds, waited_s=waited_s,
+            ))
+    return jobs, replaced, reports
+
+
+def _run_cluster_pod_fallback(
+    manifest: dict[str, dict],
+    group_filter: Optional[str],
+    results: list[Result],
+    waited_s: float = 0.0,
+) -> None:
+    """With CLUSTER_POD_FALLBACK=1, re-test cluster images that found no
+    cluster capacity on one pod, replacing their SKIP rows in place."""
+    if not config.CLUSTER_POD_FALLBACK:
+        return
+    if len(config.CLOUD_TYPES) > 1 and config.CLOUD_TYPE != config.CLOUD_TYPES[0]:
+        config.CLOUD_TYPE = config.CLOUD_TYPES[0]
+        _init_gpu_catalog()
+    jobs, replaced, reports = _cluster_pod_fallback_jobs(
+        manifest, group_filter, results, waited_s,
+    )
+    if not jobs:
+        return
+    print()
+    bar = "=" * 20
+    log(f"{bar} single-pod fallback: {len(jobs)} job(s) {bar}")
+    fallback: list[Result] = []
+    _run_jobs(jobs, fallback)
+    for i, new, report, job in zip(replaced, fallback, reports, jobs):
+        note = f"{FALLBACK_NOTE}; {new[2]}" if new[2] else FALLBACK_NOTE
+        results[i] = (new[0], new[1], note, *new[3:])
+        report.finish(new[1], new[2], pod_run(job[0], job[1]))
+        cluster_report.FALLBACK_REPORTS.append(report)
 
 
 def _plan_all_clouds(
