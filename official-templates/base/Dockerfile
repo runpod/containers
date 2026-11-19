@@ -293,6 +293,12 @@ RUN --mount=type=bind,from=slurm-builder,source=/slurm-debs,target=/tmp/slurm-de
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
+# Canonical's service manager, dropped into the ubuntu:26.04 image outside
+# dpkg, so there is no package to purge. start.sh is the entrypoint and nothing
+# invokes it, but pebble v1.33.2 is built with Go 1.27.3 (8 High stdlib CVEs,
+# fixed in 1.27.4 with no pebble release yet). Same as sandbox-ubuntu.
+RUN rm -rf /usr/bin/pebble /var/lib/pebble
+
 # Install Python 3.11-3.13. Whichever of them is the release's own system
 # python3 comes from the Ubuntu archive (3.12 on 24.04; 26.04's system python3
 # is 3.14, which is not in this list), the rest from deadsnakes. The PPA is
