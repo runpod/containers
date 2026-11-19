@@ -1016,7 +1016,7 @@ jobs:
   # test takes the cheapest GPU type Instant Clusters offer, 2 nodes.
   test-pytorch-cluster-instant:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-pytorch-cluster
+    needs: [versions, build-pytorch-cluster]
     if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
     env:
       # The harness refuses cluster groups on prod unless this is set, so a
@@ -1024,11 +1024,7 @@ jobs:
       ALLOW_PROD_CLUSTERS: "1"
       # No cluster capacity -> test the image on a single pod instead.
       CLUSTER_POD_FALLBACK: "1"
-      # Prod cluster nodes are 8-GPU: A100 is $17.18/node/hr ($34.37/hr for
-      # 2), H100 $38.30, up to B300 at $86.30. Only A100 fits under this cap;
-      # a pricier type counts as no capacity, so the job falls back to a pod
-      # rather than buying a $76-$173/hr cluster per image.
-      CLUSTER_MAX_NODE_PRICE: "20"
+      CLUSTER_MAX_NODE_PRICE: "25"
     steps:
       - name: Check prod credentials
         id: creds
@@ -1078,6 +1074,7 @@ jobs:
           runpod-env: prod
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           cluster-nodes: "2"
           # The image ships the Slurm that slurm-init.sh runs, and only a
           # SLURM cluster starts it; TRAINING is the fallback when there is
