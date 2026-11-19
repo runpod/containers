@@ -11,6 +11,8 @@ MIGRATION_MARKER=".runpod-migration-incomplete"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
 BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+CUDA_COMPAT_DIR="/opt/cuda-compat"
+CUDA_COMPAT_STATUS="not installed"
 # 8188 is the port the template exposes. The password proxy owns it, and
 # ComfyUI listens on loopback only, on the internal port.
 COMFYUI_PUBLIC_PORT=8188
@@ -775,6 +777,183 @@ sync_comfyui_pinned_packages() {
     fi
 }
 
+# Print "<driver_version> <cuInit_rc> <libcuda_path>" for whichever libcuda.so.1
+# the dynamic loader picks up with the current LD_LIBRARY_PATH.
+probe_libcuda() {
+    python3.12 - <<'PY' 2>/dev/null
+import ctypes
+try:
+    lib = ctypes.CDLL("libcuda.so.1")
+except OSError:
+    print("0 -1 none")
+    raise SystemExit
+version = ctypes.c_int(0)
+lib.cuDriverGetVersion(ctypes.byref(version))
+rc = lib.cuInit(0)
+path = "unknown"
+with open("/proc/self/maps") as maps:
+    for line in maps:
+        if "libcuda.so" in line:
+            path = line.split()[-1]
+            break
+print(version.value, rc, path)
+PY
+}
+
+# Undo compat that the NVIDIA Container Toolkit (>= 1.17.5) enabled on its own:
+# its enable-cuda-compat hook finds /usr/local/cuda/compat in the image and puts
+# it in the loader cache, even when the host driver already supports the
+# image's CUDA (e.g. user-mode 595.112 on a 595.91 kernel module), and on
+# GeForce cards across driver branches, where cuInit fails with 804 (seen: RTX
+# 4090, host 570.172, compat 580.196). Seen on Runpod hosts in two forms, both
+# handled here: an /etc/ld.so.conf.d/00-compat-*.conf entry, or an ldconfig run
+# with the compat dir on its command line (cache only, no conf file).
+# Rebuilding the cache from the remaining conf files drops both. Fails open.
+drop_runtime_cuda_compat() {
+    local conf
+    for conf in /etc/ld.so.conf.d/*.conf; do
+        [ -f "$conf" ] || continue
+        if grep -qE '^[[:space:]]*/usr/local/cuda[^/]*/compat/?[[:space:]]*$' "$conf"; then
+            mv "$conf" "$conf.disabled-by-start-sh" 2>/dev/null || true
+        fi
+    done
+    ldconfig 2>/dev/null || true
+}
+
+# CUDA version of the image's toolkit in cuDriverGetVersion form (13.0 -> 13000),
+# or 0 if it cannot be read.
+image_cuda_version() {
+    python3.12 - <<'PY' 2>/dev/null || echo 0
+import json
+import re
+import subprocess
+try:
+    with open("/usr/local/cuda/version.json") as f:
+        major, minor = json.load(f)["cuda"]["version"].split(".")[:2]
+except Exception:
+    out = subprocess.run(["/usr/local/cuda/bin/nvcc", "--version"],
+                         capture_output=True, text=True).stdout
+    major, minor = re.search(r"release (\d+)\.(\d+)", out).groups()
+print(int(major) * 1000 + int(minor) * 10)
+PY
+}
+
+# Directory of the host's injected libcuda.so.1, i.e. any loader-cache entry or
+# usual driver path that is not a compat dir. Prints nothing if there is none.
+find_host_libcuda_dir() {
+    local lib
+    for lib in $(ldconfig -p 2>/dev/null | awk '$1 == "libcuda.so.1" {print $NF}') \
+        /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib64/libcuda.so.1; do
+        [[ "$lib" == */compat/* ]] && continue
+        if [ -e "$lib" ]; then
+            dirname "$lib"
+            return
+        fi
+    done
+}
+
+# Enable NVIDIA CUDA forward compatibility when the host driver is older than
+# the CUDA version this image was built for (e.g. the cu130 image landing on a
+# 12.8/12.9 host). The compat libcuda only works on datacenter-class GPUs and
+# supported driver branches, and it breaks CUDA if the host driver is newer, so
+# it is enabled only after a real cuInit() succeeds with it. Fails open.
+setup_cuda_compat() {
+    if [ ! -e "$CUDA_COMPAT_DIR/libcuda.so.1" ]; then
+        return
+    fi
+
+    local host_ver host_rc host_path compat_ver compat_rc compat_path runtime_note=""
+    local host_dir override_ver override_rc override_path image_ver opted_out=0
+    read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
+
+    # Opt-out: leave the loader setup exactly as the container runtime made it,
+    # including any compat the runtime enabled itself. Checked before the
+    # rollback below so it never takes away compat that was working.
+    if [ "${DISABLE_CUDA_COMPAT:-}" = "1" ]; then
+        opted_out=1
+        if [[ "$host_path" == */compat/* ]] && [ "${host_rc:--1}" != "0" ]; then
+            CUDA_COMPAT_STATUS="UNAVAILABLE (DISABLE_CUDA_COMPAT=1 left compat enabled by the container runtime in place: $host_path, cuInit returned $host_rc; unset it so start.sh can remove it)"
+        elif [[ "$host_path" == */compat/* ]]; then
+            CUDA_COMPAT_STATUS="disabled (DISABLE_CUDA_COMPAT=1); compat enabled by the container runtime left in place (CUDA $host_ver via $host_path)"
+        else
+            CUDA_COMPAT_STATUS="disabled (DISABLE_CUDA_COMPAT=1)"
+        fi
+    else
+        # The container runtime already put compat in the loader cache, so the
+        # probe above measured the compat lib, not the host driver. Always remove
+        # it and re-probe: the checks below then compare against the real host
+        # driver and re-enable compat themselves only when the host is older.
+        if [[ "$host_path" == */compat/* ]]; then
+            drop_runtime_cuda_compat
+            runtime_note="; removed compat enabled by the container runtime (cuInit with it returned $host_rc)"
+            read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
+        fi
+
+        # The cache rebuild did not take (e.g. read-only /etc). LD_LIBRARY_PATH
+        # is searched ahead of ld.so.cache, so pointing it at the host's libcuda
+        # overrides the cached compat entry without touching /etc.
+        if [[ "$host_path" == */compat/* ]]; then
+            host_dir=$(find_host_libcuda_dir)
+            if [ -n "$host_dir" ]; then
+                read -r override_ver override_rc override_path <<< "$(LD_LIBRARY_PATH="$host_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" probe_libcuda || echo '0 -1 none')"
+                if [ "${override_path:-none}" != "none" ] && [[ "$override_path" != */compat/* ]]; then
+                    export LD_LIBRARY_PATH="$host_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                    runtime_note="; overrode compat enabled by the container runtime with LD_LIBRARY_PATH=$host_dir (cuInit with it returned $host_rc; the loader cache could not be rebuilt)"
+                    host_ver=$override_ver host_rc=$override_rc host_path=$override_path
+                fi
+            fi
+        fi
+
+        read -r compat_ver compat_rc compat_path <<< "$(LD_LIBRARY_PATH="$CUDA_COMPAT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" probe_libcuda || echo '0 -1 none')"
+    fi
+
+    if [ "$opted_out" = "1" ]; then
+        :
+    elif [ "${host_path:-none}" = "none" ]; then
+        CUDA_COMPAT_STATUS="skipped (no host NVIDIA driver visible)$runtime_note"
+    elif [[ "$host_path" == */compat/* ]]; then
+        # Runtime-enabled compat is still active: neither the cache rebuild nor
+        # the LD_LIBRARY_PATH override got rid of it. Report what is in use.
+        if [ "${host_rc:--1}" = "0" ]; then
+            CUDA_COMPAT_STATUS="ENABLED by container runtime, could not be removed (CUDA $host_ver via $host_path)"
+        else
+            CUDA_COMPAT_STATUS="UNAVAILABLE (container runtime enabled $host_path, cuInit returned $host_rc, and it could not be removed)"
+        fi
+    elif [ "${compat_ver:-0}" -le 0 ]; then
+        # The compat libcuda is in the image but would not load (broken symlink,
+        # missing dependency). Compare the host against the toolkit instead.
+        image_ver=$(image_cuda_version)
+        if [ "${image_ver:-0}" -gt 0 ] && [ "${host_ver:-0}" -ge "$image_ver" ]; then
+            CUDA_COMPAT_STATUS="not needed (host driver supports CUDA $host_ver; the bundled compat driver did not load)$runtime_note"
+        else
+            CUDA_COMPAT_STATUS="UNAVAILABLE (the bundled compat driver did not load; host driver CUDA $host_ver, image CUDA ${image_ver:-unknown})$runtime_note"
+        fi
+    elif [ "${host_ver:-0}" -ge "${compat_ver:-0}" ]; then
+        CUDA_COMPAT_STATUS="not needed (host driver supports CUDA $host_ver)$runtime_note"
+    elif [ "${compat_rc:--1}" = "0" ] && [ "$compat_path" != "$host_path" ]; then
+        export LD_LIBRARY_PATH="$CUDA_COMPAT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        CUDA_COMPAT_STATUS="ENABLED (host driver CUDA $host_ver -> CUDA $compat_ver via $compat_path)"
+    else
+        local reason="cuInit returned $compat_rc"
+        case "$compat_rc" in
+            804) reason="this GPU does not support CUDA forward compatibility (consumer/GeForce cards are not supported)" ;;
+            803) reason="the host driver branch is not supported by the bundled compat driver" ;;
+        esac
+        CUDA_COMPAT_STATUS="UNAVAILABLE (host driver CUDA $host_ver < image CUDA $compat_ver; $reason)$runtime_note"
+    fi
+
+    echo "============================================="
+    echo "  CUDA forward compat: $CUDA_COMPAT_STATUS"
+    case "$CUDA_COMPAT_STATUS" in
+        UNAVAILABLE*)
+            echo "  ComfyUI will likely fail with 'The NVIDIA driver on your system is too old'."
+            echo "  Redeploy on a host whose driver supports this image's CUDA (filter by CUDA"
+            echo "  version), or, for non-Blackwell GPUs, use the ComfyUI CUDA 12.8 template."
+            ;;
+    esac
+    echo "============================================="
+}
+
 log_cuda_venv_diagnostics() {
     local expected_build local_packages status
     expected_build=$(sed -n 's/^torch==.*+\(cu[0-9][0-9]*\).*$/\1/p' \
@@ -784,6 +963,7 @@ log_cuda_venv_diagnostics() {
     echo "  CUDA / venv diagnostics"
     echo "  active venv: $VENV_DIR"
     echo "  expected image torch build: ${expected_build:-unknown}"
+    echo "  CUDA forward compat: $CUDA_COMPAT_STATUS"
 
     # Fail open: a crashed probe must not abort startup (set -e).
     if ! status=$(VENV_DIR="$VENV_DIR" EXPECTED_TORCH_BUILD="$expected_build" \
@@ -947,6 +1127,10 @@ if [ -f "$PIP_CONSTRAINT_FILE" ]; then
     export PIP_BUILD_CONSTRAINT="$PIP_CONSTRAINT_FILE"
     echo "Using runtime pip constraints from $PIP_CONSTRAINT_FILE"
 fi
+
+# Must run before export_env_vars/Jupyter so SSH and notebook sessions inherit
+# the compat LD_LIBRARY_PATH too.
+setup_cuda_compat
 
 setup_ssh
 export_env_vars
