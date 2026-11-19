@@ -44,8 +44,10 @@ variable "RAY_CLUSTER_BUILDS" {
     { cuda_code = "1290", torch_code = "2130", ubuntu_name = "ubuntu2404" },
 
     { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2150", ubuntu_name = "ubuntu2404" },
 
     { cuda_code = "1320", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2150", ubuntu_name = "ubuntu2404" },
   ]
 }
 

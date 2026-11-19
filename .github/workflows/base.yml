@@ -1209,6 +1209,9 @@ jobs:
           registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           test-ray: true
           test-pip-check: true
+          # As test-pytorch: the torch 2.15 base ships only nixl's CUDA 13 backend.
+          pip-check-allow: |
+            nixl 1.5.2 requires nixl-cu12, which is not installed
           test-torch-packages: true
           test-jupyter: true
           test-ca-certs: true
