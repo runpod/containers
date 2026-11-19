@@ -115,7 +115,7 @@ for ((i = 0; i < ${#extra_args[@]}; i++)); do
     opt=${arg%%=*}
     opt=${opt//_/-}
     [[ "$arg" == *=* ]] && value=${arg#*=} || value=${extra_args[i + 1]:-}
-    for name in --api-key --revision --download-dir --load-format --served-model-name; do
+    for name in --api-key --config --revision --download-dir --load-format --served-model-name; do
         if [[ "$opt" == --?* && "$name" == "$opt"* ]]; then
             opt=$name
             break
@@ -124,6 +124,10 @@ for ((i = 0; i < ${#extra_args[@]}; i++)); do
     case "$opt" in
         --api-key)
             log "error: VLLM_EXTRA_ARGS sets --api-key, which LiteLLM can't send, and vLLM would print it to the pod logs at startup. Remove it (LiteLLM checks LITELLM_MASTER_KEY on $API_PORT) and restart the pod. vLLM was not started."
+            services
+            ;;
+        --config)
+            log "error: VLLM_EXTRA_ARGS sets --config, whose file can set options this script must see (--api-key, --served-model-name, --revision, --download-dir, --load-format). Put its options in VLLM_EXTRA_ARGS instead and restart the pod. vLLM was not started."
             services
             ;;
         --revision) revision=$value ;;
