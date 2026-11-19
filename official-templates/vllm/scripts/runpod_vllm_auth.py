@@ -22,6 +22,13 @@ def _digest(value: str) -> bytes:
     return hashlib.sha256(value.encode("utf-8")).digest()
 
 
+def _is_preflight(scope) -> bool:
+    if scope.get("method") != "OPTIONS":
+        return False
+    names = {name.lower() for name, _ in scope.get("headers") or ()}
+    return b"origin" in names and b"access-control-request-method" in names
+
+
 class BearerAuth:
     def __init__(self, app):
         self.app = app
@@ -48,8 +55,9 @@ class BearerAuth:
         if kind not in ("http", "websocket"):
             return await self.app(scope, receive, send)
 
-        # CORS preflight carries no credentials; vLLM's own check skips it too.
-        if kind == "http" and scope.get("method") == "OPTIONS":
+        # A CORS preflight carries no credentials. Anything else sent as
+        # OPTIONS still reaches a route, so it needs the key.
+        if kind == "http" and _is_preflight(scope):
             return await self.app(scope, receive, send)
 
         root_path = scope.get("root_path", "")

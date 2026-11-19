@@ -38,8 +38,9 @@ class Recorder:
             await send({"type": "http.response.body", "body": b"ok"})
 
 
-def request(app, path, *, method="GET", auth=None, kind="http", root_path=""):
-    headers = [(b"host", b"pod")]
+def request(app, path, *, method="GET", auth=None, kind="http", root_path="",
+            extra_headers=()):
+    headers = [(b"host", b"pod"), *extra_headers]
     if auth is not None:
         headers.append((b"authorization", auth.encode("latin-1")))
     scope = {
@@ -138,7 +139,15 @@ class Middleware(unittest.TestCase):
         self.assertEqual(body["body"], b'{"error": "Unauthorized"}')
 
     def test_cors_preflight_passes_through(self):
-        self.assert_open("/v1/chat/completions", method="OPTIONS")
+        preflight = ((b"origin", b"https://example.com"),
+                     (b"access-control-request-method", b"POST"))
+        self.assert_open("/v1/chat/completions", method="OPTIONS",
+                         extra_headers=preflight)
+
+    def test_options_that_is_not_a_preflight_needs_the_key(self):
+        self.assert_closed("/v1/chat/completions", method="OPTIONS")
+        self.assert_closed("/invocations", method="OPTIONS",
+                           extra_headers=((b"origin", b"https://example.com"),))
 
     def test_websocket_without_key_is_closed_before_accept(self):
         before = len(self.inner.calls)
@@ -247,9 +256,12 @@ class StartScript(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertNotIn("sshd", out.stdout + out.stderr)
 
-    def test_api_key_on_cmd_is_flagged(self):
-        out = self.start({"VLLM_API_KEY": KEY}, "m", "--api-key", "other")
-        self.assertIn("--api-key is set in the container command", out.stdout)
+    def test_api_key_on_cmd_does_not_start_vllm(self):
+        """vLLM's /v1 check would take this key and the middleware VLLM_API_KEY:
+        with two different keys, neither opens /v1."""
+        for cmd in (("m", "--api-key", "other"), ("m", "--api-key=other")):
+            self.assert_refuses({"VLLM_API_KEY": KEY}, cmd=cmd,
+                                reason="--api-key is set in the container start command")
 
     def assert_refuses(self, env, cmd=("m",), reason="VLLM_API_KEY is not set"):
         if self.record.exists():

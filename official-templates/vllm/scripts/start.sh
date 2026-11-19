@@ -55,13 +55,15 @@ key="${VLLM_API_KEY:-}"
 key="${key#"${key%%[![:space:]]*}"}"
 key="${key%"${key##*[![:space:]]}"}"
 
-# vLLM logs its CLI args at startup.
+# vLLM's own /v1 check would use this key and the middleware VLLM_API_KEY, so
+# with two different keys no key opens /v1. vLLM also logs its CLI args.
 for arg in "$@"; do
     case "$arg" in
         --api-key | --api-key=*)
-            echo "WARNING: --api-key is set in the container command. vLLM prints its"
-            echo "WARNING: arguments at startup, so that key is now in the Pod logs."
-            echo "WARNING: Remove it and set the VLLM_API_KEY environment variable instead."
+            refuse "--api-key is set in the container start command." \
+                "Remove it and set the VLLM_API_KEY environment variable instead." \
+                "If it held a real key, rotate it: the start command is visible" \
+                "in the Pod settings."
             ;;
     esac
 done

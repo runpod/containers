@@ -72,7 +72,7 @@ def main() -> int:
         if isinstance(route, Mount):
             methods = ["GET"]
         for method in methods:
-            if method in ("HEAD", "OPTIONS"):
+            if method == "HEAD":
                 continue
             checked += 1
             response = client.request(method, url)
@@ -83,6 +83,12 @@ def main() -> int:
                 failures.append(
                     f"{method:4} {path}: HTTP {response.status_code} without a key"
                 )
+
+    # A bare OPTIONS is not a CORS preflight and must not skip the key.
+    for path in ("/invocations", "/v1/chat/completions"):
+        checked += 1
+        if not ours(client.options(path)):
+            failures.append(f"OPTIONS {path}: not refused without a key")
 
     keyed = client.post("/tokenize", headers={"Authorization": f"Bearer {KEY}"})
     if keyed.status_code == 401:
