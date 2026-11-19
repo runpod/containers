@@ -195,8 +195,9 @@ jobs:
   # One tag + GitHub Release per changed family, on a releasable push to main.
   # A push to develop builds the same families into the -dev repos and stops
   # here: it is released once it reaches main.
-  # Each family waits only on its own build: a scan that fails on one image
-  # must not keep the others unreleased while their images are already pushed.
+  # Each family waits only on its own build and on what it builds FROM: a
+  # scan that fails on one image must not keep unrelated ones unreleased while
+  # their images are already pushed.
   release:
     needs: [plan, base, nvidia, rocm, comfyui, sandbox, k3s-node]
     if: >-
@@ -208,6 +209,8 @@ jobs:
     runs-on: ${{ vars.RUNNER_4VCPU_UBUNTU_2404 }}
     permissions:
       contents: write
+      # The gate reads this run's jobs to find the family's own build.
+      actions: read
     strategy:
       # Independent tags, so one family failing must not hide the others.
       fail-fast: false
@@ -226,26 +229,87 @@ jobs:
         with:
           family: ${{ matrix.family }}
       # The job-level `if` can't see `matrix`, so the per-family gate lives
-      # here: release this family only if the workflow that builds it passed.
+      # here: release this family only if its own build-/test- jobs passed,
+      # and so did those of everything it builds FROM that was rebuilt in this
+      # run. Not `needs.<workflow>.result`: base.yml and sandbox.yml build
+      # several families, and that result fails them all when one fails.
       - name: Check this family's build
         id: gate
         env:
-          RESULTS: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
           FAMILY: ${{ matrix.family }}
           RELEASABLE: ${{ steps.v.outputs.should-release }}
         run: |
           set -euo pipefail
-          WORKFLOW="$(python3 .github/scripts/plan_families.py --workflow "${FAMILY}")"
-          RESULT="$(printf '%s' "${RESULTS}" | jq -r --arg w "${WORKFLOW}" '.[$w].result')"
-          echo "${FAMILY} is built by '${WORKFLOW}': ${RESULT}"
           if [ "${RELEASABLE}" != "true" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "${FAMILY} has nothing releasable outstanding"
-          elif [ "${RESULT}" = "success" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
+            exit 0
+          fi
+
+          JOBS="${RUNNER_TEMP}/jobs-${FAMILY}.tsv"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
+            --jq '.jobs[] | [.name, .conclusion] | @tsv' > "${JOBS}"
+
+          # Sets FOUND and RESULT from one family's build-/test- jobs. RESULT
+          # is failure if any leg failed, else the first other non-success
+          # conclusion, else success.
+          check() {
+            local workflow build test name conclusion
+            workflow="$(python3 .github/scripts/plan_families.py --workflow "$1")"
+            build="${workflow} / build-$1"
+            test="${workflow} / test-$1"
+            FOUND=0
+            RESULT="success"
+            while IFS=$'\t' read -r name conclusion; do
+              # Matrix legs are named "<job> (cu1281)".
+              case "$name" in
+                "$build"|"$build "\(*|"$test"|"$test "\(*) ;;
+                *) continue ;;
+              esac
+              FOUND=$((FOUND + 1))
+              echo "  ${name}: ${conclusion}"
+              if [ "$conclusion" = "failure" ]; then
+                RESULT="failure"
+              elif [ "$conclusion" != "success" ] && [ "$RESULT" = "success" ]; then
+                RESULT="${conclusion:-unknown}"
+              fi
+            done < "${JOBS}"
+          }
+
+          check "${FAMILY}"
+          # A releasable family always has a build job; none means the job
+          # names and families.yml have drifted apart.
+          if [ "$FOUND" -eq 0 ]; then
+            echo "::error::no '${FAMILY}' build job in this run — cannot tell whether it was built"
+            exit 1
+          fi
+          OWN="${RESULT}"
+          echo "${FAMILY}: ${OWN}"
+
+          # A parent that failed its test still feeds this image, and is not
+          # released itself. Skipped means the parent was not rebuilt here,
+          # so this family built FROM its last released image.
+          BLOCKER=""
+          ANCESTORS="$(python3 .github/scripts/plan_families.py --ancestors "${FAMILY}")"
+          while IFS= read -r parent; do
+            [ -z "$parent" ] && continue
+            check "${parent}"
+            echo "${parent} (builds FROM): ${RESULT}"
+            case "${RESULT}" in
+              success|skipped) ;;
+              *) [ -n "${BLOCKER}" ] || BLOCKER="${parent}, which it builds FROM, ${RESULT}" ;;
+            esac
+          done <<< "${ANCESTORS}"
+
+          if [ "${OWN}" != "success" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::${FAMILY} not released — its build ${RESULT}"
+            echo "::warning::${FAMILY} not released — its build ${OWN}"
+          elif [ -n "${BLOCKER}" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::${FAMILY} not released — ${BLOCKER}"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
       # Notes are scoped to the family: a release can carry a change from an
