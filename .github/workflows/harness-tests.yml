@@ -17,6 +17,7 @@ on:
       - 'official-templates/comfyui/scripts/start.sh'
       - 'official-templates/ray-cluster/inference/start.sh'
       - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
+      - 'official-templates/ray-cluster/inference/download_model.py'
       - 'official-templates/ray-cluster/inference/post_start.sh'
       # test_grafana_auth_proxy runs the real proxy.
       - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
@@ -37,6 +38,7 @@ on:
       - 'official-templates/comfyui/scripts/start.sh'
       - 'official-templates/ray-cluster/inference/start.sh'
       - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
+      - 'official-templates/ray-cluster/inference/download_model.py'
       - 'official-templates/ray-cluster/inference/post_start.sh'
       # test_grafana_auth_proxy runs the real proxy.
       - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'

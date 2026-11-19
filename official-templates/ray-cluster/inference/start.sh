@@ -3,18 +3,17 @@
 # entrypoint (/opt/runpod/ray/entrypoint) has started Ray.
 #
 #   - Worker: nothing beyond Ray; vLLM runs from the head.
-#   - Head: wait until NUM_NODES nodes have joined Ray, download the model,
+#   - Head: download the model, wait until NUM_NODES nodes have joined Ray,
 #     then `vllm serve $MODEL_REPO` across the whole cluster: tensor
 #     parallelism is the GPUs per node, pipeline parallelism the node count.
-#     vLLM listens on
-#     127.0.0.1:8000 only; the API on 4000 (LiteLLM's default) is LiteLLM's
-#     proxy in front of it,
-#     which checks the key.
+#     vLLM listens on 127.0.0.1:8000 only; the API on 4000 (LiteLLM's
+#     default) is LiteLLM's proxy in front of it, which checks the key.
 #   - No NODE_RANK (a plain pod): the same on this pod's GPUs, without Ray.
 #
 # Every path ends in /start.sh (SSH, Jupyter on the head, the dashboard front
-# door, monitoring), and vLLM and LiteLLM run beside it, so the pod stays up
-# for interactive use when they are not started or exit.
+# door, monitoring), and the download, the wait for the nodes, vLLM and
+# LiteLLM run beside it, so the pod is up for interactive use meanwhile and
+# stays up when they are not started or exit.
 #
 # Never `set -x` here: the API key is in the environment.
 set -uo pipefail
@@ -86,7 +85,7 @@ fi
 unset VLLM_API_KEY
 
 # --- vLLM arguments ----------------------------------------------------------- #
-# Checked before the wait for the cluster, so a bad setting is reported at once.
+# Checked before anything starts, so a bad setting is reported at once.
 model_args=()
 [[ -n "${MAX_MODEL_LENGTH:-}" ]] && model_args+=(--max-model-len "$MAX_MODEL_LENGTH")
 
@@ -104,9 +103,9 @@ if ! wait $!; then
     log "error: VLLM_EXTRA_ARGS can't be split into arguments (see above), so vLLM was not started"
     services
 fi
-# The download before vLLM fetches the revision and into the directory vLLM
-# will read; the last one given wins, as in vLLM.
-revision='' download_dir=''
+# The download before vLLM fetches the revision, into the directory and in
+# the load format vLLM will read; the last one given wins, as in vLLM.
+revision='' download_dir='' load_format=auto
 for ((i = 0; i < ${#extra_args[@]}; i++)); do
     arg=${extra_args[i]}
     # vLLM takes --api_key as --api-key.
@@ -119,11 +118,14 @@ for ((i = 0; i < ${#extra_args[@]}; i++)); do
             ;;
         --revision) revision=$value ;;
         --download-dir) download_dir=$value ;;
+        --load-format) load_format=$value ;;
         *) ;;
     esac
 done
 
 # --- Shape -------------------------------------------------------------------- #
+# On a cluster, the GPUs per node are known once every node has joined Ray,
+# which the background job below waits for.
 parallel_args=()
 if [[ -n "${NODE_RANK:-}" ]]; then
     nodes=${NUM_NODES:-1}
@@ -132,18 +134,6 @@ if [[ -n "${NODE_RANK:-}" ]]; then
         services
     fi
     nodes=$((10#$nodes))
-    gpus=$(python3 "$INFERENCE_DIR/wait_for_nodes.py" "$nodes")
-    case $? in
-        0) ;;
-        2)
-            log "error: the cluster can't be split into $nodes pipeline stages, so vLLM was not started"
-            services
-            ;;
-        *)
-            log "error: could not read the cluster's nodes from Ray (see above and /tmp/ray/session_latest/logs), so vLLM was not started"
-            services
-            ;;
-    esac
     parallel_args=(--distributed-executor-backend ray --pipeline-parallel-size "$nodes")
 else
     gpus=$(nvidia-smi -L 2> /dev/null | grep -c '^GPU ') || gpus=0
@@ -152,24 +142,39 @@ else
         services
     fi
 fi
-parallel_args+=(--tensor-parallel-size "$gpus")
 
 # --- vLLM --------------------------------------------------------------------- #
-# VLLM_EXTRA_ARGS follows the derived settings so it can override them; the
-# listen address is last, so vLLM stays reachable only from this pod.
-cmd=(vllm serve "$MODEL_REPO" "${parallel_args[@]}" "${model_args[@]}" "${extra_args[@]}"
-    --host 127.0.0.1 --port "$VLLM_PORT")
-# The head downloads the model first (download_model.py says why), in this
-# background job so SSH and Jupyter come up meanwhile. A local directory is
-# served as is.
+# In the background, so SSH and Jupyter come up meanwhile: download the model
+# (download_model.py says why the head does it first; a local directory is
+# served as is), wait for the nodes, which join during the download, then
+# serve. A refusal here ends the job: /start.sh is already running.
 (
     if [[ ! -d "$MODEL_REPO" ]]; then
         log "downloading $MODEL_REPO into ${download_dir:-the Hugging Face cache (${HF_HOME:-~/.cache/huggingface})} before starting vLLM"
-        if ! env -u LITELLM_MASTER_KEY python3 "$INFERENCE_DIR/download_model.py" "$MODEL_REPO" "$revision" "$download_dir"; then
+        if ! env -u LITELLM_MASTER_KEY python3 "$INFERENCE_DIR/download_model.py" \
+            "$MODEL_REPO" "$revision" "$download_dir" "$load_format"; then
             log "error: could not download $MODEL_REPO (see above), so vLLM was not started. Check MODEL_REPO, HF_TOKEN for a gated or private model, and the free space there, then restart the pod."
             exit 1
         fi
     fi
+    if [[ -n "${NODE_RANK:-}" ]]; then
+        gpus=$(python3 "$INFERENCE_DIR/wait_for_nodes.py" "$nodes")
+        case $? in
+            0) ;;
+            2)
+                log "error: the cluster can't be split into $nodes pipeline stages, so vLLM was not started"
+                exit 1
+                ;;
+            *)
+                log "error: could not read the cluster's nodes from Ray (see above and /tmp/ray/session_latest/logs), so vLLM was not started"
+                exit 1
+                ;;
+        esac
+    fi
+    # VLLM_EXTRA_ARGS follows the derived settings so it can override them;
+    # the listen address is last, so vLLM stays reachable only from this pod.
+    cmd=(vllm serve "$MODEL_REPO" "${parallel_args[@]}" --tensor-parallel-size "$gpus"
+        "${model_args[@]}" "${extra_args[@]}" --host 127.0.0.1 --port "$VLLM_PORT")
     log "starting vLLM on 127.0.0.1:$VLLM_PORT: ${cmd[*]}"
     env -u LITELLM_MASTER_KEY "${cmd[@]}"
     log "vLLM exited with status $?; the pod stays up. Restart the pod to serve again."
