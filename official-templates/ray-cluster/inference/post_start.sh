@@ -20,12 +20,14 @@ set +e
 log() { echo "[ray-inference] $*"; }
 
 PROM_CONFIG=/etc/prometheus/prometheus.yml
+LITELLM_KEY=/etc/litellm/master_key
 
 /post_start.ray.sh
 
-# The head is rank 0, as for Ray's hook; vLLM serves only there, and only with
-# a MODEL_REPO (without one, the targets would only ever be down).
-if [[ "${NODE_RANK:-}" != "0" || "${RAY_CLUSTER_METRICS:-1}" == "0" || -z "${MODEL_REPO:-}" ]]; then
+# The head is rank 0, as for Ray's hook; vLLM serves only there, only with a
+# MODEL_REPO, and only once the start script has accepted the settings, which
+# is when it writes the master key (else the targets would only ever be down).
+if [[ "${NODE_RANK:-}" != "0" || "${RAY_CLUSTER_METRICS:-1}" == "0" || -z "${MODEL_REPO:-}" || ! -f "$LITELLM_KEY" ]]; then
     exit 0
 fi
 
@@ -42,7 +44,7 @@ else
         echo "  - job_name: litellm"
         echo "    metrics_path: /metrics/"
         echo "    authorization:"
-        echo "      credentials_file: /etc/litellm/master_key"
+        echo "      credentials_file: ${LITELLM_KEY}"
         echo "    static_configs:"
         echo "      - targets: ['127.0.0.1:4000']"
     } >> "$PROM_CONFIG"

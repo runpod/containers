@@ -99,7 +99,7 @@ class StartScript(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.work = Path(tmp.name)
-        for d in ("bin", "inference"):
+        for d in ("bin", "inference", "litellm"):
             (self.work / d).mkdir()
         for name, body in [("vllm", FAKE_VLLM), ("litellm", FAKE_LITELLM),
                            ("curl", FAKE_CURL), ("nvidia-smi", FAKE_NVIDIA_SMI)]:
@@ -113,6 +113,7 @@ class StartScript(unittest.TestCase):
     def run_start(self, env: dict) -> str:
         result = subprocess.run(
             ["bash", str(self.work / "start.sh")],
+            check=False,
             env={"PATH": f"{self.work / 'bin'}:{os.environ['PATH']}",
                  "HOME": str(self.work), "WORK": str(self.work), **env},
             capture_output=True, text=True, timeout=60,
@@ -171,8 +172,12 @@ class StartScript(unittest.TestCase):
             with self.subTest(what):
                 for name in ("vllm.args", "litellm.args", "download.args"):
                     (self.work / name).unlink(missing_ok=True)
+                # One left from an earlier boot that served.
+                (self.work / "litellm/master_key").write_text("earlier-key")
                 out = self.run_start(env)
                 self.assertIn(want, out)
+                self.assertFalse((self.work / "litellm/master_key").exists(),
+                                 "a master key is left, so post_start.sh would scrape a LiteLLM that never starts")
                 self.assertIsNone(self.recorded("download.args"), "the model was downloaded")
                 self.assertIsNone(self.recorded("vllm.args"), "vLLM was started")
                 self.assertIsNone(self.recorded("litellm.args"), "LiteLLM was started")
@@ -620,10 +625,12 @@ class PostStart(unittest.TestCase):
 
     text = (INFERENCE / "post_start.sh").read_text()
 
-    def test_scrape_jobs_need_the_head_metrics_and_a_model(self) -> None:
-        gate = re.search(r'^if \[\[ (.*) \]\]; then\n    exit 0\nfi$', self.text, re.M)
-        self.assertIsNotNone(gate, "the head/metrics/model gate is gone")
-        for cond in ('"${NODE_RANK:-}" != "0"', '"${RAY_CLUSTER_METRICS:-1}" == "0"', '-z "${MODEL_REPO:-}"'):
+    def test_scrape_jobs_need_the_head_metrics_a_model_and_the_key(self) -> None:
+        gate = re.search(r'^if \[\[ (.*) \]\]; then\n    exit 0\nfi$', self.text, re.MULTILINE)
+        self.assertIsNotNone(gate, "the head/metrics/model/key gate is gone")
+        self.assertIn("LITELLM_KEY=/etc/litellm/master_key\n", self.text)
+        for cond in ('"${NODE_RANK:-}" != "0"', '"${RAY_CLUSTER_METRICS:-1}" == "0"', '-z "${MODEL_REPO:-}"',
+                     '! -f "$LITELLM_KEY"'):
             self.assertIn(cond, gate.group(1))
         self.assertLess(gate.start(), self.text.index("job_name: vllm"))
 

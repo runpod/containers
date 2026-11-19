@@ -27,6 +27,10 @@ readonly API_PORT=4000
 log() { echo "[ray-inference] $*"; }
 services() { exec /start.sh; }
 
+# Written again below once the settings are accepted; post_start.sh scrapes
+# LiteLLM only when it's there, so none may be left from an earlier boot.
+rm -f "$LITELLM_DIR/master_key"
+
 if [[ -n "${NODE_RANK:-}" && "$NODE_RANK" != 0 ]]; then
     log "worker node: Ray only; vLLM runs from the head"
     services
@@ -50,9 +54,9 @@ fi
 # so it matches Jupyter's. With neither, nothing is started. Pasted whitespace
 # around LITELLM_MASTER_KEY is trimmed. LiteLLM checks it on every route but
 # its health checks, /metrics included; vLLM behind it takes no key, being
-# reachable only from this pod. The key also goes, root-only, to
-# $LITELLM_DIR/master_key, which the head's Prometheus sends when it scrapes
-# LiteLLM (post_start.sh).
+# reachable only from this pod. Once every setting is accepted, the key also
+# goes, root-only, to $LITELLM_DIR/master_key, which the head's Prometheus
+# sends when it scrapes LiteLLM (post_start.sh).
 key=${LITELLM_MASTER_KEY:-}
 key="${key#"${key%%[![:space:]]*}"}"
 key="${key%"${key##*[![:space:]]}"}"
@@ -77,10 +81,6 @@ else
     export LITELLM_MASTER_KEY=$key
     log "authentication on (key from $key_source): every route on $API_PORT except LiteLLM's health checks needs 'Authorization: Bearer <key>'"
 fi
-(
-    umask 077
-    printf '%s' "$key" > "$LITELLM_DIR/master_key"
-)
 # vLLM reads VLLM_API_KEY itself, and LiteLLM sends it none.
 unset VLLM_API_KEY
 
@@ -153,6 +153,11 @@ else
         services
     fi
 fi
+
+(
+    umask 077
+    printf '%s' "$key" > "$LITELLM_DIR/master_key"
+)
 
 # --- vLLM --------------------------------------------------------------------- #
 # In the background, so SSH and Jupyter come up meanwhile: download the model
