@@ -155,6 +155,10 @@ class StartScript(unittest.TestCase):
              "sets --api-key"),
             ("--api-key after other args", {**serving, "VLLM_EXTRA_ARGS": f"--enforce-eager --api-key {KEY}"},
              "sets --api-key"),
+            ("--api-k, an abbreviation vLLM's argparse takes", {**serving, "VLLM_EXTRA_ARGS": f"--api-k {KEY}"},
+             "sets --api-key"),
+            ("--api_k=, abbreviated with underscores", {**serving, "VLLM_EXTRA_ARGS": f"--api_k={KEY}"},
+             "sets --api-key"),
             ("unbalanced quote", {**serving, "VLLM_EXTRA_ARGS": "--hf-overrides '{\"a\": 1}"},
              "VLLM_EXTRA_ARGS can't be split into arguments"),
             ("no GPU on a plain pod", {**serving, "FAKE_GPUS": ""}, "no GPU visible"),
@@ -305,6 +309,7 @@ class StartScript(unittest.TestCase):
             ("its first name, as vLLM answers with", MODEL, "--served-model-name qwen q", "qwen"),
             ("--served_model_name=, the last one given", MODEL,
              "--served-model-name a --served_model_name=b", "b"),
+            ("--served-model, an abbreviation", MODEL, "--served-model qwen", "qwen"),
         ]
         for what, model, extra, want in rows:
             with self.subTest(what):
@@ -335,6 +340,8 @@ class StartScript(unittest.TestCase):
             ("--load_format=", "--load_format=gguf", ["", "", "gguf"]),
             ("the last one wins, as in vLLM", "--revision a --enforce-eager --revision=b", ["b", "", "auto"]),
             ("a trailing --revision with no value", "--revision", ["", "", "auto"]),
+            ("abbreviations, as vLLM's argparse takes them", "--revis abc --download_d=/m --load-f pt",
+             ["abc", "/m", "pt"]),
         ]
         for what, extra, want in rows:
             with self.subTest(what):

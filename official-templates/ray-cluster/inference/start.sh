@@ -110,10 +110,18 @@ fi
 revision='' download_dir='' load_format=auto served_name=''
 for ((i = 0; i < ${#extra_args[@]}; i++)); do
     arg=${extra_args[i]}
-    # vLLM takes --api_key as --api-key.
+    # vLLM takes --api_key as --api-key, and (argparse's allow_abbrev) any
+    # unambiguous prefix, such as --api-k; an ambiguous one fails vLLM anyway.
     opt=${arg%%=*}
+    opt=${opt//_/-}
     [[ "$arg" == *=* ]] && value=${arg#*=} || value=${extra_args[i + 1]:-}
-    case "${opt//_/-}" in
+    for name in --api-key --revision --download-dir --load-format --served-model-name; do
+        if [[ "$opt" == --?* && "$name" == "$opt"* ]]; then
+            opt=$name
+            break
+        fi
+    done
+    case "$opt" in
         --api-key)
             log "error: VLLM_EXTRA_ARGS sets --api-key, which LiteLLM can't send, and vLLM would print it to the pod logs at startup. Remove it (LiteLLM checks LITELLM_MASTER_KEY on $API_PORT) and restart the pod. vLLM was not started."
             services
