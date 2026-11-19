@@ -24,7 +24,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,6 +40,8 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 from runpod_smoke.instances import detect_cuda_version  # noqa: E402
 
 SCHEMA_VERSION = 1
+ASSET_NAME = "gpu-compatibility.json"
+RELEASE_WORKFLOW = "release.yml"
 FAMILY_TAG_RE = re.compile(r"^(?P<family>.+)-v\d+\.\d+\.\d+$")
 GROUP_NAME_RE = re.compile(r"[^a-z0-9_]")
 # Manifest checks a family may opt into. Each must be a boolean flag the
@@ -99,6 +103,7 @@ def load_config(path: Path) -> dict:
         "spend_cap_usd": cap,
         "reserve_minutes": float(cfg.get("reserve_minutes") or 30),
         "max_parallel": int(cfg.get("max_parallel") or 2),
+        "catch_up_days": float(cfg.get("catch_up_days") or 3),
         "families": {fam: (body or {}) for fam, body in families.items()},
     }
 
@@ -175,7 +180,9 @@ def sample_torch_range(items: list[dict]) -> tuple[list[dict], list[dict]]:
     return kept, dropped
 
 
-def plan(cfg: dict, graph: dict, released: dict[str, str], refs: list[str]) -> dict:
+def plan(
+    cfg: dict, graph: dict, released: dict[str, str], refs: list[str], commit: str = "",
+) -> dict:
     """Pick the images to sweep and say why the rest were left out."""
     repo_to_family = {
         body.get("image_repo"): fam for fam, body in graph.items() if body.get("image_repo")
@@ -188,7 +195,7 @@ def plan(cfg: dict, graph: dict, released: dict[str, str], refs: list[str]) -> d
             skipped.append({"image": ref, "reason": "repo is not in families.yml"})
             continue
         if family not in released:
-            skipped.append({"image": ref, "reason": f"{family} was not released by this run"})
+            skipped.append({"image": ref, "reason": f"{family} was not released by this run, or that release already has a result"})
             continue
         if family not in cfg["families"]:
             skipped.append({"image": ref, "reason": f"{family} is not in the sweep config"})
@@ -202,6 +209,7 @@ def plan(cfg: dict, graph: dict, released: dict[str, str], refs: list[str]) -> d
             "image": ref,
             "family": family,
             "release_tag": released[family],
+            "commit": commit,
             "cuda_floor": str(floor),
         })
     sampled = [i for i in images if cfg["families"][i["family"]].get("sample") == "torch-range"]
@@ -238,6 +246,40 @@ def render_manifest(cfg: dict, images: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def plan_releases(
+    cfg: dict, graph: dict, releases: list[dict], refs_root: Path,
+) -> tuple[dict[str, str], dict]:
+    """plan() for each release run in releases.json, merged. Returns
+    (tag -> family, plan). A run whose refs artifacts are gone is listed as
+    skipped per tag, never silently dropped."""
+    tags_out: dict[str, str] = {}
+    images: list[dict] = []
+    skipped: list[dict] = []
+    seen: set[str] = set()
+    for rel in releases:
+        released = released_families(rel.get("tags") or [], graph)
+        run_dir = refs_root / str(rel.get("run_id") or "")
+        refs = read_refs(run_dir) if rel.get("run_id") and run_dir.exists() else []
+        if not refs:
+            for tag in released.values():
+                skipped.append({
+                    "image": tag,
+                    "reason": rel.get("note") or (
+                        f"no refs from release run {rel.get('run_id')} "
+                        "(artifacts are kept 3 days) — not swept"
+                    ),
+                })
+            continue
+        tags_out.update({tag: fam for fam, tag in released.items()})
+        result = plan(cfg, graph, released, refs, rel.get("sha") or "")
+        for item in result["images"]:
+            if item["image"] not in seen:
+                seen.add(item["image"])
+                images.append(item)
+        skipped.extend(result["skipped"])
+    return tags_out, {"images": images, "skipped": skipped}
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     graph = (yaml.safe_load(args.graph.read_text()) or {}).get("families") or {}
@@ -245,11 +287,9 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if unknown:
         print(f"::error::sweep config names families not in {args.graph}: {unknown}")
         return 1
-    tags = args.tags.read_text().split() if args.tags else []
-    released = released_families(tags, graph)
-    refs = read_refs(args.refs_dir) if args.refs_dir.exists() else []
-    result = plan(cfg, graph, released, refs)
-    print(f"released families: {', '.join(sorted(released)) or 'none'}")
+    releases = json.loads(args.releases.read_text()) if args.releases.exists() else []
+    released, result = plan_releases(cfg, graph, releases, args.refs_root)
+    print(f"released tags: {', '.join(sorted(released)) or 'none'}")
     for item in result["images"]:
         print(f"  sweep  {item['image']}  (floor CUDA {item['cuda_floor']})")
     for item in result["skipped"]:
@@ -274,6 +314,111 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "max-combos",
         str(max(120, len(result["images"]) * len(cfg["gpus"]) * 8)),
     )
+    return 0
+
+
+def catch_up_candidates(
+    tags: list[dict], families: dict, *, sha: str, now: float, days: float,
+) -> list[dict]:
+    """Release tags of swept `families` behind `sha` (not at it), created in
+    the last `days`: the releases a cancelled pending sweep may have skipped.
+    Older ones can't be swept anyway — their refs artifacts are gone."""
+    out = []
+    for t in tags:
+        m = FAMILY_TAG_RE.match(t["tag"])
+        if not m or m.group("family") not in families:
+            continue
+        if t["commit"] == sha or t["date"] < now - days * 86400:
+            continue
+        out.append(t)
+    return sorted(out, key=lambda t: (t["date"], t["tag"]))
+
+
+def _gh_api(path: str) -> dict | None:
+    """GET a GitHub API path with gh; None on 404."""
+    proc = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+    if proc.returncode != 0:
+        if "HTTP 404" in proc.stderr:
+            return None
+        raise RuntimeError(f"gh api {path}: {proc.stderr.strip()}")
+    return json.loads(proc.stdout or "null")
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def _merged_tags(sha: str) -> list[dict]:
+    fmt = "%(refname:short)%09%(objectname)%09%(*objectname)%09%(creatordate:unix)"
+    out = []
+    for line in _git("for-each-ref", "--merged", sha, f"--format={fmt}", "refs/tags").splitlines():
+        tag, obj, peeled, date = line.split("\t")
+        out.append({"tag": tag, "commit": peeled or obj, "date": float(date or 0)})
+    return out
+
+
+def _has_result(repo: str, tag: str) -> bool | None:
+    """True if the tag's Release has the sweep asset, False if not, None if
+    there is no Release (the family wasn't released)."""
+    rel = _gh_api(f"repos/{repo}/releases/tags/{tag}")
+    if rel is None:
+        return None
+    return any(a.get("name") == ASSET_NAME for a in rel.get("assets") or [])
+
+
+def _release_run_for(repo: str, commit: str) -> int | None:
+    data = _gh_api(
+        f"repos/{repo}/actions/workflows/{RELEASE_WORKFLOW}/runs"
+        f"?head_sha={commit}&event=push&status=completed&per_page=10"
+    ) or {}
+    runs = sorted(data.get("workflow_runs") or [], key=lambda r: r["id"], reverse=True)
+    return runs[0]["id"] if runs else None
+
+
+def cmd_releases(args: argparse.Namespace) -> int:
+    """Write the release runs this sweep covers: the triggering run, plus
+    recent releases behind it with no result yet. The workflow keeps one
+    concurrency group, so only one sweep spends at a time, and GitHub keeps
+    one pending run — a release whose sweep was dropped from the queue is
+    picked up here by the next one."""
+    cfg = load_config(args.config)
+    graph = (yaml.safe_load(args.graph.read_text()) or {}).get("families") or {}
+    repo = os.environ["GH_REPO"]
+
+    def is_family(tag: str) -> bool:
+        m = FAMILY_TAG_RE.match(tag)
+        return bool(m and m.group("family") in graph)
+
+    releases: list[dict] = []
+    current = [t for t in _git("tag", "--points-at", args.sha).split() if is_family(t)]
+    # A dispatch is an explicit re-sweep. On workflow_run, a release an
+    # earlier sweep already caught up on is not swept twice.
+    todo = [t for t in current if args.force or _has_result(repo, t) is not True]
+    for tag in sorted(set(current) - set(todo)):
+        print(f"  done   {tag} (already has {ASSET_NAME})")
+    if todo:
+        releases.append({"run_id": args.run_id, "sha": args.sha, "tags": todo, "catch_up": False})
+
+    by_commit: dict[str, list[str]] = {}
+    candidates = catch_up_candidates(
+        _merged_tags(args.sha), cfg["families"], sha=args.sha, now=time.time(), days=cfg["catch_up_days"],
+    )
+    for t in candidates:
+        if _has_result(repo, t["tag"]) is False:
+            by_commit.setdefault(t["commit"], []).append(t["tag"])
+    for commit, tags in by_commit.items():
+        run_id = _release_run_for(repo, commit)
+        rel = {"run_id": run_id, "sha": commit, "tags": tags, "catch_up": True}
+        if run_id is None:
+            rel["note"] = f"no completed '{RELEASE_WORKFLOW}' push run found for {commit[:12]} — not swept"
+        releases.append(rel)
+
+    for rel in releases:
+        kind = "catch-up" if rel["catch_up"] else "release"
+        print(f"  {kind:8} run {rel['run_id']} @ {rel['sha'][:12]}: {' '.join(rel['tags'])}")
+    args.out.write_text(json.dumps(releases, indent=2) + "\n")
+    _set_output("count", str(sum(len(r["tags"]) for r in releases)))
+    _set_output("run-ids", " ".join(str(r["run_id"]) for r in releases if r["run_id"]))
     return 0
 
 
@@ -470,13 +615,15 @@ def cmd_report(args: argparse.Namespace) -> int:
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "gpu-compatibility.json").write_text(json.dumps(report, indent=2) + "\n")
-    # One file per released family, attached to that family's GitHub
-    # Release: its own images only, same schema.
-    for family, tag in plan_data.get("released", {}).items():
-        imgs = [i for i in report["images"] if i["family"] == family]
+    # One file per release tag, attached to that tag's GitHub Release: its
+    # own images only, same schema. A catch-up sweep covers several
+    # releases, so the commit is the tag's, not the run's.
+    for tag in plan_data.get("released", {}):
+        imgs = [i for i in report["images"] if i.get("release_tag") == tag]
         if not imgs:
             continue
         sub = {**report, "images": imgs, "release_tag": tag}
+        sub["commit"] = imgs[0].get("commit") or report["commit"]
         sub["totals"] = {
             s: sum(1 for i in imgs for c in i["results"] if c["state"] == s)
             for s in ("pass", "fail", "untested")
@@ -507,13 +654,29 @@ def cmd_report(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+SWEEP_POD_RE = re.compile(r"^smoketest-\d+-.*-sweep\d+$")
+
+
+def is_sweep_pod(name: str, suffix: str = "") -> bool:
+    """`suffix` set: that run's pods only. Empty: any sweep run's pods."""
+    if suffix:
+        return name.startswith("smoketest-") and name.endswith(f"-{suffix}")
+    return bool(SWEEP_POD_RE.match(name))
+
+
 def cmd_reap(args: argparse.Namespace) -> int:
-    """Delete every pod whose name ends with -<suffix>. The harness deletes
-    its pods itself; this catches what a cancelled or killed job left."""
+    """Delete every pod whose name ends with -<suffix>, or with --any-sweep
+    every sweep pod of any run. The harness deletes its pods itself; this
+    catches what a cancelled job left. --any-sweep runs first thing in a
+    sweep: sweeps share one concurrency group, so a sweep pod alive then
+    belongs to a runner that died and will never settle or reap it."""
     from runpod_smoke import api
 
-    suffix = args.suffix
-    if not (suffix.isascii() and suffix.isalnum()):
+    suffix = args.suffix or ""
+    if args.any_sweep == bool(suffix):
+        print("::error::pass exactly one of --suffix or --any-sweep")
+        return 1
+    if suffix and not (suffix.isascii() and suffix.isalnum()):
         print(f"::error::suffix must be alphanumeric, got {suffix!r}")
         return 1
     status, data = api.request_with_retries("GET", "/pods", timeout=30)
@@ -521,12 +684,7 @@ def cmd_reap(args: argparse.Namespace) -> int:
         print(f"::error::could not list pods: {api.error_detail(status, data)}")
         return 1
     pods = data if isinstance(data, list) else (data or {}).get("pods") or []
-    mine = [
-        p for p in pods
-        if isinstance(p, dict)
-        and str(p.get("name", "")).startswith("smoketest-")
-        and str(p.get("name", "")).endswith(f"-{suffix}")
-    ]
+    mine = [p for p in pods if isinstance(p, dict) and is_sweep_pod(str(p.get("name", "")), suffix)]
     failed = 0
     for pod in mine:
         st, body = api.request_with_retries("DELETE", f"/pods/{pod['id']}", timeout=30)
@@ -549,8 +707,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--config", type=Path, default=REPO_ROOT / ".github/gpu-sweep.yml")
     p.add_argument("--graph", type=Path, default=REPO_ROOT / ".github/families.yml")
-    p.add_argument("--refs-dir", type=Path, required=True)
-    p.add_argument("--tags", type=Path, help="file listing the release tags at the commit")
+    p.add_argument("--releases", type=Path, required=True, help="releases.json from `releases`")
+    p.add_argument("--refs-root", type=Path, required=True, help="<root>/<run id>/**/refs.json")
     p.add_argument("--manifest-out", type=Path, required=True)
     p.add_argument("--plan-out", type=Path, required=True)
     p.set_defaults(func=cmd_plan)
@@ -564,8 +722,18 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--commit", default="")
     r.set_defaults(func=cmd_report)
 
+    c = sub.add_parser("releases")
+    c.add_argument("--config", type=Path, default=REPO_ROOT / ".github/gpu-sweep.yml")
+    c.add_argument("--graph", type=Path, default=REPO_ROOT / ".github/families.yml")
+    c.add_argument("--sha", required=True)
+    c.add_argument("--run-id", type=int, required=True)
+    c.add_argument("--force", action="store_true", help="sweep the run's own tags even if they have a result")
+    c.add_argument("--out", type=Path, required=True)
+    c.set_defaults(func=cmd_releases)
+
     k = sub.add_parser("reap")
-    k.add_argument("--suffix", required=True)
+    k.add_argument("--suffix", default="")
+    k.add_argument("--any-sweep", action="store_true")
     k.set_defaults(func=cmd_reap)
 
     args = ap.parse_args(argv)

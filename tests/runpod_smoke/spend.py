@@ -7,11 +7,20 @@ reservation would take spent + reserved past the cap is never created; the
 runner reports that job as SKIP, which a sweep reads as "untested", never as
 incompatible.
 
+The runner deletes a pod when its hold runs out (runner.test_pair), so a
+settled cost can't exceed its hold by more than the delete takes, and
+spent + held stays within the cap.
+
+What the cap does not see:
+  * the catalog price is an estimate of what Runpod bills (disk, partial
+    minutes);
+  * a pod whose runner dies outright never settles. The next sweep deletes
+    it first thing (gpu_sweep.py reap --any-sweep), and reap-pods.yml
+    hourly is the backstop.
+
 Prices are the catalog's $/hr for the tier the job runs in, captured while
 each tier is planned (the catalog is reloaded per tier, so it can't be read
-back at run time). It is an estimate of what RunPod bills — disk and partial
-minutes aside — which is why the reservation, not the settled figure, is
-what gates creation.
+back at run time).
 """
 
 from __future__ import annotations

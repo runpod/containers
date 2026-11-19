@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -155,7 +156,7 @@ class Report(unittest.TestCase):
     def _report(self, rows):
         plan = {
             "config": CFG,
-            "released": {"pytorch": "pytorch-v1.4.0"},
+            "released": {"pytorch-v1.4.0": "pytorch"},
             "images": [{"image": PT, "family": "pytorch", "release_tag": "pytorch-v1.4.0", "cuda_floor": "13.0"}],
             "skipped": [],
         }
@@ -232,7 +233,7 @@ class Report(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             plan = {
-                "config": CFG, "released": {"pytorch": "pytorch-v1.4.0"},
+                "config": CFG, "released": {"pytorch-v1.4.0": "pytorch"},
                 "images": [{"image": PT, "family": "pytorch", "release_tag": "pytorch-v1.4.0", "cuda_floor": "13.0"}],
                 "skipped": [],
             }
@@ -251,7 +252,7 @@ class Report(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             plan = {
-                "config": CFG, "released": {"pytorch": "pytorch-v1.4.0"},
+                "config": CFG, "released": {"pytorch-v1.4.0": "pytorch"},
                 "images": [{"image": PT, "family": "pytorch", "release_tag": "pytorch-v1.4.0", "cuda_floor": "13.0"}],
                 "skipped": [],
             }
@@ -265,6 +266,133 @@ class Report(unittest.TestCase):
                     ])
                 self.assertEqual(rc, 1, results.name)
                 self.assertFalse((tmp / "out").exists(), results.name)
+
+
+class CatchUp(unittest.TestCase):
+    NOW = 1_800_000_000.0
+    DAY = 86400.0
+
+    def test_candidates_are_recent_family_tags_behind_the_commit(self):
+        tags = [
+            {"tag": "pytorch-v1.4.1", "commit": "head", "date": self.NOW},
+            {"tag": "pytorch-v1.4.0", "commit": "c2", "date": self.NOW - self.DAY},
+            {"tag": "base-v1.2.0", "commit": "c1", "date": self.NOW - 2 * self.DAY},
+            {"tag": "base-v1.1.0", "commit": "c0", "date": self.NOW - 5 * self.DAY},
+            {"tag": "unknown-v1.0.0", "commit": "c2", "date": self.NOW},
+            {"tag": "v9", "commit": "c2", "date": self.NOW},
+        ]
+        out = S.catch_up_candidates(tags, GRAPH, sha="head", now=self.NOW, days=3)
+        self.assertEqual([t["tag"] for t in out], ["base-v1.2.0", "pytorch-v1.4.0"])
+
+    def _releases(self, *, force, has_result):
+        def git(*args):
+            if args[0] == "tag":
+                return "pytorch-v1.4.1\nnot-a-family\n"
+            fmt = "{}\t{}\t\t{:.0f}\n"
+            return (
+                fmt.format("pytorch-v1.4.1", "head", self.NOW)
+                + fmt.format("base-v1.2.0", "c1", self.NOW - self.DAY)
+                + fmt.format("comfyui-v1.0.0", "c1", self.NOW - self.DAY)
+                + fmt.format("pytorch-v1.3.0", "c0", self.NOW - self.DAY)
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "releases.json"
+            with mock.patch.object(S, "_git", side_effect=git), \
+                    mock.patch.object(S, "_has_result", side_effect=lambda _r, t: has_result[t]), \
+                    mock.patch.object(S, "_release_run_for", side_effect=lambda _r, c: {"c1": 11}.get(c)), \
+                    mock.patch.object(S.time, "time", return_value=self.NOW), \
+                    mock.patch.dict(S.os.environ, {"GH_REPO": "o/r"}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                rc = S.main([
+                    "releases", "--graph", str(self._graph(Path(tmp))), "--sha", "head",
+                    "--run-id", "99", "--out", str(out), *(["--force"] if force else []),
+                ])
+            self.assertEqual(rc, 0)
+            return json.loads(out.read_text())
+
+    def _graph(self, tmp):
+        path = tmp / "families.yml"
+        path.write_text(json.dumps({"families": GRAPH}))
+        return path
+
+    def test_unswept_releases_behind_are_caught_up(self):
+        rels = self._releases(force=False, has_result={
+            "pytorch-v1.4.1": False, "base-v1.2.0": False,
+            "comfyui-v1.0.0": True, "pytorch-v1.3.0": False,
+        })
+        self.assertEqual(rels[0], {"run_id": 99, "sha": "head", "tags": ["pytorch-v1.4.1"], "catch_up": False})
+        # comfyui at c1 already has a result; base at c1 doesn't.
+        self.assertEqual(rels[1]["tags"], ["base-v1.2.0"])
+        self.assertEqual(rels[1]["run_id"], 11)
+        # No release run found for c0: kept, with a note, so the report says so.
+        self.assertIsNone(rels[2]["run_id"])
+        self.assertIn("not swept", rels[2]["note"])
+
+    def test_own_tags_already_caught_up_are_not_swept_twice(self):
+        has = {"pytorch-v1.4.1": True, "base-v1.2.0": True, "comfyui-v1.0.0": True, "pytorch-v1.3.0": True}
+        self.assertEqual(self._releases(force=False, has_result=has), [])
+        # A dispatch is an explicit re-sweep.
+        self.assertEqual(self._releases(force=True, has_result=has)[0]["tags"], ["pytorch-v1.4.1"])
+
+    def test_plan_merges_releases_and_reports_expired_refs(self):
+        pt_old = PT.replace("1.4.0", "1.3.0")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for run, refs in (("1", [PT, BASE_GPU]), ("2", [pt_old])):
+                (root / run / "pytorch-refs").mkdir(parents=True)
+                (root / run / "pytorch-refs" / "refs.json").write_text(json.dumps(refs))
+            releases = [
+                {"run_id": 1, "sha": "head", "tags": ["pytorch-v1.4.0"], "catch_up": False},
+                {"run_id": 2, "sha": "c2", "tags": ["pytorch-v1.3.0"], "catch_up": True},
+                {"run_id": 3, "sha": "c3", "tags": ["base-v1.1.0"], "catch_up": True},
+            ]
+            tags, out = S.plan_releases(CFG, GRAPH, releases, root)
+        self.assertEqual(tags, {"pytorch-v1.4.0": "pytorch", "pytorch-v1.3.0": "pytorch"})
+        by_image = {i["image"]: i for i in out["images"]}
+        self.assertEqual(by_image[PT]["release_tag"], "pytorch-v1.4.0")
+        self.assertEqual(by_image[pt_old]["commit"], "c2")
+        skipped = {s["image"]: s["reason"] for s in out["skipped"]}
+        self.assertIn("not released", skipped[BASE_GPU])
+        self.assertIn("no refs from release run 3", skipped["base-v1.1.0"])
+
+    def test_report_writes_one_file_per_tag_of_the_same_family(self):
+        pt_old = PT.replace("1.4.0", "1.3.0")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            plan = {
+                "config": CFG,
+                "released": {"pytorch-v1.4.0": "pytorch", "pytorch-v1.3.0": "pytorch"},
+                "images": [
+                    {"image": PT, "family": "pytorch", "release_tag": "pytorch-v1.4.0", "cuda_floor": "13.0", "commit": "head"},
+                    {"image": pt_old, "family": "pytorch", "release_tag": "pytorch-v1.3.0", "cuda_floor": "13.0", "commit": "c2"},
+                ],
+                "skipped": [],
+            }
+            (tmp / "plan.json").write_text(json.dumps(plan))
+            (tmp / "results.json").write_text(json.dumps({"results": [
+                _row(PT, "PASS", "B200", "13.0"), _row(pt_old, "FAIL", "B200", "13.0"),
+            ]}))
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = S.main([
+                    "report", "--plan", str(tmp / "plan.json"), "--results", str(tmp / "results.json"),
+                    "--out-dir", str(tmp / "out"), "--run-url", "u", "--commit", "head",
+                ])
+            self.assertEqual(rc, 0)
+            old = json.loads((tmp / "out" / "pytorch-v1.3.0.json").read_text())
+            self.assertEqual([i["image"] for i in old["images"]], [pt_old])
+            self.assertEqual(old["commit"], "c2")
+            self.assertEqual(old["totals"]["fail"], 1)
+
+
+class Reap(unittest.TestCase):
+    def test_sweep_pod_matching(self):
+        self.assertTrue(S.is_sweep_pod("smoketest-1700000000-0042-1-sweep123", "sweep123"))
+        self.assertFalse(S.is_sweep_pod("smoketest-1700000000-0042-1-sweep123", "sweep12"))
+        self.assertTrue(S.is_sweep_pod("smoketest-1700000000-0042-1-sweep123"))
+        # A PR smoke-test pod or a human's pod is never an "any sweep" pod.
+        self.assertFalse(S.is_sweep_pod("smoketest-1700000000-0042-1"))
+        self.assertFalse(S.is_sweep_pod("my-pod-sweep123"))
 
 
 if __name__ == "__main__":

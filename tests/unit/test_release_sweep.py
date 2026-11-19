@@ -9,6 +9,7 @@
 - Sweep pods carry a run suffix so the run can reap its own leftovers.
 """
 
+import time
 import unittest
 from unittest import mock
 
@@ -133,6 +134,48 @@ class SpendCap(_ConfigReset):
         # cap; released, the next one fits and nothing was spent.
         self.assertTrue(spend.reserve("B200", "SECURE")[0])
         self.assertEqual(spend.spent(), 0.0)
+
+    def _run_pair_with_short_hold(self, check):
+        """test_pair with a 0.2 s hold and `check` standing in for the pod's
+        checks. Returns (outcome, cleanup mock)."""
+        with mock.patch.object(config, "SPEND_RESERVE_MINUTES", 0.2 / 60), \
+                mock.patch.object(runner, "_create_pod_with_retries", return_value=("pod1", "", "")), \
+                mock.patch.object(runner, "register_pod"), \
+                mock.patch.object(runner, "cleanup_pod") as cleanup, \
+                mock.patch.object(runner, "_check_pod", side_effect=check), \
+                mock.patch.object(runner, "log"), \
+                mock.patch.object(runner, "resolve_gpu_id", return_value="NVIDIA B200"):
+            outcome = runner.test_pair(CU129, "B200", "g", "13.0", "SECURE")
+        return outcome, cleanup
+
+    def test_pod_past_its_hold_is_deleted_and_untested(self):
+        def hung_check(*_a):
+            # A pull or check still running when the hold runs out; the
+            # deleted pod then fails whatever the check does next.
+            time.sleep(0.5)
+            return "FAIL", "SSH connection refused"
+
+        (status, note), cleanup = self._run_pair_with_short_hold(hung_check)
+        self.assertEqual(status, "BUDGET")
+        self.assertIn("spend cap", note)
+        cleanup.assert_called_once_with("pod1")  # by the timer, not again
+        # Settled at roughly the hold, not the 0.5 s the check ran.
+        self.assertLess(spend.spent(), 6.0 * 0.45 / 3600)
+
+    def test_hold_expiry_never_turns_into_fail_on_exception(self):
+        def hung_then_raise(*_a):
+            time.sleep(0.5)
+            raise RuntimeError("pod vanished")
+
+        (status, _note), _cleanup = self._run_pair_with_short_hold(hung_then_raise)
+        self.assertEqual(status, "BUDGET")
+
+    def test_pod_inside_its_hold_keeps_its_verdict(self):
+        (status, _note), cleanup = self._run_pair_with_short_hold(lambda *_a: ("FAIL", "CUDA init failed"))
+        self.assertEqual(status, "FAIL")
+        cleanup.assert_called_once_with("pod1")
+        time.sleep(0.3)  # the cancelled timer must not delete it again
+        cleanup.assert_called_once_with("pod1")
 
     def test_disabled_cap_is_a_noop(self):
         with mock.patch.object(config, "SPEND_CAP_USD", 0.0):

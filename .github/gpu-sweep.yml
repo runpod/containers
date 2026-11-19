@@ -29,16 +29,26 @@ gpus:
 # SECURE (DEDUPE_CLOUD_TIERS).
 cloud: ALL
 
-# Hard ceiling on pod spend per release, from catalog $/hr. Every pod holds
-# reserve_minutes of its price before it is created; pods that no longer fit
-# are recorded as untested (spend cap), never as failed.
+# Cap on one sweep's pod spend, at catalog $/hr. Sweeps run one at a time,
+# so it is also the most spent at once. Every pod holds reserve_minutes of
+# its price before it is created and is deleted when that runs out; pods that
+# don't fit, or are cut off, are recorded untested (spend cap), never failed.
+# Not counted: the gap between catalog price and the bill, and a pod whose
+# runner died — the next sweep deletes it first, reap-pods.yml (hourly) is
+# the backstop.
 spend_cap_usd: 50
-# Longest a sweep pod lives: create-timeout (20 min for the biggest pulls)
-# plus the checks. Too low and a slow pod can overrun its hold.
+# Each pod's lifetime limit and hold: create-timeout (20 min for the biggest
+# pulls) plus the checks. Too low and slow pods come back untested.
 reserve_minutes: 30
 
 # Parallel pods. Doesn't change cost, only wall-clock vs. pull throttling.
 max_parallel: 4
+
+# Each sweep also sweeps release tags behind it from the last N days whose
+# Release has no gpu-compatibility.json — the releases whose queued sweep
+# GitHub dropped (a concurrency group keeps one pending run). Past 3 days
+# their refs artifacts are gone, so a larger value finds nothing to sweep.
+catch_up_days: 3
 
 # Families to sweep. Images from any other family, and images without a CUDA
 # floor (CPU, ROCm tags), are skipped. Per family:

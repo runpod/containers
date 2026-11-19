@@ -33,15 +33,14 @@ on:
 permissions:
   contents: read
 
-# One group per release run, not one global group: a group keeps a single
-# pending run, so a third release during a long sweep would cancel the
-# queued one and its families would never be swept. Different releases sweep
-# in parallel (each under its own cap, reaping only its own pod suffix); two
-# sweeps of the same release queue instead of clobbering each other's result.
-# Never cancel in progress: a cancel SIGKILLs the runner mid-cleanup and leaks
-# paid pods.
+# One sweep at a time, so the spend cap also bounds what is spent at once.
+# GitHub keeps only one pending run per group and cancels an older pending
+# one; nothing is lost, because each sweep also catches up on recent
+# releases behind it that have no result yet (gpu_sweep.py releases).
+# Never cancel in progress: a cancel SIGKILLs the runner mid-cleanup and
+# leaks paid pods.
 concurrency:
-  group: gpu-sweep-release-${{ github.event.workflow_run.id || inputs.release-run-id }}
+  group: gpu-sweep-release
   cancel-in-progress: false
 
 jobs:
@@ -93,37 +92,58 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # The tags at the commit are exactly the families that run released.
-      # A family whose build or smoke test failed was pushed but not tagged,
-      # and is not swept.
-      - name: Released families
-        id: tags
+      # The tags at the commit are exactly the families that run released;
+      # a family whose build or smoke test failed was pushed but not tagged,
+      # and is not swept. Plus catch-up: recent release tags behind the
+      # commit whose Release has no result yet.
+      - name: Releases to sweep
+        id: releases
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           SHA: ${{ steps.run.outputs.sha }}
+          RUN_ID: ${{ steps.run.outputs.run-id }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
         run: |
           set -euo pipefail
-          git tag --points-at "${SHA}" | tee "${RUNNER_TEMP}/tags.txt"
-          echo "count=$(grep -c . "${RUNNER_TEMP}/tags.txt" || true)" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/gpu_sweep.py releases \
+            --sha "${SHA}" --run-id "${RUN_ID}" ${FORCE} \
+            --out "${RUNNER_TEMP}/releases.json"
 
-      - name: Download refs from the release run
-        if: steps.tags.outputs.count != '0'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: ${{ steps.run.outputs.run-id }}
-          github-token: ${{ github.token }}
-          pattern: "*-refs*"
-          path: ${{ runner.temp }}/refs
+      # A run whose artifacts have expired is reported as not swept by the
+      # plan, so a failed download is a warning, not an error.
+      - name: Download refs from the release runs
+        if: steps.releases.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_IDS: ${{ steps.releases.outputs.run-ids }}
+        run: |
+          set -euo pipefail
+          for id in ${RUN_IDS}; do
+            gh run download "${id}" --pattern "*-refs*" --dir "${RUNNER_TEMP}/refs/${id}" \
+              || echo "::warning::no refs artifacts from release run ${id}"
+          done
 
       - name: Plan sweep
         id: plan
-        if: steps.tags.outputs.count != '0'
+        if: steps.releases.outputs.count != '0'
         run: |
           set -euo pipefail
           python3 .github/scripts/gpu_sweep.py plan \
-            --refs-dir "${RUNNER_TEMP}/refs" \
-            --tags "${RUNNER_TEMP}/tags.txt" \
+            --releases "${RUNNER_TEMP}/releases.json" \
+            --refs-root "${RUNNER_TEMP}/refs" \
             --manifest-out "${RUNNER_TEMP}/sweep-manifest.yaml" \
             --plan-out "${RUNNER_TEMP}/sweep-plan.json"
+
+      # Sweeps run one at a time, so a sweep pod alive now was left by a
+      # runner that died: it never settled against any cap. Delete it before
+      # spending more.
+      - name: Delete pods left by an earlier sweep
+        if: fromJSON(steps.plan.outputs.images || '0') > 0
+        env:
+          RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+        run: python3 .github/scripts/gpu_sweep.py reap --any-sweep
 
       # Harness knobs the smoke-test action has no input for. $GITHUB_ENV
       # reaches the composite action's steps.
@@ -241,5 +261,5 @@ jobs:
           fi
 
       - name: Nothing to sweep
-        if: steps.tags.outputs.count == '0' || (steps.plan.outcome == 'success' && steps.plan.outputs.images == '0')
+        if: steps.releases.outputs.count == '0' || (steps.plan.outcome == 'success' && steps.plan.outputs.images == '0')
         run: echo "No released GPU images in this run — nothing to sweep." >> "$GITHUB_STEP_SUMMARY"
