@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     if [ -n "${NIXL}" ]; then \
         read -ra NIXL_PKGS <<< "${NIXL}" && \
         PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${NIXL_PKGS[@]}" && \
-        python -c "import numpy, nixl_meta_utils"; \
+        python -c "import nixl; from nixl._api import nixl_agent"; \
     fi
 
 # Patched pins for packages that Grype reports as HIGH in the layers above.
