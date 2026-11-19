@@ -73,15 +73,27 @@ class _Tree:
 
 
 class Versions(unittest.TestCase):
-    def test_compares_the_first_three_components(self):
-        self.assertTrue(dedupe.newer_or_equal((12, 9, 0, 13), (12, 8, 4, 1)))
-        self.assertTrue(dedupe.newer_or_equal((12, 8, 4, 9), (12, 8, 4, 1)))
-        self.assertFalse(dedupe.newer_or_equal((9, 8, 0), (9, 10, 2, 21)))
+    def test_same_minor_with_equal_or_newer_patch_switches(self):
+        self.assertIsNone(dedupe.mismatch((12, 8, 4, 1), (12, 8, 3, 14)))
+        # The fourth component is ignored.
+        self.assertIsNone(dedupe.mismatch((12, 8, 4, 1), (12, 8, 4, 9)))
+
+    def test_older_system_copy_stays(self):
+        self.assertEqual(dedupe.mismatch((9, 8, 0), (9, 10, 2, 21)), "older than")
+        self.assertEqual(dedupe.mismatch((12, 8, 3), (12, 8, 4, 1)), "older than")
+
+    def test_newer_minor_stays(self):
+        # torch 2.6.0 pins cuDNN 9.5.1; the 12.8.1 image has 9.8.0, which ran
+        # fp32 conv 8% slower on an RTX 4090.
+        self.assertEqual(dedupe.mismatch((9, 8, 0), (9, 5, 1, 17)),
+                         "a newer minor release than")
+        self.assertEqual(dedupe.mismatch((12, 8, 4, 1), (12, 6, 4, 1)),
+                         "a newer minor release than")
 
     def test_shorter_system_version(self):
         # libcudnn.so.9.12.0 against pip's 9.13.0.50
-        self.assertFalse(dedupe.newer_or_equal((9, 12, 0), (9, 13, 0, 50)))
-        self.assertTrue(dedupe.newer_or_equal((9, 13, 0), (9, 13, 0, 50)))
+        self.assertEqual(dedupe.mismatch((9, 12, 0), (9, 13, 0, 50)), "older than")
+        self.assertIsNone(dedupe.mismatch((9, 13, 0), (9, 13, 0, 50)))
 
 
 class SystemLibs(_Tree, unittest.TestCase):
@@ -106,13 +118,20 @@ class SystemLibs(_Tree, unittest.TestCase):
 
 
 class PlanPackage(_Tree, unittest.TestCase):
-    def test_switches_when_the_system_copy_is_newer(self):
-        self.system("libcublas.so.12", "9.0.13")
-        dist = self.pip("nvidia-cublas-cu12", "12.8.4.1", ["libcublas.so.12"])
+    def test_switches_when_the_system_copy_is_a_newer_patch(self):
+        self.system("libcublas.so.12", "8.4.1")
+        dist = self.pip("nvidia-cublas-cu12", "12.8.3.14", ["libcublas.so.12"])
         plan, why = dedupe.plan_package(dist, self.system_libs())
         self.assertIsNone(why)
         self.assertEqual([p[1] for p in plan],
                          [str(self.sys_dir / "libcublas.so.12")])
+
+    def test_keeps_pip_when_the_system_copy_is_a_newer_minor(self):
+        self.system("libcudnn.so.9", "8.0")
+        dist = self.pip("nvidia-cudnn-cu12", "9.5.1.17", ["libcudnn.so.9"])
+        plan, why = dedupe.plan_package(dist, self.system_libs())
+        self.assertEqual(plan, [])
+        self.assertIn("is a newer minor release than pip 9.5.1.17", why)
 
     def test_keeps_pip_when_the_system_copy_is_older(self):
         self.system("libcudnn.so.9", "8.0")
@@ -139,7 +158,7 @@ class PlanPackage(_Tree, unittest.TestCase):
 
 class Decide(_Tree, unittest.TestCase):
     def test_toolkit_switches_all_or_nothing(self):
-        self.system("libcublas.so.12", "9.0.13")
+        self.system("libcublas.so.12", "8.4.1")
         self.system("libcufft.so.11", "3.3.83")
         self.system("libcudnn.so.9", "10.2")
         packages = {

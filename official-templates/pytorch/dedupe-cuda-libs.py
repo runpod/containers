@@ -2,8 +2,10 @@
 """Replace torch's pip CUDA libraries with symlinks to the image's copies.
 
 A library switches only when the wheel targets the image's CUDA major, the
-soname matches and the system version is >= pip's. The toolkit libraries
-switch all together or not at all; cuDNN and NCCL decide on their own.
+soname matches and the system copy is the same minor release as pip's with an
+equal or newer patch, so torch keeps the version it was tested with. The
+toolkit libraries switch all together or not at all; cuDNN and NCCL decide on
+their own.
 Everything else stays as pip installed it.
 
 Usage: dedupe-cuda-libs.py [--dry-run]
@@ -31,9 +33,18 @@ def vt(text):
     return tuple(int(x) for x in re.findall(r"\d+", text))
 
 
-def newer_or_equal(sys_ver, pip_ver):
+def mismatch(sys_ver, pip_ver):
+    """Why the system copy can not stand in for pip's, or None if it can.
+
+    A newer minor release changes kernels and speed (cuDNN 9.8 for torch's
+    9.5 ran fp32 conv 8% slower), so only a newer patch may replace pip's.
+    """
     n = min(len(sys_ver), len(pip_ver), 3)
-    return sys_ver[:n] >= pip_ver[:n]
+    if sys_ver[:n] < pip_ver[:n]:
+        return "older than"
+    if sys_ver[:2] != pip_ver[:2]:
+        return "a newer minor release than"
+    return None
 
 
 def system_lib(d, name):
@@ -77,9 +88,10 @@ def plan_package(dist, system):
         if hit is None:
             # No system copy (e.g. libnvrtc.alt): keep pip's file.
             continue
-        if not newer_or_equal(hit[1], pip_ver):
+        why = mismatch(hit[1], pip_ver)
+        if why:
             return [], (f"system {os.path.basename(hit[0])} "
-                        f"{'.'.join(map(str, hit[1]))} is older than pip {dist.version}")
+                        f"{'.'.join(map(str, hit[1]))} is {why} pip {dist.version}")
         plan.append((path, hit[0], size))
     return plan, None if plan else "no system copy"
 

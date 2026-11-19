@@ -34,7 +34,7 @@ If you need any of these, use a CUDA 13.0 image: there PyTorch and torchaudio ar
 
 ### One copy of the CUDA libraries
 
-The PyTorch wheels bring their own CUDA libraries as pip packages (`nvidia-cublas`, `nvidia-cudnn`, `nvidia-nccl`, ...), next to the ones the image already has in `/usr/local/cuda`. Where the image's copy is the same version or newer, the pip files under `site-packages/nvidia/` are symlinks to it, so the image does not store the CUDA runtime twice (up to 3.8 GB uncompressed). PyTorch runs the same either way. The CUDA toolkit libraries switch together or not at all; cuDNN and NCCL each switch on their own. A pip library that is newer than the image's, or that the image does not have, stays a regular file.
+The PyTorch wheels bring their own CUDA libraries as pip packages (`nvidia-cublas`, `nvidia-cudnn`, `nvidia-nccl`, ...), next to the ones the image already has in `/usr/local/cuda`. Where the image's copy is the same minor release with the same or a newer patch (cuDNN 9.10.2 for pip's 9.10.1, not 9.8 for pip's 9.5), the pip files under `site-packages/nvidia/` are symlinks to it, so the image does not store the CUDA runtime twice. PyTorch keeps the library versions it was released with; a newer minor release can change kernel choice and speed, so it is not substituted. The CUDA toolkit libraries switch together or not at all; cuDNN and NCCL each switch on their own. Any other pip library stays a regular file.
 
 pip and uv still see every package as installed. `pip install --force-reinstall nvidia-cublas-cu12` (or any other of them) puts pip's own files back.
 

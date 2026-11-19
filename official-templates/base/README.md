@@ -23,6 +23,8 @@ The Runpod Base images provide a clean, developer friendly environment for every
 > Also left out: the `cuda-gdb` TUI builds for Python 3.8–3.10 (not installed in the image; the 3.11/3.12 builds stay) and the CUPTI HTML docs. In every image, the static archives of the FFmpeg, x264/Xvid and BLAS/LAPACK/ATLAS `-dev` packages are not unpacked either; `apt-get install --reinstall <package>` brings one back.
 >
 > CUDA packages also no longer move to a newer patch release than the tag names (12.9.0 used to ship parts of 12.9.1).
+>
+> The devel image's `NV_*_DEV*` build variables (such as `NV_CUDNN_PACKAGE_DEV` and `NV_LIBNCCL_DEV_PACKAGE`) are no longer set; runtime variables such as `CUDA_VERSION`, `NV_CUDNN_VERSION` and `NVIDIA_REQUIRE_CUDA` are unchanged. A Dockerfile that installs `${NV_..._DEV_PACKAGE}` needs the package name written out.
 
 ### Available configurations
 - **Ubuntu**: 24.04 (Noble); CPU-only also on 26.04 (Resolute)

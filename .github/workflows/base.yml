@@ -20,7 +20,9 @@ permissions:
   contents: read
 
 env:
-  # "gzip" or "zstd". zstd needs Docker 23+ / containerd 1.5+ on every host.
+  # "gzip" or "zstd". zstd needs Docker 23+ / containerd 1.5+ on every host,
+  # and the runner's Docker must use the containerd image store: the classic
+  # store re-compresses to gzip on `docker push` and the digest check fails.
   LAYER_COMPRESSION: ${{ vars.LAYER_COMPRESSION || 'gzip' }}
 
 jobs:
