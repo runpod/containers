@@ -143,6 +143,6 @@ target "ray-cluster-inference" {
     ray-cluster = "target:ray-cluster-${INFERENCE_BASE.ubuntu_name}-cu${INFERENCE_BASE.cuda_code}-torch${INFERENCE_BASE.torch_code}"
   }
   tags = [
-    "runpod/ray-cluster:${RELEASE_VERSION}${RELEASE_SUFFIX}-inference-cu${INFERENCE_BASE.cuda_code}-torch${INFERENCE_BASE.torch_code}-${INFERENCE_BASE.ubuntu_name}",
+    "runpod/ray-cluster${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-inference-cu${INFERENCE_BASE.cuda_code}-torch${INFERENCE_BASE.torch_code}-${INFERENCE_BASE.ubuntu_name}",
   ]
 }
