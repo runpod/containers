@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -244,6 +246,25 @@ class Report(unittest.TestCase):
             per_family = json.loads((tmp / "out" / "pytorch-v1.4.0.json").read_text())
             self.assertEqual(per_family["release_tag"], "pytorch-v1.4.0")
             self.assertEqual(per_family["schema_version"], 1)
+
+    def test_report_command_refuses_without_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            plan = {
+                "config": CFG, "released": {"pytorch": "pytorch-v1.4.0"},
+                "images": [{"image": PT, "family": "pytorch", "release_tag": "pytorch-v1.4.0", "cuda_floor": "13.0"}],
+                "skipped": [],
+            }
+            (tmp / "plan.json").write_text(json.dumps(plan))
+            (tmp / "empty.json").write_text(json.dumps({"results": []}))
+            for results in (tmp / "missing.json", tmp / "empty.json"):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = S.main([
+                        "report", "--plan", str(tmp / "plan.json"), "--results", str(results),
+                        "--out-dir", str(tmp / "out"), "--run-url", "u",
+                    ])
+                self.assertEqual(rc, 1, results.name)
+                self.assertFalse((tmp / "out").exists(), results.name)
 
 
 if __name__ == "__main__":

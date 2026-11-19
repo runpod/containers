@@ -458,8 +458,12 @@ def render_markdown(report: dict) -> str:
 def cmd_report(args: argparse.Namespace) -> int:
     plan_data = json.loads(args.plan.read_text())
     results = json.loads(args.results.read_text()) if args.results.exists() else {}
-    if not results:
-        print("::warning::no harness results JSON — every cell is reported untested")
+    if not results.get("results"):
+        print(
+            f"::error::no harness results in {args.results} — the sweep did not "
+            "run, so no report is written or attached"
+        )
+        return 1
     report = build_report(
         plan_data, results, run_url=args.run_url, log_url=args.log_url or args.run_url,
         commit=args.commit,

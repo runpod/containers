@@ -33,10 +33,15 @@ on:
 permissions:
   contents: read
 
-# Never cancel: a cancel SIGKILLs the runner mid-cleanup and leaks paid pods.
-# Sweeps queue; a release that lands while one runs is swept next.
+# One group per release run, not one global group: a group keeps a single
+# pending run, so a third release during a long sweep would cancel the
+# queued one and its families would never be swept. Different releases sweep
+# in parallel (each under its own cap, reaping only its own pod suffix); two
+# sweeps of the same release queue instead of clobbering each other's result.
+# Never cancel in progress: a cancel SIGKILLs the runner mid-cleanup and leaks
+# paid pods.
 concurrency:
-  group: gpu-sweep-release
+  group: gpu-sweep-release-${{ github.event.workflow_run.id || inputs.release-run-id }}
   cancel-in-progress: false
 
 jobs:
