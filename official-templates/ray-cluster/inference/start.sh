@@ -104,8 +104,10 @@ if ! wait $!; then
     services
 fi
 # The download before vLLM fetches the revision, into the directory and in
-# the load format vLLM will read; the last one given wins, as in vLLM.
-revision='' download_dir='' load_format=auto
+# the load format vLLM will read, and LiteLLM asks vLLM for the model by the
+# first --served-model-name, its name in vLLM's responses; the last one given
+# wins, as in vLLM.
+revision='' download_dir='' load_format=auto served_name=''
 for ((i = 0; i < ${#extra_args[@]}; i++)); do
     arg=${extra_args[i]}
     # vLLM takes --api_key as --api-key.
@@ -119,6 +121,7 @@ for ((i = 0; i < ${#extra_args[@]}; i++)); do
         --revision) revision=$value ;;
         --download-dir) download_dir=$value ;;
         --load-format) load_format=$value ;;
+        --served-model-name) served_name=$value ;;
         *) ;;
     esac
 done
@@ -182,17 +185,19 @@ fi
 vllm_job=$!
 
 # --- LiteLLM ------------------------------------------------------------------ #
-# One model, MODEL_REPO, under its own name, so clients use the same model id
-# as with vLLM directly. Written as JSON (valid YAML), so no model name can
-# break the config. LiteLLM starts only once vLLM answers /health, so while the
-# model loads nothing listens on the API port (the Runpod proxy answers 502)
-# instead of LiteLLM failing every request with a 500 and a logged traceback.
-# If vLLM exits first, LiteLLM is not started. Prometheus metrics on /metrics.
+# One model, under vLLM's name for it (MODEL_REPO, or a --served-model-name),
+# so clients use the same model id as with vLLM directly. Written as JSON
+# (valid YAML), so no model name can break the config. LiteLLM starts only
+# once vLLM answers /health, so while the model loads nothing listens on the
+# API port (the Runpod proxy answers 502) instead of LiteLLM failing every
+# request with a 500 and a logged traceback. If vLLM exits first, LiteLLM is
+# not started. Prometheus metrics on /metrics.
 # No admin UI (it needs a database this pod doesn't have) and no fetch of the
 # model price map. Without a database, a key other than the master key gets
 # LiteLLM's 400 "No connected db." rather than a 401: still refused. LiteLLM
 # also refuses to start on a publicly known master key, such as sk-1234.
-if ! python3 - "$MODEL_REPO" "$VLLM_PORT" > "$LITELLM_DIR/config.json" << 'EOF'
+model_name=${served_name:-$MODEL_REPO}
+if ! python3 - "$model_name" "$VLLM_PORT" > "$LITELLM_DIR/config.json" << 'EOF'
 import json, sys
 
 model, vllm_port = sys.argv[1:]
@@ -217,7 +222,7 @@ then
     log "error: could not write $LITELLM_DIR/config.json (see above), so LiteLLM was not started"
     services
 fi
-log "LiteLLM will start on $API_PORT for $MODEL_REPO once vLLM has loaded the model"
+log "LiteLLM will start on $API_PORT for $model_name once vLLM has loaded the model"
 (
     until curl -sf --max-time 5 -o /dev/null "http://127.0.0.1:$VLLM_PORT/health"; do
         if ! kill -0 "$vllm_job" 2> /dev/null; then

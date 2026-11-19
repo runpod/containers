@@ -295,15 +295,25 @@ class StartScript(unittest.TestCase):
                     self.assertNotIn(want.strip(), out, "the key reached the log")
 
     def test_litellm_config(self) -> None:
-        """One model under MODEL_REPO's own name, valid JSON whatever the
-        name holds."""
-        for model in (MODEL, 'org/we"ird\\name', "org/{{ template }}: x"):
-            with self.subTest(model):
-                self.run_start({"MODEL_REPO": model, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1"})
+        """<description>, <MODEL_REPO>, <VLLM_EXTRA_ARGS>, <the one model's
+        name>: vLLM's name for it, in valid JSON whatever the name holds."""
+        rows = [
+            ("MODEL_REPO's own name", MODEL, "", MODEL),
+            ("quotes and backslashes", 'org/we"ird\\name', "", 'org/we"ird\\name'),
+            ("YAML and template syntax", "org/{{ template }}: x", "", "org/{{ template }}: x"),
+            ("--served-model-name", MODEL, "--served-model-name qwen --enforce-eager", "qwen"),
+            ("its first name, as vLLM answers with", MODEL, "--served-model-name qwen q", "qwen"),
+            ("--served_model_name=, the last one given", MODEL,
+             "--served-model-name a --served_model_name=b", "b"),
+        ]
+        for what, model, extra, want in rows:
+            with self.subTest(what):
+                self.run_start({"MODEL_REPO": model, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1",
+                                "VLLM_EXTRA_ARGS": extra})
                 config = json.loads((self.work / "litellm/config.json").read_text())
                 (entry,) = config["model_list"]
-                self.assertEqual(entry["model_name"], model)
-                self.assertEqual(entry["litellm_params"]["model"], f"hosted_vllm/{model}")
+                self.assertEqual(entry["model_name"], want)
+                self.assertEqual(entry["litellm_params"]["model"], f"hosted_vllm/{want}")
                 self.assertEqual(entry["litellm_params"]["api_base"], "http://127.0.0.1:8000/v1")
                 self.assertIn("hashed_api_key", config["litellm_settings"]["prometheus_exclude_labels"])
                 args = self.recorded("litellm.args")
