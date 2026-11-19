@@ -15,7 +15,10 @@ bitsandbytes, ...) are left to vLLM. Beside them, the repo's top-level
 config and tokenizer files.
 
 When the Hub can't be reached (HF_HUB_OFFLINE, an outage, no egress), a
-snapshot already in the cache is served as is, as vLLM itself would.
+snapshot already in the cache is served as is, as vLLM itself would, but only
+one an earlier download here completed for the same load format: a download
+cut short (a full volume, a restart) leaves a snapshot vLLM would find
+missing shards in. Any other failure (no space, a refused HF_TOKEN) is one.
 
 Usage: download_model.py <repo> <revision or ""> <cache dir or ""> <load format>
 """
@@ -23,12 +26,20 @@ Usage: download_model.py <repo> <revision or ""> <cache dir or ""> <load format>
 import fnmatch
 import glob
 import json
+import os
 import posixpath
 import sys
 
+import httpx2
 from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
 
 SAFETENSORS_INDEX = "model.safetensors.index.json"
+# Written into the snapshot once its download completes; holds the load format.
+COMPLETE = ".runpod-complete"
+# What huggingface_hub raises when the Hub can't be reached: offline mode, a
+# transport failure, or either one for a file that isn't cached.
+HUB_UNREACHABLE = (OfflineModeIsEnabled, httpx2.TransportError, LocalEntryNotFoundError)
 # vLLM's LoadConfig.ignore_patterns default (Llama's original/ checkpoints).
 IGNORE = ["original/**/*"]
 # Top-level files that are weights in some format, not config or tokenizer.
@@ -88,8 +99,22 @@ def download(repo: str, revision: str | None, cache_dir: str | None, load_format
     if weights is None:
         log(f"no weights to download ahead for --load-format {load_format}; vLLM downloads them")
         weights = []
-    snapshot_download(repo, revision=revision, cache_dir=cache_dir,
-                      allow_patterns=weights + config_files(files), ignore_patterns=IGNORE)
+    snapshot = snapshot_download(repo, revision=revision, cache_dir=cache_dir,
+                                 allow_patterns=weights + config_files(files), ignore_patterns=IGNORE)
+    with open(os.path.join(snapshot, COMPLETE), "w") as f:
+        f.write(load_format)
+
+
+def complete_snapshot(repo: str, revision: str | None, cache_dir: str | None,
+                      load_format: str) -> bool:
+    """Whether the cache holds a snapshot download() completed for load_format."""
+    try:
+        snapshot = snapshot_download(repo, revision=revision, cache_dir=cache_dir,
+                                     local_files_only=True)
+        with open(os.path.join(snapshot, COMPLETE)) as f:
+            return f.read() == load_format
+    except OSError:  # LocalEntryNotFoundError included: no snapshot at all
+        return False
 
 
 def main() -> int:
@@ -97,13 +122,14 @@ def main() -> int:
     load_format = sys.argv[4].lower()
     try:
         download(repo, revision, cache_dir, load_format)
-    except Exception as e:  # noqa: BLE001 - any failure is reported, then vLLM is skipped
-        try:
-            snapshot_download(repo, revision=revision, cache_dir=cache_dir, local_files_only=True)
-        except Exception:  # noqa: BLE001 - no cached snapshot either
-            log(f"{type(e).__name__}: {e}")
+    except HUB_UNREACHABLE as e:
+        if not complete_snapshot(repo, revision, cache_dir, load_format):
+            log(f"{type(e).__name__}: {e}; no completely downloaded snapshot in the cache")
             return 1
         log(f"{type(e).__name__}: {e}; serving the snapshot already in the cache")
+    except Exception as e:  # noqa: BLE001 - any other failure is reported, then vLLM is skipped
+        log(f"{type(e).__name__}: {e}")
+        return 1
     return 0
 
 

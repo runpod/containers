@@ -433,11 +433,30 @@ class WaitForNodes(unittest.TestCase):
                 self.assertTrue(err)
 
 
+class OfflineModeIsEnabled(ConnectionError):
+    pass
+
+
+class LocalEntryNotFoundError(FileNotFoundError):
+    pass
+
+
+class TransportError(Exception):
+    pass
+
+
 def load_download_model() -> types.ModuleType:
-    """download_model.py with a fake huggingface_hub (it runs in the image)."""
+    """download_model.py with a fake huggingface_hub and httpx2 (they're in the
+    image), raising huggingface_hub 2.4.0's exceptions' bases."""
     hub = types.ModuleType("huggingface_hub")
     hub.hf_hub_download = hub.list_repo_files = hub.snapshot_download = None
-    with mock.patch.dict(sys.modules, {"huggingface_hub": hub}):
+    errors = types.ModuleType("huggingface_hub.errors")
+    errors.OfflineModeIsEnabled = OfflineModeIsEnabled
+    errors.LocalEntryNotFoundError = LocalEntryNotFoundError
+    httpx2 = types.ModuleType("httpx2")
+    httpx2.TransportError = TransportError
+    with mock.patch.dict(sys.modules, {"huggingface_hub": hub, "huggingface_hub.errors": errors,
+                                       "httpx2": httpx2}):
         spec = importlib.util.spec_from_file_location("download_model", DOWNLOAD_MODEL)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -501,19 +520,30 @@ class DownloadModel(unittest.TestCase):
                          ["config.json", "tokenizer.model", "chat_template.jinja", "merges.txt",
                           "odd[name].json"])
 
-    def run_main(self, online: bool, cached: bool, load_format: str = "auto") -> tuple[int, str, list]:
+    def run_main(self, error: Exception | None = None, cached: str | None = None,
+                 load_format: str = "auto") -> tuple[int, str, list, str | None]:
+        """main() with the repo listing raising `error` (None: the Hub answers)
+        and the cache holding a snapshot with `cached` in its completion marker
+        ("": no marker; None: no snapshot). Returns the exit status, stderr,
+        snapshot_download's calls and the marker afterwards."""
         calls = []
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        snapshot = Path(tmp.name)
+        marker = snapshot / self.module.COMPLETE
+        if cached:
+            marker.write_text(cached)
 
         def list_repo_files(repo, revision=None):
-            if not online:
-                raise OSError("Hub unreachable")
+            if error is not None:
+                raise error
             return ["config.json", "model.safetensors"]
 
         def snapshot_download(repo, **kwargs):
             calls.append(kwargs)
-            if kwargs.get("local_files_only") and not cached:
-                raise FileNotFoundError("not in the cache")
-            return "/cache/snapshot"
+            if kwargs.get("local_files_only") and cached is None:
+                raise LocalEntryNotFoundError("not in the cache")
+            return str(snapshot)
 
         err = io.StringIO()
         with mock.patch.object(self.module, "list_repo_files", list_repo_files), \
@@ -521,31 +551,51 @@ class DownloadModel(unittest.TestCase):
                 mock.patch.object(sys, "argv", ["download_model.py", MODEL, "", "", load_format]), \
                 redirect_stderr(err):
             rc = self.module.main()
-        return rc, err.getvalue(), calls
+        return rc, err.getvalue(), calls, marker.read_text() if marker.exists() else None
 
     def test_online(self) -> None:
-        rc, _, calls = self.run_main(online=True, cached=False)
+        rc, _, calls, marker = self.run_main()
         self.assertEqual(rc, 0)
         (call,) = calls
         self.assertEqual(call["allow_patterns"], ["*.safetensors", "config.json"])
         self.assertEqual(call["ignore_patterns"], ["original/**/*"])
+        self.assertEqual(marker, "auto")
 
     def test_another_loaders_format_still_gets_the_config(self) -> None:
-        rc, err, calls = self.run_main(online=True, cached=False, load_format="GGUF")
+        rc, err, calls, _ = self.run_main(load_format="GGUF")
         self.assertEqual((rc, calls[0]["allow_patterns"]), (0, ["config.json"]))
         self.assertIn("--load-format gguf; vLLM downloads them", err)
 
-    def test_hub_unreachable_serves_the_cached_snapshot(self) -> None:
-        """HF_HUB_OFFLINE, an outage or no egress, after an earlier download."""
-        rc, err, calls = self.run_main(online=False, cached=True)
-        self.assertEqual(rc, 0)
-        self.assertTrue(calls[-1]["local_files_only"])
-        self.assertIn("serving the snapshot already in the cache", err)
-
-    def test_hub_unreachable_and_nothing_cached_fails(self) -> None:
-        rc, err, _ = self.run_main(online=False, cached=False)
-        self.assertEqual(rc, 1)
-        self.assertIn("OSError: Hub unreachable", err)
+    def test_failed_download(self) -> None:
+        """<description>, <error>, <snapshot's completion marker>, <exit
+        status>, <in stderr>. The Hub is unreachable with HF_HUB_OFFLINE, an
+        outage or no egress."""
+        offline = OfflineModeIsEnabled("HF_HUB_OFFLINE is set")
+        rows = [
+            ("unreachable, a completed snapshot: served", offline, "auto", 0,
+             "serving the snapshot already in the cache"),
+            ("a transport error is unreachable too", TransportError("connection refused"), "auto", 0,
+             "TransportError: connection refused; serving"),
+            ("a file not cached, the Hub unreachable", LocalEntryNotFoundError("offline"), "auto", 0,
+             "serving"),
+            ("unreachable, nothing cached", offline, None, 1, "no completely downloaded snapshot"),
+            ("unreachable, a download cut short", offline, "", 1, "no completely downloaded snapshot"),
+            ("unreachable, completed for another load format", offline, "safetensors", 1,
+             "no completely downloaded snapshot"),
+            ("no space: not served from the cache", OSError(28, "No space left on device"), "auto", 1,
+             "OSError: [Errno 28] No space left on device"),
+            ("a refused token: not served from the cache", RuntimeError("401 Unauthorized"), "auto", 1,
+             "RuntimeError: 401 Unauthorized"),
+        ]
+        for what, error, cached, want_rc, want_err in rows:
+            with self.subTest(what):
+                rc, err, calls, _ = self.run_main(error, cached)
+                self.assertEqual(rc, want_rc)
+                self.assertIn(want_err, err)
+                self.assertNotIn("serving" if want_rc else "no completely", err)
+                if want_rc and not isinstance(error, (OfflineModeIsEnabled, TransportError,
+                                                      LocalEntryNotFoundError)):
+                    self.assertEqual(calls, [])
 
 
 class PostStart(unittest.TestCase):
