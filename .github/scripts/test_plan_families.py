@@ -100,6 +100,27 @@ class BuildOrder(unittest.TestCase):
             P.plan(cyclic, [], True)
 
 
+class Ancestors(unittest.TestCase):
+    """The release gate holds a family back when what it builds FROM failed
+    in the same run."""
+
+    def test_ancestors_are_transitive_nearest_first(self):
+        self.assertEqual(P.ancestors(GRAPH, "cluster"), ["pytorch", "base"])
+
+    def test_a_root_family_has_none(self):
+        self.assertEqual(P.ancestors(GRAPH, "base"), [])
+
+    def test_sharing_paths_is_not_building_from(self):
+        """rocm builds base's sources, not FROM runpod/base."""
+        self.assertEqual(P.ancestors(GRAPH, "rocm"), [])
+
+    def test_the_real_graph_gives_ray_cluster_the_whole_chain(self):
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        self.assertEqual(
+            P.ancestors(graph, "ray-cluster"), ["pytorch-cluster", "pytorch", "base"]
+        )
+
+
 class Pathspecs(unittest.TestCase):
     """`git log -- <spec>` is how the bump and the notes find a family's
     commits — a dependency's commits have to be among them."""
