@@ -55,6 +55,16 @@ COPY --chmod=755 post_start.sh /post_start.sh
 COPY config/provisioning/dashboards/inference.yml /etc/grafana/provisioning/dashboards/inference.yml
 COPY config/dashboards/ /opt/runpod/inference/grafana-dashboards/
 
+# The base nginx relays 8001 to localhost:8000 (an unused "vscode server"
+# block), which here would be vLLM without LiteLLM's key. #248 removes it from
+# the base, but this image builds FROM a published pytorch-cluster that may
+# still carry it, so strip it here (a no-op once it's gone) and fail the build
+# if anything in nginx still proxies to 8000.
+RUN perl -0pi -e 's/(?:^    #[^\n]*\n)?^    server \{\n(?:(?!^    \}\n).)*?proxy_pass http:\/\/(?:localhost|127\.0\.0\.1):8000;(?:(?!^    \}\n).)*^    \}\n\n?//gms' /etc/nginx/nginx.conf && \
+    nginx -t && \
+    conf=$(nginx -T 2> /dev/null) && \
+    { ! grep -Eq 'proxy_pass +https?://[^;]*:8000\b' <<< "$conf" || { echo "nginx still proxies to vLLM's port 8000"; exit 1; }; }
+
 # 4000 the OpenAI-compatible API on the head: LiteLLM, in front of vLLM.
 #      Every route except LiteLLM's health checks needs LITELLM_MASTER_KEY
 #      (else JUPYTER_PASSWORD). Map this one in the Runpod template. vLLM
