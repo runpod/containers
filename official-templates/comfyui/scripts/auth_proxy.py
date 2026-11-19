@@ -67,6 +67,7 @@ from yarl import URL
 PASSWORD = os.environ.get("COMFYUI_PASSWORD", "")
 AUTH_FILE = os.environ.get("COMFYUI_AUTH_FILE", "/workspace/runpod-slim/.comfyui-auth")
 MIN_PASSWORD_LENGTH = 12
+SETUP_LOG_PREFIX = "ComfyUI first-run setup code:"
 SCRYPT_N = 1 << 15
 SCRYPT_MAXMEM = 64 * 1024 * 1024
 
@@ -231,7 +232,7 @@ button:focus-visible { outline: 2px solid #ae9aff; outline-offset: 3px; }
 </style></head><body><div class="layout"><main class="main"><div class="content">
 <div class="brand"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M20 3 35 11.5v17L20 37 5 28.5v-17L20 3Z M5 11.5 20 20l15-8.5M20 20v17M12 7l15 9" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>runpod</span></div>
 <p class="eyebrow">ComfyUI · First-time setup</p><h1>Secure your workspace</h1>
-<p class="intro">Enter the one-time setup code from your pod logs, then create a password to access ComfyUI.</p>
+<p class="intro">In your pod logs, look for a line starting <strong>ComfyUI first-run setup code:</strong> Enter that code, then create a password to access ComfyUI. If the line is gone, restart the pod to generate a new code.</p>
 __ERROR__
 <form method="post" action="/__runpod/setup"><label for="code">Setup code<input id="code" name="code" required autocomplete="one-time-code" placeholder="Code from your pod logs"></label>
 <label for="password">New password<input id="password" type="password" name="password" minlength="12" required autocomplete="new-password" placeholder="At least 12 characters"></label>
@@ -549,7 +550,7 @@ def make_app(budget=None):
 
 def main():
     if SETUP_CODE is not None:
-        print("ComfyUI first-run setup code (enter it at the :8188 setup page): " + SETUP_CODE, flush=True)
+        print(SETUP_LOG_PREFIX + " " + SETUP_CODE, flush=True)
     print(f"comfyui-auth-proxy: listening on 0.0.0.0:{LISTEN_PORT}, "
           f"forwarding to {UPSTREAM}", flush=True)
     web.run_app(make_app(), host="0.0.0.0", port=LISTEN_PORT,

@@ -420,7 +420,7 @@ class StartupTest(unittest.TestCase):
                                        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 line = process.stdout.readline()
-                self.assertIn("first-run setup code", line)
+                self.assertTrue(line.startswith("ComfyUI first-run setup code:"))
                 self.assertNotIn(PASSWORD, line)
             finally:
                 process.terminate()
