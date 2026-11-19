@@ -91,10 +91,9 @@ Two smaller changes worth knowing about:
   `ComfyUI/user/__manager/config.ini`, both off by default. If you had lowered
   `security_level` to use those features, set the flag you need instead.
 - `network_mode` is left at Manager's default. ComfyUI runs on loopback behind the
-  password proxy, so Manager already treats the pod as a local machine and
-  `security_level` alone decides what may be installed. Pods created by an older image
-  have `network_mode = personal_cloud` in `config.ini`; it no longer changes anything
-  either way, and it is left alone.
+  password proxy, so Manager already treats the pod as a local machine, and
+  `security_level` alone decides what may be installed. A value you set yourself is
+  left alone.
 
 ## Virtual environments on the volume
 

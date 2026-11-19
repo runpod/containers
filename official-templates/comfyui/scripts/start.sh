@@ -17,8 +17,6 @@ BAKED_NODES=("ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
 # image still carry the 3.x clone; it is dead weight, so skip its requirements
 # along with the baked nodes.
 DEP_SKIP_NODES=("${BAKED_NODES[@]}" "ComfyUI-Manager")
-MANAGER_DIR="$COMFYUI_DIR/user/__manager"
-MANAGER_CONFIG="$MANAGER_DIR/config.ini"
 CUDA_COMPAT_DIR="/opt/cuda-compat"
 CUDA_COMPAT_STATUS="not installed"
 # 8188 is the port the template exposes. The password proxy owns it, and
@@ -337,6 +335,9 @@ build_comfy_args() {
 #   security_level = normal      high-risk installs stay refused
 #   allow_git_url_install = False
 #   allow_pip_install = False
+# use_uv goes with them: the image removes uv on purpose, and an explicit
+# `use_uv = True` on the volume is honoured, which sends Manager's installs
+# through a uv that is not there. Manager's own default is already False.
 # Manager reads them once at startup, so an edit to config.ini while
 # ComfyUI runs is overwritten here before it can take effect.
 # Newer Manager releases add allow_flagged_nodepack_install, ORed with
@@ -362,11 +363,12 @@ for path in targets:
     config["default"]["security_level"] = "normal"
     config["default"]["allow_git_url_install"] = "False"
     config["default"]["allow_pip_install"] = "False"
+    config["default"]["use_uv"] = "False"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".tmp", "w") as f:
         config.write(f)
     os.replace(path + ".tmp", path)
-print("ComfyUI-Manager: security_level=normal, git URL and pip installs off")
+print("ComfyUI-Manager: security_level=normal, git URL and pip installs off, uv off")
 PY
 }
 
@@ -726,51 +728,6 @@ run_with_heartbeat() {
         fi
     done
     wait "$pid"
-}
-
-# ComfyUI-Manager installs packages through its own pip wrapper, which reaches
-# for uv when the config says so, and this image removes uv on purpose. On a
-# config.ini that has a [default] section without the key, Manager defaults
-# use_uv to True, so it is written out once here.
-# network_mode is deliberately left at Manager's default: every gate that reads
-# it ORs it with a loopback listener, and ComfyUI always listens on loopback
-# behind the password proxy, so `personal_cloud` would buy nothing now and
-# would loosen those gates if the listener ever moved. Older images of this
-# template wrote it; the value is inert, so it is left alone.
-configure_manager_config() {
-    local marker="$MANAGER_DIR/.runpod-manager-config-applied"
-    local tmp="$MANAGER_CONFIG.tmp"
-    local failed=0
-
-    if [ -f "$marker" ]; then
-        return
-    fi
-    mkdir -p "$MANAGER_DIR"
-
-    if [ ! -f "$MANAGER_CONFIG" ] || ! grep -q '^\[default\]' "$MANAGER_CONFIG"; then
-        # The leading newline keeps the section off the end of a last line that
-        # has none. security_level is pin_manager_security's, not written here.
-        if [ -s "$MANAGER_CONFIG" ]; then
-            printf '\n' >> "$MANAGER_CONFIG" || failed=1
-        fi
-        printf '[default]\nuse_uv = False\n' >> "$MANAGER_CONFIG" || failed=1
-    elif ! grep -qE '^[[:space:]]*use_uv[[:space:]]*=' "$MANAGER_CONFIG"; then
-        awk '{ print } /^\[default\]/ && !seen { print "use_uv = False"; seen = 1 }' \
-            "$MANAGER_CONFIG" > "$tmp" && mv "$tmp" "$MANAGER_CONFIG" || failed=1
-    else
-        # Already False, or set to True on purpose.
-        touch "$marker"
-        return
-    fi
-
-    if [ "$failed" = "1" ]; then
-        rm -f "$tmp"
-        echo "WARNING: could not write $MANAGER_CONFIG — ComfyUI-Manager may try to install packages with uv, which this image does not ship."
-        return
-    fi
-
-    echo "ComfyUI-Manager: use_uv = False"
-    touch "$marker"
 }
 
 # comfyui_manager is patched in the image (manager-patches/ in the Dockerfile)
@@ -1447,8 +1404,6 @@ if [ -n "${PREVIOUS_VENV:-}" ]; then
 fi
 
 create_pip_shim
-
-configure_manager_config
 
 if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager" ]; then
     echo "ComfyUI-Manager now ships as a pip package in the image; ComfyUI ignores"
