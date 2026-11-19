@@ -215,14 +215,11 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
-          on-skip: "warn"
           manufacturer: "NVIDIA"
           budget-usd-per-hour: "1.5"
           min-vram-gb: "24"
           # The tag carries no CUDA marker; upstream vLLM is built on CUDA 13.0.
           min-cuda-version: "13.0"
           create-timeout: "1200"
-          exclude-instances: |
-            *MIG*
-            RTX 2000 Ada
+          exclude-instances: "*MIG*"
           test-vllm: "true"
