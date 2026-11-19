@@ -4,7 +4,7 @@
 ComfyUI has no authentication and no hook for adding it: the middleware list
 is built at server startup and a custom node cannot reach it. So ComfyUI
 listens on loopback only and this process owns the public port, checking
-COMFYUI_PASSWORD on every request, websocket included, before forwarding it.
+the configured password on every request, websocket included, before forwarding it.
 Being a separate process, it survives ComfyUI and ComfyUI-Manager upgrades.
 
 A request is let through when any one of these carries the password:
@@ -36,7 +36,8 @@ off whenever --enable-cors-header is passed, and it would refuse that link
 too.
 
 Env:
-  COMFYUI_PASSWORD     required; the proxy refuses to start without it
+  COMFYUI_PASSWORD     optional legacy password; takes precedence over a saved hash
+  COMFYUI_AUTH_FILE    persistent password hash path (default /workspace/runpod-slim/.comfyui-auth)
   COMFYUI_PROXY_PORT   public port to listen on (default 8188)
   COMFYUI_UPSTREAM     host:port ComfyUI listens on (default 127.0.0.1:18188)
 
@@ -49,10 +50,13 @@ import asyncio
 import base64
 import binascii
 import hmac
+import hashlib
+import html
 import math
 import os
 import secrets
 import sys
+import tempfile
 import time
 import urllib.parse
 
@@ -61,6 +65,46 @@ from aiohttp import web
 from yarl import URL
 
 PASSWORD = os.environ.get("COMFYUI_PASSWORD", "")
+AUTH_FILE = os.environ.get("COMFYUI_AUTH_FILE", "/workspace/runpod-slim/.comfyui-auth")
+MIN_PASSWORD_LENGTH = 12
+SCRYPT_N = 1 << 15
+SCRYPT_MAXMEM = 64 * 1024 * 1024
+
+
+def read_password_hash():
+    if not os.path.exists(AUTH_FILE):
+        return None
+    with open(AUTH_FILE, encoding="ascii") as f:
+        value = f.read().strip()
+    parts = value.split("$")
+    if len(parts) != 3 or parts[0] != "scrypt" or len(parts[1]) != 32 or len(parts[2]) != 128:
+        raise ValueError("Invalid ComfyUI authentication file")
+    bytes.fromhex(parts[1]); bytes.fromhex(parts[2])
+    return value
+
+
+SAVED_HASH = None if PASSWORD else read_password_hash()
+SETUP_CODE = secrets.token_urlsafe(24) if not PASSWORD and not SAVED_HASH else None
+
+
+def hash_password(password):
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N, r=8, p=1, maxmem=SCRYPT_MAXMEM)
+    return f"scrypt${salt.hex()}${digest.hex()}"
+
+
+def save_password_hash(value):
+    directory = os.path.dirname(AUTH_FILE)
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".comfyui-auth-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            f.write(value + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(temp_path, AUTH_FILE)
+    finally:
+        os.unlink(temp_path)
 LISTEN_PORT = int(os.environ.get("COMFYUI_PROXY_PORT", "8188"))
 UPSTREAM = os.environ.get("COMFYUI_UPSTREAM", "127.0.0.1:18188")
 
@@ -140,7 +184,51 @@ def matches(candidate):
     non-ASCII password or attempt would be a 500 on every request."""
     if not candidate:
         return False
-    return hmac.compare_digest(candidate.encode(), PASSWORD.encode())
+    if PASSWORD:
+        return hmac.compare_digest(candidate.encode(), PASSWORD.encode())
+    if not SAVED_HASH:
+        return False
+    _, salt, digest = SAVED_HASH.split("$")
+    actual = hashlib.scrypt(candidate.encode(), salt=bytes.fromhex(salt), n=SCRYPT_N, r=8, p=1, maxmem=SCRYPT_MAXMEM)
+    return hmac.compare_digest(actual, bytes.fromhex(digest))
+
+
+def setup_page(error=""):
+    message = f'<p role="alert">{html.escape(error)}</p>' if error else ""
+    page = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up ComfyUI</title>
+<style>body{{font:16px system-ui;background:#181818;color:#eee;max-width:28rem;margin:8vh auto;padding:1rem}}input,button{{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0 1rem;font:inherit}}button{{cursor:pointer}}p[role=alert]{{color:#ff9999}}</style>
+<h1>Set up ComfyUI access</h1><p>Find the one-time setup code in this pod's Runpod logs. Choose a password of at least 12 characters.</p>{message}
+<form method="post" action="/__runpod/setup"><label>Setup code<input name="code" required autocomplete="one-time-code"></label><label>New password<input type="password" name="password" minlength="12" required autocomplete="new-password"></label><label>Confirm password<input type="password" name="confirm" minlength="12" required autocomplete="new-password"></label><button type="submit">Set password</button></form></html>'''
+    return web.Response(text=page, content_type="text/html", headers={"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"})
+
+
+async def handle_setup(request):
+    global SAVED_HASH, SETUP_CODE
+    if request.method == "GET":
+        return setup_page()
+    if request.method != "POST" or request.headers.get("Sec-Fetch-Site") != "same-origin":
+        return web.Response(status=403)
+    budget = request.app[BUDGET]
+    if budget.exhausted():
+        return web.Response(status=429, headers={"Retry-After": str(budget.retry_after())})
+    form = await request.post()
+    code = str(form.get("code", ""))
+    if not hmac.compare_digest(code.encode(), SETUP_CODE.encode()):
+        budget.spend()
+        return setup_page("Incorrect setup code")
+    password = str(form.get("password", ""))
+    if len(password) < MIN_PASSWORD_LENGTH or password != form.get("confirm"):
+        return setup_page("Passwords must match and be at least 12 characters")
+    value = hash_password(password)
+    try:
+        save_password_hash(value)
+    except FileExistsError:
+        return web.Response(status=409, text="Already configured. Restart the pod.")
+    SAVED_HASH = value
+    SETUP_CODE = None
+    response = web.Response(status=303, headers={"Location": "/"})
+    response.headers["Set-Cookie"] = SESSION_COOKIE
+    return response
 
 
 def session_ok(cookie):
@@ -285,6 +373,12 @@ def foreign_origin(request):
 
 
 async def proxy(request):
+    if SETUP_CODE is not None:
+        if request.path == "/__runpod/setup":
+            return await handle_setup(request)
+        if request.method in ("GET", "HEAD"):
+            return web.Response(status=303, headers={"Location": "/__runpod/setup"})
+        return web.Response(status=403, text="Complete ComfyUI setup first.\n")
     site = request.headers.get("Sec-Fetch-Site")
     navigation = is_navigation(request)
     if site in ("cross-site", "same-site") and not navigation:
@@ -414,10 +508,8 @@ def make_app(budget=None):
 
 
 def main():
-    if not PASSWORD:
-        print("comfyui-auth-proxy: COMFYUI_PASSWORD is empty; refusing to start.",
-              file=sys.stderr)
-        sys.exit(2)
+    if SETUP_CODE is not None:
+        print("ComfyUI first-run setup code (enter it at the :8188 setup page): " + SETUP_CODE, flush=True)
     print(f"comfyui-auth-proxy: listening on 0.0.0.0:{LISTEN_PORT}, "
           f"forwarding to {UPSTREAM}", flush=True)
     web.run_app(make_app(), host="0.0.0.0", port=LISTEN_PORT,
