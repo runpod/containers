@@ -578,9 +578,10 @@ jobs:
           # Blackwell stays in: Burn's CUDA backend JIT-compiles through
           # nvrtc and every CUDA column here (12.8+) targets sm_100/sm_120.
           # MIG slices are out because they do not support graphics APIs, so
-          # the Vulkan backend cannot run there.
+          # the Vulkan backend cannot run there. Match every MIG slice
+          # ('B300 MIG 34GB', 'PRO 6000 MIG ...'), not one card's.
           exclude-instances: |
-            PRO 6000 MIG *
+            * MIG *
             RTX 2000 Ada
 
   build-filebrowser:
