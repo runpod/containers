@@ -33,7 +33,7 @@ RUN torch_before=$(python -c 'import torch; print(torch.__version__)') && \
     { [[ "$torch_after" == "$torch_before" ]] || { echo "vLLM replaced torch $torch_before with $torch_after"; exit 1; }; } && \
     { [[ "$ray_after" == "$RAY_CLUSTER_RAY_VERSION" ]] || { echo "vLLM replaced Ray $RAY_CLUSTER_RAY_VERSION with $ray_after"; exit 1; }; }
 
-COPY --chmod=644 wait_for_nodes.py /opt/runpod/inference/
+COPY --chmod=644 wait_for_nodes.py download_model.py /opt/runpod/inference/
 COPY --chmod=755 start.sh /opt/runpod/inference/start
 
 # LiteLLM's proxy, the API on 4000 (LiteLLM's default) in front of vLLM (which listens on

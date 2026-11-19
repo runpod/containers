@@ -1,16 +1,18 @@
 """The ray-cluster inference variant's start script and node wait.
 
 start.sh runs whole, with fakes on PATH for nvidia-smi, vllm, curl and
-LiteLLM, and a fake wait_for_nodes.py; the test records what each was run
-with. Its fixed paths (/opt/runpod/inference, /etc/litellm, LiteLLM's binary)
+LiteLLM, and fake wait_for_nodes.py and download_model.py; the test records
+what each was run with. Its fixed paths (/opt/runpod/inference, /etc/litellm, LiteLLM's binary)
 point into a sandbox, and `exec /start.sh` becomes "wait for the background
 jobs, then stop", so every path ends where the pod would hand off to
 /start.sh. Every refusal is checked to start nothing; every acceptance, for
 the exact vllm command line and LiteLLM's key.
 
-wait_for_nodes.py runs against a fake `ray` module.
+wait_for_nodes.py runs against a fake `ray` module, and download_model.py's
+choice of files against fake repo listings.
 """
 
+import fnmatch
 import importlib.util
 import io
 import json
@@ -30,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INFERENCE = REPO_ROOT / "official-templates/ray-cluster/inference"
 SCRIPT = INFERENCE / "start.sh"
 WAIT_FOR_NODES = INFERENCE / "wait_for_nodes.py"
+DOWNLOAD_MODEL = INFERENCE / "download_model.py"
 KEY = "pod-secret-value-1234"
 MODEL = "Qwen/Qwen3-0.6B"
 HANDOFF = "[test] handed off to /start.sh"
@@ -39,6 +42,7 @@ HANDOFF = "[test] handed off to /start.sh"
 FAKE_VLLM = r"""#!/bin/bash
 printf '%s\0' "$@" > "$WORK/vllm.args"
 env > "$WORK/vllm.env"
+[[ -e "$WORK/download.args" ]] && : > "$WORK/vllm.after_download"
 [[ -n "${FAKE_VLLM_FAIL:-}" ]] && exit 1
 sleep 1
 """
@@ -60,6 +64,12 @@ FAKE_WAIT_FOR_NODES = r"""import os, sys
 open(os.path.join(os.environ["WORK"], "wait_for_nodes.args"), "w").write(" ".join(sys.argv[1:]))
 print(os.environ.get("FAKE_NODE_GPUS", "8"))
 sys.exit(int(os.environ.get("FAKE_WAIT_RC", "0")))
+"""
+FAKE_DOWNLOAD_MODEL = r"""import os, sys
+open(os.path.join(os.environ["WORK"], "download.args"), "w").write("".join(a + "\0" for a in sys.argv[1:]))
+open(os.path.join(os.environ["WORK"], "download.env"), "w").write("".join(f"{k}={v}\n" for k, v in os.environ.items()))
+if os.environ.get("FAKE_DOWNLOAD_FAIL"):
+    sys.exit("[ray-inference] RepositoryNotFoundError: 404")
 """
 
 
@@ -92,6 +102,7 @@ class StartScript(unittest.TestCase):
             path.write_text(body)
             path.chmod(0o755)
         (self.work / "inference/wait_for_nodes.py").write_text(FAKE_WAIT_FOR_NODES)
+        (self.work / "inference/download_model.py").write_text(FAKE_DOWNLOAD_MODEL)
         (self.work / "start.sh").write_text(sandboxed_script(self.work))
 
     def run_start(self, env: dict) -> str:
@@ -117,7 +128,7 @@ class StartScript(unittest.TestCase):
     def test_refusals_start_nothing(self) -> None:
         """<description>, <env>, <log line it must report>. Each still hands
         off to /start.sh, so the pod stays up, and runs neither vLLM nor
-        LiteLLM."""
+        LiteLLM, and downloads nothing."""
         serving = {"MODEL_REPO": MODEL, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1"}
         rows = [
             ("worker node", {**serving, "NODE_RANK": "1"}, "worker node: Ray only"),
@@ -155,10 +166,11 @@ class StartScript(unittest.TestCase):
         ]
         for what, env, want in rows:
             with self.subTest(what):
-                for name in ("vllm.args", "litellm.args"):
+                for name in ("vllm.args", "litellm.args", "download.args"):
                     (self.work / name).unlink(missing_ok=True)
                 out = self.run_start(env)
                 self.assertIn(want, out)
+                self.assertIsNone(self.recorded("download.args"), "the model was downloaded")
                 self.assertIsNone(self.recorded("vllm.args"), "vLLM was started")
                 self.assertIsNone(self.recorded("litellm.args"), "LiteLLM was started")
                 self.assertNotIn(KEY, out, "the key reached the log")
@@ -275,6 +287,45 @@ class StartScript(unittest.TestCase):
                 self.assertEqual(args[args.index("--port") + 1], "4000")
                 self.assertEqual(args[args.index("--config") + 1], str(self.work / "litellm/config.json"))
 
+    def test_download_before_vllm(self) -> None:
+        """<description>, <VLLM_EXTRA_ARGS>, <download_model.py's revision and
+        cache dir>. Always before vLLM, and without the API key."""
+        base = {"MODEL_REPO": MODEL, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1"}
+        rows = [
+            ("defaults", "", ["", ""]),
+            ("--revision", "--revision abc123", ["abc123", ""]),
+            ("--revision=", "--revision=abc123", ["abc123", ""]),
+            ("--download-dir", "--download-dir /workspace/models", ["", "/workspace/models"]),
+            ("--download_dir=, vLLM's underscore spelling", "--download_dir=/m", ["", "/m"]),
+            ("the last one wins, as in vLLM", "--revision a --enforce-eager --revision=b", ["b", ""]),
+            ("a trailing --revision with no value", "--revision", ["", ""]),
+        ]
+        for what, extra, want in rows:
+            with self.subTest(what):
+                for name in ("download.args", "vllm.after_download"):
+                    (self.work / name).unlink(missing_ok=True)
+                out = self.run_start({**base, "VLLM_EXTRA_ARGS": extra})
+                self.assertEqual(self.recorded("download.args"), [MODEL, *want])
+                self.assertTrue((self.work / "vllm.after_download").exists(), "vLLM started first")
+                self.assertNotIn("LITELLM_MASTER_KEY", self.recorded_env("download.env"))
+                self.assertIn(f"downloading {MODEL}", out)
+
+    def test_local_directory_is_not_downloaded(self) -> None:
+        model = str(self.work / "models/local")
+        Path(model).mkdir(parents=True)
+        self.run_start({"MODEL_REPO": model, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1"})
+        self.assertIsNone(self.recorded("download.args"))
+        self.assertEqual(self.recorded("vllm.args")[:2], ["serve", model])
+
+    def test_failed_download_starts_nothing(self) -> None:
+        out = self.run_start({"MODEL_REPO": MODEL, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1",
+                              "FAKE_DOWNLOAD_FAIL": "1", "FAKE_CURL_FAIL": "1"})
+        self.assertIn("RepositoryNotFoundError", out)
+        self.assertIn(f"could not download {MODEL}", out)
+        self.assertIn("vLLM exited before it was ready, so LiteLLM was not started", out)
+        self.assertIsNone(self.recorded("vllm.args"))
+        self.assertIsNone(self.recorded("litellm.args"))
+
     def test_vllm_exiting_before_ready_skips_litellm(self) -> None:
         out = self.run_start({"MODEL_REPO": MODEL, "LITELLM_MASTER_KEY": KEY, "FAKE_GPUS": "1",
                               "FAKE_VLLM_FAIL": "1", "FAKE_CURL_FAIL": "1"})
@@ -354,6 +405,57 @@ class WaitForNodes(unittest.TestCase):
                 rc, out, err = self.run_main([snapshot], want)
                 self.assertEqual((rc, out), (2, ""))
                 self.assertTrue(err)
+
+
+def load_download_model() -> types.ModuleType:
+    """download_model.py with a fake huggingface_hub (it runs in the image)."""
+    hub = types.ModuleType("huggingface_hub")
+    hub.hf_hub_download = hub.list_repo_files = hub.snapshot_download = None
+    with mock.patch.dict(sys.modules, {"huggingface_hub": hub}):
+        spec = importlib.util.spec_from_file_location("download_model", DOWNLOAD_MODEL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+class DownloadModel(unittest.TestCase):
+    def test_only_the_weight_format_vllm_loads(self) -> None:
+        """<description>, <repo files>, <files the safetensors index lists, or
+        None for no index>, <the files the download keeps>."""
+        module = load_download_model()
+        common = ["config.json", "tokenizer.json", "README.md"]
+        rows = [
+            ("safetensors over bin and pt",
+             ["model.safetensors", "pytorch_model.bin", "model.pt", "tf_model.h5", "flax_model.msgpack",
+              "rust_model.ot", "onnx/model.onnx", "model.tflite", "model-q4.gguf"],
+             None, ["model.safetensors"]),
+            ("sharded safetensors with an index",
+             ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+              "model.safetensors.index.json", "pytorch_model-00001-of-00002.bin"],
+             {"model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"},
+             ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+              "model.safetensors.index.json"]),
+            ("a consolidated copy beside the indexed shards (Mistral's repos)",
+             ["consolidated.safetensors", "model-00001-of-00002.safetensors",
+              "model-00002-of-00002.safetensors", "model.safetensors.index.json", "params.json"],
+             {"model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"},
+             ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+              "model.safetensors.index.json", "params.json"]),
+            ("bin when there is no safetensors", ["pytorch_model.bin", "model.pt"], None,
+             ["pytorch_model.bin"]),
+            ("pt last", ["model.pt", "tf_model.h5"], None, ["model.pt"]),
+            ("original/ is never read, nor counts as present",
+             ["original/consolidated.safetensors", "original/params.json", "consolidated.00.pth",
+              "pytorch_model.bin"],
+             None, ["pytorch_model.bin"]),
+            ("no weights at all", [], None, []),
+        ]
+        for what, weights, indexed, want in rows:
+            with self.subTest(what):
+                files = common + weights
+                ignore = module.ignore_patterns(files, indexed)
+                kept = [f for f in files if not any(fnmatch.fnmatch(f, p) for p in ignore)]
+                self.assertEqual(kept, common + want)
 
 
 class PostStart(unittest.TestCase):

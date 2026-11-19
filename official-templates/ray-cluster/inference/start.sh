@@ -3,9 +3,10 @@
 # entrypoint (/opt/runpod/ray/entrypoint) has started Ray.
 #
 #   - Worker: nothing beyond Ray; vLLM runs from the head.
-#   - Head: wait until NUM_NODES nodes have joined Ray, then `vllm serve
-#     $MODEL_REPO` across the whole cluster: tensor parallelism is the GPUs per
-#     node, pipeline parallelism the node count. vLLM listens on
+#   - Head: wait until NUM_NODES nodes have joined Ray, download the model,
+#     then `vllm serve $MODEL_REPO` across the whole cluster: tensor
+#     parallelism is the GPUs per node, pipeline parallelism the node count.
+#     vLLM listens on
 #     127.0.0.1:8000 only; the API on 4000 (LiteLLM's default) is LiteLLM's
 #     proxy in front of it,
 #     which checks the key.
@@ -103,14 +104,21 @@ if ! wait $!; then
     log "error: VLLM_EXTRA_ARGS can't be split into arguments (see above), so vLLM was not started"
     services
 fi
-for arg in "${extra_args[@]}"; do
+# The download before vLLM fetches the revision and into the directory vLLM
+# will read; the last one given wins, as in vLLM.
+revision='' download_dir=''
+for ((i = 0; i < ${#extra_args[@]}; i++)); do
+    arg=${extra_args[i]}
     # vLLM takes --api_key as --api-key.
     opt=${arg%%=*}
+    [[ "$arg" == *=* ]] && value=${arg#*=} || value=${extra_args[i + 1]:-}
     case "${opt//_/-}" in
         --api-key)
             log "error: VLLM_EXTRA_ARGS sets --api-key, which LiteLLM can't send, and vLLM would print it to the pod logs at startup. Remove it (LiteLLM checks LITELLM_MASTER_KEY on $API_PORT) and restart the pod. vLLM was not started."
             services
             ;;
+        --revision) revision=$value ;;
+        --download-dir) download_dir=$value ;;
         *) ;;
     esac
 done
@@ -151,8 +159,18 @@ parallel_args+=(--tensor-parallel-size "$gpus")
 # listen address is last, so vLLM stays reachable only from this pod.
 cmd=(vllm serve "$MODEL_REPO" "${parallel_args[@]}" "${model_args[@]}" "${extra_args[@]}"
     --host 127.0.0.1 --port "$VLLM_PORT")
-log "starting vLLM on 127.0.0.1:$VLLM_PORT: ${cmd[*]}"
+# The head downloads the model first (download_model.py says why), in this
+# background job so SSH and Jupyter come up meanwhile. A local directory is
+# served as is.
 (
+    if [[ ! -d "$MODEL_REPO" ]]; then
+        log "downloading $MODEL_REPO into ${download_dir:-the Hugging Face cache (${HF_HOME:-~/.cache/huggingface})} before starting vLLM"
+        if ! env -u LITELLM_MASTER_KEY python3 "$INFERENCE_DIR/download_model.py" "$MODEL_REPO" "$revision" "$download_dir"; then
+            log "error: could not download $MODEL_REPO (see above), so vLLM was not started. Check MODEL_REPO, HF_TOKEN for a gated or private model, and the free space there, then restart the pod."
+            exit 1
+        fi
+    fi
+    log "starting vLLM on 127.0.0.1:$VLLM_PORT: ${cmd[*]}"
     env -u LITELLM_MASTER_KEY "${cmd[@]}"
     log "vLLM exited with status $?; the pod stays up. Restart the pod to serve again."
 ) &
