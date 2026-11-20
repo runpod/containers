@@ -61,12 +61,23 @@ is deliberately human-owned (see its section).
 - One branch and one draft PR per stale family. Use a stable branch name
   `staleness-scraper/<family>` and add the label `staleness-scraper` to the PR, so
   the job can find its own PRs later. Title like `feat: pytorch <version>`.
-- Look for an existing open PR from this job for that family **first**, before you
-  decide whether there is anything to do
-  (`gh pr list --label staleness-scraper --head staleness-scraper/<family> --state open`).
-  If one exists, do NOT open a second one: update that branch (commit the new edits
-  and push to it) and refresh the PR title and body. Only open a new PR when none
-  is open for the family.
+- Look for this job's earlier PRs for that family **first**, before you decide
+  whether there is anything to do, and look at **every** state, not just open ones:
+  `gh pr list --label staleness-scraper --head staleness-scraper/<family> --state all`.
+- If one is **open**, do NOT open a second one: add your edits to *its* branch and
+  refresh the PR title and body. Check that branch out from the remote, never cut a
+  fresh one from develop:
+  `git fetch origin staleness-scraper/<family> && git switch -c staleness-scraper/<family> FETCH_HEAD`
+  (or `git switch` to it if you already have it). A branch cut from develop has
+  unrelated history, so pushing it needs `--force` and throws away whatever is on
+  the remote, including commits a human pushed to review or fix your bump. **Never
+  pass `--force` or `--force-with-lease` to `git push`.** If a plain push is
+  rejected, stop and report it rather than forcing.
+- If one is **closed and unmerged**, a maintainer rejected that bump. Do not open
+  the same bump again. Open a PR only for a version newer than the one they
+  closed, and say in the body that the earlier PR was closed and what is different
+  now. If you have nothing newer, this family is done for the run: say so in the
+  job summary and finish `ok`.
 - An existing PR may predate the reviewer setting, so decide from the PR's own
   state rather than from "this is an update". Read it with
   `gh pr view <n> --json reviewRequests,reviews`. If nobody from `PR_REVIEWER` is
@@ -402,5 +413,11 @@ release notes or changelog, a few bullets, not a full dump), plus any risks for
 users (breaking changes, deprecations, behavior shifts that could affect existing
 pods or workflows); which inputs you
 verified and how (the index URL, the computed checksum); and any CUDA base you
-deliberately left out and why. End with: "Matrix and runtime correctness are
-verified by the build and smoke-test CI on this PR."
+deliberately left out and why.
+
+Do not claim the build or smoke tests passed: your PR is a draft and you never see
+their result. Say what *you* verified and leave the rest to the reviewer, ending
+with: "Matrix and runtime correctness are not verified here -- they are whatever
+the build and smoke-test CI on this PR reports." If the PR has no checks at all,
+say that too: it means the job ran without `SCRAPER_PR_TOKEN` and nothing will
+verify the bump.

@@ -10,13 +10,13 @@ on:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
 
-# contents: push the scraper's branches. pull-requests: open and edit the PRs.
-# issues: labels live on the issues API, so `gh label create` and the PR label
-# need it on the github.token fallback path (when SCRAPER_PR_TOKEN is unset).
+# Only GITHUB_TOKEN is scoped here, and the one thing still using it is git:
+# actions/checkout persists its credentials, so the agent's `git push` of the
+# scraper branch goes out as GITHUB_TOKEN and needs contents: write. Everything
+# else (PR create/edit, labels, reviewers) runs through `gh` on
+# SCRAPER_PR_TOKEN, so no pull-requests or issues scope is needed here.
 permissions:
   contents: write
-  pull-requests: write
-  issues: write
 
 env:
   PR_REVIEWER: bohdankanarskyi-runpod
@@ -62,6 +62,19 @@ jobs:
           - family: sandbox-openclaw
             turns: 70
     steps:
+      # Without the PAT, `gh pr create` runs as GITHUB_TOKEN, and GitHub does not
+      # start workflows on a PR that token opened. The PR then carries zero checks
+      # while its body talks about build and smoke CI, so nothing verifies the
+      # bump a human is being asked to merge. Refuse to run instead.
+      - name: Require the PR token
+        env:
+          HAVE_TOKEN: ${{ secrets.SCRAPER_PR_TOKEN != '' }}
+        run: |
+          if [ "$HAVE_TOKEN" != "true" ]; then
+            echo "::error::SCRAPER_PR_TOKEN is not set. The scraper would open PRs that no CI ever runs on; set the secret (a PAT or app token with repo write) and re-run."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -77,14 +90,12 @@ jobs:
         env:
           # PAT/app token so Claude's PR triggers the build CI. The default
           # GITHUB_TOKEN cannot trigger other workflows, so the matrix would
-          # never get verified. Falls back to GITHUB_TOKEN if the PAT is unset.
-          GH_TOKEN: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
+          # never get verified. Required: see the preflight step above.
+          GH_TOKEN: ${{ secrets.SCRAPER_PR_TOKEN }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Authenticate with our own token rather than the Claude GitHub App.
-          # A PAT or app token in SCRAPER_PR_TOKEN also lets Claude's PRs trigger
-          # build CI.
-          github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
+          github_token: ${{ secrets.SCRAPER_PR_TOKEN }}
           show_full_output: true
           prompt: |
             Read .claude/staleness-playbook.md and follow it exactly, but
