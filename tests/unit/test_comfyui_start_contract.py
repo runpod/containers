@@ -527,6 +527,7 @@ class FileBrowser(Sandbox):
         admin's password is set, so any non-empty password works."""
         for db_exists in (False, True):
             with self.subTest(db_exists=db_exists):
+                (self.work / "argv").unlink(missing_ok=True)
                 calls, _ = self.start({"FILEBROWSER_PASSWORD": "ab"}, db_exists=db_exists,
                                       FB_HAS_ADMIN="1" if db_exists else "")
                 floor = [i for i, c in enumerate(calls) if "--minimumPasswordLength=1" in c]
