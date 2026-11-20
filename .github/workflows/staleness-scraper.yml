@@ -10,12 +10,13 @@ on:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
 
+# contents: push the scraper's branches. pull-requests: open and edit the PRs.
+# issues: labels live on the issues API, so `gh label create` and the PR label
+# need it on the github.token fallback path (when SCRAPER_PR_TOKEN is unset).
 permissions:
   contents: write
   pull-requests: write
   issues: write
-  actions: read
-  id-token: write
 
 env:
   PR_REVIEWER: bohdankanarskyi-runpod
@@ -71,6 +72,7 @@ jobs:
           fetch-depth: 0
 
       - name: Scan ${{ matrix.family }}
+        id: scan
         uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
         env:
           # PAT/app token so Claude's PR triggers the build CI. The default
@@ -104,13 +106,25 @@ jobs:
             --max-turns ${{ matrix.turns }}
             --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
 
+      # The status file is the agent's own verdict and stays authoritative: a run
+      # that ends without one tells us nothing about what it did or half-did, so
+      # it is a failure either way. The agent step's outcome only names the cause,
+      # separating "the agent died" (crash, max-turns) from "it finished but never
+      # reported", which are fixed in completely different places.
       - name: Require a clean agent outcome
         if: always()
         shell: bash
+        env:
+          FAMILY: ${{ matrix.family }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
         run: |
           status="$(cat /tmp/scraper-status 2>/dev/null || echo 'missing (agent did not report)')"
-          echo "::notice::${{ matrix.family }} scraper status: $status"
+          echo "::notice::${FAMILY} scraper status: ${status} (agent step: ${SCAN_OUTCOME})"
           if [ "$status" != "ok" ]; then
-            echo "::error::scraper did not complete cleanly for ${{ matrix.family }}: $status"
+            if [ "$SCAN_OUTCOME" != "success" ]; then
+              echo "::error::${FAMILY}: the agent step itself ended '${SCAN_OUTCOME}' (crash, timeout or max-turns); status file: ${status}"
+            else
+              echo "::error::${FAMILY}: the agent finished but did not report: ${status}. It ignored the status-file instruction, so what it changed is unverified."
+            fi
             exit 1
           fi

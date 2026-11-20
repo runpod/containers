@@ -75,6 +75,13 @@ is deliberately human-owned (see its section).
   or have already left a review, leave it alone: re-requesting resets the review
   they gave. Do this whenever you touch an existing PR, even when you end up
   pushing no new edits to it.
+- Keep scratch out of the checkout and out of the commit. Write any working file
+  (downloaded asset, JSON you are inspecting, notes) under `/tmp`, never into the
+  repository, and stage **only the files you deliberately edited, by path**:
+  `git add official-templates/<family>/docker-bake.hcl ...`. Never `git add -A`,
+  `git add .` or `git commit -a`; you have no `rm`, so anything stray you left in
+  the tree would ride along into the PR. Check with `git status --short` before
+  committing that nothing else is staged.
 - After editing, run `docker buildx bake -f official-templates/shared/versions.hcl
   -f official-templates/<family>/docker-bake.hcl --print` as a syntax check. If it
   errors on the HCL itself, fix it. Build/runtime correctness is proven later by CI.
@@ -99,10 +106,16 @@ Steps:
 2. For each new stable torch version, add one `TORCH_META` entry with the matching
    companion versions, each verified to exist on the index you will pull it from:
    - `torchvision`: the release paired with that torch.
-   - `torchaudio`: pinned to **2.11.0** (torchaudio's last release; dropped from the
-     PyTorch release process after 2.11, upstream says it stays compatible).
+   - `torchaudio`: the newest **2.11.x** that has a wheel on the index the row will
+     use. torchaudio left the PyTorch release process after 2.11 and its wheels
+     declare no dependencies, so it never downgrades torch, but the 2.11.x patches
+     are not interchangeable: 2.11.0 is cu130-and-older, 2.11.1 is the first with a
+     cu132 wheel. Check the index, do not assume 2.11.0.
    - `torchcodec`: the build that declares `torch >=` your version. torchcodec backs
      `torchaudio.load/save` from torch 2.9 on, so 2.9+ needs it.
+   - `nixl`: only for torch versions that ship `torch.distributed._transport` (2.15
+     and up). torch does not depend on it, so it is pinned here and the Dockerfile
+     installs the matching `nixl-cuXX` backend. Omit the key for older torch.
 3. For each of the four CUDA bases, add a `CUDA_TORCH_COMBINATIONS` row choosing
    `whl_src` = the `cuXXX` index that actually has a wheel for this torch. Verify by
    listing `https://download.pytorch.org/whl/cu<NNN>/torch/` and confirming the exact
@@ -111,9 +124,18 @@ Steps:
      it stops at sm_90 with no PTX, so it cannot run on Blackwell.
    - cu128 was deprecated in torch 2.12 and removed in 2.13. For 12.x bases on those
      versions use `cu129`.
-   - For the **13.2.0** base, if no `cu132` torchaudio wheel exists (it usually does
-     not, since torchaudio ended at 2.11.0 cu130), set `audio_index = "cpu"` on that
-     row, matching the existing 13.2 rows.
+   - A new torch may drop indexes entirely (2.15 ships cu132/cu134 only, having
+     dropped cu126 and cu130), so a CUDA base can end up on an index numbered above
+     it -- the 13.0.0 base takes `whl_src = "132"` for 2.15. That is expected; pick
+     the index that has the wheel, not the one matching the base's number.
+   - `audio_index = "cpu"` is a **workaround, not a default**: torchaudio checks the
+     CUDA minor at import, so a cu130 wheel refuses to load beside cu132 torch, and
+     the `+cpu` wheel skips the check at the cost of torchaudio's CUDA kernels. Set
+     it only when the row's index genuinely has no torchaudio wheel. From torchaudio
+     2.11.1 a cu132 wheel exists, so the newer rows (2.15 and up) correctly carry no
+     `audio_index` -- copy the 2.12/2.13 rows' `cpu` only if you confirm the gap.
+   - `codec_src` overrides the index torchcodec comes from when torch's own index
+     has no build for it. Nothing needs it today; set it only on evidence.
    - If a given base has no working wheel for this torch, omit that row and list the
      gap in the PR body rather than inventing a `whl_src`.
 4. Keep the comment style of the surrounding rows: a short note above any row that
