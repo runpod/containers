@@ -1,0 +1,26 @@
+apiVersion: 1
+
+# The inference stack's example Grafana dashboards, vendored at the image's
+# pinned versions and read from the head's `vllm` and `litellm` scrape jobs
+# (post_start.sh). Changed from upstream only in what the exports saved from
+# their authors' Grafana: titles, export ids, and the selected values of their
+# variables. DS_PROMETHEUS is set to this Grafana's datasource (uid prometheus;
+# the exports named theirs, so every panel came up empty), and the query
+# variables (model_name, Deployment_id) start empty or All and refresh on load,
+# so they pick up the model this pod serves. Redo all of that on re-vendoring.
+#   - vllm*.json: vllm-project/vllm examples/observability/ (prometheus_grafana/
+#     grafana.json and dashboards/grafana/*.json) at VLLM_VERSION;
+#   - litellm.json: BerriAI/litellm cookbook/litellm_proxy_server/
+#     grafana_dashboard/dashboard_v2/grafana_dashboard.json at the version in
+#     litellm/requirements.in.
+providers:
+  - name: inference-dashboards
+    orgId: 1
+    folder: Inference
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /opt/runpod/inference/grafana-dashboards
+      foldersFromFilesStructure: false
