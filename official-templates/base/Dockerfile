@@ -63,7 +63,11 @@ ENV TZ=Etc/UTC
 
 WORKDIR /
 
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+# The ubuntu:26.04 image ships /usr/bin/pebble outside dpkg, unused here (no
+# config, no entrypoint). v1.33.2, the latest release, is built with go1.27.3
+# and carries HIGH stdlib CVEs, so drop it rather than ship it.
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    rm -f /usr/bin/pebble
 
 # Install.
 # 26.04 dropped ATLAS (libopenblas-dev is the BLAS that replaces it) and
