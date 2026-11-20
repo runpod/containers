@@ -43,6 +43,23 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
             --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
     fi
 
+# NIXL (torch 2.15+): the backend behind torch.distributed._transport's
+# new_transport("nixl"), for KV-cache / tensor transfer in disaggregated
+# inference. NIXL is a space-separated list of pins (see docker-bake.hcl).
+# --no-deps: the `nixl` meta package requires BOTH nixl-cu12 and nixl-cu13
+# unconditionally, and nixl-cuXX requires an unpinned torch; only the backend
+# for this image's CUDA major is wanted, and torch must not move. Its other
+# dependency, numpy, is already present through torchvision. The wheel bundles
+# its own UCX, so no system packages are needed; RDMA transports additionally
+# use the host's ibverbs providers (present in the -cluster image).
+ARG NIXL
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ -n "${NIXL}" ]; then \
+        read -ra NIXL_PKGS <<< "${NIXL}" && \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${NIXL_PKGS[@]}" && \
+        python -c "import nixl; from nixl._api import nixl_agent"; \
+    fi
+
 # Patched pins for packages that Grype reports as HIGH in the layers above.
 COPY --from=requirements requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
