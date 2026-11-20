@@ -10,7 +10,13 @@ OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 MIGRATION_MARKER=".runpod-migration-incomplete"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
-BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+BAKED_NODES=("ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+# ComfyUI-Manager now ships as the comfyui_manager pip package in the image, and
+# ComfyUI ignores any copy under custom_nodes once --enable-manager is set
+# (main.py -> comfyui_manager.should_be_disabled). Volumes created by an older
+# image still carry the 3.x clone; it is dead weight, so skip its requirements
+# along with the baked nodes.
+DEP_SKIP_NODES=("${BAKED_NODES[@]}" "ComfyUI-Manager")
 CUDA_COMPAT_DIR="/opt/cuda-compat"
 CUDA_COMPAT_STATUS="not installed"
 # 8188 is the port the template exposes. The password proxy owns it, and
@@ -310,7 +316,9 @@ append_user_args() {
 # No --enable-cors-header: it replaces ComfyUI's refusal of cross-site
 # requests with a CORS policy that lets any site in.
 build_comfy_args() {
-    COMFY_ARGS=()
+    # --enable-manager loads the comfyui_manager package installed in the image.
+    # Add --enable-manager-legacy-ui to comfyui_args.txt for the 3.x Manager UI.
+    COMFY_ARGS=(--enable-manager)
     append_user_args
     COMFY_LISTEN_PORT=$COMFYUI_INTERNAL_PORT
     COMFY_ARGS+=(--listen 127.0.0.1 --port "$COMFY_LISTEN_PORT")
@@ -322,11 +330,14 @@ build_comfy_args() {
 # not the client's IP), and with ComfyUI on 127.0.0.1 behind the proxy every
 # loopback-gated install is open unless config.ini closes it. Under
 # --listen 0.0.0.0 they were closed whatever the config said. In the pinned
-# Manager (MANAGER_SHA) loopback gates exactly three things, and all three
-# are written on every start:
+# Manager (MANAGER_VERSION) loopback gates exactly three things, and all
+# three are written on every start:
 #   security_level = normal      high-risk installs stay refused
 #   allow_git_url_install = False
 #   allow_pip_install = False
+# use_uv goes with them: the image removes uv on purpose, and an explicit
+# `use_uv = True` on the volume is honoured, which sends Manager's installs
+# through a uv that is not there. Manager's own default is already False.
 # Manager reads them once at startup, so an edit to config.ini while
 # ComfyUI runs is overwritten here before it can take effect.
 # Newer Manager releases add allow_flagged_nodepack_install, ORed with
@@ -352,11 +363,12 @@ for path in targets:
     config["default"]["security_level"] = "normal"
     config["default"]["allow_git_url_install"] = "False"
     config["default"]["allow_pip_install"] = "False"
+    config["default"]["use_uv"] = "False"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".tmp", "w") as f:
         config.write(f)
     os.replace(path + ".tmp", path)
-print("ComfyUI-Manager: security_level=normal, git URL and pip installs off")
+print("ComfyUI-Manager: security_level=normal, git URL and pip installs off, uv off")
 PY
 }
 
@@ -636,7 +648,7 @@ reinstall_user_node_deps() {
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         [ -f "$req" ] || continue
         node=$(basename "$(dirname "$req")")
-        case " ${BAKED_NODES[*]} " in
+        case " ${DEP_SKIP_NODES[*]} " in
             *" $node "*) continue ;;
         esac
         reqs+=("$req")
@@ -718,6 +730,49 @@ run_with_heartbeat() {
     wait "$pid"
 }
 
+# comfyui_manager is patched in the image (manager-patches/ in the Dockerfile)
+# and lives in the system site-packages the venv reaches through
+# --system-site-packages. A copy inside the venv comes first on sys.path and
+# would shadow it, running a Manager without the 403s on update_comfyui,
+# comfyui_switch_version, share and the credential routes. So: drop any such
+# copy, and when the workspace ComfyUI asks for another version, say so rather
+# than install it. The fixes travel with the image, not with the workspace.
+pin_image_manager() {
+    local pinned have
+
+    # Fail open: a crashed probe must not abort startup (set -e).
+    if python - <<'PY'
+import importlib.metadata as md
+import os
+import sys
+
+venv = os.path.realpath(sys.prefix) + os.sep
+for dist in md.distributions():
+    name = (dist.metadata["Name"] or "").lower().replace("_", "-")
+    if name != "comfyui-manager":
+        continue
+    where = os.path.realpath(str(dist.locate_file("")))
+    if (where + os.sep).startswith(venv):
+        print(f"ComfyUI-Manager: a copy in {where} shadows the image's patched one; removing it.")
+        sys.exit(0)
+sys.exit(1)
+PY
+    then
+        python -m pip uninstall -y comfyui_manager > /dev/null 2>&1 \
+            || echo "WARNING: could not remove it; ComfyUI-Manager runs without the Runpod fixes."
+    fi
+
+    [ -f "$COMFYUI_DIR/manager_requirements.txt" ] || return 0
+    pinned=$(tr -d '\r' < "$COMFYUI_DIR/manager_requirements.txt" \
+        | grep -oE '^comfyui[-_]manager==[^[:space:];#]+' | head -1 | cut -d= -f3)
+    have=$(python -c 'import importlib.metadata as m; print(m.version("comfyui_manager"))' 2>/dev/null || true)
+    if [ -n "$pinned" ] && [ -n "$have" ] && [ "$pinned" != "$have" ]; then
+        echo "WARNING: the workspace ComfyUI asks for ComfyUI-Manager $pinned; this image ships $have."
+        echo "         The image's Manager carries the Runpod fixes, so it is the one that runs."
+        echo "         Redeploy on a tag whose ComfyUI pins $pinned if you need that version."
+    fi
+}
+
 # ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
 # to exact versions, and the workspace checkout can move away from the image via
 # Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
@@ -728,6 +783,9 @@ sync_comfyui_pinned_packages() {
     local installed pins spec name have
     local missing=()
 
+    # manager_requirements.txt is deliberately not read here: comfyui_manager is
+    # patched in the image and installing it would put an unpatched copy in the
+    # venv, ahead of the patched one on sys.path. pin_image_manager owns it.
     if [ ! -f "$requirements" ]; then
         return
     fi
@@ -746,7 +804,7 @@ sync_comfyui_pinned_packages() {
     pins=$(tr -d '\r' < "$requirements" \
         | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==[^[:space:];#]+$' \
         | tr 'A-Z_' 'a-z-' \
-        | grep -vE '^(torch|torchvision|torchaudio)==' || true)
+        | grep -vE '^(torch|torchvision|torchaudio|comfyui-manager)==' || true)
 
     while read -r spec; do
         if [ -z "$spec" ] || grep -qxF "$spec" <<< "$installed"; then
@@ -1238,7 +1296,7 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ] && [ "$VENV_NAME" = ".venv-cu1
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         if [ -f "$req" ]; then
             NODE_NAME=$(basename "$(dirname "$req")")
-            case " ${BAKED_NODES[*]} " in
+            case " ${DEP_SKIP_NODES[*]} " in
                 *" $NODE_NAME "*) continue ;;
             esac
             CURRENT=$((CURRENT + 1))
@@ -1347,6 +1405,13 @@ fi
 
 create_pip_shim
 
+if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager" ]; then
+    echo "ComfyUI-Manager now ships as a pip package in the image; ComfyUI ignores"
+    echo "the copy left in custom_nodes. Your settings, snapshots and installed nodes"
+    echo "are unaffected. Delete it to free volume space:"
+    echo "  rm -rf $COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
+fi
+
 # Interactive sessions are started by sshd, not by this script, and the PATH
 # copied into the login files above was captured before the venv existed —
 # `python` was then missing entirely and `pip` resolved to the base interpreter.
@@ -1358,6 +1423,7 @@ printf 'if [ -f "%s/bin/activate" ]; then . "%s/bin/activate"; fi\n' \
 echo "Warming up pip (Manager timeout is 30s)..."
 time python -m pip --version
 
+pin_image_manager
 sync_comfyui_pinned_packages
 
 log_cuda_venv_diagnostics
