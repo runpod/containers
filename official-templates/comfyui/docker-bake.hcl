@@ -6,7 +6,8 @@
 variable "COMFYUI_VERSIONS" {
   default = [
     { version = "v0.44.0", manager_version = "4.2.2" },
-    { version = "v0.45.0", manager_version = "4.2.2" }
+    { version = "v0.45.0", manager_version = "4.2.2" },
+    { version = "v0.46.0", manager_version = "4.2.2" }
   ]
 }
 variable "KJNODES_SHA" {
