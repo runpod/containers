@@ -32,6 +32,8 @@ AUTH_PROXY_MAX_FAST_FAILURES=5
 AUTH_PROXY_FAST_FAILURE_SECONDS=30
 # Same floor as FileBrowser's: the :8188 URL is public and guessable.
 COMFYUI_PASSWORD_MIN_LENGTH=12
+COMFYUI_AUTH_FILE="${COMFYUI_AUTH_FILE:-/workspace/runpod-slim/.comfyui-auth}"
+export COMFYUI_AUTH_FILE
 
 # ---------------------------------------------------------------------------- #
 #                          Function Definitions                                  #
@@ -213,18 +215,20 @@ start_filebrowser() {
 }
 
 # Decides whether ComfyUI is served. It always requires a password; there is
-# no opt-out:
-#   COMFYUI_PASSWORD set   ComfyUI on loopback, the password proxy on 8188
-#   not set                ComfyUI is not started
+# no opt-out. Without an environment password or saved hash, the proxy serves
+# the one-time setup page while ComfyUI stays closed.
 # A password shorter than COMFYUI_PASSWORD_MIN_LENGTH counts as not set: the
 # URL is public, so a short one could be guessed.
-# Sets COMFYUI_AUTH_MODE to proxy or off, and for off, COMFYUI_OFF_REASON to
+# Sets COMFYUI_AUTH_MODE to proxy, setup or off, and for off, COMFYUI_OFF_REASON to
 # finish the sentence "COMFYUI_PASSWORD ...". The password is never printed.
 resolve_comfyui_auth() {
     COMFYUI_OFF_REASON=""
     if [ -z "${COMFYUI_PASSWORD:-}" ]; then
-        COMFYUI_AUTH_MODE=off
-        COMFYUI_OFF_REASON="is not set"
+        if [ -f "$COMFYUI_AUTH_FILE" ]; then
+            COMFYUI_AUTH_MODE=proxy
+        else
+            COMFYUI_AUTH_MODE=setup
+        fi
     elif [ "${#COMFYUI_PASSWORD}" -lt "$COMFYUI_PASSWORD_MIN_LENGTH" ]; then
         COMFYUI_AUTH_MODE=off
         COMFYUI_OFF_REASON="is shorter than $COMFYUI_PASSWORD_MIN_LENGTH characters"
@@ -1257,6 +1261,22 @@ if [ "$COMFYUI_AUTH_MODE" = off ]; then
     exit 0
 fi
 
+if [ "$COMFYUI_AUTH_MODE" = setup ]; then
+    run_auth_proxy &
+    PROXY_PID=$!
+    echo "ComfyUI first-run setup is available on port $COMFYUI_PUBLIC_PORT."
+    echo "Find the one-time code in the pod logs; ComfyUI stays closed until setup completes."
+    while [ ! -f "$COMFYUI_AUTH_FILE" ]; do
+        if ! kill -0 "$PROXY_PID" 2>/dev/null; then
+            echo "ERROR: the setup proxy stopped before a password was saved."
+            hold_pod
+            exit 0
+        fi
+        sleep 2 &
+        wait $! || true
+    done
+fi
+
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
 if [ ! -f "$ARGS_FILE" ]; then
@@ -1465,8 +1485,10 @@ fi
 # ERR trap would also fire on the shutdown path and hold the pod open.
 trap - ERR
 
-run_auth_proxy &
-PROXY_PID=$!
+if [ -z "${PROXY_PID:-}" ]; then
+    run_auth_proxy &
+    PROXY_PID=$!
+fi
 
 echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
