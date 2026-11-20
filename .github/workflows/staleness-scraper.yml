@@ -4,7 +4,10 @@ name: Template Staleness Scraper
 # autoresearch, base, pytorch-cluster, filebrowser, k3s-node and the sandbox-*
 # families; ray-cluster is detection-only and opens no PR).
 # Opens a draft PR per stale family; the matrix is verified by the build CI on
-# that PR. Rules live in .claude/staleness-playbook.md.
+# that PR. Rules live in .claude/staleness-playbook.md. On a PR run the action
+# resets the working tree's .claude/ to develop's copy and preserves the PR's
+# own under .claude-pr/, so the prompt below names both: without that, a PR
+# testing a playbook change would silently run develop's playbook instead.
 on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
@@ -19,6 +22,9 @@ permissions:
   issues: write
   actions: read
   id-token: write
+
+env:
+  PR_REVIEWER: bohdankanarskyi-runpod
 
 concurrency:
   group: staleness-scraper
@@ -46,7 +52,7 @@ jobs:
             turns: 90
           # ray-cluster only reports: every pin needs a hand-resolved lock file.
           - family: ray-cluster
-            turns: 40
+            turns: 50
           - family: filebrowser
             turns: 50
           # k3s-node pins three components, each with an amd64 and an arm64 sum.
@@ -84,14 +90,26 @@ jobs:
           github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
           show_full_output: true
           prompt: |
-            Read .claude/staleness-playbook.md and follow it exactly, but
-            only for the `${{ matrix.family }}` family; ignore the others.
+            Read the staleness playbook and follow it exactly, but only for
+            the `${{ matrix.family }}` family; ignore the others. It is
+            .claude-pr/.claude/staleness-playbook.md when that path exists (a PR
+            run: the action has reset the working tree's copy to develop's and
+            kept the PR's there), otherwise .claude/staleness-playbook.md. Read
+            whichever exists; never fall back to git.
             Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
-            If ${{ matrix.family }} is already current, make no changes and exit.
+            If ${{ matrix.family }} is already current, make no changes.
+
+            Your LAST action, on every path through this task, is to write
+            /tmp/scraper-status with the Write tool: exactly `ok` if you got to
+            the end (PR opened, PR updated, nothing to do, or a detection-only
+            family reported to the summary), or `failed: <one-line reason>` if
+            something blocked you. Finding nothing to do is `ok`, not a failure.
+            Do not end your turn before this file is written: the job has no
+            other signal and fails the run when it is missing.
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
 
       - name: Require a clean agent outcome
         if: always()

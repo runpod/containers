@@ -20,12 +20,12 @@ is deliberately human-owned (see its section).
   template API, it does not generate them). Each family section below says exactly
   what its README needs, or that it needs none.
 - Never replace a **shipped version** with a newer one. Where a pin drives its own
-  image tag — the entries of `TORCH_META`, `COMFYUI_VERSIONS`, `FILEBROWSER_VERSIONS`
-  — add the new one **alongside** the existing ones and leave the old entries
-  untouched; users pin those tags and we keep shipping them. A pin for a component
-  *inside* an image (runpodctl, get-pip, the monitoring daemons, Node, Playwright,
-  Harbor, k3s) has no such tag and is a plain in-place bump. Each section below says
-  which kind it is.
+  image tag (the entries of `TORCH_META`, `COMFYUI_VERSIONS`,
+  `FILEBROWSER_VERSIONS`), add the new one **alongside** the existing ones and
+  leave the old entries untouched; users pin those tags and we keep shipping
+  them. A pin for a component *inside* an image (runpodctl, get-pip, the
+  monitoring daemons, Node, Playwright, Harbor, k3s) has no such tag and is a
+  plain in-place bump. Each section below says which kind it is.
 - When you bump a pin that is a git commit SHA, always add a short trailing
   comment. Use the version when the commit maps to a release tag
   (`FOO_SHA = "abc123..." # v1.2.3`); when it is untagged, use the commit date
@@ -37,14 +37,27 @@ is deliberately human-owned (see its section).
   `requirements.txt` (and base's `requirements.txt` for families that build FROM
   base). If the new version conflicts with a pinned dependency, do not just bump:
   flag the conflict in the PR body.
+- For anything released on GitHub, read it with `gh release view <tag> --repo
+  <owner>/<name>` or `gh release list --repo <owner>/<name>` rather than fetching
+  the release page. The web page truncates long notes behind "Read more" and
+  omits the year from dates, so the publish date and the asset list you need are
+  either missing or wrong; `gh` returns both in full.
 - Only add a release that is at least **2 days old** (check its upstream publish
   date). A newer release may get a quick follow-up patch; skip it this run and it
   gets picked up next week once it has settled. If the newest release is too young
   but a settled older one is still newer than ours, add that one.
 - If a family is already current, do nothing for it. Never open an empty PR.
 - Branch off `develop` and open every PR against `develop`, never `main`
-  (`gh pr create --base develop --draft`). The checkout is already on develop, so
-  `git checkout -b staleness-scraper/<family>` branches from it.
+  (`gh pr create --base develop --draft --reviewer "$PR_REVIEWER"`). The checkout
+  is already on develop, so `git checkout -b staleness-scraper/<family>` branches
+  from it. `PR_REVIEWER` is in your environment, like `GH_TOKEN`. It may name one
+  reviewer or several, comma-separated, which is the form `--reviewer` already
+  takes: pass the value through whole, never split it or spell the handles out
+  yourself. When it is empty or unset, drop the flag and open the PR with nobody
+  requested. A review request on a draft is fine; only CODEOWNERS
+  auto-assignment waits for "ready for review". If the request is the only thing
+  that fails (an unknown or unauthorised handle), the PR still stands: say so in
+  the PR body and finish `ok` rather than failing the run over it.
 - One branch and one draft PR per stale family. Use a stable branch name
   `staleness-scraper/<family>` and add the label `staleness-scraper` to the PR, so
   the job can find its own PRs later. Title like `feat: pytorch <version>`.
@@ -52,13 +65,14 @@ is deliberately human-owned (see its section).
   (`gh pr list --label staleness-scraper --head staleness-scraper/<family> --state open`).
   If one exists, do NOT open a second one: update that branch (commit the new edits
   and push to it) and refresh the PR title and body. Only open a new PR when none
-  is open for the family.
+  is open for the family. Do not re-request the review on an update: the reviewer
+  is already on the PR, and re-requesting dismisses a review they have left.
 - After editing, run `docker buildx bake -f official-templates/shared/versions.hcl
   -f official-templates/<family>/docker-bake.hcl --print` as a syntax check. If it
   errors on the HCL itself, fix it. Build/runtime correctness is proven later by CI.
 - When you finish, write your outcome to `/tmp/scraper-status` with the Write tool:
   exactly `ok` if you completed this family (opened or updated its PR, confirmed it
-  is already current with nothing to do, or — for a detection-only check — reported
+  is already current with nothing to do, or, for a detection-only check, reported
   what you found to the job summary), or `failed: <one-line reason>` if
   anything blocked you (a denied tool, an input you could not verify, a git or PR
   step that failed, or the family not being present on the base branch). The job
@@ -108,7 +122,7 @@ Pins live at the top of `official-templates/comfyui/docker-bake.hcl`. **Do not**
 touch `CUDA_TORCH_COMBINATIONS`: those torch pins are deliberately conservative
 (see the long comment in the file), every ComfyUI release shares them, and each
 row also carries `install_cuda_compat` and a `sageattention_*` wheel we build
-ourselves — none of that tracks an upstream release.
+ourselves, none of which tracks an upstream release.
 
 ⚠️ **Patched upstreams.** `patches/` is applied to the pinned ComfyUI core,
 KJNodes, Civicomfy and RunpodDirect, and `manager-patches/` to the Manager, with
@@ -123,7 +137,7 @@ release tag (`vX.Y.Z`, keep the `v`) of `comfyanonymous/ComfyUI` **alongside** t
 existing entries, never replacing them; the matrix fans it across the CUDA
 variants on its own. `manager_version` is a pip pin that must match what that
 ComfyUI release pins in its own `manager_requirements.txt` (the build asserts the
-two agree) — read it from the release, do not guess, and do not reuse the
+two agree). Read it from the release, do not guess, and do not reuse the
 neighbouring entry's value.
 
 Shared pins (one each, across all ComfyUI versions), 12-char short SHAs:
@@ -176,12 +190,12 @@ shared by every family (base and autoresearch would start building it, pytorch
 needs hand-written `CUDA_TORCH_COMBINATIONS` rows), so a human decides when to wire
 it in. Still check Docker Hub for a `nvidia/cuda:<ver>-cudnn-devel-ubuntu*` tag of
 a CUDA version newer than our highest (12.8.1, 12.9.0, 13.0.0, 13.2.0), on
-**Ubuntu 24.04 or newer** — we no longer build 22.04 anywhere. An Ubuntu 26.04 one
-is worth naming separately: `UBUNTU_VERSIONS` is 24.04 only because NVIDIA ships
-no 26.04 image below CUDA 13.3, so the first 13.3+ tag is what unblocks adding
-26.04 to the CUDA bases (the CPU base already builds it). If you find either, do
-NOT edit `CUDA_VERSIONS`, `UBUNTU_VERSIONS`, the README, or anything else. Just
-mark it: append a line to the Actions job summary
+**Ubuntu 24.04 or newer**, since we no longer build 22.04 anywhere. An Ubuntu
+26.04 one is worth naming separately: `UBUNTU_VERSIONS` is 24.04 only because
+NVIDIA ships no 26.04 image below CUDA 13.3, so the first 13.3+ tag is what
+unblocks adding 26.04 to the CUDA bases (the CPU base already builds it). If you
+find either, do NOT edit `CUDA_VERSIONS`, `UBUNTU_VERSIONS`, the README, or
+anything else. Just mark it: append a line to the Actions job summary
 (`echo "..." >> "$GITHUB_STEP_SUMMARY"`) naming the new tag and that it was skipped
 as too risky, and if a base PR is open for get-pip, note it there too.
 
@@ -211,7 +225,7 @@ runtime it links against comes from apt in the same Dockerfile:
   (`1:${DCGM_VERSION}-1`) and pins both `${DCGM_PACKAGE}` and
   `datacenter-gpu-manager-4-core`, so the exporter and the libdcgm it loads stay
   on the same version. Bump `DCGM_VERSION` only to a version that exists as that
-  apt version, and only together with an exporter tag built against it — the two
+  apt version, and only together with an exporter tag built against it: the two
   halves of the nvcr.io tag are not independent.
 - Keep the **`-distroless`** suffix. Since 4.8.2 NVIDIA publishes only that
   flavour; do not reintroduce an `ubuntu*` suffix.
@@ -224,9 +238,9 @@ runtime it links against comes from apt in the same Dockerfile:
   the PR body instead.
 - When you do bump, repeat the Dockerfile's warning in the PR body: the exporter
   binary and `/etc/dcgm-exporter` contents must be re-verified, **and the release
-  notes checked for label or metric renames** — the Grafana dashboards key off the
-  `hostname` and `gpu` labels, and exporter 4.8.3 already renamed `Hostname` to
-  `hostname` once.
+  notes checked for label or metric renames**, since the Grafana dashboards key
+  off the `hostname` and `gpu` labels, and exporter 4.8.3 already renamed
+  `Hostname` to `hostname` once.
 
 This README lists no component versions, so no README change.
 
@@ -237,7 +251,7 @@ something the scraper cannot re-derive:
 
 - `RAY_VERSION` (`official-templates/ray-cluster/docker-bake.hcl`, mirrored by the
   Dockerfile's `ARG RAY_VERSION` default) is validated against parsers in a
-  **different repo** — runpod/host's `pkg/rayready` and `pkg/raymetrics` — whose
+  **different repo** (runpod/host's `pkg/rayready` and `pkg/raymetrics`), whose
   fixtures must be bumped with it. It also requires re-resolving
   `ray-cluster/requirements.txt`, which pins Ray's direct dependencies exactly
   (2.59.0 needs `aiohttp>=3.14.1`, for instance).
@@ -266,7 +280,7 @@ entries, never replacing them; the matrix fans each version across the CPU and
 CUDA variants on its own.
 - `version`: the GitHub release tag exactly as upstream writes it, including the
   suffix (`v2.0.1-stable`), since it goes into the image tag.
-- `sha256`: of that release's **`linux-amd64-filebrowser`** asset — the bare
+- `sha256`: of that release's **`linux-amd64-filebrowser`** asset, the bare
   binary, not a tarball. Download it and compute the hash, do not guess.
 
 Do not touch `FILEBROWSER_CUDA`: it names the one CUDA variant built alongside the
@@ -291,7 +305,7 @@ those checksums sit in the target's `args` block rather than in `variable`s.
   `runc.amd64` and `runc.arm64` from `opencontainers/runc`. This pin is a
   **temporary swap**: k3s bundles a runc below our security minimum, and
   `k3s-node.sh` replaces it at runtime. When you bump `K3S_VERSION`, check the
-  "Runc" row of the k3s release notes — once a k3s release bundles runc >= the
+  "Runc" row of the k3s release notes: once a k3s release bundles runc >= the
   version pinned here, the whole swap should be deleted (the ARGs, the download,
   and the swap in `k3s-node.sh`). **Do not do that deletion yourself**; say in the
   PR body that the swap has become removable.
@@ -301,7 +315,7 @@ those checksums sit in the target's `args` block rather than in `variable`s.
   four carry in NVIDIA's `libnvidia-container/stable/deb` repo.
 
 The README states "**runc 1.4.3**, in place of the 1.4.2 that this k3s release
-bundles" — update both numbers whenever the runc pin or the k3s release moves.
+bundles". Update both numbers whenever the runc pin or the k3s release moves.
 
 ## sandbox-ubuntu
 
