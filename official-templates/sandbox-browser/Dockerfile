@@ -13,7 +13,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # One version for both bindings: they share a browser only when their
 # browsers.json agree, and a mismatch would bake a second Chromium.
-ARG PLAYWRIGHT_VERSION=1.63.0
+ARG PLAYWRIGHT_VERSION=1.65.1
 
 # Outside the home directory and root-owned, so a sandbox cannot leave itself
 # without a browser, and both bindings resolve the same one.
