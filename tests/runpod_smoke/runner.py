@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Optional
 
-from . import config
+from . import config, spend
 from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
@@ -158,6 +158,8 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
+        if config.POD_NAME_SUFFIX:
+            name += f"-{config.POD_NAME_SUFFIX}"
         test_ports = [port for port, _path in config.GROUP_TEST_PORTS.get(group) or []]
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
@@ -629,6 +631,9 @@ def test_pair(
                          endpoint within CREATE_TIMEOUT. Almost always a bad
                          host in the scheduler pool, not an image bug — caller
                          should try a different instance type.
+        'BUDGET'       — SPEND_CAP_USD has no room for this pod, so none was
+                         created; or the pod outlived its spend hold and was
+                         deleted mid-check. Says nothing about the image.
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and
     is used to select the appropriate GPU/CUDA functional check."""
@@ -637,10 +642,18 @@ def test_pair(
     _set_host_cuda("")
     is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin, cloud)
 
+    # CPU pods aren't priced from the GPU catalog and no sweep uses them.
+    token, why = (0, "") if is_cpu else spend.reserve(instance, cloud)
+    if token is None:
+        log(f"not creating a pod: {why}", indent=2)
+        return "BUDGET", why
+    started = time.monotonic()
+
     pod_id, early, early_detail = _create_pod_with_retries(
         image, instance, gpu_id, is_cpu, group, cuda_pin, cloud,
     )
     if early:
+        spend.release(token)
         return early, early_detail
     # _create_pod_with_retries' contract: when `early` is empty, pod_id is
     # guaranteed non-None. Assert so the type checker can narrow.
@@ -653,61 +666,109 @@ def test_pair(
         indent=2,
     )
 
+    # Under a spend cap the hold is the pod's budget, so the pod lives no
+    # longer than it: a slow pull or a hung check would otherwise bill past
+    # what the cap approved. The checks it cut short say nothing about the
+    # image, so that cell is reported untested (BUDGET), not FAIL.
+    expired = threading.Event()
+    deleted_at: list[float] = []
+    watchdog: Optional[threading.Timer] = None
+    if token:
+        def _expire() -> None:
+            expired.set()
+            log(
+                f"pod {pod_id} reached its {config.SPEND_RESERVE_MINUTES:g}-minute "
+                "spend hold — deleting it",
+                indent=2,
+            )
+            cleanup_pod(pod_id)
+            deleted_at.append(time.monotonic())
+
+        remaining = config.SPEND_RESERVE_MINUTES * 60 - (time.monotonic() - started)
+        watchdog = threading.Timer(max(0.0, remaining), _expire)
+        watchdog.daemon = True
+        watchdog.start()
+
+    outcome: _Outcome = ("FAIL", "")
     try:
-        state, wait_detail, endpoint = wait_for_running(pod_id)
-        if state != "RUNNING":
-            return _classify_non_running(state, wait_detail, pod_id, image)
-
-        log(f"smoke check passed: {wait_detail}", indent=2)
-        st = pod_state(pod_id)
-        # Every later check reuses the endpoint that answered readiness,
-        # carried by value. Re-reading ssh.direct would throw away a working
-        # proxy connection, and addressing a proxy by (host, port) alone
-        # would collide with every other pod on ssh.runpod.io.
-        assert endpoint is not None
-
-        # pod_state already carries cudaVersion, so the common path costs no
-        # extra request. It is nullable until the scheduler has assigned a
-        # machine, hence the retrying fallback.
-        host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
-        if host_cuda:
-            _set_host_cuda(host_cuda)
-            log(f"host CUDA: {host_cuda}", indent=2)
-
-        # Sequence the checks. Each returns None on pass/skip, or a FAIL
-        # outcome to surface to the caller. Kept as straight-line code
-        # (no fancy abstraction) so the failure points stay easy to read
-        # in stack traces / logs.
-        outcome = _run_cuda_step(endpoint, image, group, pod_id)
-        if outcome is not None:
-            return outcome
-        outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_port_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_log_scan_step(pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_dwell_step(endpoint, pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_post_dwell_steps(pod_id, image, group)
-        if outcome is not None:
-            return outcome
-
-        dump_pod_logs(pod_id, image)
-        return "PASS", ""
+        outcome = _check_pod(pod_id, image, group)
+    except Exception:
+        if not expired.is_set():
+            raise
     finally:
-        # Always clean up this specific pod, even on exception.
-        cleanup_pod(pod_id)
+        if watchdog is not None:
+            watchdog.cancel()
+        # Always clean up this specific pod, even on exception. An expired
+        # hold's timer thread has already deleted it.
+        if not expired.is_set():
+            cleanup_pod(pod_id)
+        # Billing stopped when the timer's delete returned, not when the
+        # interrupted check gave up afterwards.
+        ended = deleted_at[0] if deleted_at else time.monotonic()
+        spend.settle(token, ended - started)
+    if expired.is_set() and outcome[0] != "PASS":
+        return "BUDGET", (
+            f"spend cap: the pod outlived its {config.SPEND_RESERVE_MINUTES:g}-minute "
+            "spend hold and was deleted before its checks finished"
+        )
+    return outcome
+
+
+
+def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
+    """Wait for the pod and run every check in order. The caller owns the
+    pod's deletion and its spend."""
+    state, wait_detail, endpoint = wait_for_running(pod_id)
+    if state != "RUNNING":
+        return _classify_non_running(state, wait_detail, pod_id, image)
+
+    log(f"smoke check passed: {wait_detail}", indent=2)
+    st = pod_state(pod_id)
+    # Every later check reuses the endpoint that answered readiness,
+    # carried by value. Re-reading ssh.direct would throw away a working
+    # proxy connection, and addressing a proxy by (host, port) alone
+    # would collide with every other pod on ssh.runpod.io.
+    assert endpoint is not None
+
+    # pod_state already carries cudaVersion, so the common path costs no
+    # extra request. It is nullable until the scheduler has assigned a
+    # machine, hence the retrying fallback.
+    host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
+    if host_cuda:
+        _set_host_cuda(host_cuda)
+        log(f"host CUDA: {host_cuda}", indent=2)
+
+    # Sequence the checks. Each returns None on pass/skip, or a FAIL
+    # outcome to surface to the caller. Kept as straight-line code
+    # (no fancy abstraction) so the failure points stay easy to read
+    # in stack traces / logs.
+    outcome = _run_cuda_step(endpoint, image, group, pod_id)
+    if outcome is not None:
+        return outcome
+    outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_port_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_log_scan_step(pod_id, image)
+    if outcome is not None:
+        return outcome
+    outcome = _run_dwell_step(endpoint, pod_id, image)
+    if outcome is not None:
+        return outcome
+    outcome = _run_post_dwell_steps(pod_id, image, group)
+    if outcome is not None:
+        return outcome
+
+    dump_pod_logs(pod_id, image)
+    return "PASS", ""
 
 
 def test_image(
@@ -741,6 +802,8 @@ def test_image(
     unverified: list[tuple[str, str]] = []
     last_create_error = ""
     last_create_inst = ""
+    budget_detail = ""
+    budget_inst = ""
     for inst in instances:
         set_worker_context(inst)
         try:
@@ -765,6 +828,11 @@ def test_image(
             last_create_error = detail
             last_create_inst = inst
             continue
+        if result == "BUDGET":
+            # Holds only grow until pods finish, and candidates are tried in
+            # order, so the rest of the list wouldn't fit either.
+            budget_detail, budget_inst = detail, inst
+            break
         if result == "STUCK":
             stuck_instances.append(inst)
         if result == "UNVERIFIED":
@@ -794,6 +862,9 @@ def test_image(
             ", ".join(insts),
             "",
         )
+    if budget_detail:
+        log(f"not tested: {budget_detail}", indent=1)
+        return "SKIP", budget_detail, budget_inst, ""
     if stuck_instances:
         # We tried every instance and Runpod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at
