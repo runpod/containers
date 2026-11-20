@@ -63,7 +63,11 @@ ENV TZ=Etc/UTC
 
 WORKDIR /
 
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+# The ubuntu:26.04 image ships /usr/bin/pebble outside dpkg, unused here (no
+# config, no entrypoint). v1.33.2, the latest release, is built with go1.27.3
+# and carries HIGH stdlib CVEs, so drop it rather than ship it.
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    rm -f /usr/bin/pebble
 
 # Install.
 # 26.04 dropped ATLAS (libopenblas-dev is the BLAS that replaces it) and
@@ -167,6 +171,36 @@ RUN . /etc/os-release && \
       dpkg -i ${debs} && rm -f ${debs}; \
     fi && \
     dpkg-query -W -f='${Package} ${Version}\n' apt "${lib}"
+
+# Same stale-snapshot problem for nginx (NGINX2Root: CVE-2026-123007 critical,
+# CVE-2026-123633, CVE-2026-123634, CVE-2026-121810, CVE-2026-113425), fixed by
+# USN-9159-1 on 2026-11-19. nginx pins nginx-common to its exact version, so
+# they are installed together. Checksummed, and only when newer.
+# debs is split on purpose: it is a list of file paths.
+# hadolint ignore=SC2086
+RUN . /etc/os-release && \
+    case "${VERSION_ID}" in \
+      24.04) ver="1.24.0-2ubuntu7.20"; \
+             sha_nginx=5076b4e1737d6fe9eddbd0dae4b8bd478f96fb88dad2bfd537de27bdc696e406; \
+             sha_common=5362868fb4499e0547e9daa8a623eb5f59ea8477742f389157e952c689dde301 ;; \
+      26.04) ver="1.28.3-2ubuntu1.13"; \
+             sha_nginx=d8883f556c62c1c660e43515bd70dc3a0e16cd900718d00178e8645d07543986; \
+             sha_common=6d374599c889c342795bfbfe96152cb49fce2f1197981a12f330207d0fa1a149 ;; \
+      *) echo "no pinned nginx for ${VERSION_ID}" && exit 1 ;; \
+    esac && \
+    cur="$(dpkg-query -W -f='${Version}' nginx 2>/dev/null || echo 0)" && \
+    if dpkg --compare-versions "$cur" lt "$ver"; then \
+      debs="" && \
+      for p in "nginx_${ver}_amd64.deb:${sha_nginx}" "nginx-common_${ver}_all.deb:${sha_common}"; do \
+        deb="${p%%:*}" && \
+        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://security.ubuntu.com/ubuntu/pool/main/n/nginx/${deb}" && \
+        echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
+        debs="${debs} /tmp/${deb}"; \
+      done && \
+      dpkg -i --force-confold ${debs} && rm -f ${debs}; \
+    fi && \
+    dpkg-query -W -f='${Package} ${Version}\n' nginx nginx-common
 
 # Install SchedMD Slurm from the .deb packages built in the slurm-builder stage
 # (replaces Ubuntu's stock slurm-wlm). We install via apt (not raw dpkg) so the
