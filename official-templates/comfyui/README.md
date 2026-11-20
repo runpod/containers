@@ -69,14 +69,14 @@ If you used the `-cuda13.0` image before it had its own venv, your
 ## Access
 
 Every `/http` port is reachable by anyone who has the pod's proxy URL, so
-each one needs a password. ComfyUI and FileBrowser always require one: set the
-password variable and the service requires it; leave it unset and the service
-does not start, and the pod log says why. There is no way to run either of
-them without a password. Passwords are never written to the pod log.
+each one needs a password. ComfyUI opens a first-run setup page if no password
+has been configured. FileBrowser still requires its password variable. There
+is no way to run either service without a password. Passwords are never
+written to the pod log.
 
 | port | service | password variable | without a password |
 |---|---|---|---|
-| `8188` | ComfyUI | `COMFYUI_PASSWORD` (12+ characters) | not started |
+| `8188` | ComfyUI | `COMFYUI_PASSWORD` (optional, 12+ characters) | first-run setup page |
 | `8080` | FileBrowser, rooted at `/workspace` | `FILEBROWSER_PASSWORD` (12+ characters) | not started |
 | `8888` | JupyterLab, rooted at `/workspace` | `JUPYTER_PASSWORD` | not started, unless `JUPYTER_DISABLE_AUTH=true` |
 
@@ -85,15 +85,25 @@ them without a password. Passwords are never written to the pod log.
 ### ComfyUI (`8188`)
 
 ComfyUI has no login of its own, so it listens only inside the pod, and port
-8188 is served by a small proxy that asks for `COMFYUI_PASSWORD` on every
-request, including the websocket the UI uses. The password must be at least 12
-characters; a shorter one counts as not set, and ComfyUI does not start.
+8188 is served by a small proxy that checks every request, including the
+websocket the UI uses. On a fresh volume, open the `:8188` URL, read the
+one-time setup code from the pod logs (look for a line starting
+`ComfyUI first-run setup code:`), and choose a password of at least 12
+characters. ComfyUI stays closed until setup completes. Only a salted password
+hash is saved at `/workspace/runpod-slim/.comfyui-auth` (mode `0600`); on a
+network volume it survives redeployment with the same volume. A fresh volume
+requires setup again. If the code line has been trimmed from the logs, restart
+the pod to generate a new one. Never share the setup code or the pod logs containing it.
 
-- **Browser:** open the `:8188` URL. The browser asks for a username and
-  password. Any username works; the password is `COMFYUI_PASSWORD`. You can
-  also open `https://<pod-id>-8188.proxy.runpod.net/?token=<COMFYUI_PASSWORD>`
+Existing deployments can keep using `COMFYUI_PASSWORD`. It takes precedence
+over a saved hash. A configured password shorter than 12 characters is refused
+and ComfyUI does not start.
+
+- **Browser:** after setup, open the `:8188` URL. The browser asks for a username
+  and password. Any username works; enter the password you chose. You can
+  also open `https://<pod-id>-8188.proxy.runpod.net/?token=<password>`
   once to sign in without the prompt.
-- **API clients:** send the password as `Authorization: Bearer <COMFYUI_PASSWORD>`
+- **API clients:** send the password as `Authorization: Bearer <password>`
   or as an HTTP Basic password with any username, for example to
   `https://<pod-id>-8188.proxy.runpod.net/system_stats`.
   A request without it gets `401`.

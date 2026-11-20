@@ -4,7 +4,7 @@
 ComfyUI has no authentication and no hook for adding it: the middleware list
 is built at server startup and a custom node cannot reach it. So ComfyUI
 listens on loopback only and this process owns the public port, checking
-COMFYUI_PASSWORD on every request, websocket included, before forwarding it.
+the configured password on every request, websocket included, before forwarding it.
 Being a separate process, it survives ComfyUI and ComfyUI-Manager upgrades.
 
 A request is let through when any one of these carries the password:
@@ -36,7 +36,8 @@ off whenever --enable-cors-header is passed, and it would refuse that link
 too.
 
 Env:
-  COMFYUI_PASSWORD     required; the proxy refuses to start without it
+  COMFYUI_PASSWORD     optional legacy password; takes precedence over a saved hash
+  COMFYUI_AUTH_FILE    persistent password hash path (default /workspace/runpod-slim/.comfyui-auth)
   COMFYUI_PROXY_PORT   public port to listen on (default 8188)
   COMFYUI_UPSTREAM     host:port ComfyUI listens on (default 127.0.0.1:18188)
 
@@ -49,10 +50,13 @@ import asyncio
 import base64
 import binascii
 import hmac
+import hashlib
+import html
 import math
 import os
 import secrets
 import sys
+import tempfile
 import time
 import urllib.parse
 
@@ -61,6 +65,47 @@ from aiohttp import web
 from yarl import URL
 
 PASSWORD = os.environ.get("COMFYUI_PASSWORD", "")
+AUTH_FILE = os.environ.get("COMFYUI_AUTH_FILE", "/workspace/runpod-slim/.comfyui-auth")
+MIN_PASSWORD_LENGTH = 12
+SETUP_LOG_PREFIX = "ComfyUI first-run setup code:"
+SCRYPT_N = 1 << 15
+SCRYPT_MAXMEM = 64 * 1024 * 1024
+
+
+def read_password_hash():
+    if not os.path.exists(AUTH_FILE):
+        return None
+    with open(AUTH_FILE, encoding="ascii") as f:
+        value = f.read().strip()
+    parts = value.split("$")
+    if len(parts) != 3 or parts[0] != "scrypt" or len(parts[1]) != 32 or len(parts[2]) != 128:
+        raise ValueError("Invalid ComfyUI authentication file")
+    bytes.fromhex(parts[1]); bytes.fromhex(parts[2])
+    return value
+
+
+SAVED_HASH = None if PASSWORD else read_password_hash()
+SETUP_CODE = secrets.token_urlsafe(24) if not PASSWORD and not SAVED_HASH else None
+
+
+def hash_password(password):
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N, r=8, p=1, maxmem=SCRYPT_MAXMEM)
+    return f"scrypt${salt.hex()}${digest.hex()}"
+
+
+def save_password_hash(value):
+    directory = os.path.dirname(AUTH_FILE)
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".comfyui-auth-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            f.write(value + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(temp_path, AUTH_FILE)
+    finally:
+        os.unlink(temp_path)
 LISTEN_PORT = int(os.environ.get("COMFYUI_PROXY_PORT", "8188"))
 UPSTREAM = os.environ.get("COMFYUI_UPSTREAM", "127.0.0.1:18188")
 
@@ -140,7 +185,91 @@ def matches(candidate):
     non-ASCII password or attempt would be a 500 on every request."""
     if not candidate:
         return False
-    return hmac.compare_digest(candidate.encode(), PASSWORD.encode())
+    if PASSWORD:
+        return hmac.compare_digest(candidate.encode(), PASSWORD.encode())
+    if not SAVED_HASH:
+        return False
+    _, salt, digest = SAVED_HASH.split("$")
+    actual = hashlib.scrypt(candidate.encode(), salt=bytes.fromhex(salt), n=SCRYPT_N, r=8, p=1, maxmem=SCRYPT_MAXMEM)
+    return hmac.compare_digest(actual, bytes.fromhex(digest))
+
+
+def setup_page(error=""):
+    message = f'<p class="error" role="alert">{html.escape(error)}</p>' if error else ""
+    page = '''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up ComfyUI | Runpod</title>
+<style>
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #050505; color: #f7f7f8; }
+.layout { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.main { display: flex; align-items: center; justify-content: center; padding: 48px 32px; }
+.content { width: min(100%, 420px); }
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; color: #fff; font-weight: 700; font-size: 18px; letter-spacing: -.03em; }
+.brand svg { width: 38px; height: 38px; }
+.eyebrow { color: #9b82ff; font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: clamp(29px, 3vw, 38px); line-height: 1.12; letter-spacing: -.04em; margin: 0 0 14px; font-weight: 600; }
+.intro { color: #a4a3ab; line-height: 1.55; margin: 0 0 30px; font-size: 15px; }
+.error { background: #351b24; border: 1px solid #8b344d; border-radius: 8px; color: #ffb5c3; padding: 12px 14px; margin: 0 0 20px; }
+label { display: block; font-size: 13px; font-weight: 500; margin: 0 0 17px; }
+input { display: block; width: 100%; height: 46px; margin-top: 8px; padding: 0 14px; border: 1px solid #34343a; border-radius: 6px; background: #09090b; color: #fff; font: inherit; outline: none; }
+input::placeholder { color: #696971; }
+input:focus { border-color: #8064ef; box-shadow: 0 0 0 2px #8064ef55; }
+button { width: 100%; height: 46px; margin-top: 9px; border: 0; border-radius: 6px; background: #4c28b3; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+button:hover { background: #6239d6; }
+button:focus-visible { outline: 2px solid #ae9aff; outline-offset: 3px; }
+.note { color: #8e8d97; font-size: 12px; line-height: 1.5; margin-top: 22px; }
+.side { position: relative; display: flex; flex-direction: column; justify-content: center; overflow: hidden; padding: clamp(36px, 7vw, 110px); background: radial-gradient(circle at 78% 18%, #43208d 0, transparent 35%), linear-gradient(145deg, #171125, #130e1f 52%, #08070d); border-left: 1px solid #292334; }
+.side::before { content: ""; position: absolute; inset: 0; opacity: .28; background-image: linear-gradient(#9b82ff18 1px, transparent 1px), linear-gradient(90deg, #9b82ff18 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(to bottom, transparent, black 22%, black 80%, transparent); }
+.side-inner { position: relative; max-width: 500px; }
+.side-mark { display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin-bottom: 34px; border: 1px solid #a58cff77; border-radius: 18px; background: #9b82ff24; color: #c5b6ff; font-size: 32px; }
+.side h2 { margin: 0 0 18px; font-size: clamp(32px, 4vw, 52px); line-height: 1.08; letter-spacing: -.045em; font-weight: 600; }
+.side p { color: #bcb5ca; line-height: 1.6; font-size: 16px; max-width: 400px; }
+.steps { display: flex; gap: 9px; margin-top: 38px; }
+.steps span { height: 4px; width: 44px; border-radius: 4px; background: #a889ff; }
+.steps span + span { background: #77679855; }
+@media (max-width: 760px) { .layout { display: block; } .main { min-height: 100vh; padding: 34px 22px; } .brand { margin-bottom: 38px; } .side { display: none; } }
+</style></head><body><div class="layout"><main class="main"><div class="content">
+<div class="brand"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M20 3 35 11.5v17L20 37 5 28.5v-17L20 3Z M5 11.5 20 20l15-8.5M20 20v17M12 7l15 9" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>runpod</span></div>
+<p class="eyebrow">ComfyUI · First-time setup</p><h1>Secure your workspace</h1>
+<p class="intro">In your pod logs, look for a line starting <strong>ComfyUI first-run setup code:</strong> Enter that code, then create a password to access ComfyUI. If the line is gone, restart the pod to generate a new code.</p>
+__ERROR__
+<form method="post" action="/__runpod/setup"><label for="code">Setup code<input id="code" name="code" required autocomplete="one-time-code" placeholder="Code from your pod logs"></label>
+<label for="password">New password<input id="password" type="password" name="password" minlength="12" required autocomplete="new-password" placeholder="At least 12 characters"></label>
+<label for="confirm">Confirm password<input id="confirm" type="password" name="confirm" minlength="12" required autocomplete="new-password" placeholder="Enter your password again"></label>
+<button type="submit">Set password and continue</button></form>
+<p class="note">Your password is stored as a hash on this pod's volume. Keep the setup code private.</p>
+</div></main><aside class="side"><div class="side-inner"><div class="side-mark" aria-hidden="true">✦</div><h2>Your workspace,<br>your access.</h2><p>One password protects the ComfyUI interface and its API. With a network volume, your setup follows you to the next pod.</p><div class="steps" aria-hidden="true"><span></span><span></span><span></span></div></div></aside></div></body></html>'''.replace("__ERROR__", message)
+    return web.Response(text=page, content_type="text/html", headers={"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"})
+
+
+async def handle_setup(request):
+    global SAVED_HASH, SETUP_CODE
+    if request.method == "GET":
+        return setup_page()
+    if request.method != "POST" or request.headers.get("Sec-Fetch-Site") != "same-origin":
+        return web.Response(status=403)
+    budget = request.app[BUDGET]
+    if budget.exhausted():
+        return web.Response(status=429, headers={"Retry-After": str(budget.retry_after())})
+    form = await request.post()
+    code = str(form.get("code", ""))
+    if not hmac.compare_digest(code.encode(), SETUP_CODE.encode()):
+        budget.spend()
+        return setup_page("Incorrect setup code")
+    password = str(form.get("password", ""))
+    if len(password) < MIN_PASSWORD_LENGTH or password != form.get("confirm"):
+        return setup_page("Passwords must match and be at least 12 characters")
+    value = hash_password(password)
+    try:
+        save_password_hash(value)
+    except FileExistsError:
+        return web.Response(status=409, text="Already configured. Restart the pod.")
+    SAVED_HASH = value
+    SETUP_CODE = None
+    response = web.Response(status=303, headers={"Location": "/"})
+    response.headers["Set-Cookie"] = SESSION_COOKIE
+    return response
 
 
 def session_ok(cookie):
@@ -285,6 +414,12 @@ def foreign_origin(request):
 
 
 async def proxy(request):
+    if SETUP_CODE is not None:
+        if request.path == "/__runpod/setup":
+            return await handle_setup(request)
+        if request.method in ("GET", "HEAD"):
+            return web.Response(status=303, headers={"Location": "/__runpod/setup"})
+        return web.Response(status=403, text="Complete ComfyUI setup first.\n")
     site = request.headers.get("Sec-Fetch-Site")
     navigation = is_navigation(request)
     if site in ("cross-site", "same-site") and not navigation:
@@ -414,10 +549,8 @@ def make_app(budget=None):
 
 
 def main():
-    if not PASSWORD:
-        print("comfyui-auth-proxy: COMFYUI_PASSWORD is empty; refusing to start.",
-              file=sys.stderr)
-        sys.exit(2)
+    if SETUP_CODE is not None:
+        print(SETUP_LOG_PREFIX + " " + SETUP_CODE, flush=True)
     print(f"comfyui-auth-proxy: listening on 0.0.0.0:{LISTEN_PORT}, "
           f"forwarding to {UPSTREAM}", flush=True)
     web.run_app(make_app(), host="0.0.0.0", port=LISTEN_PORT,
