@@ -52,7 +52,7 @@ ignore:
       type: python
 
   # golang.org/x/net < 0.62.0 compiled into the runpodctl release binary
-  # (GO-2026-6860). The latest release, v3.0.1, is built with x/net 0.60.0
+  # (GO-2026-6860). The latest release, v3.1.1, is built with x/net 0.60.0
   # and runpodctl main is still on 0.60.0, so there is no release to upgrade
   # to. Scoped to the runpodctl path so x/net in any other Go binary still
   # fails the build. Remove once a runpodctl release ships x/net >= 0.62.0.
