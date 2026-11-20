@@ -30,8 +30,9 @@ from typing import Optional
 # our package imports work regardless of how the script was launched.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from runpod_smoke import api, config
+from runpod_smoke import api, config, spend
 from runpod_smoke.instances import (
+    below_floor_reason,
     cuda_axis_for,
     cuda_versions_offered,
     discover_gpu_catalog,
@@ -277,7 +278,8 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
 def _apply_cuda_axis(group: str, raw: object) -> None:
     """Read the `cuda_versions:` manifest field for one group.
 
-    Accepts the literal `all` (every version the GPU reports capacity for)
+    Accepts the literal `all` (every version the GPU reports capacity for),
+    `allowed` (the same, minus versions below the image's own CUDA floor),
     or a list of exact X.Y versions. Enabling it turns each candidate GPU
     into one job per version and pins the host with
     `gpu.allowedCudaVersions`, which the API matches exactly — so a
@@ -287,7 +289,9 @@ def _apply_cuda_axis(group: str, raw: object) -> None:
     if raw is None or raw == "":
         return
     entries = raw if isinstance(raw, list) else [raw]
-    wants_all = any(str(e).strip().strip('"\'').lower() == "all" for e in entries)
+    keywords = {str(e).strip().strip('"\'').lower() for e in entries}
+    wants_allowed = "allowed" in keywords
+    wants_all = wants_allowed or "all" in keywords
     versions: list[str] = []
     if not wants_all:
         for entry in entries:
@@ -301,7 +305,21 @@ def _apply_cuda_axis(group: str, raw: object) -> None:
                 )
     if not (wants_all or versions):
         return
-    if wants_all:
+    if wants_allowed:
+        config.GROUP_CUDA_ALL[group] = True
+        config.GROUP_CUDA_ALLOWED[group] = True
+        # The axis drops min_cuda_version below; keep it as the floor for
+        # images whose tag carries none (NGC nvidia-pytorch).
+        floor = config.GROUP_MIN_CUDA.get(group)
+        if floor:
+            config.GROUP_CUDA_FLOOR[group] = floor
+        log(
+            f"group '{group}': cuda_versions=allowed (one job per GPU x every "
+            "CUDA version with capacity at or above the image's floor"
+            + (f"; group floor {floor}" if floor else "")
+            + ")"
+        )
+    elif wants_all:
         config.GROUP_CUDA_ALL[group] = True
         log(
             f"group '{group}': cuda_versions=all (one job per GPU x every "
@@ -517,14 +535,17 @@ def _cuda_matrix_jobs(
     """
     jobs: list[Job] = []
     for inst in instances:
-        versions = cuda_axis_for(group, inst)
+        versions = cuda_axis_for(group, inst, image)
         if not versions:
             # No version reached a pod-create, so requested_cuda stays empty
             # and the pivot shows this GPU as an all-dots row. The note has
             # to carry the scope, since the CUDA column has nothing to show.
+            reason = (
+                below_floor_reason(group, inst, image) or uncovered_reason(inst)
+            )
             results.append((
                 image, "SKIP",
-                f"GPU not covered: {uncovered_reason(inst)}",
+                f"GPU not covered: {reason}",
                 inst, "", "", cloud,
             ))
             continue
@@ -554,7 +575,7 @@ def _cuda_per_version_jobs(
     """
     per_version: dict[str, list[str]] = {}
     for inst in instances:
-        for version in cuda_axis_for(group, inst):
+        for version in cuda_axis_for(group, inst, image):
             per_version.setdefault(version, []).append(inst)
     if not per_version:
         reasons = "; ".join(
@@ -906,6 +927,21 @@ def _emit_step_summary(results: list[Result], counts: dict[str, int]) -> None:
         log(f"warn: could not write step summary: {exc}")
 
 
+def _gpu_id_for(instance: str) -> str:
+    """Catalog id ('NVIDIA GeForce RTX 5080') for a single GPU display
+    name, or '' for CPU labels, multi-candidate rows and unknown names —
+    console template fields are keyed by id, not display name."""
+    if not instance or "," in instance or config.is_cpu_instance(instance):
+        return ""
+    if instance in config.GPU_ID_MAP:
+        return config.GPU_ID_MAP[instance]
+    lowered = instance.lower()
+    for name, gpu_id in config.GPU_ID_MAP.items():
+        if name.lower() == lowered:
+            return gpu_id
+    return ""
+
+
 def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
     """Write the matrix to $SMOKE_RESULTS_JSON so CI can keep it as an
     artifact and diff runs against each other. No-op when unset."""
@@ -920,6 +956,7 @@ def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
                 "image": img,
                 "status": status,
                 "instance": instance,
+                "gpu_id": _gpu_id_for(instance),
                 "cloud": cloud,
                 "cuda": host_cuda,
                 "requested_cuda": req_cuda,
@@ -929,6 +966,12 @@ def _write_results_json(results: list[Result], counts: dict[str, int]) -> None:
             in results
         ],
     }
+    if spend.enabled():
+        payload["spend"] = {
+            "cap_usd": round(config.SPEND_CAP_USD, 2),
+            "spent_usd": round(spend.spent(), 2),
+            "reserve_minutes": config.SPEND_RESERVE_MINUTES,
+        }
     try:
         parent = os.path.dirname(path)
         if parent:
@@ -987,6 +1030,12 @@ def _print_summary(results: list[Result]) -> int:
             )
             if line is not None:
                 print(line)
+
+    if spend.enabled():
+        print(
+            f"\nspend: ~${spend.spent():.2f} of ${config.SPEND_CAP_USD:.2f} "
+            "cap (catalog $/hr x pod lifetime)"
+        )
 
     _emit_step_summary(results, counts)
     _write_results_json(results, counts)
@@ -1090,12 +1139,94 @@ def _plan_all_clouds(
             print()
             log(f"---------- planning cloud: {cloud} ----------")
         _init_gpu_catalog()
+        spend.record_prices(cloud, config.GPU_CATALOG)
         resolved = _resolve_all_instances(manifest)
         _warn_unknown_instances(resolved)
         _warn_unviable_cuda_axis(manifest, resolved)
         _log_budget_picks(manifest, resolved)
         jobs += _build_jobs(manifest, resolved, group_filter, results, cloud)
+    if config.DEDUPE_CLOUD_TIERS and len(config.CLOUD_TYPES) > 1:
+        jobs = _dedupe_cloud_tiers(jobs, results)
+    if spend.enabled():
+        jobs = _spread_cuda_versions(jobs)
+        _log_spend_plan(jobs)
     return _cap_jobs(jobs)
+
+
+def _dedupe_cloud_tiers(jobs: list[Job], results: list[Result]) -> list[Job]:
+    """Keep one job per (image, candidates, CUDA pin) across cloud tiers.
+
+    Tiers are planned in VALID_CLOUDS order, so the first job seen is the
+    SECURE one. A GPU the first tier couldn't cover left a "GPU not covered"
+    SKIP row behind; once a later tier plans a job for it that row is noise,
+    and it is dropped.
+    """
+    seen: set[tuple] = set()
+    kept: list[Job] = []
+    for job in jobs:
+        img, _group, insts, cuda_pin, _cloud = job
+        key = (img, tuple(insts), cuda_pin)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(job)
+    planned = {(img, insts[0]) for img, _g, insts, _p, _c in kept if len(insts) == 1}
+    before = len(results)
+    results[:] = [
+        r for r in results
+        if not (
+            r[1] == "SKIP"
+            and r[2].startswith("GPU not covered")
+            and (r[0], r[3]) in planned
+        )
+    ]
+    if len(kept) < len(jobs) or len(results) < before:
+        log(
+            f"cloud tiers deduplicated: {len(jobs) - len(kept)} job(s) already "
+            f"planned in an earlier tier, {before - len(results)} "
+            "'not covered' row(s) covered by a later tier"
+        )
+    return kept
+
+
+def _spread_cuda_versions(jobs: list[Job]) -> list[Job]:
+    """Order jobs so a spend cap cuts the least informative ones.
+
+    Each (image, GPU) gets its newest CUDA version first, then every pair
+    gets its second version, and so on. Within one depth, GPUs go in the
+    order they were listed (the sweep config's priority order) and every
+    image gets that GPU before any image gets the next one. Jobs run in this
+    order and a pod that doesn't fit the cap is never created, so the cap
+    trims CUDA depth first, then the lowest-priority GPUs — never whole
+    families that happened to come last in the manifest.
+    """
+    depth: dict[tuple, int] = defaultdict(int)
+    gpu_rank: dict[tuple, int] = {}
+    ranked = []
+    for index, job in enumerate(jobs):
+        gpus = tuple(job[2])
+        gpu_rank.setdefault(gpus, len(gpu_rank))
+        key = (job[0], gpus)
+        ranked.append((depth[key], gpu_rank[gpus], index, job))
+        depth[key] += 1
+    return [r[-1] for r in sorted(ranked, key=lambda r: r[:3])]
+
+
+def _log_spend_plan(jobs: list[Job]) -> None:
+    """Say up front whether the cap is going to bite."""
+    pairs = [(insts[0], cloud) for _i, _g, insts, _p, cloud in jobs if insts]
+    worst = spend.estimate(pairs)
+    cap = config.SPEND_CAP_USD
+    log(
+        f"spend cap ${cap:.2f}: {len(jobs)} pod(s) planned, worst-case hold "
+        f"${worst:.2f} at {config.SPEND_RESERVE_MINUTES:g} min each"
+    )
+    if worst > cap:
+        log(
+            "::notice::the planned pods exceed the spend cap if every one "
+            "lands; jobs that no longer fit are recorded as SKIP (spend cap) "
+            "— untested, not failed"
+        )
 
 
 if __name__ == "__main__":

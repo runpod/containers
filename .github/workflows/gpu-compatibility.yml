@@ -1,7 +1,9 @@
 name: GPU Compatibility Matrix
 
-# Manual sweep for any image: boots it on every NVIDIA GPU in the Runpod
-# catalog independently and reports a per-GPU pass/fail matrix. AMD is out
+# Manual sweep for any image: boots it on every NVIDIA GPU in the RunPod
+# catalog independently and reports a per-GPU pass/fail matrix. Every
+# release already runs a smaller sweep automatically (gpu-sweep-release.yml,
+# GPU subset in .github/gpu-sweep.yml); this is the full catalog on demand. AMD is out
 # of scope here — the CUDA axis has no meaning for it; use a local manifest.
 #
 # COST: ~45 NVIDIA types x 5-10 min per pod, multiplied by the images and
@@ -21,7 +23,7 @@ on:
         required: false
         default: ""
       cuda-versions:
-        description: "CUDA axis: 'all', or exact versions like '12.8, 13.0'. Empty = one job per GPU, floor from the tag."
+        description: "CUDA axis: 'all', 'allowed' (all at or above the image's floor), or exact versions like '12.8, 13.0'. Empty = one job per GPU, floor from the tag."
         type: string
         required: false
         default: ""
@@ -173,12 +175,12 @@ jobs:
             echo "::error::nothing to test: set 'instances', or tick 'check-all-gpu'."
             exit 1
           fi
-          # 'all', or a comma list of X.Y. Rejecting a bare major here saves
-          # a whole sweep that would pin a version nothing reports.
-          if [[ -n "${CUDA}" && "${CUDA,,}" != "all" ]]; then
+          # 'all', 'allowed', or a comma list of X.Y. Rejecting a bare major
+          # here saves a whole sweep that would pin a version nothing reports.
+          if [[ -n "${CUDA}" && "${CUDA,,}" != "all" && "${CUDA,,}" != "allowed" ]]; then
             normalized=$(printf '%s' "${CUDA}" | tr -d '[:space:]')
             [[ "${normalized}" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]] \
-              || { echo "::error::cuda-versions must be 'all' or X.Y[,X.Y...] (e.g. '12.8, 13.0'), got '${CUDA}'"; exit 1; }
+              || { echo "::error::cuda-versions must be 'all', 'allowed' or X.Y[,X.Y...] (e.g. '12.8, 13.0'), got '${CUDA}'"; exit 1; }
           fi
 
       - name: Summarize run parameters
