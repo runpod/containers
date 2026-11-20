@@ -21,7 +21,8 @@ variable "BASE_REPO_SUFFIX" {
 
 variable "FILEBROWSER_VERSIONS" {
   default = [
-    { version = "v2.0.1-stable", sha256 = "42df10b6f2fcd4db17a53f64a9449e677a528164002fd13b050d348d7c477517" }
+    { version = "v2.0.1-stable", sha256 = "42df10b6f2fcd4db17a53f64a9449e677a528164002fd13b050d348d7c477517" },
+    { version = "v2.0.2-stable", sha256 = "5710dc6f51d77f1db884eace44f6952286c49f2ce40b6a59af37e0dc7c4a8bbd" }
   ]
 }
 
