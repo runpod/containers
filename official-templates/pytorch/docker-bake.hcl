@@ -56,6 +56,24 @@ variable "TORCH_META" {
       torchaudio  = "2.11.0"
       torchcodec  = "0.16.0"
     }
+    # 2.15 is cu132/cu134 only (cu126 and cu130 were dropped). torchvision
+    # 0.29.2 is the build released with it (py3-none, torch >= 2.14), and
+    # torchaudio 2.11.1 is the first torchaudio with a cu132 wheel, so the
+    # audio_index=cpu workaround is not needed here. torchcodec 0.17 declares
+    # torch >= 2.11 in its compatibility table.
+    #
+    # nixl: torch 2.15 adds torch.distributed._transport, a one-sided transport
+    # API whose NIXL backend (new_transport("nixl"), registered through the
+    # torch.distributed.transports entry point) imports the optional `nixl`
+    # package. torch does not depend on it, so it is installed here. Only the
+    # nixl version is pinned in this map; the Dockerfile installs the `nixl`
+    # dispatcher plus the nixl-cuXX backend wheel matching the torch index.
+    "2.15.0" = {
+      torchvision = "0.29.2"
+      torchaudio  = "2.11.1"
+      torchcodec  = "0.17.0"
+      nixl        = "1.5.2"
+    }
   }
 }
 
@@ -100,6 +118,11 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.0.0", torch = "2.12.0", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.12.1", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.13.0", whl_src = "130" },
+    # 2.15 publishes no cu130 wheels. The cu132 wheels run on any CUDA 13
+    # driver (>= 580) through minor version compatibility — torch brings its
+    # own CUDA 13.2.2 runtime from pip — so this image runs on the same hosts
+    # as the other CUDA 13.0 images. Same substitution as cu129 on 12.8.1.
+    { cuda_version = "13.0.0", torch = "2.15.0", whl_src = "132" },
 
     { cuda_version = "13.2.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "13.2.0", torch = "2.7.1", whl_src = "128" },
@@ -113,6 +136,7 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.15.0", whl_src = "132" },
   ]
 }
 
@@ -135,6 +159,7 @@ variable "COMPATIBLE_BUILDS" {
           # that version. Unused right now; kept because it has been needed.
           codec_src      = lookup(combo, "codec_src", combo.whl_src)
           audio_index    = lookup(combo, "audio_index", "cu${combo.whl_src}")
+          nixl           = lookup(TORCH_META[combo.torch], "nixl", "")
         } if cuda.version == combo.cuda_version && contains(cuda.ubuntu, ubuntu.version)
       ]
     ]
@@ -142,7 +167,7 @@ variable "COMPATIBLE_BUILDS" {
 }
 
 group "dev" {
-  targets = ["pytorch-ubuntu2404-cu1281-torch280"]
+  targets = ["pytorch-ubuntu2404-cu1300-torch2150"]
 }
 
 group "default" {
@@ -213,6 +238,9 @@ target "pytorch-matrix" {
     AUDIO_INDEX = build.audio_index
     TORCHCODEC = build.torch_codec != "" ? "torchcodec==${build.torch_codec}" : ""
     CODEC_SRC = build.codec_src
+    # Both packages carry the same version: `nixl` is the import-time
+    # dispatcher, nixl-cuXX the backend for torch's CUDA major (whl_src).
+    NIXL = build.nixl != "" ? "nixl==${build.nixl} nixl-cu${substr(build.wheel_src, 0, 2)}==${build.nixl}" : ""
   }
   
   tags = [

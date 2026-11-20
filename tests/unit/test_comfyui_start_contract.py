@@ -210,6 +210,8 @@ class ComfyArgs(Sandbox):
         parser.add_argument("--port", type=int, default=8188)
         parser.add_argument("--lowvram", action="store_true")
         parser.add_argument("--log-stdout", action="store_true")
+        parser.add_argument("--enable-manager", action="store_true")
+        parser.add_argument("--enable-manager-legacy-ui", action="store_true")
         return parser.parse_args(args)
 
     def test_comfyui_is_loopback_only_behind_the_proxy(self) -> None:
@@ -353,6 +355,92 @@ if [ -n "$FB_FAIL" ] && [[ "$*" == *"$FB_FAIL"* ]]; then
   exit 1
 fi
 """
+
+
+class ImageManagerWins(Sandbox):
+    """comfyui_manager is patched in the image. The venv is created with
+    --system-site-packages, so a copy installed into it comes first on sys.path
+    and would run a Manager with none of the Runpod fixes. Nothing on the
+    startup path may put one there, whatever the workspace ComfyUI pins."""
+
+    def fake_python(self, freeze: str, probe_exit: int, version: str = "4.2.2") -> Path:
+        log = self.work / "python.log"
+        (self.bin / "python").write_text(f"""#!/bin/bash
+printf '%s\\n' "$*" >> {log}
+case "$*" in
+    "-m pip freeze")        printf '%b' {freeze!r} ;;
+    "-m pip install"*)      ;;
+    "-m pip uninstall"*)    ;;
+    "-c "*)                 echo {version} ;;
+    "-")                    cat > /dev/null; exit {probe_exit} ;;
+esac
+exit 0
+""")
+        (self.bin / "python").chmod(0o755)
+        return log
+
+    def comfyui_dir(self, requirements: str, manager_pin: str) -> Path:
+        comfyui = self.work / "ComfyUI"
+        comfyui.mkdir(exist_ok=True)
+        (comfyui / "requirements.txt").write_text(requirements)
+        (comfyui / "manager_requirements.txt").write_text(manager_pin)
+        return comfyui
+
+    def sync(self, requirements: str, manager_pin: str, freeze: str):
+        log = self.fake_python(freeze, probe_exit=1)
+        comfyui = self.comfyui_dir(requirements, manager_pin)
+        result = self.run_bash(
+            "run_with_heartbeat() { shift; \"$@\"; }\n"
+            + function("sync_comfyui_pinned_packages")
+            + "\nsync_comfyui_pinned_packages",
+            {"COMFYUI_DIR": str(comfyui), "VENV_DIR": str(self.work / "venv")})
+        return log.read_text() if log.exists() else "", result.stdout + result.stderr
+
+    def test_a_manager_pin_is_never_installed_into_the_venv(self) -> None:
+        """The workspace moved ahead and asks for a newer Manager. Other pins
+        are still installed; the Manager pin is not."""
+        calls, out = self.sync(
+            requirements="comfy-kitchen==2.0.0\n",
+            manager_pin="comfyui_manager==4.3.0\n",
+            freeze="comfy-kitchen==1.0.0\ncomfyui-manager==4.2.2\n")
+        self.assertIn("comfy-kitchen==2.0.0", calls)
+        self.assertNotIn("comfyui_manager", calls)
+        self.assertNotIn("comfyui-manager", calls)
+        self.assertNotIn("4.3.0", calls)
+
+    def test_a_matching_manager_pin_is_not_installed_either(self) -> None:
+        calls, _ = self.sync(
+            requirements="comfy-kitchen==1.0.0\n",
+            manager_pin="comfyui_manager==4.2.2\n",
+            freeze="comfy-kitchen==1.0.0\n")
+        self.assertNotIn("pip install", calls)
+
+    def test_a_venv_copy_is_removed(self) -> None:
+        log = self.fake_python("", probe_exit=0)
+        comfyui = self.comfyui_dir("", "comfyui_manager==4.2.2\n")
+        self.run_bash(
+            function("pin_image_manager") + "\npin_image_manager",
+            {"COMFYUI_DIR": str(comfyui), "VENV_DIR": str(self.work / "venv")})
+        self.assertIn("-m pip uninstall -y comfyui_manager", log.read_text())
+
+    def test_no_venv_copy_means_no_uninstall(self) -> None:
+        log = self.fake_python("", probe_exit=1)
+        comfyui = self.comfyui_dir("", "comfyui_manager==4.2.2\n")
+        self.run_bash(
+            function("pin_image_manager") + "\npin_image_manager",
+            {"COMFYUI_DIR": str(comfyui), "VENV_DIR": str(self.work / "venv")})
+        self.assertNotIn("uninstall", log.read_text())
+
+    def test_a_differing_pin_is_reported_not_installed(self) -> None:
+        log = self.fake_python("", probe_exit=1, version="4.2.2")
+        comfyui = self.comfyui_dir("", "comfyui_manager==4.3.0\n")
+        result = self.run_bash(
+            function("pin_image_manager") + "\npin_image_manager",
+            {"COMFYUI_DIR": str(comfyui), "VENV_DIR": str(self.work / "venv")})
+        out = result.stdout + result.stderr
+        self.assertIn("asks for ComfyUI-Manager 4.3.0", out)
+        self.assertIn("this image ships 4.2.2", out)
+        self.assertNotIn("pip install", log.read_text())
 
 
 class FileBrowser(Sandbox):

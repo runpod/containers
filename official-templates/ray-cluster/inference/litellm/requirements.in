@@ -1,0 +1,15 @@
+# LiteLLM's proxy, the inference variant's API on 4000, in its own venv
+# (/opt/litellm) so its pins never touch vLLM's, Ray's or torch's.
+# 1.108.x is LiteLLM's LTS line. The `proxy-runtime` extra is left out (cloud
+# SDKs, tracing vendors); prometheus-client is the one piece of it we use.
+# prisma comes from the `extra_proxy` extra, see below.
+#
+# Re-lock after any change, hash-pinned for the image's platform:
+#   uv pip compile requirements.in --generate-hashes --python-version 3.12 \
+#     --python-platform x86_64-manylinux_2_28 --no-header -o requirements.txt
+# then restore the header of requirements.txt.
+litellm[proxy]==1.108.11
+prometheus-client
+# Not used as a database: LiteLLM's error handler imports it to classify
+# exceptions, and without it every auth failure becomes a 500.
+prisma>=0.11.0,<1.0
