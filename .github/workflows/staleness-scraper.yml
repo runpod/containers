@@ -4,17 +4,11 @@ name: Template Staleness Scraper
 # autoresearch, base, pytorch-cluster, filebrowser, k3s-node and the sandbox-*
 # families; ray-cluster is detection-only and opens no PR).
 # Opens a draft PR per stale family; the matrix is verified by the build CI on
-# that PR. Rules live in .claude/staleness-playbook.md. On a PR run the action
-# resets the working tree's .claude/ to develop's copy and preserves the PR's
-# own under .claude-pr/, so the prompt below names both: without that, a PR
-# testing a playbook change would silently run develop's playbook instead.
+# that PR. Rules live in .claude/staleness-playbook.md.
 on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
-  # Test trigger until this lands on main and the cron can fire. Label a PR
-  # `test-staleness-scraper` to run it; pushes to that PR re-run it.
-  pull_request:
 
 permissions:
   contents: write
@@ -70,9 +64,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          # Test runs use the PR branch so the PR's own playbook is exercised;
-          # otherwise branch work off develop.
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          # Always work off develop: the scraper branches from it and opens its
+          # PRs into it. The workflow itself is read from the default branch
+          # (main), which is where the cron and workflow_dispatch fire.
+          ref: develop
           fetch-depth: 0
 
       - name: Scan ${{ matrix.family }}
@@ -84,18 +79,14 @@ jobs:
           GH_TOKEN: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Authenticate with our own token instead of the Claude GitHub App, so
-          # the job runs on a PR branch before this workflow is on main. A PAT or
-          # app token in SCRAPER_PR_TOKEN also lets Claude's PRs trigger build CI.
+          # Authenticate with our own token rather than the Claude GitHub App.
+          # A PAT or app token in SCRAPER_PR_TOKEN also lets Claude's PRs trigger
+          # build CI.
           github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
           show_full_output: true
           prompt: |
-            Read the staleness playbook and follow it exactly, but only for
-            the `${{ matrix.family }}` family; ignore the others. It is
-            .claude-pr/.claude/staleness-playbook.md when that path exists (a PR
-            run: the action has reset the working tree's copy to develop's and
-            kept the PR's there), otherwise .claude/staleness-playbook.md. Read
-            whichever exists; never fall back to git.
+            Read .claude/staleness-playbook.md and follow it exactly, but
+            only for the `${{ matrix.family }}` family; ignore the others.
             Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
             If ${{ matrix.family }} is already current, make no edits to it --
             but still run the playbook's checks on any PR this job already has
