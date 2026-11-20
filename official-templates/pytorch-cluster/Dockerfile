@@ -49,8 +49,8 @@ RUN apt-get update --yes && \
     rm -rf /var/lib/apt/lists/*
 
 # node_exporter — system metrics (pinned + SHA-256 verified).
-ARG NODE_EXPORTER_VERSION=1.12.1
-ARG NODE_EXPORTER_SHA256=b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+ARG NODE_EXPORTER_VERSION=1.13.0
+ARG NODE_EXPORTER_SHA256=f6a6c72ee04fd6537efede3900ea45385eeade513c99de60d607d4b1611f8e6e
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node_exporter.tar.gz \
         "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz" && \
     echo "${NODE_EXPORTER_SHA256}  /tmp/node_exporter.tar.gz" | sha256sum -c - && \
@@ -60,8 +60,8 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node_exporter.tar.gz \
     rm -rf /tmp/node_exporter*
 
 # Prometheus — scraper + query engine (pinned + SHA-256 verified).
-ARG PROMETHEUS_VERSION=3.14.0
-ARG PROMETHEUS_SHA256=f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d
+ARG PROMETHEUS_VERSION=3.16.0
+ARG PROMETHEUS_SHA256=68727009472a2c02e1ff7f062fd5b3e637285bffc8fc2d340c76fb449d6e0f34
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/prometheus.tar.gz \
         "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" && \
     echo "${PROMETHEUS_SHA256}  /tmp/prometheus.tar.gz" | sha256sum -c - && \
@@ -72,9 +72,9 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/prometheus.tar.gz \
     rm -rf /tmp/prometheus*
 
 # Grafana OSS — dashboards (pinned + SHA-256 verified).
-ARG GRAFANA_VERSION=13.1.5
-ARG GRAFANA_BUILD=33098073184
-ARG GRAFANA_SHA256=35d3f3b93777564a95b6f2f9380340ac07b0f238e2df6ba46a106fde785d61f7
+ARG GRAFANA_VERSION=13.3.1
+ARG GRAFANA_BUILD=42849527790
+ARG GRAFANA_SHA256=6acf8939dd2f73332cbcafc27a33973fb1115b8867e7ffa3223c6e2ecbed8531
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/grafana.tar.gz \
         "https://dl.grafana.com/grafana/release/${GRAFANA_VERSION}/grafana_${GRAFANA_VERSION}_${GRAFANA_BUILD}_linux_amd64.tar.gz" && \
     echo "${GRAFANA_SHA256}  /tmp/grafana.tar.gz" | sha256sum -c - && \
