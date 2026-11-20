@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test RunPod container images.
+"""Smoke-test Runpod container images.
 
 Entry point. See ./README.md for the manifest schema, env vars, and how
 the CUDA / Jupyter checks work. All implementation lives in the
@@ -8,7 +8,7 @@ runpod_smoke/ package next to this file.
 Usage:
     ./test_images.py [path/to/images.yaml] [group_filter]
 
-Requirements: a RunPod API key (RUNPOD_API_KEY or ~/.runpod/config.toml),
+Requirements: a Runpod API key (RUNPOD_API_KEY or ~/.runpod/config.toml),
 python3 >= 3.9
 """
 
@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -148,7 +149,7 @@ def _init_registry_auth() -> Optional[int]:
     if not config.REGISTRY_AUTH_ID:
         have = ", ".join(sorted(r.get("name") or "?" for r in registries))
         print(f"::error::registry auth '{config.REGISTRY_AUTH_NAME}' not found "
-              f"in this RunPod account (has: {have or 'none'})")
+              f"in this Runpod account (has: {have or 'none'})")
         return 1
     log(
         f"using registry auth: {config.REGISTRY_AUTH_ID} "
@@ -162,28 +163,115 @@ def _init_registry_auth() -> Optional[int]:
 # ---------------------------------------------------------------------------
 
 
-def _coerce_ports(raw_ports: object, group: str) -> list[int]:
-    """Coerce optional `test_ports` list entries to valid TCP port numbers."""
+def _coerce_ports(raw_ports: object, group: str) -> list[tuple[int, str]]:
+    """Coerce optional `test_ports` entries to (port, path) pairs.
+
+    An entry is `<port>` (probe `/`) or `<port>/<path>` (probe that path,
+    e.g. `80/health`). The path is everything from the first `/`.
+    """
     if not isinstance(raw_ports, list):
         return []
-    ports: list[int] = []
+    ports: list[tuple[int, str]] = []
     for entry in raw_ports:
+        text = str(entry).strip()
+        port_text, sep, path = text.partition("/")
         try:
-            port = int(str(entry).strip())
+            port = int(port_text.strip())
         except (TypeError, ValueError):
             log(
                 f"warn: group '{group}': test_ports entry {entry!r} "
                 "is not a valid TCP port — skipping"
             )
             continue
-        if 1 <= port <= 65535:
-            ports.append(port)
-        else:
+        if not 1 <= port <= 65535:
             log(
                 f"warn: group '{group}': test_ports entry {entry!r} "
                 "is outside 1–65535 — skipping"
             )
+            continue
+        ports.append((port, f"/{path}" if sep else "/"))
     return ports
+
+
+def _coerce_str_list(raw: object) -> list[str]:
+    """Coerce an optional manifest list to stripped, non-empty strings."""
+    if not isinstance(raw, list):
+        return []
+    return [s for s in (str(entry).strip() for entry in raw) if s]
+
+
+def _apply_hygiene_flags(grp: str, contents: dict) -> None:
+    """Populate the opt-in image hygiene flags for one manifest group.
+
+    Kept separate from the other overrides because these five travel
+    together: they are the checks that look at how the image is assembled
+    rather than at whether it boots."""
+    if _normalize_bool(contents.get("test_pip_check")):
+        config.GROUP_TEST_PIP_CHECK[grp] = True
+        allowed = _coerce_str_list(contents.get("pip_check_allow"))
+        if allowed:
+            config.GROUP_PIP_CHECK_ALLOW[grp] = allowed
+        log(
+            f"group '{grp}': test_pip_check=true "
+            f"({len(allowed)} known conflict(s) allowed)"
+        )
+
+    revoked = _coerce_str_list(contents.get("revoked_ca_names"))
+    if revoked:
+        config.GROUP_REVOKED_CA_NAMES[grp] = revoked
+
+    if _normalize_bool(contents.get("test_ca_certs")):
+        config.GROUP_TEST_CA_CERTS[grp] = True
+        floor = str(contents.get("min_ca_certs_version") or "").strip()
+        if floor:
+            config.GROUP_MIN_CA_CERTS_VER[grp] = floor
+        log(
+            f"group '{grp}': test_ca_certs=true "
+            f"(revoked={revoked or 'default'}, "
+            f"min version={floor or 'not enforced'})"
+        )
+
+    if _normalize_bool(contents.get("test_python_tls")):
+        config.GROUP_TEST_PYTHON_TLS[grp] = True
+        venv = str(contents.get("python_tls_venv") or "").strip()
+        if venv:
+            config.GROUP_PYTHON_TLS_VENV[grp] = venv
+        log(
+            f"group '{grp}': test_python_tls=true "
+            f"(certifi bundle{f', venv {venv}' if venv else ''})"
+        )
+
+    if _normalize_bool(contents.get("test_uv")):
+        config.GROUP_TEST_UV[grp] = True
+        log(f"group '{grp}': test_uv=true (single uv on PATH, resolve works)")
+
+    if _normalize_bool(contents.get("test_virtualenv")):
+        config.GROUP_TEST_VIRTUALENV[grp] = True
+        log(
+            f"group '{grp}': test_virtualenv=true "
+            "(every shipped python3.X interpreter)"
+        )
+
+    if _normalize_bool(contents.get("test_python_path")):
+        config.GROUP_TEST_PYTHON_PATH[grp] = True
+        log(
+            f"group '{grp}': test_python_path=true "
+            "(apt's dist-packages only on the system python3)"
+        )
+
+    if _normalize_bool(contents.get("test_autoresearch")):
+        config.GROUP_TEST_AUTORESEARCH[grp] = True
+        log(f"group '{grp}': test_autoresearch=true (train.py runs end to end)")
+
+    if _normalize_bool(contents.get("test_dcgm_exporter")):
+        config.GROUP_TEST_DCGM_EXPORTER[grp] = True
+        log(
+            f"group '{grp}': test_dcgm_exporter=true "
+            "(:9400 serves the dashboard series with a hostname label)"
+        )
+    if _normalize_bool(contents.get("test_ray")):
+        config.GROUP_TEST_RAY[grp] = True
+        log(f"group '{grp}': test_ray=true (one-node Ray head, GPU task, metrics)")
 
 
 def _apply_cuda_axis(group: str, raw: object) -> None:
@@ -241,8 +329,9 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
     `GROUP_TEST_TORCH_PACKAGES` (opt-in for the torchvision/torchaudio part
     of the CUDA check), and
     `GROUP_TEST_PORTS` (generic public HTTP service probes),
-    `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), and the
-    ComfyUI reachability / functional-generation opt-ins."""
+    `GROUP_CHECK_ALL_GPU` (one independent job per matching GPU), the
+    ComfyUI reachability / functional-generation opt-ins, and the image
+    hygiene opt-ins (`_apply_hygiene_flags`)."""
     for grp, contents in manifest.items():
         normalized = _normalize_cuda_version(contents.get("min_cuda_version"))
         if normalized:
@@ -278,6 +367,8 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
                 "(expose as <port>/http, probe public proxy first)"
             )
     for grp, contents in manifest.items():
+        _apply_hygiene_flags(grp, contents)
+    for grp, contents in manifest.items():
         _apply_cuda_axis(grp, contents.get("cuda_versions"))
     for grp, contents in manifest.items():
         if _normalize_bool(contents.get("check_all_gpu")):
@@ -310,7 +401,7 @@ def _resolve_all_instances(manifest: dict[str, dict]) -> dict[str, list[str]]:
 
 
 def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
-    """Surface manifest entries that don't map to any RunPod display name
+    """Surface manifest entries that don't map to any Runpod display name
     (typos / casing) so the user sees them once at startup instead of
     inside the per-job logs."""
     unmapped = sorted({
@@ -322,7 +413,7 @@ def _warn_unknown_instances(resolved: dict[str, list[str]]) -> None:
     if not unmapped:
         return
     log(
-        f"warn: {len(unmapped)} instance(s) don't match any RunPod "
+        f"warn: {len(unmapped)} instance(s) don't match any Runpod "
         "displayName — check spelling/casing:"
     )
     for inst in unmapped:
@@ -544,9 +635,10 @@ def _cap_jobs(jobs: list[Job]) -> list[Job]:
 # ---------------------------------------------------------------------------
 
 
-def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
+def _run_jobs_serial(jobs: list[Job]) -> list[Result]:
     """Single-threaded run — no worker tags, simpler logs, group-header
     banner each time the group changes."""
+    out: list[Result] = []
     current_group: Optional[str] = None
     for img, group, instances, cuda_pin, cloud in jobs:
         if group != current_group:
@@ -556,7 +648,8 @@ def _run_jobs_serial(jobs: list[Job], results: list[Result]) -> None:
         status, note, instance, host_cuda = test_image(
             img, instances, group, cuda_pin, cloud
         )
-        results.append((img, status, note, instance, host_cuda, cuda_pin, cloud))
+        out.append((img, status, note, instance, host_cuda, cuda_pin, cloud))
+    return out
 
 
 def _job_note(cuda_pin: str, cloud: str) -> str:
@@ -584,28 +677,75 @@ def _run_one_tagged_job(job: Job) -> Result:
     return img, status, note, instance, host_cuda, cuda_pin, cloud
 
 
-def _run_jobs_parallel(jobs: list[Job], results: list[Result]) -> None:
+def _run_jobs_parallel(jobs: list[Job]) -> list[Result]:
     """ThreadPool fan-out capped at MAX_PARALLEL. Each worker holds at
-    most one pod at a time."""
+    most one pod at a time. Results come back in job order."""
     with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL) as pool:
         futures = [pool.submit(_run_one_tagged_job, job) for job in jobs]
-        for fut in as_completed(futures):
-            results.append(fut.result())
+        return [fut.result() for fut in futures]
 
 
-def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
-    if not jobs:
-        log("no jobs to run after filtering")
-        return
+def _run_jobs_once(jobs: list[Job], label: str = "running") -> list[Result]:
+    """Run every job once; one Result per job, in job order."""
     print()
     log(
-        f"==================== running {len(jobs)} job(s) "
+        f"==================== {label} {len(jobs)} job(s) "
         f"with MAX_PARALLEL={config.MAX_PARALLEL} ===================="
     )
     if config.MAX_PARALLEL <= 1:
-        _run_jobs_serial(jobs, results)
-    else:
-        _run_jobs_parallel(jobs, results)
+        return _run_jobs_serial(jobs)
+    return _run_jobs_parallel(jobs)
+
+
+# Outcomes that say nothing about the image — Runpod had no capacity, or the
+# host never answered — so running the job again later can change them. FAIL
+# is a verdict on the image and is never retried.
+_RETRYABLE = ("SKIP", "UNVERIFIED")
+
+
+def _merge_retry(old: Result, new: Result) -> Result:
+    """Keep the strongest honest outcome across attempts.
+
+    A retry that lands on no capacity must not downgrade an earlier
+    UNVERIFIED to SKIP: under ON_SKIP=warn that would turn "we could not
+    tell whether this image works" into a green job."""
+    if new[1] == "SKIP" and old[1] == "UNVERIFIED":
+        return old
+    return new
+
+
+def _run_jobs(jobs: list[Job], results: list[Result]) -> None:
+    """Run all jobs, then re-run the ones that ended SKIP / UNVERIFIED.
+
+    Capacity comes and goes within minutes, so waiting and trying the same
+    candidates again usually lands a pod — this is the manual "re-run failed
+    jobs" click, done in-process and only for the jobs that need it. Retries
+    are off under ON_SKIP=pass: those runs already accept SKIPs, and the
+    catalog sweep that uses it would multiply its pod count for nothing.
+    """
+    if not jobs:
+        log("no jobs to run after filtering")
+        return
+    final = _run_jobs_once(jobs)
+    rounds = config.SKIP_RETRIES if config.ON_SKIP != "pass" else 0
+    for attempt in range(1, rounds + 1):
+        pending = [i for i, r in enumerate(final) if r[1] in _RETRYABLE]
+        if not pending:
+            break
+        delay = config.SKIP_RETRY_DELAY * attempt
+        print()
+        log(
+            f"::notice::{len(pending)} job(s) ended SKIP/UNVERIFIED (no "
+            f"capacity or unresponsive host) — retry {attempt}/{rounds} "
+            f"in {delay}s"
+        )
+        time.sleep(delay)
+        retried = _run_jobs_once(
+            [jobs[i] for i in pending], label=f"retry {attempt}/{rounds}:"
+        )
+        for i, new in zip(pending, retried):
+            final[i] = _merge_retry(final[i], new)
+    results.extend(final)
 
 
 # ---------------------------------------------------------------------------
@@ -882,8 +1022,9 @@ def _print_summary(results: list[Result]) -> int:
     # decide exit code based on the mode.
     msg = (
         f"{counts['SKIP']} image(s) SKIPped — no real validation "
-        "happened. RunPod had no capacity on every candidate instance "
-        "type, or every candidate landed on a stuck host. "
+        "happened. Runpod had no capacity on every candidate instance "
+        "type, or every candidate landed on a stuck host, even after "
+        f"{config.SKIP_RETRIES} retry round(s) (SKIP_RETRIES). "
         "Set ON_SKIP=pass to silence this, ON_SKIP=warn to keep the "
         "job green with a warning, or ON_SKIP=fail (default) to make "
         "it fatal."

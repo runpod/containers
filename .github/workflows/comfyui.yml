@@ -24,7 +24,7 @@ permissions:
 jobs:
   # This family's own version series (git tags `comfyui-v1.3.1`).
   versions:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # pull-requests: compute-version names a develop push's dev image after
     # the PR it merged.
     permissions:
@@ -103,6 +103,7 @@ jobs:
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -133,7 +134,7 @@ jobs:
         with:
           name: comfyui-refs-${{ matrix.comfyui }}
           path: /tmp/comfyui-refs/refs.json
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
           
   test-comfyui:
@@ -175,12 +176,17 @@ jobs:
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
-          on-skip: "warn"
+          on-skip: "fail"
           manufacturer: "NVIDIA"
           budget-usd-per-hour: "3.0"
           min-vram-gb: "80"
           create-timeout: "1200"
           test-jupyter: "true"
+          # The ComfyUI venv is created with --system-site-packages, so
+          # certifi resolves to the system copy and one check covers both.
+          test-ca-certs: "true"
+          min-ca-certs-version: "20260816"
+          test-python-tls: "true"
           test-comfyui: "true"
           test-comfyui-functional: ${{ inputs.run-functional-tests }}
           save-comfyui-images: ${{ inputs.run-functional-tests }}

@@ -109,7 +109,17 @@ runs:
         fi
         BASE="${LATEST#"${PREFIX}"v}"
 
-        if [ "$EVENT_NAME" = "pull_request" ]; then
+        # A PR into the release branch is merged with a merge commit, so its
+        # title never becomes a commit there and the bump comes from the range,
+        # exactly as the merge will read it. Anywhere else a PR is squashed and
+        # its title IS the commit.
+        TITLE_IS_THE_COMMIT="true"
+        if [ "$EVENT_NAME" = "pull_request" ] && [ -n "${FAMILY}" ] \
+           && [ "${BASE_REF}" = "${RELEASE_BRANCH}" ]; then
+          TITLE_IS_THE_COMMIT="false"
+        fi
+
+        if [ "$EVENT_NAME" = "pull_request" ] && [ "$TITLE_IS_THE_COMMIT" = "true" ]; then
           # Squash merge: PR title → subject, PR body → commit body (footers).
           PR_BODY="$(printf '%s' "${PR_BODY_JSON:-null}" | jq -r 'if . == null then "" else . end')"
           BUMP="$(detect_bump "${PR_TITLE}"$'\n\n'"${PR_BODY}")"

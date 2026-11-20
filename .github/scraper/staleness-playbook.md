@@ -120,9 +120,10 @@ Shared pins (one each, across all ComfyUI versions), 12-char short SHAs:
 - `KJNODES_SHA`: latest default-branch commit of `kijai/ComfyUI-KJNodes`.
 - `CIVICOMFY_SHA`: latest default-branch commit of `MoonGoblinDev/Civicomfy`.
 - `RUNPODDIRECT_SHA`: latest default-branch commit of `MadiatorLabs/ComfyUI-RunpodDirect`.
-- `FILEBROWSER_VERSION`: latest release tag (`vX.Y.Z`) of `filebrowser/filebrowser`.
-- `FILEBROWSER_SHA256`: sha256 of that release's `linux-amd64-filebrowser.tar.gz`
-  asset. Download it and compute the hash, do not guess.
+- `FILEBROWSER_VERSION` / `FILEBROWSER_COMMIT`: leave both alone. Upstream
+  `filebrowser/filebrowser` is archived (2026-09-01) and `v2.63.23` is its last
+  release, so there is nothing to bump. The separate `filebrowser` family tracks
+  the maintained fork instead.
 
 If only some pins moved, bump just those.
 

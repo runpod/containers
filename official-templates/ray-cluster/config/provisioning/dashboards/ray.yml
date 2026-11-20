@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# Ray's stock dashboards. `ray start --head` generates them for the installed
+# Ray version (so they always match it) before Grafana starts, since the
+# entrypoint runs ahead of /start.sh.
+providers:
+  - name: ray-dashboards
+    orgId: 1
+    folder: Ray
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /tmp/ray/session_latest/metrics/grafana/dashboards
+      foldersFromFilesStructure: false

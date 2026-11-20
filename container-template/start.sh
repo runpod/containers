@@ -35,7 +35,7 @@ setup_ssh() {
             ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub
         fi
 
-        if [[ ! -f /etc/ssh/ssh_host_dsa_key ]]; then
+        if [[ ! -f /etc/ssh/ssh_host_dsa_key ]] && ssh -Q key | grep -qx ssh-dss; then
             ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -q -N ''
             echo "DSA key fingerprint:"
             ssh-keygen -lf /etc/ssh/ssh_host_dsa_key.pub
@@ -60,6 +60,10 @@ setup_ssh() {
             echo "Key: $key"
             ssh-keygen -lf "$key"
         done
+    else
+        echo "PUBLIC_KEY is not set; sshd was not started and port 22 stays"
+        echo "closed. Connecting through ssh.runpod.io is unaffected. For port"
+        echo "22, set PUBLIC_KEY and restart the pod."
     fi
 }
 

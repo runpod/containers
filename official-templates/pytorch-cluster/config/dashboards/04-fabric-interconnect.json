@@ -423,8 +423,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (Hostname, gpu) (rate(DCGM_FI_DEV_PCIE_REPLAY_COUNTER[5m]))",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "sum by (hostname, gpu) (rate(DCGM_FI_DEV_PCIE_REPLAY_COUNTER[5m]))",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "description": "PCIe replays indicate a marginal link. Sustained >0 is a red flag.",

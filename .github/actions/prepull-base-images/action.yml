@@ -1,0 +1,167 @@
+name: Pre-pull base images
+description: >-
+  Download the BASE_IMAGE of every bake target into a local OCI layout with
+  crane (blob digests verified, failed pulls retried), and write a bake
+  override file that points each target's `FROM ${BASE_IMAGE}` at that layout
+  through a named context. Add the `bake-file` output to the bake step's
+  `files:` so BuildKit reads the base from disk instead of the registry.
+
+  Why: BuildKit's own pull of multi-GB base layers from Docker Hub
+  intermittently fails with "failed commit on ref layer-sha256:…: unexpected
+  commit digest …: failed precondition", on a different layer and job each
+  time, so a re-run does not reliably fix it. crane checks every blob against
+  its digest, and a retry only fetches the blobs still missing.
+
+inputs:
+  bake-files:
+    description: Newline-separated bake files, as passed to docker/bake-action.
+    required: true
+  targets:
+    description: Bake target or group to build (same as the bake step).
+    required: false
+    default: default
+  platform:
+    description: Platform to pull.
+    required: false
+    default: linux/amd64
+  attempts:
+    description: Pull attempts per image before giving up.
+    required: false
+    default: "5"
+
+outputs:
+  bake-file:
+    description: >-
+      Path to a bake JSON override file. Append it to the bake step's `files:`
+      after the family's own bake files.
+    value: ${{ steps.pull.outputs.bake-file }}
+  layout:
+    description: Path to the OCI layout. Delete it after bake to free disk.
+    value: ${{ steps.pull.outputs.layout }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install crane
+      shell: bash
+      env:
+        CRANE_VERSION: v0.22.1
+        CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+      run: |
+        set -euo pipefail
+        if command -v crane > /dev/null; then
+          crane version
+          exit 0
+        fi
+        curl -fsSL \
+          "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+          -o /tmp/crane.tar.gz
+        echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+        tar xz -C /tmp -f /tmp/crane.tar.gz crane
+        sudo mv /tmp/crane /usr/local/bin/crane
+        crane version
+
+    - name: Pull base images
+      id: pull
+      shell: bash
+      env:
+        BAKE_FILES: ${{ inputs.bake-files }}
+        TARGETS: ${{ inputs.targets }}
+        PLATFORM: ${{ inputs.platform }}
+        ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        set -euo pipefail
+
+        LAYOUT="${RUNNER_TEMP}/base-images-oci"
+        BAKE_FILE="${RUNNER_TEMP}/base-images.bake.json"
+        rm -rf "${LAYOUT}"
+        mkdir -p "${LAYOUT}"
+
+        file_args=()
+        while IFS= read -r f; do
+          [ -n "${f}" ] && file_args+=(--file "${f}")
+        done <<< "${BAKE_FILES}"
+
+        # Resolve with the caller's env (RELEASE_VERSION, BASE_VERSION, …) so
+        # these are exactly the refs the bake step would otherwise pull.
+        # Targets are split on spaces/commas/newlines like bake-action does.
+        read -ra target_args <<< "$(echo "${TARGETS}" | tr ',\n' '  ')"
+        docker buildx bake --progress=quiet "${file_args[@]}" --print "${target_args[@]}" \
+          > "${RUNNER_TEMP}/bake-print.json"
+
+        # target name -> BASE_IMAGE, for targets that have one.
+        jq -c '.target | to_entries | map(select(.value.args.BASE_IMAGE != null)
+               | {target: .key, ref: .value.args.BASE_IMAGE})' \
+          "${RUNNER_TEMP}/bake-print.json" > "${RUNNER_TEMP}/base-refs.json"
+        mapfile -t refs < <(jq -r '.[].ref' "${RUNNER_TEMP}/base-refs.json" | sort -u)
+        if [ ${#refs[@]} -eq 0 ]; then
+          echo "::error::No BASE_IMAGE args found for ${TARGETS}"
+          exit 1
+        fi
+
+        # ref -> layout tag. Layout tags must be unique and contain no ':' or
+        # '/', so derive one from the full ref.
+        declare -A layout_tag
+        for ref in "${refs[@]}"; do
+          echo "::group::crane pull ${ref}"
+          tag="$(printf '%s' "${ref}" | tr '/:@' '___')"
+          layout_tag["${ref}"]="${tag}"
+
+          # Pin the tag to one manifest digest so every attempt fetches the
+          # same image, even if the tag moves mid-pull.
+          digest=$(crane digest --platform "${PLATFORM}" "${ref}")
+          # Repository without tag/digest. Handles name:tag@sha256:…, and a
+          # registry port (host:5000/name) whose ':' is not a tag separator.
+          repo="${ref%%@*}"
+          last="${repo##*/}"
+          if [[ "${last}" == *:* ]]; then
+            repo="${repo%:*}"
+          fi
+          echo "${ref} -> ${digest}"
+
+          ok=false
+          for attempt in $(seq 1 "${ATTEMPTS}"); do
+            if crane pull --format=oci --platform "${PLATFORM}" \
+                "${repo}@${digest}" "${LAYOUT}"; then
+              ok=true
+              break
+            fi
+            echo "::warning::crane pull ${ref} failed (attempt ${attempt}/${ATTEMPTS})"
+            sleep $((attempt * 15))
+          done
+          if [ "${ok}" != true ]; then
+            echo "::error::Failed to pull ${ref} after ${ATTEMPTS} attempts"
+            exit 1
+          fi
+
+          # Tag the manifest in the layout (org.opencontainers.image.ref.name)
+          # so bake can reference it as oci-layout://<layout>:<tag>.
+          jq --arg d "${digest}" --arg t "${tag}" \
+            '.manifests |= map(if .digest == $d
+               then .annotations = ((.annotations // {}) + {"org.opencontainers.image.ref.name": $t})
+               else . end)' \
+            "${LAYOUT}/index.json" > "${LAYOUT}/index.json.new"
+          mv "${LAYOUT}/index.json.new" "${LAYOUT}/index.json"
+          if ! jq -e --arg d "${digest}" --arg t "${tag}" \
+              'any(.manifests[]; .digest == $d and .annotations["org.opencontainers.image.ref.name"] == $t)' \
+              "${LAYOUT}/index.json" > /dev/null; then
+            echo "::error::${digest} for ${ref} is missing from ${LAYOUT}/index.json"
+            exit 1
+          fi
+          echo "::endgroup::"
+        done
+
+        # Bake override: per target, a named context keyed by its BASE_IMAGE
+        # ref replaces the `FROM ${BASE_IMAGE}` pull. Bake merges this into the
+        # family's targets (existing contexts are kept).
+        tags_json=$(for ref in "${refs[@]}"; do
+          jq -n --arg r "${ref}" --arg t "${layout_tag[${ref}]}" '{($r): $t}'
+        done | jq -s 'add')
+        jq --arg layout "${LAYOUT}" --argjson tags "${tags_json}" \
+          '{target: (map({key: .target, value: {contexts: {(.ref): ("oci-layout://" + $layout + ":" + $tags[.ref])}}}) | from_entries)}' \
+          "${RUNNER_TEMP}/base-refs.json" > "${BAKE_FILE}"
+        cat "${BAKE_FILE}"
+        du -sh "${LAYOUT}"
+
+        echo "bake-file=${BAKE_FILE}" >> "${GITHUB_OUTPUT}"
+        echo "layout=${LAYOUT}" >> "${GITHUB_OUTPUT}"
