@@ -735,60 +735,10 @@ def test_pair(
 
     outcome: _Outcome = ("FAIL", "")
     try:
-        state, wait_detail, endpoint = wait_for_running(pod_id)
-        if state != "RUNNING":
-            return _classify_non_running(state, wait_detail, pod_id, image)
-
-        log(f"smoke check passed: {wait_detail}", indent=2)
-        st = pod_state(pod_id)
-        # Every later check reuses the endpoint that answered readiness,
-        # carried by value. Re-reading ssh.direct would throw away a working
-        # proxy connection, and addressing a proxy by (host, port) alone
-        # would collide with every other pod on ssh.runpod.io.
-        assert endpoint is not None
-
-        # pod_state already carries cudaVersion, so the common path costs no
-        # extra request. It is nullable until the scheduler has assigned a
-        # machine, hence the retrying fallback.
-        host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
-        if host_cuda:
-            _set_host_cuda(host_cuda)
-            log(f"host CUDA: {host_cuda}", indent=2)
-
-        # Sequence the checks. Each returns None on pass/skip, or a FAIL
-        # outcome to surface to the caller. Kept as straight-line code
-        # (no fancy abstraction) so the failure points stay easy to read
-        # in stack traces / logs.
-        outcome = _run_cuda_step(endpoint, image, group, pod_id)
-        if outcome is not None:
-            return outcome
-        outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_port_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_vllm_steps(pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_log_scan_step(pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_dwell_step(endpoint, pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_post_dwell_steps(pod_id, image, group)
-        if outcome is not None:
-            return outcome
-
-        dump_pod_logs(pod_id, image)
-        return "PASS", ""
+        outcome = _check_pod(pod_id, image, group)
+    except Exception:
+        if not expired.is_set():
+            raise
     finally:
         if watchdog is not None:
             watchdog.cancel()
@@ -849,6 +799,9 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
     if outcome is not None:
         return outcome
     outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_vllm_steps(pod_id, image, group)
     if outcome is not None:
         return outcome
     outcome = _run_log_scan_step(pod_id, image)
