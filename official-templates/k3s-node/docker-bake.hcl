@@ -2,7 +2,7 @@
 # multi-platform image.
 
 variable "K3S_VERSION" {
-  default = "v1.37.1+k3s1"
+  default = "v1.37.2+k3s1"
 }
 
 # Remove with the runc swap in k3s-node.sh once k3s bundles runc >= 1.4.3.
@@ -12,7 +12,7 @@ variable "RUNC_VERSION" {
 
 # The apt package version of nvidia-container-toolkit and its libraries.
 variable "NVIDIA_CTK_VERSION" {
-  default = "1.20.1-1"
+  default = "1.20.2-1"
 }
 
 group "default" {
@@ -29,8 +29,8 @@ target "k3s-node" {
     BASE_IMAGE = "ubuntu:24.04@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c"
 
     K3S_VERSION      = K3S_VERSION
-    K3S_SHA256_AMD64 = "92b94582eb7b34a8cf532e6006842b9ed215a6783cf56a3dd6271fd35243b2c0"
-    K3S_SHA256_ARM64 = "a1561ca4aef8b99f5588a840d4468ac39c8c1cd92470bbcb9634823fa221741a"
+    K3S_SHA256_AMD64 = "265b3ee6a3198ef14033c63ef46cbb32370d83795199fb6d1b01f21575eddbda"
+    K3S_SHA256_ARM64 = "a779ccf1e5e2e33a62f5a29c2f1c0bbf99431e100579d4c10f0aa0742a6aa84b"
 
     RUNC_VERSION      = RUNC_VERSION
     RUNC_SHA256_AMD64 = "f6ae8efc0fa40079e1475e97cbe9d1bd3f106a28d6af78a11d9f1bd565515e60"
@@ -39,7 +39,7 @@ target "k3s-node" {
     NVIDIA_CTK_VERSION = NVIDIA_CTK_VERSION
   }
 
-  # The k3s version without its build suffix: v1.37.1+k3s1 -> k3s-v1.37.1.
+  # The k3s version without its build suffix: v1.37.2+k3s1 -> k3s-v1.37.2.
   tags = [
     "runpod/k3s-node${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-k3s-${split("+", K3S_VERSION)[0]}",
   ]
