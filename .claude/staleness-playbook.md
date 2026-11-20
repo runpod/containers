@@ -61,12 +61,20 @@ is deliberately human-owned (see its section).
 - One branch and one draft PR per stale family. Use a stable branch name
   `staleness-scraper/<family>` and add the label `staleness-scraper` to the PR, so
   the job can find its own PRs later. Title like `feat: pytorch <version>`.
-- Before opening a PR, check for an existing open PR from this job for that family
+- Look for an existing open PR from this job for that family **first**, before you
+  decide whether there is anything to do
   (`gh pr list --label staleness-scraper --head staleness-scraper/<family> --state open`).
   If one exists, do NOT open a second one: update that branch (commit the new edits
   and push to it) and refresh the PR title and body. Only open a new PR when none
-  is open for the family. Do not re-request the review on an update: the reviewer
-  is already on the PR, and re-requesting dismisses a review they have left.
+  is open for the family.
+- An existing PR may predate the reviewer setting, so decide from the PR's own
+  state rather than from "this is an update". Read it with
+  `gh pr view <n> --json reviewRequests,reviews`. If nobody from `PR_REVIEWER` is
+  requested there and none of them has already reviewed, add them:
+  `gh pr edit <n> --add-reviewer "$PR_REVIEWER"`. If they are already requested,
+  or have already left a review, leave it alone: re-requesting resets the review
+  they gave. Do this whenever you touch an existing PR, even when you end up
+  pushing no new edits to it.
 - After editing, run `docker buildx bake -f official-templates/shared/versions.hcl
   -f official-templates/<family>/docker-bake.hcl --print` as a syntax check. If it
   errors on the HCL itself, fix it. Build/runtime correctness is proven later by CI.

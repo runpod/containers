@@ -97,7 +97,9 @@ jobs:
             kept the PR's there), otherwise .claude/staleness-playbook.md. Read
             whichever exists; never fall back to git.
             Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
-            If ${{ matrix.family }} is already current, make no changes.
+            If ${{ matrix.family }} is already current, make no edits to it --
+            but still run the playbook's checks on any PR this job already has
+            open for it, which is not the same as having nothing to do.
 
             Your LAST action, on every path through this task, is to write
             /tmp/scraper-status with the Write tool: exactly `ok` if you got to
