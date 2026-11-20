@@ -6,17 +6,18 @@
 variable "COMFYUI_VERSIONS" {
   default = [
     { version = "v0.44.0", manager_version = "4.2.2" },
-    { version = "v0.45.0", manager_version = "4.2.2" }
+    { version = "v0.45.0", manager_version = "4.2.2" },
+    { version = "v0.46.0", manager_version = "4.2.2" }
   ]
 }
 variable "KJNODES_SHA" {
-  default = "57105374f47d"
+  default = "aa2b5ea5e7f6" # 2026-11-18
 }
 variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
 }
 variable "RUNPODDIRECT_SHA" {
-  default = "9e32b1a09577"
+  default = "1c0dd562dc3f" # v.1.0.13
 }
 # FileBrowser is archived upstream (2026-09-01); v2.63.23 is its last release.
 # The Dockerfile builds it from source with a current Go and patched modules.
