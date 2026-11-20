@@ -1,9 +1,10 @@
 name: Template Staleness Scraper
 
 # Weekly check for upstream releases we do not yet ship (pytorch, comfyui,
-# autoresearch, base, pytorch-cluster, and the sandbox-* families).
+# autoresearch, base, pytorch-cluster, filebrowser, k3s-node and the sandbox-*
+# families; ray-cluster is detection-only and opens no PR).
 # Opens a draft PR per stale family; the matrix is verified by the build CI on
-# that PR. Rules live in .github/scraper/staleness-playbook.md.
+# that PR. Rules live in .claude/staleness-playbook.md.
 on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
@@ -40,17 +41,25 @@ jobs:
           - family: autoresearch
             turns: 60
           - family: base
-            turns: 60
+            turns: 90
           - family: pytorch-cluster
             turns: 90
+          # ray-cluster only reports: every pin needs a hand-resolved lock file.
+          - family: ray-cluster
+            turns: 40
+          - family: filebrowser
+            turns: 50
+          # k3s-node pins three components, each with an amd64 and an arm64 sum.
+          - family: k3s-node
+            turns: 80
           - family: sandbox-ubuntu
             turns: 70
           - family: sandbox-browser
-            turns: 50
+            turns: 70
           - family: sandbox-harbor
-            turns: 50
+            turns: 70
           - family: sandbox-openclaw
-            turns: 50
+            turns: 70
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -75,7 +84,7 @@ jobs:
           github_token: ${{ secrets.SCRAPER_PR_TOKEN || github.token }}
           show_full_output: true
           prompt: |
-            Read .github/scraper/staleness-playbook.md and follow it exactly, but
+            Read .claude/staleness-playbook.md and follow it exactly, but
             only for the `${{ matrix.family }}` family; ignore the others.
             Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
             If ${{ matrix.family }} is already current, make no changes and exit.
