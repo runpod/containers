@@ -443,7 +443,14 @@ either.
    - the smoke test passes `registry-auth-name`, or its pod cannot pull the
      private image;
    - a private `runpod/<name>-dev` repo exists on Docker Hub.
-3. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
+3. Decide how the family is watched for upstream releases. The weekly staleness
+   scraper only looks at families named in `.claude/staleness-playbook.md`, so
+   either add a section describing which pins it should track and how to verify
+   each one, plus an entry in the `.github/workflows/staleness-scraper.yml`
+   matrix, or name the family in the playbook's "Ignore all others" line with
+   the reason. Skipping this does not fail anything; the family's pins simply
+   stop being watched.
+4. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
 
 ### Seed a family that already has published images
 
