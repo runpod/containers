@@ -173,19 +173,25 @@ filebrowser_cli() {
     return 1
 }
 
-# FileBrowser always requires a login: a set FILEBROWSER_PASSWORD is the admin
-# password, and without one FileBrowser is not started. There is no opt-out.
+# FileBrowser requires a login unless FILEBROWSER_DISABLE_AUTH is set, which
+# wins over a set password. Otherwise a set FILEBROWSER_PASSWORD is the admin
+# password, and without one FileBrowser is not started.
 # Images before this one created admin with the published default
 # adminadmin12 whenever FILEBROWSER_PASSWORD was unset, so admin's password is
 # set from the env on every start rather than only when the database is first
-# created, and the login method is forced back to json in case a database was
-# switched to noauth.
+# created. The login method is written on every start too, so a database left
+# on noauth by an earlier start with the flag goes back to json without it.
 start_filebrowser() {
-    if [ -z "${FILEBROWSER_PASSWORD:-}" ]; then
+    local method=json
+    if is_true "${FILEBROWSER_DISABLE_AUTH:-}"; then
+        method=noauth
+        echo "WARNING: FILEBROWSER_DISABLE_AUTH is set -- starting FileBrowser with NO login: anyone with this pod's :8080 URL can read, change and delete everything in /workspace."
+    elif [ -z "${FILEBROWSER_PASSWORD:-}" ]; then
         echo "============================================="
         echo "  FILEBROWSER_PASSWORD is not set, so FileBrowser was not started."
-        echo "  Set FILEBROWSER_PASSWORD, at least 12 characters, on the pod"
-        echo "  and restart it; sign in as admin with it."
+        echo "  Set FILEBROWSER_PASSWORD on the pod and restart it; sign in as"
+        echo "  admin with it. Or set FILEBROWSER_DISABLE_AUTH=true to run"
+        echo "  FileBrowser with no login (understand the risk)."
         echo "============================================="
         return 0
     fi
@@ -199,20 +205,29 @@ start_filebrowser() {
         fi
     fi
 
-    if ! filebrowser_cli config set --auth.method=json; then
+    # FileBrowser's own minimum length is 12; 1 accepts any non-empty
+    # password. It still refuses passwords on its list of common ones.
+    if ! filebrowser_cli config set --auth.method="$method" --minimumPasswordLength=1; then
         echo "ERROR: could not set FileBrowser's login method (see above); it was not started."
         return 0
     fi
 
     local ok=1
-    if filebrowser_cli users find admin > /dev/null; then
+    if [ "$method" = noauth ]; then
+        # noauth signs every visitor in as user 1, so admin, the first user,
+        # must exist. A new one gets a random password nobody needs; an
+        # existing admin keeps its password for when the flag is removed.
+        if ! filebrowser_cli users find admin > /dev/null; then
+            filebrowser_cli users add admin "$(head -c 24 /dev/urandom | base64)" --perm.admin || ok=0
+        fi
+    elif filebrowser_cli users find admin > /dev/null; then
         filebrowser_cli users update admin --password "$FILEBROWSER_PASSWORD" || ok=0
     else
         filebrowser_cli users add admin "$FILEBROWSER_PASSWORD" --perm.admin || ok=0
     fi
     if [ "$ok" = 0 ]; then
         echo "ERROR: could not set the FileBrowser admin password (see above), so FileBrowser"
-        echo "was not started. It must be 12 or more characters and not a common password."
+        echo "was not started. FileBrowser refuses common passwords; choose another one."
         return 0
     fi
 

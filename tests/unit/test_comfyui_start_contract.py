@@ -487,7 +487,8 @@ class FileBrowser(Sandbox):
         db = self.work / "filebrowser.db"
         if db_exists:
             db.write_text("")
-        funcs = (function("filebrowser_cli") + "\n" + function("start_filebrowser")
+        funcs = (function("is_true") + "\n" + function("filebrowser_cli") + "\n"
+                 + function("start_filebrowser")
                  ).replace("/filebrowser.log", str(self.work / "filebrowser.log"))
         result = self.run_bash(
             funcs + "\nstart_filebrowser\nwait",
@@ -503,6 +504,7 @@ class FileBrowser(Sandbox):
         calls, out = self.start({}, db_exists=True)
         self.assertEqual(calls, [], "not even the CLI may run")
         self.assertIn("FILEBROWSER_PASSWORD is not set, so FileBrowser was not started.", out)
+        self.assertIn("FILEBROWSER_DISABLE_AUTH=true", out)
         # Boxed like the ComfyUI banner, so it is not lost above ComfyUI's
         # startup output.
         box = out.split("=============================================")
@@ -520,6 +522,19 @@ class FileBrowser(Sandbox):
         self.assertTrue(self.served(calls))
         self.assertNotIn(SECRET, out)
 
+    def test_no_minimum_length(self) -> None:
+        """FileBrowser's own floor is 12 by default; it is set to 1 before
+        admin's password is set, so any non-empty password works."""
+        for db_exists in (False, True):
+            with self.subTest(db_exists=db_exists):
+                calls, _ = self.start({"FILEBROWSER_PASSWORD": "ab"}, db_exists=db_exists,
+                                      FB_HAS_ADMIN="1" if db_exists else "")
+                floor = [i for i, c in enumerate(calls) if "--minimumPasswordLength=1" in c]
+                user = [i for i, c in enumerate(calls) if "users add" in c or "users update" in c]
+                self.assertTrue(floor and user, calls)
+                self.assertLess(floor[0], user[0])
+                self.assertTrue(self.served(calls))
+
     def test_password_replaces_an_existing_admin_password(self) -> None:
         """A volume from an older image holds admin/adminadmin12."""
         calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET},
@@ -536,21 +551,58 @@ class FileBrowser(Sandbox):
         self.assertIn("<FILEBROWSER_PASSWORD>", out)
         self.assertNotIn(SECRET, out)
 
-    def test_there_is_no_opt_out(self) -> None:
-        """FILEBROWSER_DISABLE_AUTH, which an earlier rc honoured, changes
-        nothing: without a password FileBrowser stays off."""
-        calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": "true"},
+    def test_disable_flag_serves_with_no_login(self) -> None:
+        for value in TRUE_VALUES:
+            with self.subTest(value=value):
+                (self.work / "argv").unlink(missing_ok=True)
+                calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": value},
+                                        db_exists=True, FB_HAS_ADMIN="1")
+                self.assertTrue(any("--auth.method=noauth" in c for c in calls), calls)
+                self.assertFalse(any("--auth.method=json" in c for c in calls))
+                self.assertFalse(any("users update" in c or "users add" in c for c in calls))
+                self.assertTrue(self.served(calls))
+                self.assertEqual(out.count("WARNING"), 1, out)
+                self.assertIn("NO login", out)
+
+    def test_disable_flag_wins_over_a_set_password(self) -> None:
+        calls, out = self.start({"FILEBROWSER_PASSWORD": SECRET, "FILEBROWSER_DISABLE_AUTH": "1"},
                                 db_exists=True, FB_HAS_ADMIN="1")
-        self.assertEqual(calls, [])
-        self.assertIn("FileBrowser was not started", out)
+        self.assertTrue(any("--auth.method=noauth" in c for c in calls))
+        self.assertTrue(self.served(calls))
+        self.assertNotIn(SECRET, out)
+
+    def test_disable_flag_on_a_new_volume_creates_admin(self) -> None:
+        """noauth signs everyone in as user 1, so admin must exist. Its
+        password is random and never printed."""
+        calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": "yes"})
+        add = [c for c in calls if c.startswith("-d ") and " users add admin " in c]
+        self.assertEqual(len(add), 1, calls)
+        password = add[0].split(" users add admin ")[1].split(" --perm.admin")[0]
+        self.assertGreaterEqual(len(password), 20)
+        self.assertNotIn(password, out)
+        self.assertTrue(self.served(calls))
+
+    def test_other_flag_values_keep_the_login(self) -> None:
+        for value in NOT_TRUE_VALUES:
+            with self.subTest(value=value):
+                (self.work / "argv").unlink(missing_ok=True)
+                calls, _ = self.start({"FILEBROWSER_DISABLE_AUTH": value},
+                                      db_exists=True, FB_HAS_ADMIN="1")
+                self.assertEqual(calls, [])
+                calls, _ = self.start({"FILEBROWSER_DISABLE_AUTH": value,
+                                       "FILEBROWSER_PASSWORD": SECRET},
+                                      db_exists=True, FB_HAS_ADMIN="1")
+                self.assertTrue(any("--auth.method=json" in c for c in calls))
+                self.assertFalse(any("noauth" in c for c in calls))
 
     def test_login_is_forced_back_on(self) -> None:
-        """A database left on noauth, by hand or by an earlier rc, is switched
-        back to a login on the next start."""
-        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET, "FILEBROWSER_DISABLE_AUTH": "true"},
+        """A database left on noauth, by an earlier start with the flag or by
+        hand, is switched back to a login once the flag is gone."""
+        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET},
                               db_exists=True, FB_HAS_ADMIN="1")
         self.assertTrue(any("--auth.method=json" in c for c in calls))
         self.assertFalse(any("noauth" in c for c in calls))
+        self.assertTrue(any(f"users update admin --password {SECRET}" in c for c in calls))
         self.assertTrue(self.served(calls))
 
 
