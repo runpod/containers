@@ -168,6 +168,36 @@ RUN . /etc/os-release && \
     fi && \
     dpkg-query -W -f='${Package} ${Version}\n' apt "${lib}"
 
+# Same stale-snapshot problem for nginx (CVE-2026-113425, CVE-2026-123007,
+# CVE-2026-123633, CVE-2026-123634, HIGH; fixed in 1.24.0-2ubuntu7.20 on 24.04).
+# nginx pins nginx-common to its exact version, so both go in together.
+# Checksummed, and only when newer.
+# debs is split on purpose: it is a list of file paths.
+# hadolint ignore=SC2086
+RUN . /etc/os-release && \
+    case "${VERSION_ID}" in \
+      24.04) ver="1.24.0-2ubuntu7.21"; \
+             sha_nginx=c125a2ad6bfd25b6fdf92e3534a3facbf35180e05a054dcb84f68b63fc38227e; \
+             sha_common=4176112bca331776560304ced6f6e6ca36fee2818a834d6ccdf79c6c58ed5e28 ;; \
+      26.04) ver="1.28.3-2ubuntu1.14"; \
+             sha_nginx=05a780d312e408d09482a8d735383a29b40514606f2855db94cd81da15f406d1; \
+             sha_common=e9e6f64696bd5d0c74f06c3a5d95ac22746ee1a4ab1de62b616393a94db9b8ab ;; \
+      *) echo "no pinned nginx for ${VERSION_ID}" && exit 1 ;; \
+    esac && \
+    cur="$(dpkg-query -W -f='${Version}' nginx 2>/dev/null || echo 0)" && \
+    if dpkg --compare-versions "$cur" lt "$ver"; then \
+      debs="" && \
+      for p in "nginx_${ver}_amd64.deb:${sha_nginx}" "nginx-common_${ver}_all.deb:${sha_common}"; do \
+        deb="${p%%:*}" && \
+        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://security.ubuntu.com/ubuntu/pool/main/n/nginx/${deb}" && \
+        echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
+        debs="${debs} /tmp/${deb}"; \
+      done && \
+      dpkg -i ${debs} && rm -f ${debs}; \
+    fi && \
+    dpkg-query -W -f='${Package} ${Version}\n' nginx nginx-common
+
 # Install SchedMD Slurm from the .deb packages built in the slurm-builder stage
 # (replaces Ubuntu's stock slurm-wlm). We install via apt (not raw dpkg) so the
 # runtime dependencies (libmunge2, libmariadb, ...) resolve automatically, as
