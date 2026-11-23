@@ -132,6 +132,12 @@ jobs:
           # Read-only by this job's permissions: enough for `gh pr list/view` and
           # `gh release view`, not enough to push, open a PR or label anything.
           GH_TOKEN: ${{ github.token }}
+          # Keep ANTHROPIC_API_KEY out of the environment the agent's Bash tool
+          # inherits. It is the one long-lived secret in this job, and `curl` is
+          # allowed here because checksums have to be computed from real files,
+          # so injected text could otherwise post the key anywhere. Undocumented
+          # but present since Claude Code 2.1.83; the action installs a newer one.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
@@ -171,7 +177,7 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
       # the agent produced plus its own two notes.

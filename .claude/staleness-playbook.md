@@ -78,9 +78,12 @@ is deliberately human-owned (see its section).
   behind rides into the PR, and you have no `rm` to take it back. Nothing filters
   this for you: either the file is a change you meant to make, or it does not
   belong in the checkout.
-- After editing, run `docker buildx bake -f official-templates/shared/versions.hcl
-  -f official-templates/<family>/docker-bake.hcl --print` as a syntax check. If it
-  errors on the HCL itself, fix it. Build/runtime correctness is proven later by CI.
+- After editing, run `docker buildx bake --print -f
+  official-templates/shared/versions.hcl -f
+  official-templates/<family>/docker-bake.hcl` as a syntax check. If it errors on
+  the HCL itself, fix it. Build/runtime correctness is proven later by CI.
+  **`--print` must come first**: that exact prefix is what you are allowed to
+  run, and a bake without it would start a real build.
 - **The two files you leave behind are the whole handover.** Write both with the
   Write tool:
   - `/tmp/scraper-pr.json`: `{"title": ..., "body": ...}`, the PR the next job
