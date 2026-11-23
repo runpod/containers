@@ -104,8 +104,35 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # Required by CLAUDE_CODE_SUBPROCESS_ENV_SCRUB below: Claude Code refuses
+      # to start without it, since it isolates subprocesses through bubblewrap.
+      # The blacksmith image does not ship it.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          bwrap --version
+
+      # Out of the checkout and owned by root. The agent may run this script but
+      # must not be able to rewrite it first: it can Write anywhere the runner
+      # user can, and a writable file that something later executes is arbitrary
+      # shell. It has no sudo, so a root-owned 0755 copy settles it by file
+      # permission rather than by a pattern whose semantics we would have to
+      # trust.
+      - name: Install the checksum helper outside the checkout
+        run: |
+          sudo install -m 0755 -o root -g root \
+            .github/scripts/sha256_url.sh /usr/local/bin/sha256-url
+          sha256-url https://raw.githubusercontent.com/pypa/get-pip/0d4515b4d114f9cd820446a4bd4bd0986393d454/public/get-pip.py
+
       # Edit on top of the PR this job already has open, so the patch applies
       # there later. Deterministic shell, before the model starts.
+      #
+      # Keep this step LAST of the setup. It replaces the whole working tree
+      # with a scraper branch, which was cut from develop and carries none of
+      # this run's own files: anything the run needs from the checked-out ref
+      # (the helper installed above, the playbook restored below) has to be in
+      # place, or come back explicitly, before it runs.
       - name: Continue an open PR's branch, if any
         shell: bash
         env:
@@ -129,27 +156,6 @@ jobs:
           git fetch --quiet origin "$branch"
           git checkout --force --quiet -B "$branch" FETCH_HEAD
           git checkout --quiet "$config_from" -- .claude/
-
-      # Required by CLAUDE_CODE_SUBPROCESS_ENV_SCRUB below: Claude Code refuses
-      # to start without it, since it isolates subprocesses through bubblewrap.
-      # The blacksmith image does not ship it.
-      - name: Install bubblewrap
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends bubblewrap
-          bwrap --version
-
-      # Out of the checkout and owned by root. The agent may run this script but
-      # must not be able to rewrite it first: it can Write anywhere the runner
-      # user can, and a writable file that something later executes is arbitrary
-      # shell. It has no sudo, so a root-owned 0755 copy settles it by file
-      # permission rather than by a pattern whose semantics we would have to
-      # trust.
-      - name: Install the checksum helper outside the checkout
-        run: |
-          sudo install -m 0755 -o root -g root \
-            .github/scripts/sha256_url.sh /usr/local/bin/sha256-url
-          sha256-url https://raw.githubusercontent.com/pypa/get-pip/0d4515b4d114f9cd820446a4bd4bd0986393d454/public/get-pip.py
 
       - name: Scan ${{ matrix.family }}
         id: scan
@@ -274,6 +280,10 @@ jobs:
 
           # 1. Did the agent itself survive? A crash, a timeout or max-turns is a
           #    failure whatever it managed to leave behind.
+          if [ "$SCAN_OUTCOME" = "skipped" ]; then
+            echo "::error::${FAMILY}: the agent never ran; an earlier step in this job failed, so look above this one"
+            exit 1
+          fi
           if [ "$SCAN_OUTCOME" != "success" ]; then
             echo "::error::${FAMILY}: the agent step ended '${SCAN_OUTCOME}' (crash, timeout or max-turns)"
             exit 1
