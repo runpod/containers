@@ -110,11 +110,20 @@ jobs:
           branch="staleness-scraper/${FAMILY}"
           open_pr="$(gh pr list --label staleness-scraper --head "$branch" \
             --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$open_pr" ]; then
-            echo "::notice::${FAMILY}: continuing #${open_pr} on ${branch}"
-            git fetch --quiet origin "$branch"
-            git checkout --force -B "$branch" FETCH_HEAD
+          if [ -z "$open_pr" ]; then
+            echo "::notice::${FAMILY}: no open PR; working from the checked-out ref"
+            exit 0
           fi
+          echo "::notice::${FAMILY}: continuing #${open_pr} on ${branch}"
+          # Keep the .claude/ we were checked out on. The scraper branch was cut
+          # from develop and need not carry this run's playbook at all, and the
+          # action preserves whatever .claude/ it finds in the tree, so without
+          # this the agent is handed the wrong playbook or none. Only
+          # official-templates/ is collected afterwards, so it never travels.
+          config_from="$(git rev-parse HEAD)"
+          git fetch --quiet origin "$branch"
+          git checkout --force --quiet -B "$branch" FETCH_HEAD
+          git checkout --quiet "$config_from" -- .claude/
 
       - name: Scan ${{ matrix.family }}
         id: scan
@@ -176,10 +185,19 @@ jobs:
           mkdir -p "$out"
           cp /tmp/scraper-status "$out/status" 2>/dev/null || echo 'missing (agent did not report)' > "$out/status"
           cp /tmp/scraper-pr.json "$out/pr.json" 2>/dev/null || true
+          # Only template files travel to `publish`. Anything the agent wrote
+          # elsewhere is a finding, not cargo: report it and fail the family.
+          # .claude/ is excluded because the step above restores it deliberately.
+          stray="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
+          if [ -n "$stray" ]; then
+            echo "::error::${FAMILY}: the agent changed paths outside official-templates/:"
+            printf '%s\n' "$stray" | sed 's/^/  /'
+            echo "failed: changed paths outside official-templates/" > "$out/status"
+          fi
           # Staged, not committed: --cached also captures files the agent added.
-          git add -A
-          git diff --cached --binary > "$out/changes.patch"
-          git diff --cached --name-only > "$out/changed-files"
+          git add -A -- official-templates/
+          git diff --cached --binary -- official-templates/ > "$out/changes.patch"
+          git diff --cached --name-only -- official-templates/ > "$out/changed-files"
           echo "::notice::${FAMILY}: $(wc -l < "$out/changed-files") changed file(s)"
 
       - name: Upload the result
@@ -203,7 +221,7 @@ jobs:
           FAMILY: ${{ matrix.family }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
         run: |
-          status="$(cat /tmp/scraper-status 2>/dev/null || echo 'missing (agent did not report)')"
+          status="$(cat "${RUNNER_TEMP}/out/status" 2>/dev/null || echo 'missing (agent did not report)')"
           echo "::notice::${FAMILY} scraper status: ${status} (agent step: ${SCAN_OUTCOME})"
           if [ "$status" != "ok" ]; then
             if [ "$SCAN_OUTCOME" != "success" ]; then

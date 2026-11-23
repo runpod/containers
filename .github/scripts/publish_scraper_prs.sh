@@ -100,6 +100,20 @@ for dir in "$RESULTS"/scraper-*; do
     continue
   fi
 
+  # Re-check what actually landed, with rename detection off. `--name-only`
+  # collapses a rename to its destination, so a move out of .github/ into
+  # official-templates/ passes the list check above while still deleting a file
+  # outside the allowed tree. This looks at the applied result rather than at a
+  # file the agent wrote, which makes it the check that counts.
+  applied="$(git diff --cached --name-only --no-renames | grep -v "^${ALLOWED_PATHS}" || true)"
+  if [ -n "$applied" ]; then
+    echo "::error::${family}: applying the patch reached outside ${ALLOWED_PATHS}:"
+    printf '%s\n' "$applied" | sed 's/^/  /'
+    reset_tree
+    failed=1
+    continue
+  fi
+
   if git diff --cached --quiet; then
     echo "::notice::${family}: ${branch} already carries these changes"
     reset_tree
