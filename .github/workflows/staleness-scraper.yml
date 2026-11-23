@@ -196,9 +196,13 @@ jobs:
             next job should open or update, written as the playbook's "PR body"
             section describes. Required whenever you changed a file.
 
+            /tmp/scraper-notes.md -- optional markdown for anything a person
+            should see in the run summary but that is not a file change. The job
+            appends it for you; you cannot write to the summary yourself.
+
             /tmp/scraper-status -- exactly `ok` if you got to the end (edits
             made, nothing to do, or a detection-only family reported to the
-            summary), or `failed: <one-line reason>` if something blocked you.
+            notes), or `failed: <one-line reason>` if something blocked you.
             Finding nothing to do is `ok`, not a failure. Write it on every path
             through the task, as your last action. `failed:` is the one way you
             can stop your own work from being published, so use it whenever you
@@ -211,7 +215,7 @@ jobs:
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
             --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/work/_actions/**)"
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
       # the agent produced plus its own two notes.
@@ -225,6 +229,18 @@ jobs:
           mkdir -p "$out"
           cp /tmp/scraper-status "$out/status" 2>/dev/null || echo 'missing (agent did not report)' > "$out/status"
           cp /tmp/scraper-pr.json "$out/pr.json" 2>/dev/null || true
+          # The agent cannot reach $GITHUB_STEP_SUMMARY: it sits outside the
+          # working directory its Bash tools are confined to. Carry its notes
+          # there from here, which is also why it needs no `echo` of its own
+          # (echo plus a redirect is a write-anywhere primitive).
+          if [ -s /tmp/scraper-notes.md ]; then
+            cp /tmp/scraper-notes.md "$out/notes.md"
+            {
+              echo "### ${FAMILY}"
+              cat /tmp/scraper-notes.md
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           # Only template files travel to `publish`. Anything the agent wrote
           # elsewhere is a finding, not cargo: report it and fail the family.
           # .claude/ is excluded because the step above restores it deliberately.

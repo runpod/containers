@@ -97,8 +97,13 @@ is deliberately human-owned (see its section).
     should open or update, with the body written as *PR body* below describes.
     Required whenever you changed a file; the family is dropped with an error if
     you edited the tree and left no usable title and body.
+  - `/tmp/scraper-notes.md`: optional, markdown. Anything a person should see in
+    the Actions run but that is not a file change: a release you deliberately
+    skipped, a version that needs hand-resolving, a gap you could not verify.
+    The job appends it to the run summary for you, because you cannot write
+    there yourself. For a detection-only family it is the whole output.
   - `/tmp/scraper-status`: exactly `ok` if you got to the end (edits made,
-    nothing to do, or a detection-only family reported to the job summary), or
+    nothing to do, or a detection-only family wrote its notes), or
     `failed: <one-line reason>` if something blocked you. Finding nothing to do
     is `ok`, not a failure. Write it on **every** path through the task, as your
     last action. `failed:` is your veto: it is the one way to stop what you
@@ -236,9 +241,8 @@ a CUDA version newer than our highest (12.8.1, 12.9.0, 13.0.0, 13.2.0), on
 NVIDIA ships no 26.04 image below CUDA 13.3, so the first 13.3+ tag is what
 unblocks adding 26.04 to the CUDA bases (the CPU base already builds it). If you
 find either, do NOT edit `CUDA_VERSIONS`, `UBUNTU_VERSIONS`, the README, or
-anything else. Just mark it: append a line to the Actions job summary
-(`echo "..." >> "$GITHUB_STEP_SUMMARY"`) naming the new tag and that it was skipped
-as too risky, and if a base PR is open for get-pip, note it there too.
+anything else. Just mark it: write the new tag and why it was skipped into
+`/tmp/scraper-notes.md`, and if a base PR is open for get-pip, note it there too.
 
 A get-pip bump needs no README change (no version is listed there), and base makes
 no other README change while CUDA is detection-only.
@@ -306,9 +310,9 @@ something the scraper cannot re-derive:
 You have no `uv` in your allowed tools, so you cannot produce a correct lock file,
 and a bump without one ships whatever the ranges happen to resolve to. So: check
 `ray-project/ray` and `vllm-project/vllm` for releases newer than ours, and if you
-find any, change nothing. Append a line to the Actions job summary
-(`echo "..." >> "$GITHUB_STEP_SUMMARY"`) naming the new versions and that they need
-a hand-resolved lock file plus, for Ray, the runpod/host fixtures. Open no PR.
+find any, change nothing. Write the new versions into `/tmp/scraper-notes.md`,
+saying they need a hand-resolved lock file plus, for Ray, the runpod/host
+fixtures. Change no files.
 
 ## filebrowser
 
