@@ -481,12 +481,19 @@ either.
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
   `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
   The staleness scraper needs no secret of its own: it runs on the workflow's
-  own `GITHUB_TOKEN`. GitHub starts no workflow from an event that token
-  creates, so the draft PRs the scraper opens arrive with **no checks** at all.
-  They therefore cannot be merged either, since `develop` requires `shellcheck`
-  and `sonarqube`: pushing to such a PR, or closing and reopening it, raises a
-  real event and runs the full CI. Review the diff first, then start CI that way
-  rather than giving the job a long-lived token.
+  own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
+  upstream text holds a read-only one. `research` runs the agent with
+  `contents: read` and no tool that writes anywhere; `publish` holds the write
+  token, runs no model, and applies the agent's patch only if every path in it
+  is under `official-templates/`. GitHub starts no workflow from an event that
+  token creates, so the draft PRs the scraper opens arrive with **no checks** at
+  all.
+  Pushing to such a PR, or closing and reopening it, raises a real event and runs
+  the full CI. Start it that way after reading the diff, rather than giving the
+  job a long-lived token. Merging is gated on `shellcheck` and `sonarqube` only,
+  the two checks `develop` requires; the image build is `release.yml`, which is
+  path-filtered and so can never be required, so read its result before merging
+  a bump instead of trusting the merge button.
 - **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
   credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
   `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests

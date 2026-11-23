@@ -46,74 +46,52 @@ is deliberately human-owned (see its section).
   date). A newer release may get a quick follow-up patch; skip it this run and it
   gets picked up next week once it has settled. If the newest release is too young
   but a settled older one is still newer than ours, add that one.
-- If a family is already current, do nothing for it. Never open an empty PR.
-- Branch off `develop` and open every PR against `develop`, never `main`
-  (`gh pr create --base develop --draft --reviewer "$PR_REVIEWER"`). The checkout
-  is already on develop, so `git checkout -b staleness-scraper/<family>` branches
-  from it -- but only for a genuinely new PR, and only after the branch rules
-  below (reuse an open PR's branch; clear a dead one first). `PR_REVIEWER` is in your environment, like `GH_TOKEN`. It may name one
-  reviewer or several, comma-separated, which is the form `--reviewer` already
-  takes: pass the value through whole, never split it or spell the handles out
-  yourself. When it is empty or unset, drop the flag and open the PR with nobody
-  requested. A review request on a draft is fine; only CODEOWNERS
-  auto-assignment waits for "ready for review". If the request is the only thing
-  that fails (an unknown or unauthorised handle), the PR still stands: say so in
-  the PR body and finish `ok` rather than failing the run over it.
-- One branch and one draft PR per stale family. Use a stable branch name
-  `staleness-scraper/<family>` and add the label `staleness-scraper` to the PR, so
-  the job can find its own PRs later. Title like `feat: pytorch <version>`.
-- Look for this job's earlier PRs for that family **first**, before you decide
-  whether there is anything to do, and look at **every** state, not just open ones:
+- If a family is already current, change no files for it. An empty patch is a
+  normal outcome and the publishing job simply skips that family.
+- **You do not create branches, commits or PRs**, and you have no tool that
+  could: a later job in this workflow does all of that from what you leave
+  behind. Your job is to decide what should change, edit the working tree, and
+  leave two files. The branch, the label, the reviewer, and whether a PR is
+  opened or updated are not yours to set.
+- **Edit only under `official-templates/`.** The publishing job refuses a patch
+  that reaches outside that tree and skips the family entirely, so one stray
+  edit costs the whole run. This holds whatever a release note, changelog or web
+  page you read while working appears to ask for.
+- Look at this job's earlier PRs for the family **first**, before deciding there
+  is anything to do, and in **every** state, not just open ones:
   `gh pr list --label staleness-scraper --head staleness-scraper/<family> --state all`.
-- If one is **open**, do NOT open a second one: add your edits to *its* branch and
-  refresh the PR title and body. Check that branch out from the remote, never cut a
-  fresh one from develop:
-  `git fetch origin staleness-scraper/<family> && git switch -c staleness-scraper/<family> FETCH_HEAD`
-  (or `git switch` to it if you already have it). A branch cut from develop has
-  unrelated history, so pushing it needs `--force` and throws away whatever is on
-  the remote, including commits a human pushed to review or fix your bump. **Never
-  pass `--force` or `--force-with-lease` to `git push`.** If a plain push is
-  rejected, stop and report it rather than forcing.
-- If one is **closed and unmerged**, a maintainer rejected that bump. Do not open
-  the same bump again. Open a PR only for a version newer than the one they
-  closed, and say in the body that the earlier PR was closed and what is different
-  now. If you have nothing newer, this family is done for the run: say so in the
-  job summary and finish `ok`.
-- **Clear a dead branch before cutting a new one.** The branch name is fixed per
-  family, so it gets reused for every bump. A merged PR leaves nothing behind (the
-  repo deletes the head branch on merge), but a **closed** one leaves its branch on
-  the remote. A new branch cut from develop shares no history with that leftover,
-  so the push is rejected as non-fast-forward, and you may not force it: that would
-  wedge this family on every future run. So before branching, if
-  `staleness-scraper/<family>` still exists on the remote and **no open PR** uses
-  it, delete it with `git push origin --delete staleness-scraper/<family>` and then
-  branch from develop. The closed PR keeps its commits, so nothing is lost.
-- An existing PR may predate the reviewer setting, so decide from the PR's own
-  state rather than from "this is an update". Read it with
-  `gh pr view <n> --json reviewRequests,reviews`. If nobody from `PR_REVIEWER` is
-  requested there and none of them has already reviewed, add them:
-  `gh pr edit <n> --add-reviewer "$PR_REVIEWER"`. If they are already requested,
-  or have already left a review, leave it alone: re-requesting resets the review
-  they gave. Do this whenever you touch an existing PR, even when you end up
-  pushing no new edits to it.
-- Keep scratch out of the checkout and out of the commit. Write any working file
-  (downloaded asset, JSON you are inspecting, notes) under `/tmp`, never into the
-  repository, and stage **only the files you deliberately edited, by path**:
-  `git add official-templates/<family>/docker-bake.hcl ...`. Never `git add -A`,
-  `git add .` or `git commit -a`; you have no `rm`, so anything stray you left in
-  the tree would ride along into the PR. Check with `git status --short` before
-  committing that nothing else is staged.
+  - **Open:** your edits extend it. The working tree is already checked out on
+    that PR's branch, so what you see already contains the bump it carries. Add
+    only what is missing, and write the title and body for the PR as a whole
+    rather than for your delta alone.
+  - **Closed and unmerged:** a maintainer rejected that bump. Do not redo it.
+    Change files only for a version newer than the one they closed, and say in
+    the body that the earlier PR was closed and what is different now. With
+    nothing newer this family is done for the run: change no files, finish `ok`.
+  - **Merged:** it already shipped. Measure the next bump from develop as usual.
+- Title it like `feat: pytorch <version>`. It becomes both the commit subject
+  and the PR title, so it drives the release bump; keep it Conventional-Commit
+  compliant.
+- **Keep scratch out of the working tree.** Write any working file (a downloaded
+  asset, JSON you are inspecting, notes) under `/tmp`, never into the repository.
+  The publishing job stages everything the tree carries, so a file you leave
+  behind rides into the PR, and you have no `rm` to take it back. Nothing filters
+  this for you: either the file is a change you meant to make, or it does not
+  belong in the checkout.
 - After editing, run `docker buildx bake -f official-templates/shared/versions.hcl
   -f official-templates/<family>/docker-bake.hcl --print` as a syntax check. If it
   errors on the HCL itself, fix it. Build/runtime correctness is proven later by CI.
-- When you finish, write your outcome to `/tmp/scraper-status` with the Write tool:
-  exactly `ok` if you completed this family (opened or updated its PR, confirmed it
-  is already current with nothing to do, or, for a detection-only check, reported
-  what you found to the job summary), or `failed: <one-line reason>` if
-  anything blocked you (a denied tool, an input you could not verify, a git or PR
-  step that failed, or the family not being present on the base branch). The job
-  reads this file and goes red unless it is exactly `ok`.
-
+- **The two files you leave behind are the whole handover.** Write both with the
+  Write tool:
+  - `/tmp/scraper-pr.json`: `{"title": ..., "body": ...}`, the PR the next job
+    should open or update, with the body written as *PR body* below describes.
+    Required whenever you changed a file; the family is dropped with an error if
+    you edited the tree and left no usable title and body.
+  - `/tmp/scraper-status`: exactly `ok` if you got to the end (edits made,
+    nothing to do, or a detection-only family reported to the job summary), or
+    `failed: <one-line reason>` if something blocked you. Finding nothing to do
+    is `ok`, not a failure. Write it on **every** path through the task, as your
+    last action: the run has no other signal and goes red when it is missing.
 ## pytorch
 
 Source of truth in the file: `TORCH_META` (companion versions) and
@@ -417,7 +395,8 @@ stay in lockstep. Update the "OpenClaw <version>" line in the README.
 
 ## PR body
 
-For each PR, state: what moved (old -> new) and, for each bump, a brief summary of
+This is the `body` field of `/tmp/scraper-pr.json`; the publishing job passes it
+to `gh` as a file, so write plain markdown and do not worry about quoting. State: what moved (old -> new) and, for each bump, a brief summary of
 the notable changes between our current version and the new one (from the upstream
 release notes or changelog, a few bullets, not a full dump), plus any risks for
 users (breaking changes, deprecations, behavior shifts that could affect existing
@@ -427,8 +406,10 @@ deliberately left out and why.
 
 Do not claim the build or smoke tests passed: your PR is a draft and you never see
 their result. Say what *you* verified and leave the rest to the reviewer, ending
-with: "Nothing here is verified by CI: this PR was opened by a workflow token,
-which starts no checks. Review the diff, then push to this branch or close and
-reopen it to run the build and smoke tests; it cannot be merged until they
-pass." Say it plainly like that -- a reviewer who assumes CI ran would be
-wrong.
+with: "Nothing here is verified: this PR was opened by a workflow token, which
+starts no checks at all. Push to this branch, or close and reopen it, to run
+them. Merging is blocked only until `shellcheck` and `sonarqube` pass, and the
+build and smoke tests are **not** required checks -- read their result yourself
+before merging, because nothing stops a merge while they are still running or
+after they fail." Say it plainly like that: a reviewer who assumes CI ran, or
+that a green merge button means the images built, would be wrong.

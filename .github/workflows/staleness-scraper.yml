@@ -3,40 +3,54 @@ name: Template Staleness Scraper
 # Weekly check for upstream releases we do not yet ship (pytorch, comfyui,
 # autoresearch, base, pytorch-cluster, filebrowser, k3s-node and the sandbox-*
 # families; ray-cluster is detection-only and opens no PR).
-# Opens a draft PR per stale family; the matrix is verified by the build CI on
-# that PR. Rules live in .claude/staleness-playbook.md.
+# Opens a draft PR per stale family. Rules live in .claude/staleness-playbook.md.
+#
+# Split in two on purpose. `research` runs the agent, which is told to read
+# release notes, changelogs and web pages that other people write; injected text
+# in any of them is indistinguishable from the playbook once it is in the
+# context. So that job holds a read-only GITHUB_TOKEN and no tool that can write
+# anywhere: the worst an injection achieves is a bad diff, which a human reads.
+# `publish` holds the write token and runs no model at all, so there is nothing
+# in it to talk into doing something else. Permissions are per job, which is why
+# this is two jobs rather than two steps.
 on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
+  # Temporary, until this is on main and the cron can fire: a PR that changes the
+  # scraper runs it against that PR's own copy, and every push re-runs it. The
+  # paths filter is what keeps it from firing on unrelated PRs, where twelve
+  # agent jobs would be pure waste. REMOVE this trigger once the weekly run has
+  # proved itself.
+  pull_request:
+    paths:
+      - .github/workflows/staleness-scraper.yml
+      - .github/scripts/publish_scraper_prs.sh
+      - .claude/staleness-playbook.md
 
-# The job runs entirely on the run's own GITHUB_TOKEN. contents: push the
-# scraper's branches. pull-requests: open and edit the PRs and request a review.
-# issues: labels are an issues API, so the `staleness-scraper` label needs it.
-#
-# GitHub starts no workflow from an event this token creates, so the PRs the
-# scraper opens arrive with **no checks**, including the `shellcheck` and
-# `sonarqube` ones that `develop` requires. That is deliberate rather than
-# unnoticed: it means such a PR cannot be merged until a person pushes to it or
-# closes and reopens it, which raises a real event and runs the full CI. A draft
-# nobody has looked at does not need to burn a build; what must not happen is a
-# bump merging unverified, and the required checks prevent that.
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+# Least privilege by default; each job widens only what it needs.
+permissions: {}
 
 env:
   PR_REVIEWER: bohdankanarskyi-runpod
+  # The only tree the scraper is ever allowed to touch. `publish` rejects a patch
+  # that reaches outside it, so no amount of injected text can make the agent
+  # edit a workflow, the playbook, or anything else that runs later.
+  ALLOWED_PATHS: official-templates/
 
 concurrency:
   group: staleness-scraper
   cancel-in-progress: false
 
 jobs:
-  scrape:
+  research:
     runs-on: blacksmith-4vcpu-ubuntu-2404 # On the org IP allow list; ubuntu-latest is not.
     timeout-minutes: 45
+    # Read only. The agent reads untrusted text, so give it a token that cannot
+    # change anything even if it is persuaded to try.
+    permissions:
+      contents: read
+      pull-requests: read
     strategy:
       fail-fast: false # One stale family should not block the other.
       matrix:
@@ -73,45 +87,109 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          # Always work off develop: the scraper branches from it and opens its
-          # PRs into it. The workflow itself is read from the default branch
-          # (main), which is where the cron and workflow_dispatch fire.
-          ref: develop
+          # Work off develop: that is what the bump is measured against and what
+          # `publish` branches from. The workflow file itself comes from the
+          # default branch (main), where the cron and workflow_dispatch fire.
+          # On a test PR, use that PR's head instead, so the run exercises the
+          # workflow, script and playbook the PR is changing.
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          # The repo is public, so fetching needs no credential: keep one out of
+          # .git/config entirely rather than leave a readable token next to an
+          # agent that reads untrusted text.
+          persist-credentials: false
           fetch-depth: 0
+
+      # Edit on top of the PR this job already has open, so the patch applies
+      # there later. Deterministic shell, before the model starts.
+      - name: Continue an open PR's branch, if any
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAMILY: ${{ matrix.family }}
+        run: |
+          branch="staleness-scraper/${FAMILY}"
+          open_pr="$(gh pr list --label staleness-scraper --head "$branch" \
+            --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            echo "::notice::${FAMILY}: continuing #${open_pr} on ${branch}"
+            git fetch --quiet origin "$branch"
+            git checkout --force -B "$branch" FETCH_HEAD
+          fi
 
       - name: Scan ${{ matrix.family }}
         id: scan
         uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
         env:
-          # The run's own GITHUB_TOKEN: scoped to this repository by the
-          # permissions above and dead when the job ends, so there is no secret
-          # to mint, store or rotate. The cost is that the PRs it opens start no
-          # workflows (see the comment on permissions).
+          # Read-only by this job's permissions: enough for `gh pr list/view` and
+          # `gh release view`, not enough to push, open a PR or label anything.
           GH_TOKEN: ${{ github.token }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Our own token rather than the Claude GitHub App.
           github_token: ${{ github.token }}
           show_full_output: true
           prompt: |
-            Read .claude/staleness-playbook.md and follow it exactly, but
-            only for the `${{ matrix.family }}` family; ignore the others.
-            Use the GH_TOKEN env var for all `gh` commands. Open the PR as a draft.
-            If ${{ matrix.family }} is already current, make no edits to it --
-            but still run the playbook's checks on any PR this job already has
-            open for it, which is not the same as having nothing to do.
+            Read the staleness playbook and follow it exactly, but only for the
+            `${{ matrix.family }}` family; ignore the others. It is
+            .claude-pr/.claude/staleness-playbook.md when that path exists (a
+            test PR: the action resets the working tree's .claude/ to
+            develop's copy and keeps the PR's there), otherwise
+            .claude/staleness-playbook.md. Read whichever exists; never fall
+            back to git. Use the GH_TOKEN env var for all `gh` commands.
 
-            Your LAST action, on every path through this task, is to write
-            /tmp/scraper-status with the Write tool: exactly `ok` if you got to
-            the end (PR opened, PR updated, nothing to do, or a detection-only
-            family reported to the summary), or `failed: <one-line reason>` if
-            something blocked you. Finding nothing to do is `ok`, not a failure.
-            Do not end your turn before this file is written: the job has no
-            other signal and fails the run when it is missing.
+            You do not create the branch, the commit or the PR, and you have no
+            tool that could: a later job does that from what you leave behind.
+            Your job is to decide what should change and to edit the files in
+            the working tree, nothing else. Edit only under
+            ${{ env.ALLOWED_PATHS }} -- a patch that reaches outside it is
+            rejected and the family is skipped.
+
+            Leave exactly two files behind, with the Write tool:
+
+            /tmp/scraper-pr.json -- JSON with "title" and "body", the PR the
+            next job should open or update, written as the playbook's "PR body"
+            section describes. Required whenever you changed a file.
+
+            /tmp/scraper-status -- exactly `ok` if you got to the end (edits
+            made, nothing to do, or a detection-only family reported to the
+            summary), or `failed: <one-line reason>` if something blocked you.
+            Finding nothing to do is `ok`, not a failure. Write this on every
+            path through the task, as your last action: the run has no other
+            signal and fails when it is missing.
+
+            If `${{ matrix.family }}` is already current, change no files. Still
+            follow the playbook's checks on any PR this job already has open for
+            it; reporting that there is nothing to add is a normal `ok`.
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(git fetch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(gh label create:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+
+      # Everything the next job needs, and nothing that is not a file: the diff
+      # the agent produced plus its own two notes.
+      - name: Collect the result
+        if: always()
+        shell: bash
+        env:
+          FAMILY: ${{ matrix.family }}
+        run: |
+          out="${RUNNER_TEMP}/out"
+          mkdir -p "$out"
+          cp /tmp/scraper-status "$out/status" 2>/dev/null || echo 'missing (agent did not report)' > "$out/status"
+          cp /tmp/scraper-pr.json "$out/pr.json" 2>/dev/null || true
+          # Staged, not committed: --cached also captures files the agent added.
+          git add -A
+          git diff --cached --binary > "$out/changes.patch"
+          git diff --cached --name-only > "$out/changed-files"
+          echo "::notice::${FAMILY}: $(wc -l < "$out/changed-files") changed file(s)"
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scraper-${{ matrix.family }}
+          path: ${{ runner.temp }}/out
+          retention-days: 3
+          if-no-files-found: error
 
       # The status file is the agent's own verdict and stays authoritative: a run
       # that ends without one tells us nothing about what it did or half-did, so
@@ -135,3 +213,39 @@ jobs:
             fi
             exit 1
           fi
+
+  publish:
+    needs: research
+    if: always()
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    # The write half. No model runs here, so there is no context to inject into:
+    # every decision below is made by this script from the repository's own
+    # state, never from anything the agent wrote.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # labels are the issues API
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # The PR's own copy of publish_scraper_prs.sh on a test run; the
+          # branches it creates still come off origin/develop either way.
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          fetch-depth: 0
+
+      - name: Download every family's result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: scraper-*
+          path: ${{ runner.temp }}/results
+
+      - name: Open or update a PR per family
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ runner.temp }}/results
+          ALLOWED_PATHS: ${{ env.ALLOWED_PATHS }}
+          PR_REVIEWER: ${{ env.PR_REVIEWER }}
+        run: .github/scripts/publish_scraper_prs.sh
