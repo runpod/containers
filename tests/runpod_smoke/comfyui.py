@@ -34,6 +34,7 @@ def _request(
     headers = {"User-Agent": _UA}
     if authenticated:
         headers.update(auth_headers())
+        headers["Sec-Fetch-Site"] = "same-origin"
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers)

@@ -15,7 +15,7 @@ set -euo pipefail
 NODES="
 kijai/ComfyUI-KJNodes|KJNODES_SHA
 MoonGoblinDev/Civicomfy|CIVICOMFY_SHA
-MadiatorLabs/ComfyUI-RunpodDirect|RUNPODDIRECT_SHA
+Madiator2011Work/ComfyUI-RunpodDirect|RUNPODDIRECT_SHA
 "
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
