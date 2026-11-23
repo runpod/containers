@@ -3,10 +3,10 @@ ComfyUI-Manager's security settings and user-supplied ComfyUI arguments.
 
 Like test_jupyter_contract, each test runs the real shell function pulled out
 of official-templates/comfyui/scripts/start.sh, with fakes on PATH where it
-calls out, and checks what it did. ComfyUI and FileBrowser always require a
-password: the variable set means it is enforced, and without it the service
-does not start. Unlike Jupyter there is no *_DISABLE_AUTH opt-out. No password
-ever reaches the output, which is the pod log.
+calls out, and checks what it did. ComfyUI and FileBrowser require a
+password unless their *_DISABLE_AUTH flag is set: the flag wins over a set
+password, any non-empty password is enforced, and with neither the service
+does not start. No password ever reaches the output, which is the pod log.
 """
 
 import argparse
@@ -61,25 +61,32 @@ class Sandbox(unittest.TestCase):
         )
 
 
+TRUE_VALUES = ("true", "1", "yes", "TRUE", "True", "Yes", "YES")
+NOT_TRUE_VALUES = ("", "false", "0", "no", "off", "FALSE", "nope", " true", "truee", "2")
+
+
+class IsTrue(Sandbox):
+    def test_values(self) -> None:
+        for value, expected in ([(v, 0) for v in TRUE_VALUES]
+                                + [(v, 1) for v in NOT_TRUE_VALUES]):
+            with self.subTest(value=value):
+                result = self.run_bash(function("is_true") + '\nis_true "$V"', {"V": value})
+                self.assertEqual(result.returncode, expected)
+
+
 class ComfyUIAuthMode(Sandbox):
     def mode(self, env: dict) -> tuple[str, str]:
         result = self.run_bash(
-            constants("COMFYUI_PASSWORD_MIN_LENGTH")
-            + function("resolve_comfyui_auth")
-            + '\nresolve_comfyui_auth\necho "MODE=$COMFYUI_AUTH_MODE"'
-            + '\necho "REASON=$COMFYUI_OFF_REASON"', env)
+            function("is_true") + "\n" + function("resolve_comfyui_auth")
+            + '\nresolve_comfyui_auth\necho "MODE=$COMFYUI_AUTH_MODE"', env)
         mode = re.search(r"^MODE=(\w*)$", result.stdout, re.M).group(1)
         return mode, result.stdout + result.stderr
 
-    def test_short_password_does_not_start_comfyui(self) -> None:
-        for password in ("a", "x" * 11):
+    def test_short_password_puts_the_proxy_in_front(self) -> None:
+        """No minimum length: any non-empty password is the password."""
+        for password in ("a", "x" * 11, "x" * 12):
             with self.subTest(length=len(password)):
-                mode, out = self.mode({"COMFYUI_PASSWORD": password})
-                self.assertEqual(mode, "off")
-                self.assertIn("REASON=is shorter than 12 characters", out)
-        self.assertEqual(self.mode({"COMFYUI_PASSWORD": "x" * 12})[0], "proxy")
-        _, out = self.mode({})
-        self.assertIn("REASON=is not set", out)
+                self.assertEqual(self.mode({"COMFYUI_PASSWORD": password})[0], "proxy")
 
     def test_password_puts_the_proxy_in_front(self) -> None:
         mode, out = self.mode({"COMFYUI_PASSWORD": SECRET})
@@ -90,14 +97,23 @@ class ComfyUIAuthMode(Sandbox):
         self.assertEqual(self.mode({})[0], "off")
         self.assertEqual(self.mode({"COMFYUI_PASSWORD": ""})[0], "off")
 
-    def test_there_is_no_opt_out(self) -> None:
-        """COMFYUI_DISABLE_AUTH, which an earlier rc honoured, changes nothing."""
-        mode, out = self.mode({"COMFYUI_DISABLE_AUTH": "true"})
-        self.assertEqual(mode, "off")
-        self.assertNotIn("NO authentication", out)
+    def test_disable_flag_turns_auth_off(self) -> None:
+        for value in TRUE_VALUES:
+            with self.subTest(value=value):
+                self.assertEqual(self.mode({"COMFYUI_DISABLE_AUTH": value})[0], "disabled")
+
+    def test_disable_flag_wins_over_a_set_password(self) -> None:
+        """The platform may generate a password; the flag still turns auth off."""
         mode, out = self.mode({"COMFYUI_DISABLE_AUTH": "true", "COMFYUI_PASSWORD": SECRET})
-        self.assertEqual(mode, "proxy")
+        self.assertEqual(mode, "disabled")
         self.assertNotIn(SECRET, out)
+
+    def test_other_flag_values_do_not_turn_auth_off(self) -> None:
+        for value in NOT_TRUE_VALUES:
+            with self.subTest(value=value):
+                self.assertEqual(self.mode({"COMFYUI_DISABLE_AUTH": value})[0], "off")
+                self.assertEqual(self.mode({"COMFYUI_DISABLE_AUTH": value,
+                                            "COMFYUI_PASSWORD": SECRET})[0], "proxy")
 
 
 class MainProgram(unittest.TestCase):
@@ -110,7 +126,8 @@ class MainProgram(unittest.TestCase):
             r'^if \[ "\$COMFYUI_AUTH_MODE" = off \]; then\n(.*?)^fi$',
             self.text, re.S | re.M)
         self.assertIsNotNone(gate, "the COMFYUI_AUTH_MODE=off gate is gone")
-        self.assertIn("COMFYUI_PASSWORD $COMFYUI_OFF_REASON", gate.group(1))
+        self.assertIn("COMFYUI_PASSWORD is not set", gate.group(1))
+        self.assertIn("COMFYUI_DISABLE_AUTH=true", gate.group(1))
         self.assertIn("hold_pod", gate.group(1))
         self.assertIn("exit 0", gate.group(1))
         self.assertLess(gate.start(), self.text.index("\nupgrade_comfyui_if_needed\n"))
@@ -123,14 +140,23 @@ class MainProgram(unittest.TestCase):
         loop = shutdown.index('kill "$PROXY_PID"')
         self.assertLess(loop, shutdown.index('pkill -TERM -f "$AUTH_PROXY"'))
 
-    def test_no_opt_out_variables(self) -> None:
-        """ComfyUI and FileBrowser always need a password; only Jupyter keeps
-        its JUPYTER_DISABLE_AUTH."""
-        for name in ("COMFYUI_DISABLE_AUTH", "FILEBROWSER_DISABLE_AUTH", "noauth\n"):
-            self.assertNotIn(name, self.text.replace("switched to noauth.", ""))
-        code = "\n".join(line for line in self.text.splitlines()
-                         if not line.lstrip().startswith("#"))
-        self.assertNotIn("--listen 0.0.0.0", code)
+    def test_no_auth_warns_once(self) -> None:
+        gate = re.search(
+            r'^if \[ "\$COMFYUI_AUTH_MODE" = disabled \]; then\n(.*?)^fi$',
+            self.text, re.S | re.M)
+        self.assertIsNotNone(gate, "the COMFYUI_AUTH_MODE=disabled warning is gone")
+        warnings = [line for line in gate.group(1).splitlines() if "WARNING" in line]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("NO password", warnings[0])
+        self.assertLess(gate.start(), self.text.index("\nupgrade_comfyui_if_needed\n"))
+
+    def test_proxy_only_starts_in_proxy_mode(self) -> None:
+        start = re.search(
+            r'^if \[ "\$COMFYUI_AUTH_MODE" = proxy \]; then\n(.*?)^fi$',
+            self.text, re.S | re.M)
+        self.assertIsNotNone(start, "the proxy start is no longer gated on proxy mode")
+        self.assertIn("run_auth_proxy &", start.group(1))
+        self.assertEqual(self.text.count("run_auth_proxy &"), 1)
 
     def test_no_permissive_cors(self) -> None:
         launch = self.text[self.text.index("COMFY_ARGS=("):]
@@ -220,9 +246,18 @@ class ComfyArgs(Sandbox):
         parsed = self.parse(args)
         self.assertEqual((parsed.listen, parsed.port), ("127.0.0.1", 18188))
 
-    def test_no_mode_puts_comfyui_on_the_network(self) -> None:
-        """There is no opt-out: whatever the mode says, ComfyUI is loopback-only."""
-        for mode in ("proxy", "disabled", ""):
+    def test_disabled_serves_comfyui_on_the_public_port(self) -> None:
+        """With auth off there is no proxy: ComfyUI itself listens on 8188.
+        The args file still cannot move it."""
+        for content in ("", "--listen 127.0.0.1 --port 9000", "--lis=::1"):
+            with self.subTest(content=content):
+                args, port = self.build("disabled", content)
+                self.assertEqual(port, "8188")
+                parsed = self.parse(args)
+                self.assertEqual((parsed.listen, parsed.port), ("0.0.0.0", 8188))
+
+    def test_only_disabled_puts_comfyui_on_the_network(self) -> None:
+        for mode in ("proxy", "off", "Disabled", ""):
             with self.subTest(mode=mode):
                 args, port = self.build(mode, "")
                 self.assertEqual(port, "18188")
@@ -452,7 +487,8 @@ class FileBrowser(Sandbox):
         db = self.work / "filebrowser.db"
         if db_exists:
             db.write_text("")
-        funcs = (function("filebrowser_cli") + "\n" + function("start_filebrowser")
+        funcs = (function("is_true") + "\n" + function("filebrowser_cli") + "\n"
+                 + function("start_filebrowser")
                  ).replace("/filebrowser.log", str(self.work / "filebrowser.log"))
         result = self.run_bash(
             funcs + "\nstart_filebrowser\nwait",
@@ -468,6 +504,7 @@ class FileBrowser(Sandbox):
         calls, out = self.start({}, db_exists=True)
         self.assertEqual(calls, [], "not even the CLI may run")
         self.assertIn("FILEBROWSER_PASSWORD is not set, so FileBrowser was not started.", out)
+        self.assertIn("FILEBROWSER_DISABLE_AUTH=true", out)
         # Boxed like the ComfyUI banner, so it is not lost above ComfyUI's
         # startup output.
         box = out.split("=============================================")
@@ -485,6 +522,20 @@ class FileBrowser(Sandbox):
         self.assertTrue(self.served(calls))
         self.assertNotIn(SECRET, out)
 
+    def test_no_minimum_length(self) -> None:
+        """FileBrowser's own floor is 12 by default; it is set to 1 before
+        admin's password is set, so any non-empty password works."""
+        for db_exists in (False, True):
+            with self.subTest(db_exists=db_exists):
+                (self.work / "argv").unlink(missing_ok=True)
+                calls, _ = self.start({"FILEBROWSER_PASSWORD": "ab"}, db_exists=db_exists,
+                                      FB_HAS_ADMIN="1" if db_exists else "")
+                floor = [i for i, c in enumerate(calls) if "--minimumPasswordLength=1" in c]
+                user = [i for i, c in enumerate(calls) if "users add" in c or "users update" in c]
+                self.assertTrue(floor and user, calls)
+                self.assertLess(floor[0], user[0])
+                self.assertTrue(self.served(calls))
+
     def test_password_replaces_an_existing_admin_password(self) -> None:
         """A volume from an older image holds admin/adminadmin12."""
         calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET},
@@ -501,21 +552,58 @@ class FileBrowser(Sandbox):
         self.assertIn("<FILEBROWSER_PASSWORD>", out)
         self.assertNotIn(SECRET, out)
 
-    def test_there_is_no_opt_out(self) -> None:
-        """FILEBROWSER_DISABLE_AUTH, which an earlier rc honoured, changes
-        nothing: without a password FileBrowser stays off."""
-        calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": "true"},
+    def test_disable_flag_serves_with_no_login(self) -> None:
+        for value in TRUE_VALUES:
+            with self.subTest(value=value):
+                (self.work / "argv").unlink(missing_ok=True)
+                calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": value},
+                                        db_exists=True, FB_HAS_ADMIN="1")
+                self.assertTrue(any("--auth.method=noauth" in c for c in calls), calls)
+                self.assertFalse(any("--auth.method=json" in c for c in calls))
+                self.assertFalse(any("users update" in c or "users add" in c for c in calls))
+                self.assertTrue(self.served(calls))
+                self.assertEqual(out.count("WARNING"), 1, out)
+                self.assertIn("NO login", out)
+
+    def test_disable_flag_wins_over_a_set_password(self) -> None:
+        calls, out = self.start({"FILEBROWSER_PASSWORD": SECRET, "FILEBROWSER_DISABLE_AUTH": "1"},
                                 db_exists=True, FB_HAS_ADMIN="1")
-        self.assertEqual(calls, [])
-        self.assertIn("FileBrowser was not started", out)
+        self.assertTrue(any("--auth.method=noauth" in c for c in calls))
+        self.assertTrue(self.served(calls))
+        self.assertNotIn(SECRET, out)
+
+    def test_disable_flag_on_a_new_volume_creates_admin(self) -> None:
+        """noauth signs everyone in as user 1, so admin must exist. Its
+        password is random and never printed."""
+        calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": "yes"})
+        add = [c for c in calls if c.startswith("-d ") and " users add admin " in c]
+        self.assertEqual(len(add), 1, calls)
+        password = add[0].split(" users add admin ")[1].split(" --perm.admin")[0]
+        self.assertGreaterEqual(len(password), 20)
+        self.assertNotIn(password, out)
+        self.assertTrue(self.served(calls))
+
+    def test_other_flag_values_keep_the_login(self) -> None:
+        for value in NOT_TRUE_VALUES:
+            with self.subTest(value=value):
+                (self.work / "argv").unlink(missing_ok=True)
+                calls, _ = self.start({"FILEBROWSER_DISABLE_AUTH": value},
+                                      db_exists=True, FB_HAS_ADMIN="1")
+                self.assertEqual(calls, [])
+                calls, _ = self.start({"FILEBROWSER_DISABLE_AUTH": value,
+                                       "FILEBROWSER_PASSWORD": SECRET},
+                                      db_exists=True, FB_HAS_ADMIN="1")
+                self.assertTrue(any("--auth.method=json" in c for c in calls))
+                self.assertFalse(any("noauth" in c for c in calls))
 
     def test_login_is_forced_back_on(self) -> None:
-        """A database left on noauth, by hand or by an earlier rc, is switched
-        back to a login on the next start."""
-        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET, "FILEBROWSER_DISABLE_AUTH": "true"},
+        """A database left on noauth, by an earlier start with the flag or by
+        hand, is switched back to a login once the flag is gone."""
+        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET},
                               db_exists=True, FB_HAS_ADMIN="1")
         self.assertTrue(any("--auth.method=json" in c for c in calls))
         self.assertFalse(any("noauth" in c for c in calls))
+        self.assertTrue(any(f"users update admin --password {SECRET}" in c for c in calls))
         self.assertTrue(self.served(calls))
 
 

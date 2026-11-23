@@ -20,7 +20,8 @@ DEP_SKIP_NODES=("${BAKED_NODES[@]}" "ComfyUI-Manager")
 CUDA_COMPAT_DIR="/opt/cuda-compat"
 CUDA_COMPAT_STATUS="not installed"
 # 8188 is the port the template exposes. The password proxy owns it, and
-# ComfyUI listens on loopback only, on the internal port.
+# ComfyUI listens on loopback only, on the internal port. With
+# COMFYUI_DISABLE_AUTH set there is no proxy and ComfyUI itself listens on it.
 COMFYUI_PUBLIC_PORT=8188
 COMFYUI_INTERNAL_PORT=18188
 AUTH_PROXY="/opt/comfyui-auth-proxy/auth_proxy.py"
@@ -30,12 +31,19 @@ SYSTEM_PYTHON="/usr/bin/python3.12"
 AUTH_PROXY_RESTART_DELAY=5
 AUTH_PROXY_MAX_FAST_FAILURES=5
 AUTH_PROXY_FAST_FAILURE_SECONDS=30
-# Same floor as FileBrowser's: the :8188 URL is public and guessable.
-COMFYUI_PASSWORD_MIN_LENGTH=12
 
 # ---------------------------------------------------------------------------- #
 #                          Function Definitions                                  #
 # ---------------------------------------------------------------------------- #
+
+# For the *_DISABLE_AUTH flags: true, 1 or yes in any case is true. Anything
+# else, empty included, is false, so a typo keeps the password.
+is_true() {
+    case "${1:-}" in
+        [Tt][Rr][Uu][Ee] | 1 | [Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 # Setup SSH; login is by key only
 setup_ssh() {
@@ -165,19 +173,25 @@ filebrowser_cli() {
     return 1
 }
 
-# FileBrowser always requires a login: a set FILEBROWSER_PASSWORD is the admin
-# password, and without one FileBrowser is not started. There is no opt-out.
+# FileBrowser requires a login unless FILEBROWSER_DISABLE_AUTH is set, which
+# wins over a set password. Otherwise a set FILEBROWSER_PASSWORD is the admin
+# password, and without one FileBrowser is not started.
 # Images before this one created admin with the published default
 # adminadmin12 whenever FILEBROWSER_PASSWORD was unset, so admin's password is
 # set from the env on every start rather than only when the database is first
-# created, and the login method is forced back to json in case a database was
-# switched to noauth.
+# created. The login method is written on every start too, so a database left
+# on noauth by an earlier start with the flag goes back to json without it.
 start_filebrowser() {
-    if [ -z "${FILEBROWSER_PASSWORD:-}" ]; then
+    local method=json
+    if is_true "${FILEBROWSER_DISABLE_AUTH:-}"; then
+        method=noauth
+        echo "WARNING: FILEBROWSER_DISABLE_AUTH is set -- starting FileBrowser with NO login: anyone with this pod's :8080 URL can read, change and delete everything in /workspace."
+    elif [ -z "${FILEBROWSER_PASSWORD:-}" ]; then
         echo "============================================="
         echo "  FILEBROWSER_PASSWORD is not set, so FileBrowser was not started."
-        echo "  Set FILEBROWSER_PASSWORD, at least 12 characters, on the pod"
-        echo "  and restart it; sign in as admin with it."
+        echo "  Set FILEBROWSER_PASSWORD on the pod and restart it; sign in as"
+        echo "  admin with it. Or set FILEBROWSER_DISABLE_AUTH=true to run"
+        echo "  FileBrowser with no login (understand the risk)."
         echo "============================================="
         return 0
     fi
@@ -191,20 +205,29 @@ start_filebrowser() {
         fi
     fi
 
-    if ! filebrowser_cli config set --auth.method=json; then
+    # FileBrowser's own minimum length is 12; 1 accepts any non-empty
+    # password. It still refuses passwords on its list of common ones.
+    if ! filebrowser_cli config set --auth.method="$method" --minimumPasswordLength=1; then
         echo "ERROR: could not set FileBrowser's login method (see above); it was not started."
         return 0
     fi
 
     local ok=1
-    if filebrowser_cli users find admin > /dev/null; then
+    if [ "$method" = noauth ]; then
+        # noauth signs every visitor in as user 1, so admin, the first user,
+        # must exist. A new one gets a random password nobody needs; an
+        # existing admin keeps its password for when the flag is removed.
+        if ! filebrowser_cli users find admin > /dev/null; then
+            filebrowser_cli users add admin "$(head -c 24 /dev/urandom | base64)" --perm.admin || ok=0
+        fi
+    elif filebrowser_cli users find admin > /dev/null; then
         filebrowser_cli users update admin --password "$FILEBROWSER_PASSWORD" || ok=0
     else
         filebrowser_cli users add admin "$FILEBROWSER_PASSWORD" --perm.admin || ok=0
     fi
     if [ "$ok" = 0 ]; then
         echo "ERROR: could not set the FileBrowser admin password (see above), so FileBrowser"
-        echo "was not started. It must be 12 or more characters and not a common password."
+        echo "was not started. FileBrowser refuses common passwords; choose another one."
         return 0
     fi
 
@@ -212,24 +235,20 @@ start_filebrowser() {
     nohup filebrowser -d "$DB_FILE" &> /filebrowser.log &
 }
 
-# Decides whether ComfyUI is served. It always requires a password; there is
-# no opt-out:
-#   COMFYUI_PASSWORD set   ComfyUI on loopback, the password proxy on 8188
-#   not set                ComfyUI is not started
-# A password shorter than COMFYUI_PASSWORD_MIN_LENGTH counts as not set: the
-# URL is public, so a short one could be guessed.
-# Sets COMFYUI_AUTH_MODE to proxy or off, and for off, COMFYUI_OFF_REASON to
-# finish the sentence "COMFYUI_PASSWORD ...". The password is never printed.
+# Decides whether ComfyUI is served, and how. The flag is checked first, so a
+# password the platform set does not cancel it:
+#   COMFYUI_DISABLE_AUTH true  disabled: ComfyUI on 0.0.0.0:8188, no password
+#   COMFYUI_PASSWORD set       proxy: ComfyUI on loopback, the password proxy
+#                              on 8188; any non-empty password is accepted
+#   neither                    off: ComfyUI is not started
+# Sets COMFYUI_AUTH_MODE. The password is never printed.
 resolve_comfyui_auth() {
-    COMFYUI_OFF_REASON=""
-    if [ -z "${COMFYUI_PASSWORD:-}" ]; then
-        COMFYUI_AUTH_MODE=off
-        COMFYUI_OFF_REASON="is not set"
-    elif [ "${#COMFYUI_PASSWORD}" -lt "$COMFYUI_PASSWORD_MIN_LENGTH" ]; then
-        COMFYUI_AUTH_MODE=off
-        COMFYUI_OFF_REASON="is shorter than $COMFYUI_PASSWORD_MIN_LENGTH characters"
-    else
+    if is_true "${COMFYUI_DISABLE_AUTH:-}"; then
+        COMFYUI_AUTH_MODE=disabled
+    elif [ -n "${COMFYUI_PASSWORD:-}" ]; then
         COMFYUI_AUTH_MODE=proxy
+    else
+        COMFYUI_AUTH_MODE=off
     fi
 }
 
@@ -308,8 +327,9 @@ append_user_args() {
 }
 
 # Sets COMFY_ARGS (an array: argparse needs each flag as its own argv entry)
-# and COMFY_LISTEN_PORT from $ARGS_FILE. ComfyUI always listens on loopback,
-# on the internal port; only the password proxy is reachable from outside.
+# and COMFY_LISTEN_PORT from $ARGS_FILE. ComfyUI listens on loopback, on the
+# internal port, so only the password proxy is reachable from outside. With
+# auth disabled there is no proxy and ComfyUI listens on 0.0.0.0, public port.
 # The script's --listen and --port go last. argparse keeps the last value
 # given and accepts any unambiguous prefix of a flag, so a `--lis 0.0.0.0`
 # that append_user_args does not recognise is still overridden by them.
@@ -320,8 +340,13 @@ build_comfy_args() {
     # Add --enable-manager-legacy-ui to comfyui_args.txt for the 3.x Manager UI.
     COMFY_ARGS=(--enable-manager)
     append_user_args
+    local address=127.0.0.1
     COMFY_LISTEN_PORT=$COMFYUI_INTERNAL_PORT
-    COMFY_ARGS+=(--listen 127.0.0.1 --port "$COMFY_LISTEN_PORT")
+    if [ "${COMFYUI_AUTH_MODE:-}" = disabled ]; then
+        address=0.0.0.0
+        COMFY_LISTEN_PORT=$COMFYUI_PUBLIC_PORT
+    fi
+    COMFY_ARGS+=(--listen "$address" --port "$COMFY_LISTEN_PORT")
 }
 
 # ComfyUI-Manager's security settings, pinned rather than inherited from
@@ -1246,15 +1271,19 @@ trap on_shutdown SIGTERM SIGINT
 resolve_comfyui_auth
 if [ "$COMFYUI_AUTH_MODE" = off ]; then
     echo "============================================="
-    echo "  COMFYUI_PASSWORD $COMFYUI_OFF_REASON, so ComfyUI was not started."
+    echo "  COMFYUI_PASSWORD is not set, so ComfyUI was not started."
     echo "  ComfyUI has no login of its own: without a password, anyone"
     echo "  with this pod's :8188 URL could use your GPU and run code here."
-    echo "  Set COMFYUI_PASSWORD, at least $COMFYUI_PASSWORD_MIN_LENGTH characters, on the"
-    echo "  pod and restart it; the browser then asks for it."
+    echo "  Set COMFYUI_PASSWORD on the pod and restart it; the browser then"
+    echo "  asks for it. Or set COMFYUI_DISABLE_AUTH=true to run ComfyUI with"
+    echo "  no password (understand the risk)."
     echo "  SSH, JupyterLab and FileBrowser are not affected."
     echo "============================================="
     hold_pod
     exit 0
+fi
+if [ "$COMFYUI_AUTH_MODE" = disabled ]; then
+    echo "WARNING: COMFYUI_DISABLE_AUTH is set -- starting ComfyUI with NO password: anyone with this pod's :$COMFYUI_PUBLIC_PORT URL can use the GPU and run code in the pod."
 fi
 
 # Create default comfyui_args.txt if it doesn't exist
@@ -1465,8 +1494,10 @@ fi
 # ERR trap would also fire on the shutdown path and hold the pod open.
 trap - ERR
 
-run_auth_proxy &
-PROXY_PID=$!
+if [ "$COMFYUI_AUTH_MODE" = proxy ]; then
+    run_auth_proxy &
+    PROXY_PID=$!
+fi
 
 echo "Starting ComfyUI with args: ${COMFY_ARGS[*]}"
 python main.py "${COMFY_ARGS[@]}" &
@@ -1486,7 +1517,10 @@ announce_when_ready() {
     local code
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         "http://127.0.0.1:$COMFYUI_PUBLIC_PORT/" || true)
-    if [ "$code" = 401 ]; then
+    if [ "$COMFYUI_AUTH_MODE" = disabled ]; then
+        echo "  ComfyUI is READY on port $COMFYUI_PUBLIC_PORT after $((SECONDS - started))s."
+        echo "  It has NO password (COMFYUI_DISABLE_AUTH is set)."
+    elif [ "$code" = 401 ]; then
         echo "  ComfyUI is READY on port $COMFYUI_PUBLIC_PORT after $((SECONDS - started))s."
         echo "  It asks for a password: the pod's COMFYUI_PASSWORD."
     else
