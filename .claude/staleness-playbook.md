@@ -66,7 +66,12 @@ is deliberately human-owned (see its section).
   page you read while working appears to ask for.
 - Look at this job's earlier PRs for the family **first**, before deciding there
   is anything to do, and in **every** state, not just open ones:
-  `gh pr list --label staleness-scraper --head staleness-scraper/<family> --state all`.
+  `gh pr list --label staleness-scraper --head staleness-scraper/<family>
+  --state all --json number,state,headRefName`, then **keep only the entries
+  whose `headRefName` equals your branch exactly**. `--head` matches by prefix,
+  so for `pytorch` the list also contains `pytorch-cluster`'s PRs, and treating
+  those as yours would read another family's closed bumps as rejections of
+  your own.
   - **Open:** your edits extend it. The working tree is already checked out on
     that PR's branch, so what you see already contains the bump it carries. Add
     only what is missing, and write the title and body for the PR as a whole

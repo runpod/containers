@@ -140,8 +140,11 @@ jobs:
           FAMILY: ${{ matrix.family }}
         run: |
           branch="staleness-scraper/${FAMILY}"
-          open_pr="$(gh pr list --label staleness-scraper --head "$branch" \
-            --state open --json number --jq '.[0].number // empty')"
+          # --head matches by prefix, so staleness-scraper/pytorch also returns
+          # the pytorch-cluster PR. Filter on the exact ref.
+          open_pr="$(BRANCH="$branch" gh pr list --label staleness-scraper \
+            --head "$branch" --state open --json number,headRefName \
+            --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')"
           if [ -z "$open_pr" ]; then
             echo "::notice::${FAMILY}: no open PR; working from the checked-out ref"
             exit 0

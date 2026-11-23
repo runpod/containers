@@ -82,8 +82,13 @@ for dir in "$RESULTS"/scraper-*; do
   fi
 
   branch="staleness-scraper/${family}"
-  number="$(gh pr list --label "$LABEL" --head "$branch" --state open \
-    --json number --jq '.[0].number // empty')"
+  # --head is a prefix match, not an exact one: `staleness-scraper/pytorch` also
+  # returns the pytorch-cluster PR, and taking .[0] picks whichever the API
+  # happens to list first. Filter on the exact ref. BRANCH goes through the
+  # environment so the jq program stays free of shell interpolation.
+  number="$(BRANCH="$branch" gh pr list --label "$LABEL" --head "$branch" --state open \
+    --json number,headRefName \
+    --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')"
 
   reset_tree
   if [ -n "$number" ]; then
@@ -96,8 +101,9 @@ for dir in "$RESULTS"/scraper-*; do
     # Deleting a branch closes any PR on it, so ask about the branch rather than
     # about our label: a scraper PR someone un-labelled is still a live PR, and
     # the lookup above would not have seen it.
-    any_open="$(gh pr list --head "$branch" --state open --json number \
-      --jq '.[0].number // empty')"
+    any_open="$(BRANCH="$branch" gh pr list --head "$branch" --state open \
+      --json number,headRefName \
+      --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')"
     if [ -n "$any_open" ]; then
       echo "::warning::${family}: #${any_open} is open on ${branch} without the ${LABEL} label; leaving it alone"
       reset_tree
