@@ -22,16 +22,6 @@ on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
-  # Temporary, until this is on main and the cron can fire: a PR that changes the
-  # scraper runs it against that PR's own copy, and every push re-runs it. The
-  # paths filter is what keeps it from firing on unrelated PRs, where twelve
-  # agent jobs would be pure waste. REMOVE this trigger once the weekly run has
-  # proved itself.
-  pull_request:
-    paths:
-      - .github/workflows/staleness-scraper.yml
-      - .github/scripts/publish_scraper_prs.sh
-      - .claude/staleness-playbook.md
 
 # Least privilege by default; each job widens only what it needs.
 permissions: {}
@@ -95,9 +85,7 @@ jobs:
           # Work off develop: that is what the bump is measured against and what
           # `publish` branches from. The workflow file itself comes from the
           # default branch (main), where the cron and workflow_dispatch fire.
-          # On a test PR, use that PR's head instead, so the run exercises the
-          # workflow, script and playbook the PR is changing.
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          ref: develop
           # The repo is public, so fetching needs no credential: keep one out of
           # .git/config entirely rather than leave a readable token next to an
           # agent that reads untrusted text.
@@ -178,13 +166,10 @@ jobs:
           github_token: ${{ github.token }}
           show_full_output: true
           prompt: |
-            Read the staleness playbook and follow it exactly, but only for the
-            `${{ matrix.family }}` family; ignore the others. It is
-            .claude-pr/.claude/staleness-playbook.md when that path exists (a
-            test PR: the action resets the working tree's .claude/ to
-            develop's copy and keeps the PR's there), otherwise
-            .claude/staleness-playbook.md. Read whichever exists; never fall
-            back to git. Use the GH_TOKEN env var for all `gh` commands.
+            Read .claude/staleness-playbook.md and follow it exactly, but only
+            for the `${{ matrix.family }}` family; ignore the others. If it is
+            not there, stop and report that: never reconstruct it from git or
+            work without it. Use the GH_TOKEN env var for all `gh` commands.
 
             You do not create the branch, the commit or the PR, and you have no
             tool that could: a later job does that from what you leave behind.
@@ -365,9 +350,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          # The PR's own copy of publish_scraper_prs.sh on a test run; the
-          # branches it creates still come off origin/develop either way.
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          ref: develop
           fetch-depth: 0
 
       - name: Download every family's result
