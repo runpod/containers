@@ -95,8 +95,11 @@ RUN . /etc/os-release && \
 
 # CON-1869: CUDA bases pin apt to a snapshot that lags the emSign removal
 # (CVE-2026-111943), and plain `apt-get upgrade` there only reaches the stale
-# version. Pull the patched ca-certificates from the archive over https,
-# checksum it, and install only when newer so we never downgrade a fresher one.
+# version. Pull the patched ca-certificates over https, checksum it, and install
+# only when newer so we never downgrade a fresher one. Pinned .debs come from
+# Launchpad, which keeps superseded builds; the archive pool keeps only the
+# newest, so a pin there 404s as soon as Ubuntu ships the next update. Launchpad
+# answers 503 in bursts, hence --retry.
 RUN . /etc/os-release && \
     ver="20260816ubuntu0.${VERSION_ID}.1" && \
     deb="ca-certificates_${ver}_all.deb" && \
@@ -107,16 +110,16 @@ RUN . /etc/os-release && \
     esac && \
     cur="$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null || echo 0)" && \
     if dpkg --compare-versions "$cur" lt "$ver"; then \
-      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-        "https://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
+      curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
       echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
       dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
     fi && \
     update-ca-certificates
 
 # Same stale-snapshot problem for brotli (CVE-2026-111497, KEV): `apt-get
-# upgrade` can't reach the patched libbrotli1. Pull it from the security
-# archive over https, checksum, and install only when newer.
+# upgrade` can't reach the patched libbrotli1. Pull it from Launchpad over
+# https, checksum, and install only when newer.
 RUN . /etc/os-release && \
     case "${VERSION_ID}" in \
       24.04) ver="1.1.0-2ubuntu0.1"; sha=70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de ;; \
@@ -126,8 +129,8 @@ RUN . /etc/os-release && \
     deb="libbrotli1_${ver}_amd64.deb" && \
     cur="$(dpkg-query -W -f='${Version}' libbrotli1 2>/dev/null || echo 0)" && \
     if dpkg --compare-versions "$cur" lt "$ver"; then \
-      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-        "https://security.ubuntu.com/ubuntu/pool/main/b/brotli/${deb}" && \
+      curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
       echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
       dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
     fi
@@ -159,10 +162,10 @@ RUN . /etc/os-release && \
       debs="" && \
       for p in ${pkgs}; do \
         deb="${p%%:*}_${ver}_amd64.deb" && \
-        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-          "https://security.ubuntu.com/ubuntu/pool/main/a/apt/${deb}" && \
+        curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
         echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
-        debs="${debs} /tmp/${deb}"; \
+        debs="${debs} /tmp/${deb}" || exit 1; \
       done && \
       dpkg -i ${debs} && rm -f ${debs}; \
     fi && \
@@ -189,10 +192,10 @@ RUN . /etc/os-release && \
       debs="" && \
       for p in "nginx_${ver}_amd64.deb:${sha_nginx}" "nginx-common_${ver}_all.deb:${sha_common}"; do \
         deb="${p%%:*}" && \
-        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-          "https://security.ubuntu.com/ubuntu/pool/main/n/nginx/${deb}" && \
+        curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
         echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
-        debs="${debs} /tmp/${deb}"; \
+        debs="${debs} /tmp/${deb}" || exit 1; \
       done && \
       dpkg -i ${debs} && rm -f ${debs}; \
     fi && \
