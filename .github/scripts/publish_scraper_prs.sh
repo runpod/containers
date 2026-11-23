@@ -38,11 +38,18 @@ for dir in "$RESULTS"/scraper-*; do
   family="$(basename "$dir")"
   family="${family#scraper-}"
 
-  status="$(cat "$dir/status" 2>/dev/null || echo "missing")"
-  if [ "$status" != "ok" ]; then
-    echo "::notice::${family}: skipped, research reported '${status}'"
-    continue
-  fi
+  # Only an explicit veto stops a family. A missing note is not one: the patch
+  # and pr.json below say everything needed, and `research` has already failed
+  # the family if the agent crashed or wrote outside the template tree.
+  status="$(cat "$dir/status" 2>/dev/null || true)"
+  case "$status" in
+    failed:*)
+      echo "::notice::${family}: skipped, research reported '${status}'"
+      continue
+      ;;
+    ok) ;;
+    *) echo "::warning::${family}: research left no status note; judging by its output" ;;
+  esac
 
   patch="$dir/changes.patch"
   if [ ! -s "$patch" ]; then
@@ -86,6 +93,16 @@ for dir in "$RESULTS"/scraper-*; do
     # A closed PR leaves its branch behind, and a branch freshly cut from
     # develop shares no history with it, so a plain push would be rejected and
     # we never force. Delete the dead one first; the closed PR keeps its commits.
+    # Deleting a branch closes any PR on it, so ask about the branch rather than
+    # about our label: a scraper PR someone un-labelled is still a live PR, and
+    # the lookup above would not have seen it.
+    any_open="$(gh pr list --head "$branch" --state open --json number \
+      --jq '.[0].number // empty')"
+    if [ -n "$any_open" ]; then
+      echo "::warning::${family}: #${any_open} is open on ${branch} without the ${LABEL} label; leaving it alone"
+      reset_tree
+      continue
+    fi
     if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
       echo "::notice::${family}: removing leftover ${branch} (no open PR uses it)"
       git push --quiet origin --delete "$branch"

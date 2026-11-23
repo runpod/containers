@@ -8,8 +8,13 @@ name: Template Staleness Scraper
 # Split in two on purpose. `research` runs the agent, which is told to read
 # release notes, changelogs and web pages that other people write; injected text
 # in any of them is indistinguishable from the playbook once it is in the
-# context. So that job holds a read-only GITHUB_TOKEN and no tool that can write
-# anywhere: the worst an injection achieves is a bad diff, which a human reads.
+# context. So that job holds a read-only GITHUB_TOKEN, and its tools can write
+# only through Write/Edit, into the checkout. It has no `curl`: being able to
+# pick where downloaded bytes land is enough to write .git/config, whose
+# core.fsmonitor command the next `git status` would run, or a file under
+# _work/_actions that a later step executes. Checksums go through
+# scripts/sha256_url.sh, which owns the temporary file and returns only a digest.
+# What survives is that the agent can write a bad diff, and a human reads it.
 # `publish` holds the write token and runs no model at all, so there is nothing
 # in it to talk into doing something else. Permissions are per job, which is why
 # this is two jobs rather than two steps.
@@ -125,6 +130,15 @@ jobs:
           git checkout --force --quiet -B "$branch" FETCH_HEAD
           git checkout --quiet "$config_from" -- .claude/
 
+      # Required by CLAUDE_CODE_SUBPROCESS_ENV_SCRUB below: Claude Code refuses
+      # to start without it, since it isolates subprocesses through bubblewrap.
+      # The blacksmith image does not ship it.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          bwrap --version
+
       - name: Scan ${{ matrix.family }}
         id: scan
         uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
@@ -167,9 +181,10 @@ jobs:
             /tmp/scraper-status -- exactly `ok` if you got to the end (edits
             made, nothing to do, or a detection-only family reported to the
             summary), or `failed: <one-line reason>` if something blocked you.
-            Finding nothing to do is `ok`, not a failure. Write this on every
-            path through the task, as your last action: the run has no other
-            signal and fails when it is missing.
+            Finding nothing to do is `ok`, not a failure. Write it on every path
+            through the task, as your last action. `failed:` is the one way you
+            can stop your own work from being published, so use it whenever you
+            are unsure of what you produced.
 
             If `${{ matrix.family }}` is already current, change no files. Still
             follow the playbook's checks on any PR this job already has open for
@@ -177,7 +192,7 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(curl:*),Bash(sha256sum:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(.github/scripts/sha256_url.sh:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
       # the agent produced plus its own two notes.
@@ -194,11 +209,22 @@ jobs:
           # Only template files travel to `publish`. Anything the agent wrote
           # elsewhere is a finding, not cargo: report it and fail the family.
           # .claude/ is excluded because the step above restores it deliberately.
-          stray="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
-          if [ -n "$stray" ]; then
-            echo "::error::${FAMILY}: the agent changed paths outside official-templates/:"
-            printf '%s\n' "$stray" | sed 's/^/  /'
-            echo "failed: changed paths outside official-templates/" > "$out/status"
+          outside="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
+          # Two different things. A *tracked* file changed or deleted outside the
+          # template tree is someone rewriting the repo and fails the family. An
+          # untracked leftover is just scratch the playbook told it to keep in
+          # /tmp: it can never reach `publish`, which only ever stages
+          # official-templates/, so it is worth saying and not worth failing on.
+          edited="$(printf '%s\n' "$outside" | grep -v '^??' || true)"
+          scratch="$(printf '%s\n' "$outside" | grep '^??' || true)"
+          if [ -n "$scratch" ]; then
+            echo "::warning::${FAMILY}: scratch left in the checkout (ignored, belongs in /tmp):"
+            printf '%s\n' "$scratch" | sed 's/^/  /'
+          fi
+          if [ -n "$edited" ]; then
+            echo "::error::${FAMILY}: the agent changed tracked files outside official-templates/:"
+            printf '%s\n' "$edited" | sed 's/^/  /'
+            echo "failed: changed tracked files outside official-templates/" > "$out/status"
           fi
           # Staged, not committed: --cached also captures files the agent added.
           git add -A -- official-templates/
@@ -215,27 +241,56 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-      # The status file is the agent's own verdict and stays authoritative: a run
-      # that ends without one tells us nothing about what it did or half-did, so
-      # it is a failure either way. The agent step's outcome only names the cause,
-      # separating "the agent died" (crash, max-turns) from "it finished but never
-      # reported", which are fixed in completely different places.
-      - name: Require a clean agent outcome
+      # What makes this family pass or fail. The agent's status note is one
+      # input, not the only one: since the split it produces nothing but files,
+      # so a patch plus a usable pr.json (or an empty patch) already describes
+      # the outcome completely. Throwing away a correct patch because a
+      # bookkeeping file is missing would cost more than it protects.
+      - name: Judge the outcome
         if: always()
         shell: bash
         env:
           FAMILY: ${{ matrix.family }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
         run: |
-          status="$(cat "${RUNNER_TEMP}/out/status" 2>/dev/null || echo 'missing (agent did not report)')"
-          echo "::notice::${FAMILY} scraper status: ${status} (agent step: ${SCAN_OUTCOME})"
-          if [ "$status" != "ok" ]; then
-            if [ "$SCAN_OUTCOME" != "success" ]; then
-              echo "::error::${FAMILY}: the agent step itself ended '${SCAN_OUTCOME}' (crash, timeout or max-turns); status file: ${status}"
-            else
-              echo "::error::${FAMILY}: the agent finished but did not report: ${status}. It ignored the status-file instruction, so what it changed is unverified."
-            fi
+          out="${RUNNER_TEMP}/out"
+          status="$(cat "$out/status" 2>/dev/null || true)"
+
+          # 1. Did the agent itself survive? A crash, a timeout or max-turns is a
+          #    failure whatever it managed to leave behind.
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "::error::${FAMILY}: the agent step ended '${SCAN_OUTCOME}' (crash, timeout or max-turns)"
             exit 1
+          fi
+
+          # 2. Did it veto itself? `failed:` is the agent, or the collect step,
+          #    saying something is wrong. Believe it.
+          case "$status" in
+            failed:*)
+              echo "::error::${FAMILY}: reported ${status}"
+              exit 1
+              ;;
+          esac
+
+          # 3. Otherwise judge by what it left, not by whether it remembered to
+          #    say so. Since the split the agent only produces files, and those
+          #    files are the whole handover: a patch and a PR title and body, or
+          #    nothing at all. Either is a complete, checkable outcome, so a
+          #    missing status note is bookkeeping rather than an unknown state.
+          if [ -s "$out/changes.patch" ]; then
+            if ! jq -e '(.title // "") != "" and (.body // "") != ""' "$out/pr.json" >/dev/null 2>&1; then
+              echo "::error::${FAMILY}: it changed files but left no usable pr.json, so there is nothing to open a PR with"
+              exit 1
+            fi
+            left="a patch and a PR title and body"
+          else
+            left="no changes"
+          fi
+
+          if [ "$status" = "ok" ]; then
+            echo "::notice::${FAMILY}: ok (${left})"
+          else
+            echo "::warning::${FAMILY}: no status note was written; judging by what it left instead (${left})"
           fi
 
   publish:
