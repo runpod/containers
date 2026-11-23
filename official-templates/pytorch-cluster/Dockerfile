@@ -49,8 +49,8 @@ RUN apt-get update --yes && \
     rm -rf /var/lib/apt/lists/*
 
 # node_exporter — system metrics (pinned + SHA-256 verified).
-ARG NODE_EXPORTER_VERSION=1.13.0
-ARG NODE_EXPORTER_SHA256=f6a6c72ee04fd6537efede3900ea45385eeade513c99de60d607d4b1611f8e6e
+ARG NODE_EXPORTER_VERSION=1.13.1
+ARG NODE_EXPORTER_SHA256=5c00c5234f1ee45900b25539a5a0ab82146a098c15c16a4ec3bc855b597a6477
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node_exporter.tar.gz \
         "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz" && \
     echo "${NODE_EXPORTER_SHA256}  /tmp/node_exporter.tar.gz" | sha256sum -c - && \
