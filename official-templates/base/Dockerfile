@@ -229,6 +229,12 @@ RUN apt-get update --yes && \
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
+# Canonical's service manager, dropped into the 26.04 image outside dpkg, so
+# there is no package to purge or upgrade. start.sh is the CMD and nothing
+# invokes it, but its Go stdlib carries HIGH findings with no fixed build in
+# 26.04. Same removal as sandbox-ubuntu; a no-op on 24.04.
+RUN rm -rf /usr/bin/pebble /var/lib/pebble
+
 # Install Python 3.11-3.13. Whichever of them is the release's own system
 # python3 comes from the Ubuntu archive (3.12 on 24.04; 26.04's system python3
 # is 3.14, which is not in this list), the rest from deadsnakes. The PPA is
