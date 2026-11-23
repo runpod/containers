@@ -243,8 +243,8 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     rm -rf "${GNUPGHOME}" && \
     echo "deb [signed-by=/usr/share/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu ${VERSION_CODENAME} main" \
       > /etc/apt/sources.list.d/deadsnakes.list && \
-    apt-get update --yes && \
-    apt-get install --yes --no-install-recommends \
+    apt-get -o Acquire::Retries=10 update --yes --error-on=any && \
+    apt-get -o Acquire::Retries=10 install --yes --no-install-recommends \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
         python3.13-dev python3.13-venv && \
