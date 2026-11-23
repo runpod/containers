@@ -38,7 +38,7 @@ is deliberately human-owned (see its section).
   base). If the new version conflicts with a pinned dependency, do not just bump:
   flag the conflict in the PR body.
 - **You cannot download files, and there is no `curl`.** To checksum a release
-  asset, run `.github/scripts/sha256_url.sh <https-url>`: it fetches into a
+  asset, run `sha256-url <https-url>`: it fetches into a
   temporary file it owns and deletes, and prints only the digest and the size.
   To *read* a page, an index listing or release notes, use WebFetch. Choosing
   where bytes land is exactly what would let text you read while working write
@@ -206,7 +206,7 @@ base image, and so on) is managed by hand; do not touch it.
 bake file:
 - `RUNPODCTL_VERSION`: latest stable release tag (`vX.Y.Z`) of `runpod/runpodctl`.
 - `RUNPODCTL_SHA256`: sha256 of that release's `runpodctl-linux-amd64.tar.gz`
-  asset, from `sha256_url.sh`. Do not guess it.
+  asset, from `sha256-url`. Do not guess it.
 
 This is a plain pin bump (not an add-alongside): replace both values. If
 runpodctl is already current, do nothing. autoresearch has no version list in its
@@ -222,7 +222,7 @@ to, not an arbitrary branch tip.
 - `GET_PIP_COMMIT`: the commit at the latest `pypa/get-pip` release tag. Annotate
   it with that version (`GET_PIP_COMMIT=... # 26.2.2`).
 - `GET_PIP_SHA256`: sha256 of `public/get-pip.py` at that commit, from
-  `sha256_url.sh` against the raw.githubusercontent.com URL for that commit. There is one hash: base installs pip for
+  `sha256-url` against the raw.githubusercontent.com URL for that commit. There is one hash: base installs pip for
   python3.11, 3.12 and 3.13 from this single script, all of which `public/` serves.
 
 **nvidia/cuda** — **detection only, do not apply.** Adding a CUDA version is too
@@ -247,7 +247,7 @@ no other README change while CUDA is detection-only.
 
 Monitoring daemons pinned in `official-templates/pytorch-cluster/Dockerfile`, each
 a plain pin bump: replace the version and take the SHA-256 of the exact asset
-from `sha256_url.sh`, never from guesswork.
+from `sha256-url`, never from guesswork.
 - `NODE_EXPORTER_VERSION` + `NODE_EXPORTER_SHA256`: latest release of
   `prometheus/node_exporter`, asset `node_exporter-<ver>.linux-amd64.tar.gz`.
 - `PROMETHEUS_VERSION` + `PROMETHEUS_SHA256`: latest release of
@@ -322,7 +322,7 @@ CUDA variants on its own.
 - `version`: the GitHub release tag exactly as upstream writes it, including the
   suffix (`v2.0.1-stable`), since it goes into the image tag.
 - `sha256`: of that release's **`linux-amd64-filebrowser`** asset, the bare
-  binary, not a tarball. Take it from `sha256_url.sh`.
+  binary, not a tarball. Take it from `sha256-url`.
 
 Do not touch `FILEBROWSER_CUDA`: it names the one CUDA variant built alongside the
 CPU image and must stay a 24.04 CUDA build that runpod/base publishes
@@ -337,7 +337,7 @@ those checksums sit in the target's `args` block rather than in `variable`s.
 - `K3S_VERSION` (`v1.37.1+k3s1`) plus the `K3S_SHA256_AMD64` / `K3S_SHA256_ARM64`
   args. The release assets are `k3s` (amd64) and `k3s-arm64` (arm64); upstream
   publishes their checksums as `sha256sum-amd64.txt` and `sha256sum-arm64.txt` on
-  the same release, or run `sha256_url.sh` against each binary.
+  the same release, or run `sha256-url` against each binary.
   Keep the `+k3s1` build suffix, the tag strips it on its own.
   **Patch bumps only** (`v1.37.1+k3s1` -> `v1.37.2+k3s1`). A new Kubernetes minor
   changes which control planes this agent can join, so flag it in the job summary

@@ -13,7 +13,7 @@ name: Template Staleness Scraper
 # pick where downloaded bytes land is enough to write .git/config, whose
 # core.fsmonitor command the next `git status` would run, or a file under
 # _work/_actions that a later step executes. Checksums go through
-# scripts/sha256_url.sh, which owns the temporary file and returns only a digest.
+# sha256-url, a root-owned copy of scripts/sha256_url.sh, which owns the temporary file and returns only a digest.
 # What survives is that the agent can write a bad diff, and a human reads it.
 # `publish` holds the write token and runs no model at all, so there is nothing
 # in it to talk into doing something else. Permissions are per job, which is why
@@ -139,6 +139,18 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           bwrap --version
 
+      # Out of the checkout and owned by root. The agent may run this script but
+      # must not be able to rewrite it first: it can Write anywhere the runner
+      # user can, and a writable file that something later executes is arbitrary
+      # shell. It has no sudo, so a root-owned 0755 copy settles it by file
+      # permission rather than by a pattern whose semantics we would have to
+      # trust.
+      - name: Install the checksum helper outside the checkout
+        run: |
+          sudo install -m 0755 -o root -g root \
+            .github/scripts/sha256_url.sh /usr/local/bin/sha256-url
+          sha256-url https://raw.githubusercontent.com/pypa/get-pip/0d4515b4d114f9cd820446a4bd4bd0986393d454/public/get-pip.py
+
       - name: Scan ${{ matrix.family }}
         id: scan
         uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
@@ -192,7 +204,8 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(.github/scripts/sha256_url.sh:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
+            --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/work/_actions/**)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*),Bash(echo:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
       # the agent produced plus its own two notes.
@@ -209,6 +222,9 @@ jobs:
           # Only template files travel to `publish`. Anything the agent wrote
           # elsewhere is a finding, not cargo: report it and fail the family.
           # .claude/ is excluded because the step above restores it deliberately.
+          # -c flags, not trust in .git/config: the agent can write that file,
+          # and core.fsmonitor / core.hooksPath name commands git would run here.
+          git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"; }
           outside="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
           # Two different things. A *tracked* file changed or deleted outside the
           # template tree is someone rewriting the repo and fails the family. An
