@@ -480,6 +480,13 @@ either.
   `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
   `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
+  The staleness scraper needs no secret of its own: it runs on the workflow's
+  own `GITHUB_TOKEN`. GitHub starts no workflow from an event that token
+  creates, so the draft PRs the scraper opens arrive with **no checks** at all.
+  They therefore cannot be merged either, since `develop` requires `shellcheck`
+  and `sonarqube`: pushing to such a PR, or closing and reopening it, raises a
+  real event and runs the full CI. Review the diff first, then start CI that way
+  rather than giving the job a long-lived token.
 - **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
   credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
   `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests

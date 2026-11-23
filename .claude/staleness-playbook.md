@@ -50,7 +50,8 @@ is deliberately human-owned (see its section).
 - Branch off `develop` and open every PR against `develop`, never `main`
   (`gh pr create --base develop --draft --reviewer "$PR_REVIEWER"`). The checkout
   is already on develop, so `git checkout -b staleness-scraper/<family>` branches
-  from it. `PR_REVIEWER` is in your environment, like `GH_TOKEN`. It may name one
+  from it -- but only for a genuinely new PR, and only after the branch rules
+  below (reuse an open PR's branch; clear a dead one first). `PR_REVIEWER` is in your environment, like `GH_TOKEN`. It may name one
   reviewer or several, comma-separated, which is the form `--reviewer` already
   takes: pass the value through whole, never split it or spell the handles out
   yourself. When it is empty or unset, drop the flag and open the PR with nobody
@@ -78,6 +79,15 @@ is deliberately human-owned (see its section).
   closed, and say in the body that the earlier PR was closed and what is different
   now. If you have nothing newer, this family is done for the run: say so in the
   job summary and finish `ok`.
+- **Clear a dead branch before cutting a new one.** The branch name is fixed per
+  family, so it gets reused for every bump. A merged PR leaves nothing behind (the
+  repo deletes the head branch on merge), but a **closed** one leaves its branch on
+  the remote. A new branch cut from develop shares no history with that leftover,
+  so the push is rejected as non-fast-forward, and you may not force it: that would
+  wedge this family on every future run. So before branching, if
+  `staleness-scraper/<family>` still exists on the remote and **no open PR** uses
+  it, delete it with `git push origin --delete staleness-scraper/<family>` and then
+  branch from develop. The closed PR keeps its commits, so nothing is lost.
 - An existing PR may predate the reviewer setting, so decide from the PR's own
   state rather than from "this is an update". Read it with
   `gh pr view <n> --json reviewRequests,reviews`. If nobody from `PR_REVIEWER` is
@@ -417,7 +427,8 @@ deliberately left out and why.
 
 Do not claim the build or smoke tests passed: your PR is a draft and you never see
 their result. Say what *you* verified and leave the rest to the reviewer, ending
-with: "Matrix and runtime correctness are not verified here -- they are whatever
-the build and smoke-test CI on this PR reports." If the PR has no checks at all,
-say that too: it means the job ran without `SCRAPER_PR_TOKEN` and nothing will
-verify the bump.
+with: "Nothing here is verified by CI: this PR was opened by a workflow token,
+which starts no checks. Review the diff, then push to this branch or close and
+reopen it to run the build and smoke tests; it cannot be merged until they
+pass." Say it plainly like that -- a reviewer who assumes CI ran would be
+wrong.
