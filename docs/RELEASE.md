@@ -483,7 +483,8 @@ either.
   The staleness scraper needs no secret of its own: it runs on the workflow's
   own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
   upstream text holds a read-only one. `research` runs the agent with
-  `contents: read` and no tool that writes anywhere; `publish` holds the write
+  `contents: read` and no tool that writes outside the checkout except through
+  `Write`, which is why only `official-templates/` is ever collected from it; `publish` holds the write
   token, runs no model, and applies the agent's patch only if every path in it
   is under `official-templates/`. GitHub starts no workflow from an event that
   token creates, so the draft PRs the scraper opens arrive with **no checks** at

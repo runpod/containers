@@ -214,7 +214,7 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/work/_actions/**)"
+            --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/_work/_actions/**),Edit(//home/runner/work/_actions/**)"
             --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
@@ -224,10 +224,21 @@ jobs:
         shell: bash
         env:
           FAMILY: ${{ matrix.family }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
         run: |
           out="${RUNNER_TEMP}/out"
           mkdir -p "$out"
-          cp /tmp/scraper-status "$out/status" 2>/dev/null || echo 'missing (agent did not report)' > "$out/status"
+          # An agent that crashed, timed out or ran out of turns stopped in the
+          # middle of its edits, so whatever is in the tree is half of a bump.
+          # Record the veto in the artifact itself: `publish` reads only that,
+          # and it has no other way to learn the step died.
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "failed: the agent step ended '${SCAN_OUTCOME}'" > "$out/status"
+            echo "::error::${FAMILY}: agent step '${SCAN_OUTCOME}'; its partial work will not be published"
+          fi
+          if [ ! -s "$out/status" ]; then
+            cp /tmp/scraper-status "$out/status" 2>/dev/null || true
+          fi
           cp /tmp/scraper-pr.json "$out/pr.json" 2>/dev/null || true
           # The agent cannot reach $GITHUB_STEP_SUMMARY: it sits outside the
           # working directory its Bash tools are confined to. Carry its notes
