@@ -30,11 +30,25 @@ reset_tree() {
   git clean -fdq
 }
 
-failed=0
-published=0
+# Request a review only when nobody is on the PR yet: one opened before the
+# reviewer was configured has none, and re-requesting resets a review already
+# left. Runs for an up-to-date PR too, which is why it is not inside the
+# "there is something to push" path below.
+request_review() {
+  pr_number="$1"
+  [ -n "$PR_REVIEWER" ] || return 0
+  on_pr="$(gh pr view "$pr_number" --json reviewRequests,reviews \
+    --jq '[.reviewRequests[].login] + [.reviews[].author.login] | unique | join(",")')" || return 0
+  [ -z "$on_pr" ] || return 0
+  gh pr edit "$pr_number" --add-reviewer "$PR_REVIEWER" >/dev/null ||
+    echo "::warning::could not request a review from ${PR_REVIEWER} on #${pr_number}"
+}
 
-for dir in "$RESULTS"/scraper-*; do
-  [ -d "$dir" ] || continue
+# One family. Every fallible step returns non-zero rather than letting `set -e`
+# take the whole script down: a push that fails for pytorch must not stop
+# sandbox-ubuntu from being published.
+publish_family() {
+  dir="$1"
   family="$(basename "$dir")"
   family="${family#scraper-}"
 
@@ -45,16 +59,33 @@ for dir in "$RESULTS"/scraper-*; do
   case "$status" in
     failed:*)
       echo "::notice::${family}: skipped, research reported '${status}'"
-      continue
+      return 0
       ;;
     ok) ;;
     *) echo "::warning::${family}: research left no status note; judging by its output" ;;
   esac
 
+  branch="staleness-scraper/${family}"
+  # --head is a prefix match, not an exact one: `staleness-scraper/pytorch` also
+  # returns the pytorch-cluster PR, and taking .[0] picks whichever the API
+  # happens to list first. Filter on the exact ref. BRANCH goes through the
+  # environment so the jq program stays free of shell interpolation.
+  number="$(BRANCH="$branch" gh pr list --label "$LABEL" --head "$branch" --state open \
+    --json number,headRefName \
+    --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')" || return 1
+
   patch="$dir/changes.patch"
   if [ ! -s "$patch" ]; then
-    echo "::notice::${family}: already current, nothing to open"
-    continue
+    # Nothing new to push, but an existing PR may still be waiting for a
+    # reviewer: one opened before PR_REVIEWER was configured has none, and this
+    # is the only pass that will look at it.
+    if [ -n "$number" ]; then
+      request_review "$number"
+      echo "::notice::${family}: already current; #${number} left as it is"
+    else
+      echo "::notice::${family}: already current, nothing to open"
+    fi
+    return 0
   fi
 
   # Containment. The scraper bumps pins in template files and nothing else, so a
@@ -64,36 +95,24 @@ for dir in "$RESULTS"/scraper-*; do
   if [ -n "$stray" ]; then
     echo "::error::${family}: patch touches paths outside ${ALLOWED_PATHS}, refused:"
     printf '%s\n' "$stray" | sed 's/^/  /'
-    failed=1
-    continue
+    return 1
   fi
 
   if [ ! -s "$dir/pr.json" ]; then
     echo "::error::${family}: changed files but left no pr.json"
-    failed=1
-    continue
+    return 1
   fi
   title="$(jq -r '.title // empty' "$dir/pr.json")"
   jq -r '.body // empty' "$dir/pr.json" > "$dir/body.md"
   if [ -z "$title" ] || [ ! -s "$dir/body.md" ]; then
     echo "::error::${family}: pr.json has no usable title or body"
-    failed=1
-    continue
+    return 1
   fi
-
-  branch="staleness-scraper/${family}"
-  # --head is a prefix match, not an exact one: `staleness-scraper/pytorch` also
-  # returns the pytorch-cluster PR, and taking .[0] picks whichever the API
-  # happens to list first. Filter on the exact ref. BRANCH goes through the
-  # environment so the jq program stays free of shell interpolation.
-  number="$(BRANCH="$branch" gh pr list --label "$LABEL" --head "$branch" --state open \
-    --json number,headRefName \
-    --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')"
 
   reset_tree
   if [ -n "$number" ]; then
-    git fetch --quiet origin "$branch"
-    git checkout --force --quiet -B "$branch" FETCH_HEAD
+    git fetch --quiet origin "$branch" || return 1
+    git checkout --force --quiet -B "$branch" FETCH_HEAD || return 1
   else
     # A closed PR leaves its branch behind, and a branch freshly cut from
     # develop shares no history with it, so a plain push would be rejected and
@@ -107,20 +126,19 @@ for dir in "$RESULTS"/scraper-*; do
     if [ -n "$any_open" ]; then
       echo "::warning::${family}: #${any_open} is open on ${branch} without the ${LABEL} label; leaving it alone"
       reset_tree
-      continue
+      return 0
     fi
     if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
       echo "::notice::${family}: removing leftover ${branch} (no open PR uses it)"
-      git push --quiet origin --delete "$branch"
+      git push --quiet origin --delete "$branch" || return 1
     fi
-    git checkout --force --quiet -B "$branch" origin/develop
+    git checkout --force --quiet -B "$branch" origin/develop || return 1
   fi
 
   if ! git apply --3way --index "$patch" 2>/dev/null; then
     echo "::error::${family}: the research patch does not apply to ${branch}"
     reset_tree
-    failed=1
-    continue
+    return 1
   fi
 
   # Re-check what actually landed, with rename detection off. `--name-only`
@@ -133,42 +151,49 @@ for dir in "$RESULTS"/scraper-*; do
     echo "::error::${family}: applying the patch reached outside ${ALLOWED_PATHS}:"
     printf '%s\n' "$applied" | sed 's/^/  /'
     reset_tree
-    failed=1
-    continue
+    return 1
   fi
 
   if git diff --cached --quiet; then
+    # Nothing new to commit, but this is still an open PR that may never have
+    # been given a reviewer. Same reason as the empty-patch path above.
+    [ -z "$number" ] || request_review "$number"
     echo "::notice::${family}: ${branch} already carries these changes"
     reset_tree
-    continue
+    return 0
   fi
 
-  git commit --quiet -m "$title"
-  git push --quiet origin "$branch"
+  git commit --quiet -m "$title" || return 1
+  git push --quiet origin "$branch" || return 1
 
   if [ -n "$number" ]; then
-    gh pr edit "$number" --title "$title" --body-file "$dir/body.md" >/dev/null
+    gh pr edit "$number" --title "$title" --body-file "$dir/body.md" >/dev/null || return 1
     echo "::notice::${family}: updated #${number}"
   else
     url="$(gh pr create --draft --base develop --head "$branch" \
-      --title "$title" --body-file "$dir/body.md" --label "$LABEL")"
+      --title "$title" --body-file "$dir/body.md" --label "$LABEL")" || return 1
     number="${url##*/}"
     echo "::notice::${family}: opened #${number}"
   fi
 
-  # Request a review only when nobody is on the PR yet: one opened before the
-  # reviewer was configured has none, and re-requesting resets a review that has
-  # already been left.
-  if [ -n "$PR_REVIEWER" ]; then
-    on_pr="$(gh pr view "$number" --json reviewRequests,reviews \
-      --jq '[.reviewRequests[].login] + [.reviews[].author.login] | unique | join(",")')"
-    if [ -z "$on_pr" ]; then
-      gh pr edit "$number" --add-reviewer "$PR_REVIEWER" >/dev/null ||
-        echo "::warning::${family}: could not request a review from ${PR_REVIEWER}"
-    fi
-  fi
-
+  request_review "$number"
   published=$((published + 1))
+  reset_tree
+}
+
+failed=0
+published=0
+
+# A family is called through `if !`, which both contains its failure and, as a
+# side effect, disables errexit inside it. That is why publish_family guards its
+# own fallible commands with `|| return 1` instead of relying on `set -e`.
+for dir in "$RESULTS"/scraper-*; do
+  [ -d "$dir" ] || continue
+  if ! publish_family "$dir"; then
+    name="$(basename "$dir")"
+    echo "::error::${name#scraper-}: not published; continuing with the other families"
+    failed=1
+  fi
   reset_tree
 done
 

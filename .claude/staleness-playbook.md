@@ -7,10 +7,13 @@ adds them following the exact conventions already in the repo.
 
 Covered families: **pytorch**, **comfyui**, **autoresearch**, **base**,
 **pytorch-cluster**, **ray-cluster** (detection only), **filebrowser**,
-**k3s-node**, and the four sandboxes (**sandbox-ubuntu**, **sandbox-browser**,
-**sandbox-harbor**, **sandbox-openclaw**). Ignore all others: **rocm** and
-**nvidia-pytorch** track upstream vendor images by hand, and **base**'s CUDA list
-is deliberately human-owned (see its section).
+**k3s-node**, **vllm**, and the four sandboxes (**sandbox-ubuntu**,
+**sandbox-browser**, **sandbox-harbor**, **sandbox-openclaw**). That is the list of families in
+`.github/families.yml`; ignore the other two, **rocm** and **nvidia-pytorch**,
+which track upstream vendor images by hand, and leave **base**'s CUDA list
+human-owned as well (see its section). Components pinned *inside* a family, such
+as Ray and vLLM inside ray-cluster, belong to that family's section rather than
+to this list.
 
 ## Ground rules
 
@@ -319,6 +322,26 @@ find any, change nothing. Write the new versions into `/tmp/scraper-notes.md`,
 saying they need a hand-resolved lock file plus, for Ray, the runpod/host
 fixtures. Change no files.
 
+## vllm
+
+A thin layer over upstream's own image, so there is one thing to track:
+`VLLM_VERSION` and `VLLM_DIGEST` in `official-templates/vllm/docker-bake.hcl`,
+which name `vllm/vllm-openai:<version>@<digest>`.
+
+Bump both together, never one alone, exactly as sandbox-openclaw does: take the
+latest stable release tag of `vllm-project/vllm` (ignore rc and dev tags), then
+read its index digest with
+`docker buildx imagetools inspect vllm/vllm-openai:<version>`. A version with a
+digest from another tag produces an image nobody can reproduce.
+
+This is a plain in-place bump, not an add-alongside: the version is in the image
+tag (`runpod/vllm-openai:<release>-vllm<version>`), so older builds keep their
+own tags. The README names no version of its own, only that scheme, so it needs
+no change.
+
+Do not touch the `Dockerfile`: its single `ARG VLLM_IMAGE` is filled from the
+bake file, and the scripts beside it are ours, not upstream's.
+
 ## filebrowser
 
 Its own family, separate from the FileBrowser that ships inside comfyui: this one
@@ -377,8 +400,13 @@ Base image for the other sandboxes. Four pins, each a plain bump:
 - **Node**: `NODE_VERSION` + `NODE_SHA256` in the Dockerfile. Latest Node 24 LTS
   from nodejs.org/dist, asset `node-v<ver>-linux-x64.tar.xz`. Stay on the 24 LTS
   line (the README says "Node.js 24 LTS").
-- **tar deb**: `TAR_DEB` + `TAR_DEB_SHA256`. Newest `tar_*_amd64.deb` in
-  `https://archive.ubuntu.com/ubuntu/pool/main/t/tar/`, download it and hash it.
+- **tar deb**: `TAR_DEB` + `TAR_DEB_SHA256`. **Stay on the 24.04 build.** It is
+  pinned deliberately: 26.04 builds tar against `openat2`, gVisor does not
+  implement that call, and `tar -x` then fails inside a sandbox (the Dockerfile
+  says so above the pin). Take only a newer `1.35+dfsg-3ubuntu0.N` from
+  `https://archive.ubuntu.com/ubuntu/pool/main/t/tar/` and hash it with
+  `sha256-url`; never the newest file in that directory. If all that is on offer
+  is another upstream version or series, leave the pin alone and say so.
 - **uv**: `ghcr.io/astral-sh/uv:<ver>@sha256:...` in the Dockerfile COPY. Latest
   `astral-sh/uv` release; update both the version and the digest
   (`docker buildx imagetools inspect ghcr.io/astral-sh/uv:<ver>`).

@@ -112,7 +112,7 @@ jobs:
       - name: Claude review
         uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1.0.282
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.PR_REVIEW_ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           allow_fork_prs: "false"
           prompt: |

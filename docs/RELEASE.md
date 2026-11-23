@@ -480,8 +480,8 @@ either.
   `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
   `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
-  The staleness scraper needs no secret of its own: it runs on the workflow's
-  own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
+  The staleness scraper needs no *GitHub* credential of its own: it runs on the
+  workflow's own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
   upstream text holds a read-only one. `research` runs the agent with
   `contents: read` and no tool that writes outside the checkout except through
   `Write`, which is why only `official-templates/` is ever collected from it; `publish` holds the write
@@ -494,7 +494,10 @@ either.
   job a long-lived token. Merging is gated on `shellcheck` and `sonarqube` only,
   the two checks `develop` requires; the image build is `release.yml`, which is
   path-filtered and so can never be required, so read its result before merging
-  a bump instead of trusting the merge button.
+  a bump instead of trusting the merge button. It does use
+  `ANTHROPIC_API_KEY`, which is now the scraper's alone: the PR reviewer moved to
+  `PR_REVIEW_ANTHROPIC_API_KEY`. Keep a spend limit on it, since this job runs
+  unattended every week across every family.
 - **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
   credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
   `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests

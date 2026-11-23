@@ -65,6 +65,10 @@ jobs:
           # ray-cluster only reports: every pin needs a hand-resolved lock file.
           - family: ray-cluster
             turns: 50
+          # vllm is one version plus its digest, read straight off the
+          # upstream image; nothing to resolve.
+          - family: vllm
+            turns: 40
           - family: filebrowser
             turns: 50
           # k3s-node pins three components, each with an amd64 and an arm64 sum.
@@ -155,11 +159,13 @@ jobs:
           # Read-only by this job's permissions: enough for `gh pr list/view` and
           # `gh release view`, not enough to push, open a PR or label anything.
           GH_TOKEN: ${{ github.token }}
-          # Keep ANTHROPIC_API_KEY out of the environment the agent's Bash tool
-          # inherits. It is the one long-lived secret in this job, and `curl` is
-          # allowed here because checksums have to be computed from real files,
-          # so injected text could otherwise post the key anywhere. Undocumented
-          # but present since Claude Code 2.1.83; the action installs a newer one.
+          # Keep ANTHROPIC_API_KEY out of the environment the agent's Bash
+          # tools inherit: it is the one long-lived secret left in this job, and
+          # the agent reads text other people wrote. The key is the scraper's
+          # own (the PR reviewer uses PR_REVIEW_ANTHROPIC_API_KEY), so a leak
+          # would be bounded by its spend limit rather than shared. Undocumented
+          # but present since Claude Code 2.1.83; the action installs a newer
+          # one, and it needs the bubblewrap installed above.
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -202,7 +208,7 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/_work/_actions/**),Edit(//home/runner/work/_actions/**)"
+            --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/_work/_actions/**),Edit(//home/runner/work/_actions/**),Edit(//home/runner/_work/_temp/**),Edit(~/.gitconfig),Read(//proc/**)"
             --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
@@ -213,6 +219,13 @@ jobs:
         env:
           FAMILY: ${{ matrix.family }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          # Step env beats anything written to $GITHUB_ENV, so these hold even
+          # if the agent got that far. BASH_ENV would be sourced before the
+          # first line below runs; a global git config or an external diff
+          # driver would run commands of someone else's choosing out of `git`.
+          BASH_ENV: ""
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
         run: |
           out="${RUNNER_TEMP}/out"
           mkdir -p "$out"
@@ -245,7 +258,7 @@ jobs:
           # .claude/ is excluded because the step above restores it deliberately.
           # -c flags, not trust in .git/config: the agent can write that file,
           # and core.fsmonitor / core.hooksPath name commands git would run here.
-          git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"; }
+          git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null --no-ext-diff "$@"; }
           outside="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
           # Two different things. A *tracked* file changed or deleted outside the
           # template tree is someone rewriting the repo and fails the family. An
@@ -289,6 +302,7 @@ jobs:
         env:
           FAMILY: ${{ matrix.family }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          BASH_ENV: ""
         run: |
           out="${RUNNER_TEMP}/out"
           status="$(cat "$out/status" 2>/dev/null || true)"
