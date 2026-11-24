@@ -63,11 +63,7 @@ ENV TZ=Etc/UTC
 
 WORKDIR /
 
-# The ubuntu:26.04 image ships /usr/bin/pebble outside dpkg, unused here (no
-# config, no entrypoint). v1.33.2, the latest release, is built with go1.27.3
-# and carries HIGH stdlib CVEs, so drop it rather than ship it.
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
-    rm -f /usr/bin/pebble
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
 # Install.
 # 26.04 dropped ATLAS (libopenblas-dev is the BLAS that replaces it) and
@@ -99,8 +95,11 @@ RUN . /etc/os-release && \
 
 # CON-1869: CUDA bases pin apt to a snapshot that lags the emSign removal
 # (CVE-2026-111943), and plain `apt-get upgrade` there only reaches the stale
-# version. Pull the patched ca-certificates from the archive over https,
-# checksum it, and install only when newer so we never downgrade a fresher one.
+# version. Pull the patched ca-certificates over https, checksum it, and install
+# only when newer so we never downgrade a fresher one. Pinned .debs come from
+# Launchpad, which keeps superseded builds; the archive pool keeps only the
+# newest, so a pin there 404s as soon as Ubuntu ships the next update. Launchpad
+# answers 503 in bursts, hence --retry.
 RUN . /etc/os-release && \
     ver="20260816ubuntu0.${VERSION_ID}.1" && \
     deb="ca-certificates_${ver}_all.deb" && \
@@ -111,16 +110,16 @@ RUN . /etc/os-release && \
     esac && \
     cur="$(dpkg-query -W -f='${Version}' ca-certificates 2>/dev/null || echo 0)" && \
     if dpkg --compare-versions "$cur" lt "$ver"; then \
-      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-        "https://security.ubuntu.com/ubuntu/pool/main/c/ca-certificates/${deb}" && \
+      curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
       echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
       dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
     fi && \
     update-ca-certificates
 
 # Same stale-snapshot problem for brotli (CVE-2026-111497, KEV): `apt-get
-# upgrade` can't reach the patched libbrotli1. Pull it from the security
-# archive over https, checksum, and install only when newer.
+# upgrade` can't reach the patched libbrotli1. Pull it from Launchpad over
+# https, checksum, and install only when newer.
 RUN . /etc/os-release && \
     case "${VERSION_ID}" in \
       24.04) ver="1.1.0-2ubuntu0.1"; sha=70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de ;; \
@@ -130,8 +129,8 @@ RUN . /etc/os-release && \
     deb="libbrotli1_${ver}_amd64.deb" && \
     cur="$(dpkg-query -W -f='${Version}' libbrotli1 2>/dev/null || echo 0)" && \
     if dpkg --compare-versions "$cur" lt "$ver"; then \
-      curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-        "https://security.ubuntu.com/ubuntu/pool/main/b/brotli/${deb}" && \
+      curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+        "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
       echo "${sha}  /tmp/${deb}" | sha256sum -c - && \
       dpkg -i "/tmp/${deb}" && rm "/tmp/${deb}"; \
     fi
@@ -163,29 +162,29 @@ RUN . /etc/os-release && \
       debs="" && \
       for p in ${pkgs}; do \
         deb="${p%%:*}_${ver}_amd64.deb" && \
-        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-          "https://security.ubuntu.com/ubuntu/pool/main/a/apt/${deb}" && \
+        curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
         echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
-        debs="${debs} /tmp/${deb}"; \
+        debs="${debs} /tmp/${deb}" || exit 1; \
       done && \
       dpkg -i ${debs} && rm -f ${debs}; \
     fi && \
     dpkg-query -W -f='${Package} ${Version}\n' apt "${lib}"
 
-# Same stale-snapshot problem for nginx (NGINX2Root: CVE-2026-123007 critical,
-# CVE-2026-123633, CVE-2026-123634, CVE-2026-121810, CVE-2026-113425), fixed by
-# USN-9159-1 on 2026-11-19. nginx pins nginx-common to its exact version, so
-# they are installed together. Checksummed, and only when newer.
+# Same stale-snapshot problem for nginx (CVE-2026-113425, CVE-2026-123007,
+# CVE-2026-123633, CVE-2026-123634, HIGH; fixed in 1.24.0-2ubuntu7.20 on 24.04).
+# nginx pins nginx-common to its exact version, so both go in together.
+# Checksummed, and only when newer.
 # debs is split on purpose: it is a list of file paths.
 # hadolint ignore=SC2086
 RUN . /etc/os-release && \
     case "${VERSION_ID}" in \
-      24.04) ver="1.24.0-2ubuntu7.20"; \
-             sha_nginx=5076b4e1737d6fe9eddbd0dae4b8bd478f96fb88dad2bfd537de27bdc696e406; \
-             sha_common=5362868fb4499e0547e9daa8a623eb5f59ea8477742f389157e952c689dde301 ;; \
-      26.04) ver="1.28.3-2ubuntu1.13"; \
-             sha_nginx=d8883f556c62c1c660e43515bd70dc3a0e16cd900718d00178e8645d07543986; \
-             sha_common=6d374599c889c342795bfbfe96152cb49fce2f1197981a12f330207d0fa1a149 ;; \
+      24.04) ver="1.24.0-2ubuntu7.21"; \
+             sha_nginx=c125a2ad6bfd25b6fdf92e3534a3facbf35180e05a054dcb84f68b63fc38227e; \
+             sha_common=4176112bca331776560304ced6f6e6ca36fee2818a834d6ccdf79c6c58ed5e28 ;; \
+      26.04) ver="1.28.3-2ubuntu1.14"; \
+             sha_nginx=05a780d312e408d09482a8d735383a29b40514606f2855db94cd81da15f406d1; \
+             sha_common=e9e6f64696bd5d0c74f06c3a5d95ac22746ee1a4ab1de62b616393a94db9b8ab ;; \
       *) echo "no pinned nginx for ${VERSION_ID}" && exit 1 ;; \
     esac && \
     cur="$(dpkg-query -W -f='${Version}' nginx 2>/dev/null || echo 0)" && \
@@ -193,12 +192,12 @@ RUN . /etc/os-release && \
       debs="" && \
       for p in "nginx_${ver}_amd64.deb:${sha_nginx}" "nginx-common_${ver}_all.deb:${sha_common}"; do \
         deb="${p%%:*}" && \
-        curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
-          "https://security.ubuntu.com/ubuntu/pool/main/n/nginx/${deb}" && \
+        curl -fsSL --retry 5 --proto '=https' --tlsv1.2 -o "/tmp/${deb}" \
+          "https://launchpad.net/ubuntu/+archive/primary/+files/${deb}" && \
         echo "${p#*:}  /tmp/${deb}" | sha256sum -c - && \
-        debs="${debs} /tmp/${deb}"; \
+        debs="${debs} /tmp/${deb}" || exit 1; \
       done && \
-      dpkg -i --force-confold ${debs} && rm -f ${debs}; \
+      dpkg -i ${debs} && rm -f ${debs}; \
     fi && \
     dpkg-query -W -f='${Package} ${Version}\n' nginx nginx-common
 
@@ -230,6 +229,12 @@ RUN apt-get update --yes && \
 RUN find /opt/nvidia /usr/local/cuda* -type d -name 'efa_metrics' \
         -print -exec rm -rf {} + 2>/dev/null || true
 
+# Canonical's service manager, dropped into the 26.04 image outside dpkg, so
+# there is no package to purge or upgrade. start.sh is the CMD and nothing
+# invokes it, but its Go stdlib carries HIGH findings with no fixed build in
+# 26.04. Same removal as sandbox-ubuntu; a no-op on 24.04.
+RUN rm -rf /usr/bin/pebble /var/lib/pebble
+
 # Install Python 3.11-3.13. Whichever of them is the release's own system
 # python3 comes from the Ubuntu archive (3.12 on 24.04; 26.04's system python3
 # is 3.14, which is not in this list), the rest from deadsnakes. The PPA is
@@ -247,8 +252,8 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     rm -rf "${GNUPGHOME}" && \
     echo "deb [signed-by=/usr/share/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu ${VERSION_CODENAME} main" \
       > /etc/apt/sources.list.d/deadsnakes.list && \
-    apt-get update --yes && \
-    apt-get install --yes --no-install-recommends \
+    apt-get -o Acquire::Retries=10 update --yes --error-on=any && \
+    apt-get -o Acquire::Retries=10 install --yes --no-install-recommends \
         python3.11-dev python3.11-venv python3.11-distutils \
         python3.12-dev python3.12-venv \
         python3.13-dev python3.13-venv && \
