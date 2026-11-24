@@ -96,8 +96,8 @@ repeat lint-level findings they catch; spend the effort on what they cannot see.
 - A new family (a new `.github/families.yml` entry) must also settle how it is
   tracked for upstream releases: either `.claude/staleness-playbook.md` gains a
   section naming the pins the weekly scraper should watch and how to verify
-  each one, or the playbook's "Ignore all others" line names the family and why
-  it is not tracked. A family that gets a section needs a matching entry in the
+  each one, or the playbook's "ignore the other two" sentence names the family
+  and why it is not tracked. A family that gets a section needs a matching entry in the
   `.github/workflows/staleness-scraper.yml` matrix too, or the section never
   runs. Nothing fails when this is missed: the family just quietly stops being
   watched, and its pins rot. The playbook in the working tree is the BASE

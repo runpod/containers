@@ -116,14 +116,13 @@ to this list.
     hand-resolving, a gap you could not verify. The job appends it to the run
     summary for you, because you cannot write there yourself. For a
     detection-only family it is the whole output.
-  - `/tmp/scraper-status`: starts at `ok`, which is also the right answer when
-    you made edits or found nothing to do. `ok` is a claim that you reached the
-    end, so if you stop for any other reason (this file missing, a `gh` or
+  - `/tmp/scraper-status`: starts at `unknown` and must not stay there. Replace
+    it with `ok` once you reach the end, whether you made edits or found nothing
+    to do. If you stop for any other reason (this playbook missing, a `gh` or
     WebFetch call that keeps failing, a version you cannot verify, turns running
-    out) replace it with `failed: <one-line reason>` before you stop. Left
-    alone there it turns the run green on work you did not do. `failed:` is
-    your veto: it is the one way to stop what you produced from being opened as
-    a PR, so use it whenever you are unsure of what you left behind.
+    out) replace it with `failed: <one-line reason>` before you stop. `failed:`
+    is your veto: it is the one way to stop what you produced from being opened
+    as a PR, so use it whenever you are unsure of what you left behind.
 ## pytorch
 
 Source of truth in the file: `TORCH_META` (companion versions) and

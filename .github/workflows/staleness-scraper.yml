@@ -23,6 +23,18 @@ on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
+  # Temporary, until this is on main and the cron can fire: a PR that changes
+  # the scraper runs it against that PR's own copy, and every push re-runs it.
+  # The paths filter keeps it off unrelated PRs, where thirteen agent jobs would
+  # be pure waste. REMOVE this trigger, the two `ref:` expressions that read
+  # `github.event_name`, and the .claude-pr/ branch of the prompt, once the
+  # weekly run has proved itself.
+  pull_request:
+    paths:
+      - .github/workflows/staleness-scraper.yml
+      - .github/scripts/publish_scraper_prs.sh
+      - .github/scripts/sha256_url.sh
+      - .claude/staleness-playbook.md
 
 # Least privilege by default; each job widens only what it needs.
 permissions: {}
@@ -90,7 +102,9 @@ jobs:
           # Work off develop: that is what the bump is measured against and what
           # `publish` branches from. The workflow file itself comes from the
           # default branch (main), where the cron and workflow_dispatch fire.
-          ref: develop
+          # On a test PR use that PR's head instead, so the run exercises the
+          # workflow, scripts and playbook the PR is changing.
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
           # The repo is public, so fetching needs no credential: keep one out of
           # .git/config entirely rather than leave a readable token next to an
           # agent that reads untrusted text.
@@ -162,9 +176,10 @@ jobs:
         run: |
           printf '{"title": "", "body": ""}\n' > /tmp/scraper-pr.json
           printf '(nothing to report)\n' > /tmp/scraper-notes.md
-          # `ok` by default: a family that did its work but forgot the note
-          # should still publish, and `failed:` is the agent's explicit veto.
-          printf 'ok\n' > /tmp/scraper-status
+          # Neither `ok` nor a veto: an agent whose Edit rules do not match
+          # writes nothing at all, and a pre-filled `ok` would then pass for
+          # "already current" on every family at once. Collect resolves it.
+          printf 'unknown\n' > /tmp/scraper-status
 
       - name: Scan ${{ matrix.family }}
         id: scan
@@ -189,10 +204,14 @@ jobs:
           # post-session step with ANTHROPIC_API_KEY in its environment.
           classify_inline_comments: "false"
           prompt: |
-            Read .claude/staleness-playbook.md and follow it exactly, but
-            only for the `${{ matrix.family }}` family; ignore the others. If it
-            is not there, stop and report that: never reconstruct it from git or
-            work without it. Use the GH_TOKEN env var for all `gh` commands.
+            Read the staleness playbook and follow it exactly, but only for
+            the `${{ matrix.family }}` family; ignore the others. It is
+            .claude-pr/.claude/staleness-playbook.md when that path exists (a
+            test PR: the action resets the working tree's .claude/ to the base
+            branch's copy and keeps the PR's there), otherwise
+            .claude/staleness-playbook.md. If neither is there, stop and report
+            that: never reconstruct it from git or work without it. Use the
+            GH_TOKEN env var for all `gh` commands.
 
             You do not create the branch, the commit or the PR, and you have no
             tool that could: a later job does that from what you leave behind.
@@ -217,13 +236,12 @@ jobs:
             the summary yourself. For a detection-only family it is your whole
             output.
 
-            /tmp/scraper-status -- starts at `ok`, which is also the right
-            answer when you made edits or found nothing to do. `ok` is a claim
-            that you reached the end, so if you stop for any other reason --
+            /tmp/scraper-status -- starts at `unknown` and must not stay
+            there. Replace it with `ok` once you reach the end, whether you made
+            edits or found nothing to do. If you stop for any other reason --
             the playbook is missing, a `gh` or WebFetch call keeps failing, a
             version you cannot verify, turns running out -- replace it with
-            `failed: <one-line reason>` before you stop. Leaving it alone there
-            turns the run green on work you did not do. That is your veto and
+            `failed: <one-line reason>` before you stop. That is your veto and
             the one way to stop what you produced from being published.
 
             If `${{ matrix.family }}` is already current, change no files. Still
@@ -232,12 +250,14 @@ jobs:
           # Every tool that reads a file or writes one is named with a path,
           # never bare: a bare name grants the tool everywhere, and Grep and
           # Glob reach the whole filesystem that way. `**` is relative, so it
-          # means the checkout. With nothing secret readable there is nothing
-          # for WebFetch to carry out, which is why its domains stay open.
+          # means the checkout. .git/ is cut back out of it because the action
+          # puts the job token in the remote URL, and /proc because that is
+          # where this job's environment, API key included, is readable. What
+          # is left is public, so WebFetch needs no domain list to carry out.
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --disallowedTools "Read(//proc/**)"
+            --disallowedTools "Read(.git/**),Grep(.git/**),Glob(.git/**),Read(//proc/**)"
             --allowedTools "Read(**),Read(//tmp/scraper-pr.json),Read(//tmp/scraper-notes.md),Read(//tmp/scraper-status),Glob(**),Grep(**),Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools inspect:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
@@ -320,6 +340,19 @@ jobs:
           git add -u -- official-templates/
           git diff --no-ext-diff --cached --binary -- official-templates/ > "$out/changes.patch"
           git diff --no-ext-diff --cached --name-only -- official-templates/ > "$out/changed-files"
+          # The agent never said how it went. Having changed files is evidence
+          # enough that it ran, so that publishes; having changed nothing means
+          # there is no evidence it ran at all, and the likeliest reason is that
+          # nothing it reached for was permitted.
+          if [ "$(cat "$out/status" 2>/dev/null)" = "unknown" ]; then
+            if [ -s "$out/changes.patch" ]; then
+              echo "::warning::${FAMILY}: changed files but never confirmed a status; publishing anyway"
+              echo "ok" > "$out/status"
+            else
+              echo "failed: no status and no changes; the agent's tools may be misconfigured" > "$out/status"
+              echo "::error::${FAMILY}: wrote nothing at all, not even its status; check the tool configuration"
+            fi
+          fi
           echo "::notice::${FAMILY}: $(wc -l < "$out/changed-files") changed file(s)"
 
       - name: Upload the result
@@ -404,7 +437,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          ref: develop
+          # The PR's own publish_scraper_prs.sh on a test run; the branches it
+          # creates still come off origin/develop either way.
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
           fetch-depth: 0
 
       - name: Download every family's result
