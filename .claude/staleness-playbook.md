@@ -47,6 +47,9 @@ to this list.
   where bytes land is exactly what would let text you read while working write
   into `.git/` or into a later step's files, so that ability is absent by
   design, not by oversight.
+- For a PyPI package, read `https://pypi.org/pypi/<name>/json` with WebFetch:
+  `info.version` is the latest stable release and `releases` lists the rest.
+  There is no `pip`, and the project page renders versions through JavaScript.
 - For anything released on GitHub, read it with `gh release view <tag> --repo
   <owner>/<name>` or `gh release list --repo <owner>/<name>` rather than fetching
   the release page. The web page truncates long notes behind "Read more" and

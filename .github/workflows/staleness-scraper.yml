@@ -230,7 +230,7 @@ jobs:
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
             --disallowedTools "Read(//proc/**)"
-            --allowedTools "Read,Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*)"
+            --allowedTools "Read,Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools inspect:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
       # the agent produced plus the three files it filled in.
