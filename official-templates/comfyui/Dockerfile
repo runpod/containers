@@ -212,70 +212,6 @@ RUN printf '%s\n' \
     cp -r /tmp/build/ComfyUI /opt/comfyui-baked
 
 # ============================================================================
-# FileBrowser - built from source
-# ============================================================================
-# Upstream archived FileBrowser on 2026-09-01: FILEBROWSER_VERSION is its last
-# release and no security fixes will follow. Its release binary carries the Go
-# toolchain and modules of July 2026, so it is rebuilt here with a current Go
-# and the vulnerable modules raised. Drop these stages when FileBrowser is
-# replaced.
-FROM golang:1.26.11-bookworm AS filebrowser-src
-
-ARG FILEBROWSER_VERSION
-ARG FILEBROWSER_COMMIT
-
-# A git checkout, not the source tarball: Go stamps the module version from it
-# (v2.63.23+dirty once go.mod is raised), so scanners still match FileBrowser's
-# own advisories. A tarball build reports (devel) and they never match.
-RUN git clone --quiet --depth 1 --branch "${FILEBROWSER_VERSION}" \
-        https://github.com/filebrowser/filebrowser.git /src && \
-    test "$(git -C /src rev-parse HEAD)" = "${FILEBROWSER_COMMIT}"
-WORKDIR /src
-
-# The web UI, embedded into the binary from frontend/dist (frontend/assets.go).
-# Corepack runs the exact pnpm the project pins in package.json.
-FROM node:24-bookworm-slim AS filebrowser-frontend
-
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-COPY --from=filebrowser-src /src /src
-WORKDIR /src/frontend
-RUN corepack enable && \
-    pnpm install --frozen-lockfile && \
-    pnpm run build
-
-FROM filebrowser-src AS filebrowser-build
-
-# pipefail: the stamp check below pipes `go version -m` into awk, and a
-# failing go must fail the build, not hand awk empty input.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-ARG FILEBROWSER_VERSION
-
-# GOTOOLCHAIN=local: build with this image's Go, never a downloaded one.
-ENV CGO_ENABLED=0 GOTOOLCHAIN=local
-COPY --from=filebrowser-frontend /src/frontend/dist /src/frontend/dist
-RUN go get \
-        github.com/andybalholm/brotli@v1.3.0 \
-        github.com/klauspost/compress@v1.20.4 \
-        golang.org/x/crypto@v0.59.0 \
-        golang.org/x/image@v0.48.0 \
-        golang.org/x/net@v0.62.0 \
-        golang.org/x/sys@v0.50.0 \
-        golang.org/x/text@v0.44.0 && \
-    go mod tidy && \
-    go build -trimpath \
-        -ldflags "-s -w -X github.com/filebrowser/filebrowser/v2/version.Version=${FILEBROWSER_VERSION#v}" \
-        -o /out/filebrowser . && \
-    /out/filebrowser version && \
-    fb_mod="$(go version -m /out/filebrowser | awk '$1 == "mod" { print $2, $3 }')" && \
-    echo "FileBrowser module stamp: ${fb_mod}" && \
-    case "${fb_mod}" in \
-        "github.com/filebrowser/filebrowser/v2 ${FILEBROWSER_VERSION}" | \
-        "github.com/filebrowser/filebrowser/v2 ${FILEBROWSER_VERSION}+dirty") ;; \
-        *) echo "FileBrowser's module version is not ${FILEBROWSER_VERSION}: scanners would not match its advisories" >&2; exit 1 ;; \
-    esac
-
-# ============================================================================
 # Stage 2: Runtime - Clean image with pre-installed packages
 # ============================================================================
 FROM ubuntu:24.04
@@ -283,7 +219,6 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
-ENV FILEBROWSER_CONFIG=/workspace/runpod-slim/.filebrowser.json
 
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
@@ -377,8 +312,21 @@ COPY --from=builder /opt/comfyui-baked /opt/comfyui-baked
 RUN pip uninstall -y uv 2>/dev/null || true && \
     rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
-# FileBrowser, rebuilt from source in the stages above
-COPY --from=filebrowser-build /out/filebrowser /usr/local/bin/filebrowser
+# FileBrowser Quantum (gtsteffaniak fork), pinned by version + checksum. The
+# release ships a static linux-amd64 ELF.
+RUN curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --max-redirs 3 \
+    -o /usr/local/bin/filebrowser \
+    "https://github.com/gtsteffaniak/filebrowser/releases/download/${FILEBROWSER_VERSION}/linux-amd64-filebrowser" && \
+    echo "${FILEBROWSER_SHA256}  /usr/local/bin/filebrowser" > /tmp/filebrowser.sha256 && \
+    sha256sum -c /tmp/filebrowser.sha256 && \
+    rm /tmp/filebrowser.sha256 && \
+    chmod +x /usr/local/bin/filebrowser
+
+# Baked config. trustProxyHeaders scopes the session JWT cookie to
+# X-Forwarded-Host instead of the pod internal IP, otherwise login breaks
+# behind the Runpod proxy.
+ENV FILEBROWSER_CONFIG=/etc/filebrowser/config.yaml
+COPY filebrowser/config.yaml /etc/filebrowser/config.yaml
 
 # Set CUDA environment variables
 ENV PATH=/usr/local/cuda/bin:${PATH}

@@ -20,6 +20,7 @@ on:
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      - 'official-templates/comfyui/filebrowser/config.yaml'
       - 'official-templates/ray-cluster/inference/start.sh'
       - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
       - 'official-templates/ray-cluster/inference/download_model.py'
@@ -45,6 +46,7 @@ on:
       - '.github/families.yml'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      - 'official-templates/comfyui/filebrowser/config.yaml'
       - 'official-templates/ray-cluster/inference/start.sh'
       - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
       - 'official-templates/ray-cluster/inference/download_model.py'
