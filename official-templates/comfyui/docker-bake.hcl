@@ -1,9 +1,13 @@
 # === Version Pins (single source of truth) ===
-variable "COMFYUI_VERSION" {
-  default = "v0.44.0"
-}
-variable "MANAGER_SHA" {
-  default = "9d4cceea1351"
+
+# Each release is built for every CUDA variant and tagged with its version, so
+# they ship side by side. manager_version must match the release's own
+# manager_requirements.txt; the build checks it.
+variable "COMFYUI_VERSIONS" {
+  default = [
+    { version = "v0.44.0", manager_version = "4.2.2" },
+    { version = "v0.45.0", manager_version = "4.2.2" }
+  ]
 }
 variable "KJNODES_SHA" {
   default = "57105374f47d"
@@ -39,6 +43,13 @@ variable "FILEBROWSER_COMMIT" {
 #
 # Hence a separate index per row. The version is spelled out rather than built
 # from the suffix so the post-install check compares against what pip resolved.
+# install_cuda_compat bakes NVIDIA's forward-compat libcuda (cuda-compat-X-Y)
+# into the image so it can run on hosts whose driver is older than its CUDA
+# (e.g. a cu130 image on a 12.8/12.9 host). start.sh enables it only after a
+# cuInit() probe succeeds, so it is a no-op on newer drivers and on GPUs NVIDIA
+# does not support for forward compat (GeForce). 12.8 is off: no evidence of
+# sub-570 hosts, and it would add ~300 MB (installed: cuda-compat-13-0 is
+# ~310 MB, cuda-compat-13-2 ~410 MB).
 #
 # SageAttention is compiled against one exact torch + CUDA pair, so each row
 # pins its own prebuilt wheel from https://github.com/runpod/sageattention
@@ -48,6 +59,7 @@ variable "FILEBROWSER_COMMIT" {
 variable "CUDA_TORCH_COMBINATIONS" {
   default = [
     { cuda_version = "12.8",
+      install_cuda_compat = false,
       torch_index_suffix = "cu128",
       torchaudio_index_suffix = "cu128",
       torch_version = "2.10.0",
@@ -58,6 +70,7 @@ variable "CUDA_TORCH_COMBINATIONS" {
       sageattention_sha256 = "e46dda74dd1ca41e231e33af03b8bdbe1f5f3de4802472ed86ea3162fb596fb0"
     },
     { cuda_version = "13.0",
+      install_cuda_compat = true,
       torch_index_suffix = "cu130",
       torchaudio_index_suffix = "cu130",
       torch_version = "2.10.0",
@@ -68,6 +81,7 @@ variable "CUDA_TORCH_COMBINATIONS" {
       sageattention_sha256 = "4277a667b6ba5f8b33e20fb44cb2399d571b44a159225242db4aaf004f2498ce"
     },
     { cuda_version = "13.2",
+      install_cuda_compat = true,
       torch_index_suffix = "cu132",
       torchaudio_index_suffix = "cpu",
       torch_version = "2.13.0",
@@ -80,57 +94,65 @@ variable "CUDA_TORCH_COMBINATIONS" {
   ]
 }
 
+# No ComfyUI release pins torch, so the stack and venv_name follow the CUDA
+# variant alone — a pod moving between ComfyUI versions keeps its venv.
 variable "COMPATIBLE_BUILDS" {
   default = flatten([
-    for combination in CUDA_TORCH_COMBINATIONS:
+    for comfyui in COMFYUI_VERSIONS:
       [
-        { cuda_version = combination.cuda_version, 
-          cuda_version_code = replace(combination.cuda_version, ".", ""),
-          cuda_version_dash = replace(combination.cuda_version, ".", "-"),
-          torch_index_suffix = combination.torch_index_suffix,
-          torchaudio_index_suffix = combination.torchaudio_index_suffix,
-          torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
-          torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
-          torchaudio_version = combination.torchaudio_version,
-          sageattention_version = combination.sageattention_version,
-          sageattention_wheel_url = combination.sageattention_wheel_url,
-          sageattention_sha256 = combination.sageattention_sha256,
-         },
+        for combination in CUDA_TORCH_COMBINATIONS:
+          { comfyui_version = comfyui.version,
+            # v0.45.0 -> 0450, for target and group names
+            comfyui_version_code = replace(replace(comfyui.version, "v", ""), ".", ""),
+            manager_version = comfyui.manager_version,
+            cuda_version = combination.cuda_version,
+            cuda_version_code = replace(combination.cuda_version, ".", ""),
+            cuda_version_dash = replace(combination.cuda_version, ".", "-"),
+            torch_index_suffix = combination.torch_index_suffix,
+            torchaudio_index_suffix = combination.torchaudio_index_suffix,
+            torch_version = "${combination.torch_version}+${combination.torch_index_suffix}",
+            torchvision_version = "${combination.torchvision_version}+${combination.torch_index_suffix}",
+            torchaudio_version = combination.torchaudio_version,
+            install_cuda_compat = combination.install_cuda_compat,
+            sageattention_version = combination.sageattention_version,
+            sageattention_wheel_url = combination.sageattention_wheel_url,
+            sageattention_sha256 = combination.sageattention_sha256,
+          }
       ]
     ]
   )
 }
 
+# One group per CUDA variant — how CI shards the build. No per-release group:
+# adding a version stays one line in COMFYUI_VERSIONS.
 group "default" {
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
   ]
 }
 
 group "cuda128" {
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
-      if combination.cuda_version == "12.8"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
+      if build.cuda_version == "12.8"
   ]
 }
 
-group "cuda13" {
-
+group "cuda130" {
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
-      if combination.cuda_version == "13.0"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
+      if build.cuda_version == "13.0"
   ]
 }
 
 group "cuda132" {
-
   targets = [
-    for combination in COMPATIBLE_BUILDS:
-      "cuda${combination.cuda_version_code}"
-      if combination.cuda_version == "13.2"
+    for build in COMPATIBLE_BUILDS:
+      "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
+      if build.cuda_version == "13.2"
   ]
 }
 
@@ -147,11 +169,11 @@ target "comfyui-matrix" {
     build = COMPATIBLE_BUILDS
   }
 
-  name = "cuda${build.cuda_version_code}"
+  name = "comfyui${build.comfyui_version_code}-cuda${build.cuda_version_code}"
 
   args = {
-    COMFYUI_VERSION     = COMFYUI_VERSION
-    MANAGER_SHA         = MANAGER_SHA
+    COMFYUI_VERSION     = build.comfyui_version
+    MANAGER_VERSION     = build.manager_version
     KJNODES_SHA         = KJNODES_SHA
     CIVICOMFY_SHA       = CIVICOMFY_SHA
     RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
@@ -163,12 +185,13 @@ target "comfyui-matrix" {
     CUDA_VERSION_DASH   = build.cuda_version_dash
     TORCH_INDEX_SUFFIX  = build.torch_index_suffix
     TORCHAUDIO_INDEX_SUFFIX = build.torchaudio_index_suffix
+    INSTALL_CUDA_COMPAT = build.install_cuda_compat ? "true" : "false"
     SAGEATTENTION_VERSION   = build.sageattention_version
     SAGEATTENTION_WHEEL_URL = build.sageattention_wheel_url
     SAGEATTENTION_SHA256    = build.sageattention_sha256
   }
 
   tags = [
-    "runpod/comfyui:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${COMFYUI_VERSION}-cuda${build.cuda_version}"
+    "runpod/comfyui${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-comfyui${build.comfyui_version}-cuda${build.cuda_version}"
   ]
 }

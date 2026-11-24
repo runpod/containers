@@ -10,7 +10,15 @@ OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 MIGRATION_MARKER=".runpod-migration-incomplete"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
-BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+BAKED_NODES=("ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
+# ComfyUI-Manager now ships as the comfyui_manager pip package in the image, and
+# ComfyUI ignores any copy under custom_nodes once --enable-manager is set
+# (main.py -> comfyui_manager.should_be_disabled). Volumes created by an older
+# image still carry the 3.x clone; it is dead weight, so skip its requirements
+# along with the baked nodes.
+DEP_SKIP_NODES=("${BAKED_NODES[@]}" "ComfyUI-Manager")
+CUDA_COMPAT_DIR="/opt/cuda-compat"
+CUDA_COMPAT_STATUS="not installed"
 # 8188 is the port the template exposes. The password proxy owns it, and
 # ComfyUI listens on loopback only, on the internal port.
 COMFYUI_PUBLIC_PORT=8188
@@ -308,7 +316,9 @@ append_user_args() {
 # No --enable-cors-header: it replaces ComfyUI's refusal of cross-site
 # requests with a CORS policy that lets any site in.
 build_comfy_args() {
-    COMFY_ARGS=()
+    # --enable-manager loads the comfyui_manager package installed in the image.
+    # Add --enable-manager-legacy-ui to comfyui_args.txt for the 3.x Manager UI.
+    COMFY_ARGS=(--enable-manager)
     append_user_args
     COMFY_LISTEN_PORT=$COMFYUI_INTERNAL_PORT
     COMFY_ARGS+=(--listen 127.0.0.1 --port "$COMFY_LISTEN_PORT")
@@ -320,11 +330,14 @@ build_comfy_args() {
 # not the client's IP), and with ComfyUI on 127.0.0.1 behind the proxy every
 # loopback-gated install is open unless config.ini closes it. Under
 # --listen 0.0.0.0 they were closed whatever the config said. In the pinned
-# Manager (MANAGER_SHA) loopback gates exactly three things, and all three
-# are written on every start:
+# Manager (MANAGER_VERSION) loopback gates exactly three things, and all
+# three are written on every start:
 #   security_level = normal      high-risk installs stay refused
 #   allow_git_url_install = False
 #   allow_pip_install = False
+# use_uv goes with them: the image removes uv on purpose, and an explicit
+# `use_uv = True` on the volume is honoured, which sends Manager's installs
+# through a uv that is not there. Manager's own default is already False.
 # Manager reads them once at startup, so an edit to config.ini while
 # ComfyUI runs is overwritten here before it can take effect.
 # Newer Manager releases add allow_flagged_nodepack_install, ORed with
@@ -350,11 +363,12 @@ for path in targets:
     config["default"]["security_level"] = "normal"
     config["default"]["allow_git_url_install"] = "False"
     config["default"]["allow_pip_install"] = "False"
+    config["default"]["use_uv"] = "False"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".tmp", "w") as f:
         config.write(f)
     os.replace(path + ".tmp", path)
-print("ComfyUI-Manager: security_level=normal, git URL and pip installs off")
+print("ComfyUI-Manager: security_level=normal, git URL and pip installs off, uv off")
 PY
 }
 
@@ -634,7 +648,7 @@ reinstall_user_node_deps() {
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         [ -f "$req" ] || continue
         node=$(basename "$(dirname "$req")")
-        case " ${BAKED_NODES[*]} " in
+        case " ${DEP_SKIP_NODES[*]} " in
             *" $node "*) continue ;;
         esac
         reqs+=("$req")
@@ -716,6 +730,49 @@ run_with_heartbeat() {
     wait "$pid"
 }
 
+# comfyui_manager is patched in the image (manager-patches/ in the Dockerfile)
+# and lives in the system site-packages the venv reaches through
+# --system-site-packages. A copy inside the venv comes first on sys.path and
+# would shadow it, running a Manager without the 403s on update_comfyui,
+# comfyui_switch_version, share and the credential routes. So: drop any such
+# copy, and when the workspace ComfyUI asks for another version, say so rather
+# than install it. The fixes travel with the image, not with the workspace.
+pin_image_manager() {
+    local pinned have
+
+    # Fail open: a crashed probe must not abort startup (set -e).
+    if python - <<'PY'
+import importlib.metadata as md
+import os
+import sys
+
+venv = os.path.realpath(sys.prefix) + os.sep
+for dist in md.distributions():
+    name = (dist.metadata["Name"] or "").lower().replace("_", "-")
+    if name != "comfyui-manager":
+        continue
+    where = os.path.realpath(str(dist.locate_file("")))
+    if (where + os.sep).startswith(venv):
+        print(f"ComfyUI-Manager: a copy in {where} shadows the image's patched one; removing it.")
+        sys.exit(0)
+sys.exit(1)
+PY
+    then
+        python -m pip uninstall -y comfyui_manager > /dev/null 2>&1 \
+            || echo "WARNING: could not remove it; ComfyUI-Manager runs without the Runpod fixes."
+    fi
+
+    [ -f "$COMFYUI_DIR/manager_requirements.txt" ] || return 0
+    pinned=$(tr -d '\r' < "$COMFYUI_DIR/manager_requirements.txt" \
+        | grep -oE '^comfyui[-_]manager==[^[:space:];#]+' | head -1 | cut -d= -f3)
+    have=$(python -c 'import importlib.metadata as m; print(m.version("comfyui_manager"))' 2>/dev/null || true)
+    if [ -n "$pinned" ] && [ -n "$have" ] && [ "$pinned" != "$have" ]; then
+        echo "WARNING: the workspace ComfyUI asks for ComfyUI-Manager $pinned; this image ships $have."
+        echo "         The image's Manager carries the Runpod fixes, so it is the one that runs."
+        echo "         Redeploy on a tag whose ComfyUI pins $pinned if you need that version."
+    fi
+}
+
 # ComfyUI pins its bundled packages (frontend, workflow templates, comfy-kitchen)
 # to exact versions, and the workspace checkout can move away from the image via
 # Manager or git — then main.py imports a comfy-kitchen that predates it and dies.
@@ -726,6 +783,9 @@ sync_comfyui_pinned_packages() {
     local installed pins spec name have
     local missing=()
 
+    # manager_requirements.txt is deliberately not read here: comfyui_manager is
+    # patched in the image and installing it would put an unpatched copy in the
+    # venv, ahead of the patched one on sys.path. pin_image_manager owns it.
     if [ ! -f "$requirements" ]; then
         return
     fi
@@ -744,7 +804,7 @@ sync_comfyui_pinned_packages() {
     pins=$(tr -d '\r' < "$requirements" \
         | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==[^[:space:];#]+$' \
         | tr 'A-Z_' 'a-z-' \
-        | grep -vE '^(torch|torchvision|torchaudio)==' || true)
+        | grep -vE '^(torch|torchvision|torchaudio|comfyui-manager)==' || true)
 
     while read -r spec; do
         if [ -z "$spec" ] || grep -qxF "$spec" <<< "$installed"; then
@@ -775,6 +835,183 @@ sync_comfyui_pinned_packages() {
     fi
 }
 
+# Print "<driver_version> <cuInit_rc> <libcuda_path>" for whichever libcuda.so.1
+# the dynamic loader picks up with the current LD_LIBRARY_PATH.
+probe_libcuda() {
+    python3.12 - <<'PY' 2>/dev/null
+import ctypes
+try:
+    lib = ctypes.CDLL("libcuda.so.1")
+except OSError:
+    print("0 -1 none")
+    raise SystemExit
+version = ctypes.c_int(0)
+lib.cuDriverGetVersion(ctypes.byref(version))
+rc = lib.cuInit(0)
+path = "unknown"
+with open("/proc/self/maps") as maps:
+    for line in maps:
+        if "libcuda.so" in line:
+            path = line.split()[-1]
+            break
+print(version.value, rc, path)
+PY
+}
+
+# Undo compat that the NVIDIA Container Toolkit (>= 1.17.5) enabled on its own:
+# its enable-cuda-compat hook finds /usr/local/cuda/compat in the image and puts
+# it in the loader cache, even when the host driver already supports the
+# image's CUDA (e.g. user-mode 595.112 on a 595.91 kernel module), and on
+# GeForce cards across driver branches, where cuInit fails with 804 (seen: RTX
+# 4090, host 570.172, compat 580.196). Seen on Runpod hosts in two forms, both
+# handled here: an /etc/ld.so.conf.d/00-compat-*.conf entry, or an ldconfig run
+# with the compat dir on its command line (cache only, no conf file).
+# Rebuilding the cache from the remaining conf files drops both. Fails open.
+drop_runtime_cuda_compat() {
+    local conf
+    for conf in /etc/ld.so.conf.d/*.conf; do
+        [ -f "$conf" ] || continue
+        if grep -qE '^[[:space:]]*/usr/local/cuda[^/]*/compat/?[[:space:]]*$' "$conf"; then
+            mv "$conf" "$conf.disabled-by-start-sh" 2>/dev/null || true
+        fi
+    done
+    ldconfig 2>/dev/null || true
+}
+
+# CUDA version of the image's toolkit in cuDriverGetVersion form (13.0 -> 13000),
+# or 0 if it cannot be read.
+image_cuda_version() {
+    python3.12 - <<'PY' 2>/dev/null || echo 0
+import json
+import re
+import subprocess
+try:
+    with open("/usr/local/cuda/version.json") as f:
+        major, minor = json.load(f)["cuda"]["version"].split(".")[:2]
+except Exception:
+    out = subprocess.run(["/usr/local/cuda/bin/nvcc", "--version"],
+                         capture_output=True, text=True).stdout
+    major, minor = re.search(r"release (\d+)\.(\d+)", out).groups()
+print(int(major) * 1000 + int(minor) * 10)
+PY
+}
+
+# Directory of the host's injected libcuda.so.1, i.e. any loader-cache entry or
+# usual driver path that is not a compat dir. Prints nothing if there is none.
+find_host_libcuda_dir() {
+    local lib
+    for lib in $(ldconfig -p 2>/dev/null | awk '$1 == "libcuda.so.1" {print $NF}') \
+        /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib64/libcuda.so.1; do
+        [[ "$lib" == */compat/* ]] && continue
+        if [ -e "$lib" ]; then
+            dirname "$lib"
+            return
+        fi
+    done
+}
+
+# Enable NVIDIA CUDA forward compatibility when the host driver is older than
+# the CUDA version this image was built for (e.g. the cu130 image landing on a
+# 12.8/12.9 host). The compat libcuda only works on datacenter-class GPUs and
+# supported driver branches, and it breaks CUDA if the host driver is newer, so
+# it is enabled only after a real cuInit() succeeds with it. Fails open.
+setup_cuda_compat() {
+    if [ ! -e "$CUDA_COMPAT_DIR/libcuda.so.1" ]; then
+        return
+    fi
+
+    local host_ver host_rc host_path compat_ver compat_rc compat_path runtime_note=""
+    local host_dir override_ver override_rc override_path image_ver opted_out=0
+    read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
+
+    # Opt-out: leave the loader setup exactly as the container runtime made it,
+    # including any compat the runtime enabled itself. Checked before the
+    # rollback below so it never takes away compat that was working.
+    if [ "${DISABLE_CUDA_COMPAT:-}" = "1" ]; then
+        opted_out=1
+        if [[ "$host_path" == */compat/* ]] && [ "${host_rc:--1}" != "0" ]; then
+            CUDA_COMPAT_STATUS="UNAVAILABLE (DISABLE_CUDA_COMPAT=1 left compat enabled by the container runtime in place: $host_path, cuInit returned $host_rc; unset it so start.sh can remove it)"
+        elif [[ "$host_path" == */compat/* ]]; then
+            CUDA_COMPAT_STATUS="disabled (DISABLE_CUDA_COMPAT=1); compat enabled by the container runtime left in place (CUDA $host_ver via $host_path)"
+        else
+            CUDA_COMPAT_STATUS="disabled (DISABLE_CUDA_COMPAT=1)"
+        fi
+    else
+        # The container runtime already put compat in the loader cache, so the
+        # probe above measured the compat lib, not the host driver. Always remove
+        # it and re-probe: the checks below then compare against the real host
+        # driver and re-enable compat themselves only when the host is older.
+        if [[ "$host_path" == */compat/* ]]; then
+            drop_runtime_cuda_compat
+            runtime_note="; removed compat enabled by the container runtime (cuInit with it returned $host_rc)"
+            read -r host_ver host_rc host_path <<< "$(probe_libcuda || echo '0 -1 none')"
+        fi
+
+        # The cache rebuild did not take (e.g. read-only /etc). LD_LIBRARY_PATH
+        # is searched ahead of ld.so.cache, so pointing it at the host's libcuda
+        # overrides the cached compat entry without touching /etc.
+        if [[ "$host_path" == */compat/* ]]; then
+            host_dir=$(find_host_libcuda_dir)
+            if [ -n "$host_dir" ]; then
+                read -r override_ver override_rc override_path <<< "$(LD_LIBRARY_PATH="$host_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" probe_libcuda || echo '0 -1 none')"
+                if [ "${override_path:-none}" != "none" ] && [[ "$override_path" != */compat/* ]]; then
+                    export LD_LIBRARY_PATH="$host_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                    runtime_note="; overrode compat enabled by the container runtime with LD_LIBRARY_PATH=$host_dir (cuInit with it returned $host_rc; the loader cache could not be rebuilt)"
+                    host_ver=$override_ver host_rc=$override_rc host_path=$override_path
+                fi
+            fi
+        fi
+
+        read -r compat_ver compat_rc compat_path <<< "$(LD_LIBRARY_PATH="$CUDA_COMPAT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" probe_libcuda || echo '0 -1 none')"
+    fi
+
+    if [ "$opted_out" = "1" ]; then
+        :
+    elif [ "${host_path:-none}" = "none" ]; then
+        CUDA_COMPAT_STATUS="skipped (no host NVIDIA driver visible)$runtime_note"
+    elif [[ "$host_path" == */compat/* ]]; then
+        # Runtime-enabled compat is still active: neither the cache rebuild nor
+        # the LD_LIBRARY_PATH override got rid of it. Report what is in use.
+        if [ "${host_rc:--1}" = "0" ]; then
+            CUDA_COMPAT_STATUS="ENABLED by container runtime, could not be removed (CUDA $host_ver via $host_path)"
+        else
+            CUDA_COMPAT_STATUS="UNAVAILABLE (container runtime enabled $host_path, cuInit returned $host_rc, and it could not be removed)"
+        fi
+    elif [ "${compat_ver:-0}" -le 0 ]; then
+        # The compat libcuda is in the image but would not load (broken symlink,
+        # missing dependency). Compare the host against the toolkit instead.
+        image_ver=$(image_cuda_version)
+        if [ "${image_ver:-0}" -gt 0 ] && [ "${host_ver:-0}" -ge "$image_ver" ]; then
+            CUDA_COMPAT_STATUS="not needed (host driver supports CUDA $host_ver; the bundled compat driver did not load)$runtime_note"
+        else
+            CUDA_COMPAT_STATUS="UNAVAILABLE (the bundled compat driver did not load; host driver CUDA $host_ver, image CUDA ${image_ver:-unknown})$runtime_note"
+        fi
+    elif [ "${host_ver:-0}" -ge "${compat_ver:-0}" ]; then
+        CUDA_COMPAT_STATUS="not needed (host driver supports CUDA $host_ver)$runtime_note"
+    elif [ "${compat_rc:--1}" = "0" ] && [ "$compat_path" != "$host_path" ]; then
+        export LD_LIBRARY_PATH="$CUDA_COMPAT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        CUDA_COMPAT_STATUS="ENABLED (host driver CUDA $host_ver -> CUDA $compat_ver via $compat_path)"
+    else
+        local reason="cuInit returned $compat_rc"
+        case "$compat_rc" in
+            804) reason="this GPU does not support CUDA forward compatibility (consumer/GeForce cards are not supported)" ;;
+            803) reason="the host driver branch is not supported by the bundled compat driver" ;;
+        esac
+        CUDA_COMPAT_STATUS="UNAVAILABLE (host driver CUDA $host_ver < image CUDA $compat_ver; $reason)$runtime_note"
+    fi
+
+    echo "============================================="
+    echo "  CUDA forward compat: $CUDA_COMPAT_STATUS"
+    case "$CUDA_COMPAT_STATUS" in
+        UNAVAILABLE*)
+            echo "  ComfyUI will likely fail with 'The NVIDIA driver on your system is too old'."
+            echo "  Redeploy on a host whose driver supports this image's CUDA (filter by CUDA"
+            echo "  version), or, for non-Blackwell GPUs, use the ComfyUI CUDA 12.8 template."
+            ;;
+    esac
+    echo "============================================="
+}
+
 log_cuda_venv_diagnostics() {
     local expected_build local_packages status
     expected_build=$(sed -n 's/^torch==.*+\(cu[0-9][0-9]*\).*$/\1/p' \
@@ -784,6 +1021,7 @@ log_cuda_venv_diagnostics() {
     echo "  CUDA / venv diagnostics"
     echo "  active venv: $VENV_DIR"
     echo "  expected image torch build: ${expected_build:-unknown}"
+    echo "  CUDA forward compat: $CUDA_COMPAT_STATUS"
 
     # Fail open: a crashed probe must not abort startup (set -e).
     if ! status=$(VENV_DIR="$VENV_DIR" EXPECTED_TORCH_BUILD="$expected_build" \
@@ -948,6 +1186,10 @@ if [ -f "$PIP_CONSTRAINT_FILE" ]; then
     echo "Using runtime pip constraints from $PIP_CONSTRAINT_FILE"
 fi
 
+# Must run before export_env_vars/Jupyter so SSH and notebook sessions inherit
+# the compat LD_LIBRARY_PATH too.
+setup_cuda_compat
+
 setup_ssh
 export_env_vars
 
@@ -1054,7 +1296,7 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ] && [ "$VENV_NAME" = ".venv-cu1
     for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
         if [ -f "$req" ]; then
             NODE_NAME=$(basename "$(dirname "$req")")
-            case " ${BAKED_NODES[*]} " in
+            case " ${DEP_SKIP_NODES[*]} " in
                 *" $NODE_NAME "*) continue ;;
             esac
             CURRENT=$((CURRENT + 1))
@@ -1163,6 +1405,13 @@ fi
 
 create_pip_shim
 
+if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager" ]; then
+    echo "ComfyUI-Manager now ships as a pip package in the image; ComfyUI ignores"
+    echo "the copy left in custom_nodes. Your settings, snapshots and installed nodes"
+    echo "are unaffected. Delete it to free volume space:"
+    echo "  rm -rf $COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
+fi
+
 # Interactive sessions are started by sshd, not by this script, and the PATH
 # copied into the login files above was captured before the venv existed —
 # `python` was then missing entirely and `pip` resolved to the base interpreter.
@@ -1174,6 +1423,7 @@ printf 'if [ -f "%s/bin/activate" ]; then . "%s/bin/activate"; fi\n' \
 echo "Warming up pip (Manager timeout is 30s)..."
 time python -m pip --version
 
+pin_image_manager
 sync_comfyui_pinned_packages
 
 log_cuda_venv_diagnostics

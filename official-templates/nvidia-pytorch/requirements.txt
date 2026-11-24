@@ -5,14 +5,14 @@ fsspec==2026.6.0
 jaraco.context==6.1.0
 jupyter_server==2.21.0
 jupyterlab==4.6.4
-mistune==3.3.3
+mistune==3.3.4
 msgpack==1.2.3
 nbconvert==7.17.2
 notebook==7.6.3
 onnx==1.21.0
 pillow==13.0.0
 protobuf==6.33.5
-soupsieve==2.8.4
+soupsieve==4.1.1
 tornado==6.5.10
 urllib3==2.8.0
 wheel==0.46.2
