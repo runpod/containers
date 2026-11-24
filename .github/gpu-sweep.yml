@@ -74,6 +74,8 @@ families:
     checks: [test_ray]
     sample: torch-range
   autoresearch: {}
+  burn:
+    checks: [test_burn]
   comfyui:
     checks: [test_comfyui]
   nvidia-pytorch:
