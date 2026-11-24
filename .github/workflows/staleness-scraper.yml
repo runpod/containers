@@ -246,6 +246,9 @@ jobs:
         run: |
           out="${RUNNER_TEMP}/out"
           mkdir -p "$out"
+          # If this step itself dies the artifact is half-written, and `publish`
+          # would read a leftover "ok" next to a missing patch as "nothing to do".
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "failed: collecting the result exited ${rc}" > "$out/status"' EXIT
           # An agent that crashed, timed out or ran out of turns stopped in the
           # middle of its edits, so whatever is in the tree is half of a bump.
           # Record the veto in the artifact itself: `publish` reads only that,
@@ -275,7 +278,9 @@ jobs:
           # .claude/ is excluded because the step above restores it deliberately.
           # -c flags, not trust in .git/config: the agent can write that file,
           # and core.fsmonitor / core.hooksPath name commands git would run here.
-          git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null --no-ext-diff "$@"; }
+          # diff.external is the third such hook, vetoed per diff below: it is a
+          # command option, not a `git` one, and breaks every other subcommand.
+          git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"; }
           outside="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
           # Two different things. A *tracked* file changed or deleted outside the
           # template tree is someone rewriting the repo and fails the family. An
@@ -295,8 +300,8 @@ jobs:
           fi
           # Staged, not committed: --cached also captures files the agent added.
           git add -A -- official-templates/
-          git diff --cached --binary -- official-templates/ > "$out/changes.patch"
-          git diff --cached --name-only -- official-templates/ > "$out/changed-files"
+          git diff --no-ext-diff --cached --binary -- official-templates/ > "$out/changes.patch"
+          git diff --no-ext-diff --cached --name-only -- official-templates/ > "$out/changed-files"
           echo "::notice::${FAMILY}: $(wc -l < "$out/changed-files") changed file(s)"
 
       - name: Upload the result
