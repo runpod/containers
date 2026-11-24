@@ -61,7 +61,7 @@ to this list.
 - **You do not create branches, commits or PRs**, and you have no tool that
   could: a later job in this workflow does all of that from what you leave
   behind. Your job is to decide what should change, edit the working tree, and
-  leave two files. The branch, the label, the reviewer, and whether a PR is
+  leave the three handover files. The branch, the label, the reviewer, and whether a PR is
   opened or updated are not yours to set.
 - **Edit only under `official-templates/`.** The publishing job refuses a patch
   that reaches outside that tree and skips the family entirely, so one stray
@@ -87,12 +87,13 @@ to this list.
 - Title it like `feat: pytorch <version>`. It becomes both the commit subject
   and the PR title, so it drives the release bump; keep it Conventional-Commit
   compliant.
-- **Keep scratch out of the working tree.** Write any working file (a downloaded
-  asset, JSON you are inspecting, notes) under `/tmp`, never into the repository.
-  The publishing job stages everything the tree carries, so a file you leave
-  behind rides into the PR, and you have no `rm` to take it back. Nothing filters
-  this for you: either the file is a change you meant to make, or it does not
-  belong in the checkout.
+- **You have no scratch space.** The only paths you can write are
+  `official-templates/` and the three handover files below; the rest of `/tmp`
+  is closed to you, and you have no `rm` to take anything back. Keep working
+  data in your context, and put whatever a person should see in
+  `/tmp/scraper-notes.md`. Never create a file under `official-templates/` that
+  is not part of the bump: a file that was not already tracked is reported and
+  dropped, so the work it stood for is simply lost.
 - After editing, run `docker buildx bake --print -f
   official-templates/shared/versions.hcl -f
   official-templates/<family>/docker-bake.hcl` as a syntax check. If it errors on

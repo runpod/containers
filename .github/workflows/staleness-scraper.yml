@@ -7,9 +7,9 @@ name: Template Staleness Scraper
 # Split in two on purpose. `research` runs the agent, which is told to read
 # release notes, changelogs and web pages that other people write; injected text
 # in any of them is indistinguishable from the playbook once it is in the
-# context. So that job holds a read-only GITHUB_TOKEN, and `Edit` is the only
-# tool it has that writes, allowed on the template tree and on the three
-# handover files and nowhere else. It has no `curl`: being able to
+# context. So that job holds a read-only GITHUB_TOKEN, and every tool of its
+# that writes is confined to the paths the Edit rules name: the template tree
+# and the three handover files. It has no `curl`: being able to
 # pick where downloaded bytes land is enough to write .git/config, whose
 # core.fsmonitor command the next `git status` would run, or a file under
 # _work/_actions that a later step executes. Checksums go through sha256-url, a
@@ -153,10 +153,10 @@ jobs:
           git checkout --force --quiet -B "$branch" FETCH_HEAD
           git checkout --quiet "$config_from" -- .claude/
 
-      # `Edit` takes a path rule and `Write` does not: a Write(...) rule is
-      # accepted and then never matched, so allowing Write at all allows every
-      # path. Creating the handover files here means the agent only ever edits
-      # files that already exist, and the allow list can name them.
+      # Only the Edit rules bound where the agent may write; a bare `Write` in
+      # the allow list, which is what used to be there, lifts that for every
+      # path. Outside the checkout nothing creates a file at all, so the
+      # handover files have to exist before the agent starts.
       - name: Lay out the handover files
         shell: bash
         run: |
@@ -201,9 +201,11 @@ jobs:
             ${{ env.ALLOWED_PATHS }} -- a patch that reaches outside it is
             rejected and the family is skipped.
 
-            Edit is your only tool that writes, and it reaches
-            ${{ env.ALLOWED_PATHS }} and these three files, nothing else. They
-            exist already, pre-filled; edit them in place.
+            The only paths you can write are ${{ env.ALLOWED_PATHS }} and
+            these three files, and nothing you have creates a file outside the
+            checkout. They exist already, pre-filled; edit them in place. Do not
+            create a file under ${{ env.ALLOWED_PATHS }} that is not part of the
+            bump: an untracked one is reported and dropped.
 
             /tmp/scraper-pr.json -- "title" and "body" start empty. Fill both
             whenever you changed a file, the body as the playbook's "PR body"
@@ -300,8 +302,14 @@ jobs:
             printf '%s\n' "$edited" | sed 's/^/  /'
             echo "failed: changed tracked files outside official-templates/" > "$out/status"
           fi
-          # Staged, not committed: --cached also captures files the agent added.
-          git add -A -- official-templates/
+          # -u, not -A. A bump only ever changes files that already exist, and
+          # the agent can create one here: -A would stage it into the PR.
+          new="$(git ls-files --others --exclude-standard -- official-templates/)"
+          if [ -n "$new" ]; then
+            echo "::warning::${FAMILY}: untracked files in the template tree, not published:"
+            printf '%s\n' "$new" | sed 's/^/  /'
+          fi
+          git add -u -- official-templates/
           git diff --no-ext-diff --cached --binary -- official-templates/ > "$out/changes.patch"
           git diff --no-ext-diff --cached --name-only -- official-templates/ > "$out/changed-files"
           echo "::notice::${FAMILY}: $(wc -l < "$out/changed-files") changed file(s)"

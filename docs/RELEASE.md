@@ -483,10 +483,10 @@ either.
   The staleness scraper needs no *GitHub* credential of its own: it runs on the
   workflow's own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
   upstream text holds a read-only one. `research` runs the agent with
-  `contents: read` and one tool that writes, `Edit`, allowed on
-  `official-templates/` and on three handover files and nowhere else;
-  `publish` holds the write token, runs no model, and applies the agent's
-  patch only if every path in it is under `official-templates/`. GitHub starts
+  `contents: read`, and the `Edit` rules it is given confine every tool of its
+  that writes to `official-templates/` and three handover files. `publish`
+  holds the write token, runs no model, and applies the agent's patch only if
+  every path in it is under `official-templates/`. GitHub starts
   no workflow from an event that token creates, so the draft PRs the scraper
   opens arrive with **no checks** at all.
   Pushing to such a PR, or closing and reopening it, raises a real event and runs
