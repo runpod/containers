@@ -99,24 +99,24 @@ to this list.
   the HCL itself, fix it. Build/runtime correctness is proven later by CI.
   **`--print` must come first**: that exact prefix is what you are allowed to
   run, and a bake without it would start a real build.
-- **The two files you leave behind are the whole handover.** Write both with the
-  Write tool:
-  - `/tmp/scraper-pr.json`: `{"title": ..., "body": ...}`, the PR the next job
-    should open or update, with the body written as *PR body* below describes.
-    Required whenever you changed a file; the family is dropped with an error if
-    you edited the tree and left no usable title and body.
-  - `/tmp/scraper-notes.md`: optional, markdown. Anything a person should see in
-    the Actions run but that is not a file change: a release you deliberately
-    skipped, a version that needs hand-resolving, a gap you could not verify.
-    The job appends it to the run summary for you, because you cannot write
-    there yourself. For a detection-only family it is the whole output.
-  - `/tmp/scraper-status`: exactly `ok` if you got to the end (edits made,
-    nothing to do, or a detection-only family wrote its notes), or
-    `failed: <one-line reason>` if something blocked you. Finding nothing to do
-    is `ok`, not a failure. Write it on **every** path through the task, as your
-    last action. `failed:` is your veto: it is the one way to stop what you
-    produced from being opened as a PR, so use it whenever you are unsure of
-    what you left behind.
+- **The three files you leave behind are the whole handover.** They exist
+  already, pre-filled, and `Edit` is the only tool you have that can change
+  them; it reaches those three and `official-templates/`, nothing else.
+  - `/tmp/scraper-pr.json`: `{"title": "", "body": ""}` to start. Fill both
+    whenever you changed a file, with the body written as *PR body* below
+    describes. The family is dropped with an error if you edited the tree and
+    left no usable title and body.
+  - `/tmp/scraper-notes.md`: starts at `(nothing to report)`. Replace that with
+    anything a person should see in the Actions run but that is not a file
+    change: a release you deliberately skipped, a version that needs
+    hand-resolving, a gap you could not verify. The job appends it to the run
+    summary for you, because you cannot write there yourself. For a
+    detection-only family it is the whole output.
+  - `/tmp/scraper-status`: starts at `ok`, which is also the right answer when
+    you made edits or found nothing to do. Replace it with
+    `failed: <one-line reason>` if something blocked you. `failed:` is your
+    veto: it is the one way to stop what you produced from being opened as a
+    PR, so use it whenever you are unsure of what you left behind.
 ## pytorch
 
 Source of truth in the file: `TORCH_META` (companion versions) and

@@ -7,8 +7,9 @@ name: Template Staleness Scraper
 # Split in two on purpose. `research` runs the agent, which is told to read
 # release notes, changelogs and web pages that other people write; injected text
 # in any of them is indistinguishable from the playbook once it is in the
-# context. So that job holds a read-only GITHUB_TOKEN, and its tools can write
-# only through Write/Edit, into the checkout. It has no `curl`: being able to
+# context. So that job holds a read-only GITHUB_TOKEN, and `Edit` is the only
+# tool it has that writes, allowed on the template tree and on the three
+# handover files and nowhere else. It has no `curl`: being able to
 # pick where downloaded bytes land is enough to write .git/config, whose
 # core.fsmonitor command the next `git status` would run, or a file under
 # _work/_actions that a later step executes. Checksums go through sha256-url, a
@@ -152,6 +153,19 @@ jobs:
           git checkout --force --quiet -B "$branch" FETCH_HEAD
           git checkout --quiet "$config_from" -- .claude/
 
+      # `Edit` takes a path rule and `Write` does not: a Write(...) rule is
+      # accepted and then never matched, so allowing Write at all allows every
+      # path. Creating the handover files here means the agent only ever edits
+      # files that already exist, and the allow list can name them.
+      - name: Lay out the handover files
+        shell: bash
+        run: |
+          printf '{"title": "", "body": ""}\n' > /tmp/scraper-pr.json
+          printf '(nothing to report)\n' > /tmp/scraper-notes.md
+          # `ok` by default: a family that did its work but forgot the note
+          # should still publish, and `failed:` is the agent's explicit veto.
+          printf 'ok\n' > /tmp/scraper-status
+
       - name: Scan ${{ matrix.family }}
         id: scan
         uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
@@ -171,15 +185,14 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           show_full_output: true
+          # This job posts no inline comments, and leaving the default on runs a
+          # post-session step with ANTHROPIC_API_KEY in its environment.
+          classify_inline_comments: "false"
           prompt: |
-            Read the staleness playbook and follow it exactly, but only for the
-            `${{ matrix.family }}` family; ignore the others. It is
-            .claude-pr/.claude/staleness-playbook.md when that path exists (a
-            test PR: the action resets the working tree's .claude/ to develop's
-            copy and keeps the PR's there), otherwise
-            .claude/staleness-playbook.md. If neither exists, stop and report
-            that: never reconstruct it from git or work without it. Use the
-            GH_TOKEN env var for all `gh` commands.
+            Read .claude/staleness-playbook.md and follow it exactly, but
+            only for the `${{ matrix.family }}` family; ignore the others. If it
+            is not there, stop and report that: never reconstruct it from git or
+            work without it. Use the GH_TOKEN env var for all `gh` commands.
 
             You do not create the branch, the commit or the PR, and you have no
             tool that could: a later job does that from what you leave behind.
@@ -188,23 +201,25 @@ jobs:
             ${{ env.ALLOWED_PATHS }} -- a patch that reaches outside it is
             rejected and the family is skipped.
 
-            Leave exactly two files behind, with the Write tool:
+            Edit is your only tool that writes, and it reaches
+            ${{ env.ALLOWED_PATHS }} and these three files, nothing else. They
+            exist already, pre-filled; edit them in place.
 
-            /tmp/scraper-pr.json -- JSON with "title" and "body", the PR the
-            next job should open or update, written as the playbook's "PR body"
-            section describes. Required whenever you changed a file.
+            /tmp/scraper-pr.json -- "title" and "body" start empty. Fill both
+            whenever you changed a file, the body as the playbook's "PR body"
+            section describes.
 
-            /tmp/scraper-notes.md -- optional markdown for anything a person
-            should see in the run summary but that is not a file change. The job
-            appends it for you; you cannot write to the summary yourself.
+            /tmp/scraper-notes.md -- starts at `(nothing to report)`. Replace
+            that with anything a person should see in the run summary that is
+            not a file change. The job appends it for you; you cannot write to
+            the summary yourself. For a detection-only family it is your whole
+            output.
 
-            /tmp/scraper-status -- exactly `ok` if you got to the end (edits
-            made, nothing to do, or a detection-only family reported to the
-            notes), or `failed: <one-line reason>` if something blocked you.
-            Finding nothing to do is `ok`, not a failure. Write it on every path
-            through the task, as your last action. `failed:` is the one way you
-            can stop your own work from being published, so use it whenever you
-            are unsure of what you produced.
+            /tmp/scraper-status -- starts at `ok`, which is also the right
+            answer when you made edits or found nothing to do. Replace it with
+            `failed: <one-line reason>` if something blocked you. That is your
+            veto and the one way to stop what you produced from being
+            published, so use it whenever you are unsure of what you left.
 
             If `${{ matrix.family }}` is already current, change no files. Still
             follow the playbook's checks on any PR this job already has open for
@@ -212,11 +227,11 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
-            --disallowedTools "Edit(.github/**),Edit(.git/**),Edit(//home/runner/_work/_actions/**),Edit(//home/runner/work/_actions/**),Edit(//home/runner/_work/_temp/**),Edit(~/.gitconfig),Read(//proc/**)"
-            --allowedTools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*)"
+            --disallowedTools "Read(//proc/**)"
+            --allowedTools "Read,Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools:*),Bash(pip index:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
-      # the agent produced plus its own two notes.
+      # the agent produced plus the three files it filled in.
       - name: Collect the result
         if: always()
         shell: bash

@@ -119,9 +119,11 @@ publish_family() {
     # Deleting a branch closes any PR on it, so ask about the branch rather than
     # about our label: a scraper PR someone un-labelled is still a live PR, and
     # the lookup above would not have seen it.
+    # `|| return 1`, not a bare call: errexit is off in here, and a failed
+    # lookup would read as "no open PR" and delete a branch that has one.
     any_open="$(BRANCH="$branch" gh pr list --head "$branch" --state open \
       --json number,headRefName \
-      --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')"
+      --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')" || return 1
     if [ -n "$any_open" ]; then
       echo "::warning::${family}: #${any_open} is open on ${branch} without the ${LABEL} label; leaving it alone"
       reset_tree
