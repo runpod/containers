@@ -8,8 +8,20 @@ description: |
 
 inputs:
   image-refs:
-    description: "JSON array of image refs to smoke-test"
+    description: |
+      JSON array of image refs to smoke-test. Ignored when `manifest` is set
+      (pass "[]").
     required: true
+  manifest:
+    description: |
+      Path to a ready-made test manifest. Skips manifest generation, so
+      `profile`, `image-refs` and every selection / test-* input that feeds
+      the generator are ignored — the manifest says it all. For callers
+      that need more than one group per run, e.g. the release GPU sweep
+      (.github/scripts/gpu_sweep.py), which gives each family its own floor.
+      Empty (default) generates the manifest from the inputs.
+    required: false
+    default: ""
   profile:
     description: |
       Manifest grouping strategy passed to generate_test_manifest.py.
@@ -188,6 +200,14 @@ inputs:
     description: |
       Emit `test_comfyui_functional: true` for the end-to-end ComfyUI
       generation check (model provisioning, workflow execution, PNG validation).
+    required: false
+    default: "false"
+  test-vllm:
+    description: |
+      Emit `test_vllm: true` for runpod/vllm-openai. Boots the Pod with
+      VLLM_API_KEY and a small model as the start command, exposes :8000 as
+      8000/http, then through the public proxy checks /health 200, the key
+      required on /v1/models, /invocations and /tokenize, and one completion.
     required: false
     default: "false"
   save-comfyui-images:
@@ -461,7 +481,24 @@ runs:
 
         echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
 
+    - name: Use provided manifest
+      if: ${{ inputs.manifest != '' }}
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+      run: |
+        set -euo pipefail
+        if [[ ! -s "${MANIFEST}" ]]; then
+          echo "::error::manifest '${MANIFEST}' does not exist or is empty"
+          exit 1
+        fi
+        echo "MANIFEST_PATH=$(realpath "${MANIFEST}")" >> "${GITHUB_ENV}"
+        echo "::group::test manifest"
+        cat "${MANIFEST}"
+        echo "::endgroup::"
+
     - name: Generate test manifest
+      if: ${{ inputs.manifest == '' }}
       shell: bash
       env:
         REFS: ${{ inputs.image-refs }}
@@ -474,6 +511,7 @@ runs:
         TEST_PORTS: ${{ inputs.test-ports }}
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
+        TEST_VLLM: ${{ inputs.test-vllm }}
         TEST_PIP_CHECK: ${{ inputs.test-pip-check }}
         PIP_CHECK_ALLOW: ${{ inputs.pip-check-allow }}
         TEST_CA_CERTS: ${{ inputs.test-ca-certs }}
@@ -511,6 +549,9 @@ runs:
         fi
         if [[ "${TEST_COMFYUI_FUNCTIONAL,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-comfyui-functional)
+        fi
+        if [[ "${TEST_VLLM,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-vllm)
         fi
         if [[ "${CHECK_ALL_GPU,,}" == "true" ]]; then
           EXTRA_ARGS+=(--check-all-gpu)

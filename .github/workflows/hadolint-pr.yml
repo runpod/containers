@@ -26,8 +26,12 @@ jobs:
             ignore: "DL3008"
           - dockerfile: official-templates/ray-cluster/Dockerfile
             ignore: ""
+          - dockerfile: official-templates/ray-cluster/inference/Dockerfile
+            ignore: ""
           - dockerfile: official-templates/comfyui/Dockerfile
             ignore: "DL3008"
+          - dockerfile: official-templates/vllm/Dockerfile
+            ignore: "DL3006,DL3008"
           - dockerfile: official-templates/filebrowser/Dockerfile
             ignore: ""
           - dockerfile: official-templates/burn/Dockerfile

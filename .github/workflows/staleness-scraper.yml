@@ -1,0 +1,438 @@
+name: Template Staleness Scraper
+
+# Weekly check for upstream releases we do not yet ship, one job per family in
+# the matrix below. Opens a draft PR per stale family; ray-cluster is
+# detection-only and opens none. Rules live in .claude/staleness-playbook.md.
+#
+# Split in two on purpose. `research` runs the agent, which is told to read
+# release notes, changelogs and web pages that other people write; injected text
+# in any of them is indistinguishable from the playbook once it is in the
+# context. So that job holds a read-only GITHUB_TOKEN, and every tool of its
+# that writes is confined to the paths the Edit rules name: the template tree
+# and the three handover files. It has no `curl`: being able to
+# pick where downloaded bytes land is enough to write .git/config, whose
+# core.fsmonitor command the next `git status` would run, or a file under
+# _work/_actions that a later step executes. Checksums go through sha256-url, a
+# root-owned copy of scripts/sha256_url.sh, which owns the temporary file it
+# downloads to and returns only a digest.
+# What survives is that the agent can write a bad diff, and a human reads it.
+# `publish` holds the write token and runs no model at all, so there is nothing
+# in it to talk into doing something else. Permissions are per job, which is why
+# this is two jobs rather than two steps.
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
+  workflow_dispatch:
+
+# Least privilege by default; each job widens only what it needs.
+permissions: {}
+
+env:
+  PR_REVIEWER: bohdankanarskyi-runpod
+  # The only tree the scraper is ever allowed to touch. `publish` rejects a patch
+  # that reaches outside it, so no amount of injected text can make the agent
+  # edit a workflow, the playbook, or anything else that runs later.
+  ALLOWED_PATHS: official-templates/
+
+concurrency:
+  group: staleness-scraper
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: blacksmith-4vcpu-ubuntu-2404 # On the org IP allow list; ubuntu-latest is not.
+    timeout-minutes: 45
+    # Read only. The agent reads untrusted text, so give it a token that cannot
+    # change anything even if it is persuaded to try.
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false # One stale family should not block the other.
+      matrix:
+        include:
+          # pytorch needs more turns: it verifies wheels across many CUDA x
+          # python combos plus companion versions. comfyui is lighter.
+          - family: pytorch
+            turns: 120
+          - family: comfyui
+            turns: 60
+          - family: autoresearch
+            turns: 60
+          - family: base
+            turns: 90
+          - family: pytorch-cluster
+            turns: 90
+          # ray-cluster only reports: every pin needs a hand-resolved lock file.
+          - family: ray-cluster
+            turns: 50
+          # vllm is one version plus its digest, read straight off the
+          # upstream image; nothing to resolve.
+          - family: vllm
+            turns: 40
+          - family: filebrowser
+            turns: 50
+          # k3s-node pins three components, each with an amd64 and an arm64 sum.
+          - family: k3s-node
+            turns: 80
+          - family: sandbox-ubuntu
+            turns: 70
+          - family: sandbox-browser
+            turns: 70
+          - family: sandbox-harbor
+            turns: 70
+          - family: sandbox-openclaw
+            turns: 70
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Work off develop: that is what the bump is measured against and what
+          # `publish` branches from. The workflow file itself comes from the
+          # default branch (main), where the cron and workflow_dispatch fire.
+          ref: develop
+          # The repo is public, so fetching needs no credential: keep one out of
+          # .git/config entirely rather than leave a readable token next to an
+          # agent that reads untrusted text.
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Required by CLAUDE_CODE_SUBPROCESS_ENV_SCRUB below: Claude Code refuses
+      # to start without it, since it isolates subprocesses through bubblewrap.
+      # The blacksmith image does not ship it.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          bwrap --version
+
+      # Out of the checkout and owned by root. The agent may run this script but
+      # must not be able to rewrite it first: it can Write anywhere the runner
+      # user can, and a writable file that something later executes is arbitrary
+      # shell. It has no sudo, so a root-owned 0755 copy settles it by file
+      # permission rather than by a pattern whose semantics we would have to
+      # trust.
+      - name: Install the checksum helper outside the checkout
+        run: |
+          sudo install -m 0755 -o root -g root \
+            .github/scripts/sha256_url.sh /usr/local/bin/sha256-url
+          sha256-url https://raw.githubusercontent.com/pypa/get-pip/0d4515b4d114f9cd820446a4bd4bd0986393d454/public/get-pip.py
+
+      # Edit on top of the PR this job already has open, so the patch applies
+      # there later. Deterministic shell, before the model starts.
+      #
+      # Keep this step LAST of the setup. It replaces the whole working tree
+      # with a scraper branch, which was cut from develop and carries none of
+      # this run's own files: anything the run needs from the checked-out ref
+      # (the helper installed above, the playbook restored below) has to be in
+      # place, or come back explicitly, before it runs.
+      - name: Continue an open PR's branch, if any
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAMILY: ${{ matrix.family }}
+        run: |
+          branch="staleness-scraper/${FAMILY}"
+          # --head matches by prefix, so staleness-scraper/pytorch also returns
+          # the pytorch-cluster PR. Filter on the exact ref.
+          open_pr="$(BRANCH="$branch" gh pr list --label staleness-scraper \
+            --head "$branch" --state open --json number,headRefName \
+            --jq 'map(select(.headRefName == env.BRANCH))[0].number // empty')"
+          if [ -z "$open_pr" ]; then
+            echo "::notice::${FAMILY}: no open PR; working from the checked-out ref"
+            exit 0
+          fi
+          echo "::notice::${FAMILY}: continuing #${open_pr} on ${branch}"
+          # Keep the .claude/ we were checked out on. The scraper branch was cut
+          # from develop and need not carry this run's playbook at all, and the
+          # action preserves whatever .claude/ it finds in the tree, so without
+          # this the agent is handed the wrong playbook or none. Only
+          # official-templates/ is collected afterwards, so it never travels.
+          config_from="$(git rev-parse HEAD)"
+          git fetch --quiet origin "$branch"
+          git checkout --force --quiet -B "$branch" FETCH_HEAD
+          git checkout --quiet "$config_from" -- .claude/
+
+      # Only the Edit rules bound where the agent may write; a bare `Write` in
+      # the allow list, which is what used to be there, lifts that for every
+      # path. Outside the checkout nothing creates a file at all, so the
+      # handover files have to exist before the agent starts.
+      - name: Lay out the handover files
+        shell: bash
+        run: |
+          printf '{"title": "", "body": ""}\n' > /tmp/scraper-pr.json
+          printf '(nothing to report)\n' > /tmp/scraper-notes.md
+          # Neither `ok` nor a veto: an agent whose Edit rules do not match
+          # writes nothing at all, and a pre-filled `ok` would then pass for
+          # "already current" on every family at once. Collect resolves it.
+          printf 'unknown\n' > /tmp/scraper-status
+
+      - name: Scan ${{ matrix.family }}
+        id: scan
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6
+        env:
+          # Read-only by this job's permissions: enough for `gh pr list/view` and
+          # `gh release view`, not enough to push, open a PR or label anything.
+          GH_TOKEN: ${{ github.token }}
+          # Keep ANTHROPIC_API_KEY out of the environment the agent's Bash
+          # tools inherit: it is the one long-lived secret left in this job, and
+          # the agent reads text other people wrote. The key is the scraper's
+          # own (the PR reviewer uses PR_REVIEW_ANTHROPIC_API_KEY), so a leak
+          # would be bounded by its spend limit rather than shared. Undocumented
+          # but present since Claude Code 2.1.83; the action installs a newer
+          # one, and it needs the bubblewrap installed above.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          show_full_output: true
+          # This job posts no inline comments, and leaving the default on runs a
+          # post-session step with ANTHROPIC_API_KEY in its environment.
+          classify_inline_comments: "false"
+          prompt: |
+            Read .claude/staleness-playbook.md and follow it exactly, but
+            only for the `${{ matrix.family }}` family; ignore the others. If it
+            is not there, stop and report that: never reconstruct it from git or
+            work without it. Use the GH_TOKEN env var for all `gh` commands.
+
+            You do not create the branch, the commit or the PR, and you have no
+            tool that could: a later job does that from what you leave behind.
+            Your job is to decide what should change and to edit the files in
+            the working tree, nothing else. Edit only under
+            ${{ env.ALLOWED_PATHS }} -- a patch that reaches outside it is
+            rejected and the family is skipped.
+
+            The only paths you can write are ${{ env.ALLOWED_PATHS }} and
+            these three files, and nothing you have creates a file outside the
+            checkout. They exist already, pre-filled; edit them in place. Do not
+            create a file under ${{ env.ALLOWED_PATHS }} that is not part of the
+            bump: an untracked one is reported and dropped.
+
+            /tmp/scraper-pr.json -- "title" and "body" start empty. Fill both
+            whenever you changed a file, the body as the playbook's "PR body"
+            section describes.
+
+            /tmp/scraper-notes.md -- starts at `(nothing to report)`. Replace
+            that with anything a person should see in the run summary that is
+            not a file change. The job appends it for you; you cannot write to
+            the summary yourself. For a detection-only family it is your whole
+            output.
+
+            /tmp/scraper-status -- starts at `unknown` and must not stay
+            there. Replace it with `ok` once you reach the end, whether you made
+            edits or found nothing to do. If you stop for any other reason --
+            the playbook is missing, a `gh` or WebFetch call keeps failing, a
+            version you cannot verify, turns running out -- replace it with
+            `failed: <one-line reason>` before you stop. That is your veto and
+            the one way to stop what you produced from being published.
+
+            If `${{ matrix.family }}` is already current, change no files. Still
+            follow the playbook's checks on any PR this job already has open for
+            it; reporting that there is nothing to add is a normal `ok`.
+          # Every tool that reads a file or writes one is named with a path,
+          # never bare: a bare name grants the tool everywhere, and Grep and
+          # Glob reach the whole filesystem that way. `**` is relative, so it
+          # means the checkout. .git/ is cut back out of it because the action
+          # puts the job token in the remote URL, and /proc because that is
+          # where this job's environment, API key included, is readable. What
+          # is left is public, so WebFetch needs no domain list to carry out.
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns ${{ matrix.turns }}
+            --disallowedTools "Read(.git/**),Grep(.git/**),Glob(.git/**),Read(//proc/**)"
+            --allowedTools "Read(**),Read(//tmp/scraper-pr.json),Read(//tmp/scraper-notes.md),Read(//tmp/scraper-status),Glob(**),Grep(**),Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools inspect:*)"
+
+      # Everything the next job needs, and nothing that is not a file: the diff
+      # the agent produced plus the three files it filled in.
+      - name: Collect the result
+        if: always()
+        shell: bash
+        env:
+          FAMILY: ${{ matrix.family }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          # Step env beats anything written to $GITHUB_ENV, so these hold even
+          # if the agent got that far. BASH_ENV would be sourced before the
+          # first line below runs; a global git config or an external diff
+          # driver would run commands of someone else's choosing out of `git`.
+          BASH_ENV: ""
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+        run: |
+          out="${RUNNER_TEMP}/out"
+          mkdir -p "$out"
+          # If this step itself dies the artifact is half-written, and `publish`
+          # would read a leftover "ok" next to a missing patch as "nothing to do".
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "failed: collecting the result exited ${rc}" > "$out/status"' EXIT
+          # An agent that crashed, timed out or ran out of turns stopped in the
+          # middle of its edits, so whatever is in the tree is half of a bump.
+          # Record the veto in the artifact itself: `publish` reads only that,
+          # and it has no other way to learn the step died.
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "failed: the agent step ended '${SCAN_OUTCOME}'" > "$out/status"
+            echo "::error::${FAMILY}: agent step '${SCAN_OUTCOME}'; its partial work will not be published"
+          fi
+          if [ ! -s "$out/status" ]; then
+            cp /tmp/scraper-status "$out/status" 2>/dev/null || true
+          fi
+          cp /tmp/scraper-pr.json "$out/pr.json" 2>/dev/null || true
+          # The agent cannot reach $GITHUB_STEP_SUMMARY: it sits outside the
+          # working directory its Bash tools are confined to. Carry its notes
+          # there from here, which is also why it needs no `echo` of its own
+          # (echo plus a redirect is a write-anywhere primitive).
+          if [ -s /tmp/scraper-notes.md ]; then
+            cp /tmp/scraper-notes.md "$out/notes.md"
+            {
+              echo "### ${FAMILY}"
+              cat /tmp/scraper-notes.md
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Only template files travel to `publish`. Anything the agent wrote
+          # elsewhere is a finding, not cargo: report it and fail the family.
+          # .claude/ is excluded because the step above restores it deliberately.
+          # -c flags, not trust in .git/config: the agent can write that file,
+          # and core.fsmonitor / core.hooksPath name commands git would run here.
+          # diff.external is the third such hook, vetoed per diff below: it is a
+          # command option, not a `git` one, and breaks every other subcommand.
+          git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"; }
+          outside="$(git status --porcelain -- . ':(exclude)official-templates' ':(exclude).claude')"
+          # Two different things. A *tracked* file changed or deleted outside the
+          # template tree is someone rewriting the repo and fails the family. An
+          # untracked leftover is just scratch the playbook told it to keep in
+          # /tmp: it can never reach `publish`, which only ever stages
+          # official-templates/, so it is worth saying and not worth failing on.
+          edited="$(printf '%s\n' "$outside" | grep -v '^??' || true)"
+          scratch="$(printf '%s\n' "$outside" | grep '^??' || true)"
+          if [ -n "$scratch" ]; then
+            echo "::warning::${FAMILY}: scratch left in the checkout (ignored, belongs in /tmp):"
+            printf '%s\n' "$scratch" | sed 's/^/  /'
+          fi
+          if [ -n "$edited" ]; then
+            echo "::error::${FAMILY}: the agent changed tracked files outside official-templates/:"
+            printf '%s\n' "$edited" | sed 's/^/  /'
+            echo "failed: changed tracked files outside official-templates/" > "$out/status"
+          fi
+          # -u, not -A. A bump only ever changes files that already exist, and
+          # the agent can create one here: -A would stage it into the PR.
+          new="$(git ls-files --others --exclude-standard -- official-templates/)"
+          if [ -n "$new" ]; then
+            echo "::warning::${FAMILY}: untracked files in the template tree, not published:"
+            printf '%s\n' "$new" | sed 's/^/  /'
+          fi
+          git add -u -- official-templates/
+          git diff --no-ext-diff --cached --binary -- official-templates/ > "$out/changes.patch"
+          git diff --no-ext-diff --cached --name-only -- official-templates/ > "$out/changed-files"
+          # The agent never said how it went. Having changed files is evidence
+          # enough that it ran, so that publishes; having changed nothing means
+          # there is no evidence it ran at all, and the likeliest reason is that
+          # nothing it reached for was permitted.
+          if [ "$(cat "$out/status" 2>/dev/null)" = "unknown" ]; then
+            if [ -s "$out/changes.patch" ]; then
+              echo "::warning::${FAMILY}: changed files but never confirmed a status; publishing anyway"
+              echo "ok" > "$out/status"
+            else
+              echo "failed: no status and no changes; the agent's tools may be misconfigured" > "$out/status"
+              echo "::error::${FAMILY}: wrote nothing at all, not even its status; check the tool configuration"
+            fi
+          fi
+          echo "::notice::${FAMILY}: $(wc -l < "$out/changed-files") changed file(s)"
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scraper-${{ matrix.family }}
+          path: ${{ runner.temp }}/out
+          retention-days: 3
+          if-no-files-found: error
+
+      # What makes this family pass or fail. The agent's status note is one
+      # input, not the only one: since the split it produces nothing but files,
+      # so a patch plus a usable pr.json (or an empty patch) already describes
+      # the outcome completely. Throwing away a correct patch because a
+      # bookkeeping file is missing would cost more than it protects.
+      - name: Judge the outcome
+        if: always()
+        shell: bash
+        env:
+          FAMILY: ${{ matrix.family }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          BASH_ENV: ""
+        run: |
+          out="${RUNNER_TEMP}/out"
+          status="$(cat "$out/status" 2>/dev/null || true)"
+
+          # 1. Did the agent itself survive? A crash, a timeout or max-turns is a
+          #    failure whatever it managed to leave behind.
+          if [ "$SCAN_OUTCOME" = "skipped" ]; then
+            echo "::error::${FAMILY}: the agent never ran; an earlier step in this job failed, so look above this one"
+            exit 1
+          fi
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "::error::${FAMILY}: the agent step ended '${SCAN_OUTCOME}' (crash, timeout or max-turns)"
+            exit 1
+          fi
+
+          # 2. Did it veto itself? `failed:` is the agent, or the collect step,
+          #    saying something is wrong. Believe it.
+          case "$status" in
+            failed:*)
+              echo "::error::${FAMILY}: reported ${status}"
+              exit 1
+              ;;
+          esac
+
+          # 3. Otherwise judge by what it left, not by whether it remembered to
+          #    say so. Since the split the agent only produces files, and those
+          #    files are the whole handover: a patch and a PR title and body, or
+          #    nothing at all. Either is a complete, checkable outcome, so a
+          #    missing status note is bookkeeping rather than an unknown state.
+          if [ -s "$out/changes.patch" ]; then
+            if ! jq -e '(.title // "") != "" and (.body // "") != ""' "$out/pr.json" >/dev/null 2>&1; then
+              echo "::error::${FAMILY}: it changed files but left no usable pr.json, so there is nothing to open a PR with"
+              exit 1
+            fi
+            left="a patch and a PR title and body"
+          else
+            left="no changes"
+          fi
+
+          if [ "$status" = "ok" ]; then
+            echo "::notice::${FAMILY}: ok (${left})"
+          else
+            echo "::warning::${FAMILY}: no status note was written; judging by what it left instead (${left})"
+          fi
+
+  publish:
+    needs: research
+    if: always()
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    # The write half. No model runs here, so there is no context to inject into:
+    # every decision below is made by this script from the repository's own
+    # state, never from anything the agent wrote.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # labels are the issues API
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Download every family's result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: scraper-*
+          path: ${{ runner.temp }}/results
+
+      - name: Open or update a PR per family
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ runner.temp }}/results
+          ALLOWED_PATHS: ${{ env.ALLOWED_PATHS }}
+          PR_REVIEWER: ${{ env.PR_REVIEWER }}
+        run: .github/scripts/publish_scraper_prs.sh

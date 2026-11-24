@@ -83,6 +83,7 @@ def render_yaml(groups: dict) -> str:
             "check_all_gpu",
             "test_comfyui",
             "test_comfyui_functional",
+            "test_vllm",
             "test_pip_check",
             "test_ca_certs",
             "min_ca_certs_version",
@@ -164,6 +165,7 @@ def build_groups(
     test_ports: list[str] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
+    test_vllm: bool = False,
     test_pip_check: bool = False,
     pip_check_allow: list[str] | None = None,
     test_ca_certs: bool = False,
@@ -235,7 +237,10 @@ def build_groups(
     instances = list(instances or [])
     test_ports = list(test_ports or [])
     cuda_versions = list(cuda_versions or [])
-    wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
+    wants_allowed_cuda = any(v.strip().lower() == "allowed" for v in cuda_versions)
+    wants_all_cuda = wants_allowed_cuda or any(
+        v.strip().lower() == "all" for v in cuda_versions
+    )
 
     if instances and check_all_gpu:
         raise ValueError(
@@ -272,6 +277,8 @@ def build_groups(
             body["test_comfyui"] = True
         if test_comfyui_functional:
             body["test_comfyui_functional"] = True
+        if test_vllm:
+            body["test_vllm"] = True
         if test_pip_check:
             body["test_pip_check"] = True
             if pip_check_allow:
@@ -302,13 +309,20 @@ def build_groups(
             body["test_ray"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
-        if gpu_group and wants_all_cuda:
+        if gpu_group and wants_allowed_cuda:
+            body["cuda_versions"] = "allowed"
+        elif gpu_group and wants_all_cuda:
             body["cuda_versions"] = "all"
         elif gpu_group and cuda_versions:
             body["cuda_versions"] = list(cuda_versions)
         # The floor is meaningless once exact versions are pinned, and
-        # sending both makes the API reject the create outright.
-        if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
+        # sending both makes the API reject the create outright. `allowed`
+        # is the exception: the harness reads it as the axis floor for
+        # tags without a CUDA marker and never sends it to the API.
+        if min_cuda_version and (
+            wants_allowed_cuda
+            or not (gpu_group and (wants_all_cuda or cuda_versions))
+        ):
             body["min_cuda_version"] = min_cuda_version
         return body
 
@@ -457,6 +471,10 @@ def main() -> int:
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument(
+        "--test-vllm", action="store_true",
+        help="runpod/vllm-openai: auth gate and one completion via the proxy",
+    )
     ap.add_argument(
         "--test-pip-check",
         action="store_true",
@@ -699,6 +717,7 @@ def main() -> int:
         test_ports=args.test_port,
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
+        test_vllm=args.test_vllm,
         test_pip_check=args.test_pip_check,
         pip_check_allow=args.pip_check_allow,
         test_ca_certs=args.test_ca_certs,
