@@ -966,7 +966,26 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+        mode: [pod]
+        include:
+          - cuda: cu1281
+            mode: cluster
     steps:
+      - name: Check prod credentials
+        if: matrix.mode == 'cluster'
+        id: creds
+        shell: bash
+        env:
+          KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          SSH: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${KEY}" && -n "${SSH}" ]]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Instant Cluster smoke test skipped: set TESTING_RUNPOD_API_KEY and TESTING_RUNPOD_SSH_PRIVATE_KEY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -990,6 +1009,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Smoke test (${{ matrix.cuda }})
+        if: matrix.mode == 'pod'
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
@@ -1014,64 +1034,15 @@ jobs:
             *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
             *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
 
-  # The per-pod job above proves the image on every CUDA variant; this one
-  # proves the cluster behaviour a single pod can't: node-0 as head, Grafana
-  # on :8889, Prometheus scraping every node. Runs on prod, where customers
-  # run it, on one CUDA variant only: clusters are billed per node, so the
-  # test takes the cheapest GPU type Instant Clusters offer, 2 nodes.
-  test-pytorch-cluster-instant:
-    runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: [versions, build-pytorch-cluster]
-    if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
-    env:
-      # The harness refuses cluster groups on prod unless this is set, so a
-      # local run can't create a prod cluster by accident.
-      ALLOW_PROD_CLUSTERS: "1"
-      # No cluster capacity -> test the image on a single pod instead.
-      CLUSTER_POD_FALLBACK: "1"
-      CLUSTER_MAX_NODE_PRICE: "25"
-    steps:
-      - name: Check prod credentials
-        id: creds
-        shell: bash
-        env:
-          KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
-          SSH: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
-        run: |
-          if [[ -n "${KEY}" && -n "${SSH}" ]]; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Instant Cluster smoke test skipped: set TESTING_RUNPOD_API_KEY and TESTING_RUNPOD_SSH_PRIVATE_KEY"
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout
-        if: steps.creds.outputs.ok == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          fetch-depth: 0
-
-      - name: Download refs for cu1281
-        if: steps.creds.outputs.ok == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: cluster-refs-cu1281
-          path: /tmp/cluster-refs
-
-      - name: Read refs
-        if: steps.creds.outputs.ok == 'true'
-        id: refs
-        shell: bash
-        run: |
-          REFS=$(cat /tmp/cluster-refs/refs.json)
-          {
-            echo "refs<<EOF"
-            echo "$REFS"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Instant Cluster smoke test
-        if: steps.creds.outputs.ok == 'true'
+        if: matrix.mode == 'cluster' && steps.creds.outputs.ok == 'true'
+        env:
+          # The harness refuses cluster groups on prod unless this is set, so a
+          # local run can't create a prod cluster by accident.
+          ALLOW_PROD_CLUSTERS: "1"
+          # No cluster capacity -> test the image on a single pod instead.
+          CLUSTER_POD_FALLBACK: "1"
+          CLUSTER_MAX_NODE_PRICE: "25"
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}

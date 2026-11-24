@@ -863,7 +863,8 @@ as pods. `.github/workflows/reap-clusters.yml` is the backstop: hourly, it
 runs `reap_clusters.py --delete` against prod and dev for `smoketest-*`
 clusters older than 90 minutes.
 
-In CI, `base.yml`'s `test-pytorch-cluster-instant` job runs this on **prod**
+In CI, the `cluster` leg of `base.yml`'s `test-pytorch-cluster` job (one
+job with the per-pod legs, so the release gate waits on it) runs this on **prod**
 (`ALLOW_PROD_CLUSTERS=1`) for the cu1281 build with `profile: cluster` and
 `cluster-types: SLURM,TRAINING` (the smoke-test action's input for
 `cluster_types`): 2 nodes of the cheapest GPU type Instant Clusters offer.
