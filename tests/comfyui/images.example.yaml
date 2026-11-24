@@ -10,7 +10,8 @@
 # PNG returned through the public proxy. It implies `test_comfyui`.
 #
 # `test_comfyui_manager` installs the custom node in manager_node.json through
-# ComfyUI-Manager, reboots ComfyUI, and verifies the node's class imports. The
+# ComfyUI-Manager, reboots ComfyUI, verifies the node's class imports, and that
+# the install left torch alone (same version and devices in /system_stats). The
 # default node has torch-dependent deps, so it exercises pip resolving against
 # the baked torch stack. It implies `test_comfyui` and needs a comfyui_manager
 # (4.x) image, where ComfyUI runs on loopback behind the password proxy and

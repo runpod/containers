@@ -405,6 +405,26 @@ def _dump_manager_history(base: str, emit: Callable[[str], None]) -> None:
         pass
 
 
+def _torch_fingerprint(base: str) -> Optional[tuple]:
+    """torch as ComfyUI sees it: the version string (with its +cuXXX build) and
+    the device types it ended up on. The venv is --system-site-packages, so a
+    node dependency that drags its own torch into the venv shadows the baked
+    one; the node still imports, and only this shows it."""
+    try:
+        code, body = _request(base + "/system_stats", timeout=15)
+        if code != 200:
+            return None
+        stats = json.loads(body)
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = (stats.get("system") or {}).get("pytorch_version")
+    types = sorted(str(device.get("type")) for device in (stats.get("devices") or []))
+    # An unexpected shape must not read as "nothing changed" on both sides.
+    if not version or not types:
+        return None
+    return (version, types)
+
+
 def _manager_install_node(
     base: str, node: dict, emit: Callable[[str], None],
 ) -> bool:
@@ -474,7 +494,8 @@ def _manager_reboot(base: str, emit: Callable[[str], None]) -> None:
 def run_comfyui_manager_check(
     pod_id: str, on_line: Optional[Callable[[str], None]] = None,
 ) -> tuple[bool, str]:
-    """Install a custom node via ComfyUI-Manager, reboot, and verify it loads."""
+    """Install a custom node via ComfyUI-Manager, reboot, verify it loads, and
+    verify the install did not replace the baked torch."""
     emit = on_line or (lambda _message: None)
     base = _base_url(pod_id)
     emit(f"ComfyUI-Manager install check via proxy: {base}")
@@ -494,6 +515,11 @@ def run_comfyui_manager_check(
     if _object_info_has_class(base, node_class):
         return False, f"node class {node_class} already present before install"
 
+    before = _torch_fingerprint(base)
+    if before is None:
+        return False, "could not read torch state from /system_stats before install"
+    emit(f"torch before install: {before[0]} on {','.join(before[1])}")
+
     emit(f"installing {node['id']}@{node.get('selected_version', 'latest')} via Manager...")
     if not _manager_install_node(base, node, emit):
         _dump_manager_history(base, emit)
@@ -511,5 +537,14 @@ def run_comfyui_manager_check(
         _dump_manager_history(base, emit)
         return False, f"node class {node_class} not available after install+reboot"
 
+    # The point of the whole step: the dependency resolved against the baked
+    # torch rather than pulling its own into the venv.
+    after = _torch_fingerprint(base)
+    if after is None:
+        return False, "could not read torch state from /system_stats after install"
+    if after != before:
+        return False, f"the install changed torch: {before} -> {after}"
+    emit(f"torch unchanged: {after[0]} on {','.join(after[1])}")
+
     emit("COMFYUI MANAGER CHECK OK")
-    return True, f"installed + activated {node['id']} ({node_class})"
+    return True, f"installed + activated {node['id']} ({node_class}), torch unchanged"
