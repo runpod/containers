@@ -1,7 +1,7 @@
 name: Harness Unit Tests
 
 # Unit tests for the smoke-test harness in tests/runpod_smoke. No network,
-# no RunPod credentials, no pods — pure logic, so this runs on every PR and
+# no Runpod credentials, no pods — pure logic, so this runs on every PR and
 # finishes in seconds. The paid end-to-end coverage is the per-family smoke
 # test in release.yml.
 
@@ -11,17 +11,56 @@ on:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
       - '.github/workflows/harness-tests.yml'
+      # Release GPU sweep: planner/reporter and the GPU subset it reads.
+      - '.github/scripts/gpu_sweep.py'
+      - '.github/scripts/test_gpu_sweep.py'
+      - '.github/gpu-sweep.yml'
+      - '.github/families.yml'
       # The Jupyter token contract runs the real start_jupyter out of these,
       # so editing one has to re-run the suite.
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      - 'official-templates/vllm/scripts/**'
+      - 'official-templates/ray-cluster/inference/start.sh'
+      - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
+      - 'official-templates/ray-cluster/inference/download_model.py'
+      - 'official-templates/ray-cluster/inference/post_start.sh'
+      # test_grafana_auth_proxy runs the real proxy.
+      - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
+      # test_comfyui_auth_proxy runs the real proxy.
+      - 'official-templates/comfyui/scripts/auth_proxy.py'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
   push:
     branches: [main, develop]
     paths:
       - 'tests/**'
       - '.github/scripts/generate_test_manifest.py'
+      - '.github/scripts/gpu_sweep.py'
+      - '.github/scripts/test_gpu_sweep.py'
+      - '.github/gpu-sweep.yml'
+      - '.github/families.yml'
       - 'container-template/start.sh'
       - 'official-templates/comfyui/scripts/start.sh'
+      - 'official-templates/vllm/scripts/**'
+      - 'official-templates/ray-cluster/inference/start.sh'
+      - 'official-templates/ray-cluster/inference/wait_for_nodes.py'
+      - 'official-templates/ray-cluster/inference/download_model.py'
+      - 'official-templates/ray-cluster/inference/post_start.sh'
+      # test_grafana_auth_proxy runs the real proxy.
+      - 'official-templates/pytorch-cluster/config/grafana-proxy/auth_proxy.py'
+      # test_comfyui_auth_proxy runs the real proxy.
+      - 'official-templates/comfyui/scripts/auth_proxy.py'
+      # test_pytorch_blackwell_rules checks base.yml's scoped Blackwell
+      # blocks against what these bake files build.
+      - '.github/workflows/base.yml'
+      - 'official-templates/shared/versions.hcl'
+      - 'official-templates/pytorch/docker-bake.hcl'
+      - 'official-templates/pytorch-cluster/docker-bake.hcl'
   workflow_dispatch:
 
 permissions:
@@ -29,14 +68,19 @@ permissions:
 
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install aiohttp
+        run: python3 -m pip install --user aiohttp==3.12.15
+
       - name: Run unit tests
         shell: bash
         working-directory: tests
+        env:
+          CI: "true"
         run: python3 -m unittest discover -s unit -t . -v
 
       # The generator is what turns CI inputs into a manifest, and its
@@ -67,3 +111,43 @@ jobs:
             exit 1
           fi
           echo "OK: instances and check-all-gpu are mutually exclusive"
+
+          # A scoped block must split the refs, not fall back to blocking
+          # the GPU for all of them: the matching ref goes to its own group
+          # carrying both patterns, the other keeps base_gpu and only the
+          # global one.
+          gen --profile gpu \
+            --refs '["runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404","runpod/pytorch:1.0.0-cu1300-torch2130-ubuntu2404"]' \
+            --exclude-instance "RTX 2000 Ada" \
+            --exclude-instance-for '*-torch260-*: B200*, B300*' \
+            --output "${RUNNER_TEMP}/m-scoped.yaml" >/dev/null
+          python3 - "${RUNNER_TEMP}/m-scoped.yaml" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "tests")
+          from runpod_smoke.manifest import parse_manifest
+          m = parse_manifest(Path(sys.argv[1]))
+          assert set(m) == {"base_gpu", "base_gpu_scoped1"}, m
+          assert m["base_gpu"]["images"] == [
+              "runpod/pytorch:1.0.0-cu1300-torch2130-ubuntu2404"], m
+          assert m["base_gpu"]["exclude_instances"] == ["RTX 2000 Ada"], m
+          assert m["base_gpu_scoped1"]["images"] == [
+              "runpod/pytorch:1.0.0-cu1300-torch260-ubuntu2404"], m
+          assert m["base_gpu_scoped1"]["exclude_instances"] == [
+              "RTX 2000 Ada", "B200*", "B300*"], m
+          PY
+          echo "OK: exclude-instance-for scopes the block to matching refs"
+
+          # `allowed` keeps min_cuda_version: the harness reads it as the
+          # axis floor for tags with no CUDA marker (NGC nvidia-pytorch).
+          gen --profile gpu --refs '["runpod/nvidia-pytorch:1.0.0-25.11"]' \
+            --check-all-gpu --cuda-version allowed --min-cuda-version 13.0 \
+            --output "${RUNNER_TEMP}/m-allowed.yaml" >/dev/null
+          grep -q 'cuda_versions: allowed' "${RUNNER_TEMP}/m-allowed.yaml"
+          grep -q 'min_cuda_version: 13.0' "${RUNNER_TEMP}/m-allowed.yaml"
+          echo "OK: cuda_versions=allowed keeps the floor"
+
+      # Plans the release sweep and builds the per-release result JSON.
+      - name: Release GPU sweep script
+        shell: bash
+        run: python3 .github/scripts/test_gpu_sweep.py

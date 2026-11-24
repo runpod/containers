@@ -7,22 +7,34 @@ It layers two things on top of `runpod/pytorch`:
    `rdma-core`, `ibverbs-utils`, `infiniband-diags`, `perftest`.
 2. **A self-contained monitoring stack**, managed by `supervisord`:
    - **node_exporter** (`:9100`) and **dcgm-exporter** (`:9400`) run on **every** node.
+     Exception: on a **MIG slice** dcgm-exporter is not started — embedded DCGM
+     can't initialise inside a MIG instance without `CAP_SYS_ADMIN` — so that
+     node has no GPU metrics.
    - **Prometheus** (`127.0.0.1:9090`) and **Grafana** (public `:8889` via the auth proxy) run **only on `node-0`**.
 
 Published to its own repository, with the pytorch tag scheme, e.g.
 `runpod/pytorch-cluster:<version>-cu1281-torch280-ubuntu2404`. Its version
 series is its own, so it need not match the `runpod/pytorch` it builds on.
 
+**Default image:** `runpod/pytorch-cluster:<version>-cu1300-torch2150-ubuntu2404`
+(PyTorch 2.15, CUDA 13 driver 580+). PyTorch 2.15 makes the rewritten NCCL
+backend the default for `init_process_group("nccl")`, and it adds the NIXL
+backend of `torch.distributed._transport` for one-sided transfers, for example
+KV-cache movement in disaggregated inference. The base `runpod/pytorch` 2.15
+image ships the `nixl` package, and the RDMA stack here lets its bundled UCX
+use InfiniBand/RoCE. See [../pytorch/README.md](../pytorch/README.md#recommended-image-pytorch-215)
+for the NCCL migration notes (`nccl-legacy`, `TORCH_DIST_USE_NCCL2=0`).
+
 ## How it works at startup
 
 The image reuses the shared `/start.sh`, which invokes the `/post_start.sh` hook
 shipped here. On start, `post_start.sh`:
 
-1. If `hostname` is **`node-0`**, renders `/etc/prometheus/prometheus.yml` with a
+1. On the head (**`NODE_RANK=0`**), renders `/etc/prometheus/prometheus.yml` with a
    `node` (`:9100`) and `dcgm` (`:9400`) scrape target for **every peer found in
    `/etc/hosts` whose name starts with `node-`** (falls back to localhost).
 2. Starts `supervisord`, which brings up the exporters on every node.
-3. If `hostname` is `node-0`, starts Prometheus + Grafana via `supervisorctl`.
+3. On the head (`NODE_RANK=0`), starts Prometheus + Grafana via `supervisorctl`.
 
 Grafana is pre-provisioned with a Prometheus datasource pointing at
 `http://127.0.0.1:9090`, so the query traffic never leaves the head node.
@@ -51,6 +63,13 @@ monitoring role) rather than the default. Note this set uses
 `DCGM_FI_PROF_GR_ENGINE_ACTIVE` (compute-engine active ratio) as the utilization
 signal instead of the coarse `DCGM_FI_DEV_GPU_UTIL`.
 
+> **Upgrading from an image with dcgm-exporter 4.8.1 or older:** the exporter
+> (4.8.3+) renamed the per-node label on DCGM metrics from `Hostname` to
+> `hostname`. The pre-baked dashboards are updated, but your own Grafana panels,
+> alerts or recording rules that use `Hostname` (e.g. `{Hostname="node-0"}`,
+> `by (Hostname)`, `{{Hostname}}`) return nothing until you switch them to
+> `hostname`.
+
 Inspect running services with `supervisorctl status`; logs live under
 `/var/log/supervisor/`.
 
@@ -78,7 +97,8 @@ Jupyter takes a shared secret from `$JUPYTER_PASSWORD` and the console opens
 Setup (nothing new — same secret as Jupyter):
 1. The pod already has **`JUPYTER_PASSWORD`** (the Jupyter secret). Omit it → no
    auto-login, Grafana shows its login form. Set `GRAFANA_PASSWORD` only if you
-   want a Grafana-specific token instead.
+   want a Grafana-specific token instead. `GRAFANA_CLUSTER_TOKEN` is a second
+   token the proxy also accepts (`ray-cluster` sets it to the Ray cluster token).
 2. The console opens `https://<pod>-8889.<proxy-base>/?token=<JUPYTER_PASSWORD>`.
 
 Notes:

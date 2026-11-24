@@ -1,15 +1,27 @@
 name: Smoke test
 description: |
   Generate a test manifest from bake image refs, then smoke-test each image
-  on a real RunPod pod via tests/test_images.py:
+  on a real Runpod pod via tests/test_images.py:
     - boots the image on the cheapest available eligible instance,
     - runs the per-group CUDA / GPU functional check over SSH,
     - terminates the pod (always — even on Ctrl-C / job timeout).
 
 inputs:
   image-refs:
-    description: "JSON array of image refs to smoke-test"
+    description: |
+      JSON array of image refs to smoke-test. Ignored when `manifest` is set
+      (pass "[]").
     required: true
+  manifest:
+    description: |
+      Path to a ready-made test manifest. Skips manifest generation, so
+      `profile`, `image-refs` and every selection / test-* input that feeds
+      the generator are ignored — the manifest says it all. For callers
+      that need more than one group per run, e.g. the release GPU sweep
+      (.github/scripts/gpu_sweep.py), which gives each family its own floor.
+      Empty (default) generates the manifest from the inputs.
+    required: false
+    default: ""
   profile:
     description: |
       Manifest grouping strategy passed to generate_test_manifest.py.
@@ -24,12 +36,12 @@ inputs:
       same `gpu` profile works regardless of what the image actually is.
     required: true
   runpod-api-key:
-    description: "RunPod API key (pod-management permissions required)"
+    description: "Runpod API key (pod-management permissions required)"
     required: true
   ssh-private-key:
     description: |
       PEM-formatted private key matching a public SSH key registered on the
-      RunPod account this API key belongs to. test_images.py uses it to ssh
+      Runpod account this API key belongs to. test_images.py uses it to ssh
       into the pod for the GPU/CUDA functional check and log capture.
     required: true
   budget-usd-per-hour:
@@ -72,9 +84,104 @@ inputs:
   test-ports:
     description: |
       Newline-separated HTTP ports to expose and probe with the generic
-      proxy-first reachability check. Accepts plain lines or `- 8080`.
+      proxy-first reachability check (HTTP 200 required). Accepts plain lines
+      or `- 8080`. Append a path to probe a specific route, e.g. `80/health`,
+      instead of `/`.
     required: false
     default: ""
+  test-pip-check:
+    description: |
+      'true' to emit `test_pip_check: true`, running `pip check` in the pod
+      and failing on any conflict not listed in pip-check-allow. Catches a
+      bumped pin that no longer satisfies something else in the image.
+    required: false
+    default: "false"
+  pip-check-allow:
+    description: |
+      Newline-separated substrings of `pip check` output to accept instead
+      of failing on, for conflicts inherited from a vendor base image.
+      Keep each narrow enough that a NEW conflict in the same package
+      still fails.
+    required: false
+    default: ""
+  test-ca-certs:
+    description: |
+      'true' to emit `test_ca_certs: true`: no revoked CA root is trusted
+      in the system store and HTTPS still validates against it. Shell-only,
+      so it is safe for images that ship no Python. Enable everywhere —
+      `apt-get --only-upgrade ca-certificates` exits 0 when the distro has
+      no patched package yet, and this is what catches that.
+    required: false
+    default: "false"
+  min-ca-certs-version:
+    description: |
+      dpkg version floor for the installed ca-certificates package, e.g.
+      '20260816'. Asserts the patched package actually reached the image:
+      an `--only-upgrade` that found nothing to upgrade exits 0 and
+      otherwise looks exactly like success. Needs test-ca-certs.
+    required: false
+    default: ""
+  test-python-tls:
+    description: |
+      'true' to emit `test_python_tls: true`: the same revoked-root check
+      against the certifi bundle, which is the store pip and requests use.
+      Separate from test-ca-certs because upgrading the system store does
+      not touch certifi. Only for images with Python.
+    required: false
+    default: "false"
+  python-tls-venv:
+    description: |
+      Path to an `activate` script sourced before the certifi check, for
+      images whose application runs in its own virtualenv (ComfyUI).
+    required: false
+    default: ""
+  revoked-ca-names:
+    description: |
+      Newline-separated CA subject substrings that must not be trusted,
+      matched case-insensitively. Empty uses the default list in
+      tests/runpod_smoke/checks.py — extend that list when a new root is
+      revoked, and use this input only for a one-off run.
+    required: false
+    default: ""
+  test-uv:
+    description: |
+      'true' to emit `test_uv: true`: exactly one uv on PATH, no
+      pip-installed copy shadowing it, and a real resolve.
+    required: false
+    default: "false"
+  test-virtualenv:
+    description: |
+      'true' to emit `test_virtualenv: true`: create a virtualenv with
+      every python3.X the image ships. For runpod/base, which pins one
+      virtualenv version across three interpreters.
+    required: false
+    default: "false"
+  test-python-path:
+    description: |
+      'true' to emit `test_python_path: true`: apt's dist-packages is on
+      sys.path for the system python3 only, and python3 is the same
+      interpreter as python. For runpod/base.
+    required: false
+    default: "false"
+  test-autoresearch:
+    description: |
+      'true' to emit `test_autoresearch: true`: run autoresearch's train.py
+      end to end on a short time budget, catching a broken image or dep bump.
+      For runpod/autoresearch only.
+    required: false
+    default: "false"
+  test-dcgm-exporter:
+    description: |
+      'true' to emit `test_dcgm_exporter: true`: scrape the in-pod
+      dcgm-exporter on :9400 and require the series the Grafana dashboards
+      read, with a hostname label. For runpod/pytorch-cluster only.
+  test-ray:
+    description: |
+      'true' to emit `test_ray: true`: start a one-node Ray head in the pod,
+      run a num_gpus=1 torch CUDA task through it, and check Ray serves
+      metrics on 20217. For runpod/ray-cluster only.
+    required: false
+    default: "false"
   test-comfyui:
     description: |
       Emit `test_comfyui: true` for each generated group. Exposes :8188 as
@@ -92,6 +199,14 @@ inputs:
     description: |
       Emit `test_comfyui_manager: true` to install a custom node via
       ComfyUI-Manager, reboot ComfyUI, and verify the node imports.
+    required: false
+    default: "false"
+  test-vllm:
+    description: |
+      Emit `test_vllm: true` for runpod/vllm-openai. Boots the Pod with
+      VLLM_API_KEY and a small model as the start command, exposes :8000 as
+      8000/http, then through the public proxy checks /health 200, the key
+      required on /v1/models, /invocations and /tokenize, and one completion.
     required: false
     default: "false"
   save-comfyui-images:
@@ -182,6 +297,21 @@ inputs:
       image/GPU pairings, e.g. PyTorch ≤ 2.6 wheels have no kernels for
       sm_100/sm_120 (Blackwell), so any test landing on a Blackwell host
       fails with 'no kernel image is available for execution on the device'.
+      A pattern here blocks that GPU for EVERY image in the run; to block it
+      only for the images that need it, use exclude-instances-for.
+    required: false
+    default: ""
+  exclude-instances-for:
+    description: |
+      Newline-separated `REF_GLOB: PATTERN, PATTERN` rules that scope an
+      exclude-instances block to the image refs matching REF_GLOB (fnmatch,
+      case-sensitive, against the full ref). Matching refs are tested as
+      their own group with the patterns added to its exclusions; every
+      other ref keeps the full GPU pool. Example:
+        exclude-instances-for: |
+          *-torch260-*: B200*, B300*, RTX 5090
+      Rules matching nothing are fine — matrix shards share one rule list.
+      Empty (default) = no scoped exclusions; the manifest is unchanged.
     required: false
     default: ""
   min-cuda-version:
@@ -220,7 +350,7 @@ inputs:
   on-skip:
     description: |
       What to do when at least one image ends up SKIPped (the smoke
-      test never actually ran on it — RunPod had no capacity on every
+      test never actually ran on it — Runpod had no capacity on every
       candidate, or every candidate landed on a stuck host). Real
       FAILs (broken container, CUDA check failed) are always fatal
       regardless of this knob.
@@ -239,9 +369,23 @@ inputs:
       flips the safer default off.
     required: false
     default: "fail"
+  skip-retries:
+    description: |
+      How many extra rounds to run for images that ended SKIP (no capacity
+      on any candidate) or UNVERIFIED (host never answered). Only those
+      images are re-run, inside this same job; FAIL is never retried.
+      Ignored under on-skip=pass. '0' disables retries.
+    required: false
+    default: "5"
+  skip-retry-delay:
+    description: |
+      Base wait in seconds before a retry round; round N waits N times this
+      (default 300 → 5, 10, 15, 20, 25 min) to give Runpod capacity time to free up.
+    required: false
+    default: "300"
   registry-auth-name:
     description: |
-      Display name of the registry credential in the RunPod account
+      Display name of the registry credential in the Runpod account
       (the `name` shown by `GET /v2/registries`) to attach to every pod.
 
       Empty (default) pulls anonymously — fine for our public images,
@@ -255,7 +399,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Configure RunPod credentials
+    - name: Configure Runpod credentials
       shell: bash
       env:
         # tests/test_images.py reads RUNPOD_API_KEY out of the env, so the
@@ -336,7 +480,24 @@ runs:
 
         echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
 
+    - name: Use provided manifest
+      if: ${{ inputs.manifest != '' }}
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+      run: |
+        set -euo pipefail
+        if [[ ! -s "${MANIFEST}" ]]; then
+          echo "::error::manifest '${MANIFEST}' does not exist or is empty"
+          exit 1
+        fi
+        echo "MANIFEST_PATH=$(realpath "${MANIFEST}")" >> "${GITHUB_ENV}"
+        echo "::group::test manifest"
+        cat "${MANIFEST}"
+        echo "::endgroup::"
+
     - name: Generate test manifest
+      if: ${{ inputs.manifest == '' }}
       shell: bash
       env:
         REFS: ${{ inputs.image-refs }}
@@ -350,9 +511,24 @@ runs:
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
         TEST_COMFYUI_MANAGER: ${{ inputs.test-comfyui-manager }}
+        TEST_VLLM: ${{ inputs.test-vllm }}
+        TEST_PIP_CHECK: ${{ inputs.test-pip-check }}
+        PIP_CHECK_ALLOW: ${{ inputs.pip-check-allow }}
+        TEST_CA_CERTS: ${{ inputs.test-ca-certs }}
+        MIN_CA_CERTS_VERSION: ${{ inputs.min-ca-certs-version }}
+        TEST_PYTHON_TLS: ${{ inputs.test-python-tls }}
+        PYTHON_TLS_VENV: ${{ inputs.python-tls-venv }}
+        REVOKED_CA_NAMES: ${{ inputs.revoked-ca-names }}
+        TEST_UV: ${{ inputs.test-uv }}
+        TEST_VIRTUALENV: ${{ inputs.test-virtualenv }}
+        TEST_PYTHON_PATH: ${{ inputs.test-python-path }}
+        TEST_AUTORESEARCH: ${{ inputs.test-autoresearch }}
+        TEST_DCGM_EXPORTER: ${{ inputs.test-dcgm-exporter }}
+        TEST_RAY: ${{ inputs.test-ray }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
         INSTANCES: ${{ inputs.instances }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
+        EXCLUDE_INSTANCES_FOR: ${{ inputs.exclude-instances-for }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
       run: |
@@ -376,9 +552,61 @@ runs:
         if [[ "${TEST_COMFYUI_MANAGER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-comfyui-manager)
         fi
+        if [[ "${TEST_VLLM,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-vllm)
+        fi
         if [[ "${CHECK_ALL_GPU,,}" == "true" ]]; then
           EXTRA_ARGS+=(--check-all-gpu)
         fi
+        if [[ "${TEST_PIP_CHECK,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-pip-check)
+        fi
+        if [[ "${TEST_CA_CERTS,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-ca-certs)
+        fi
+        if [[ -n "${MIN_CA_CERTS_VERSION}" ]]; then
+          EXTRA_ARGS+=(--min-ca-certs-version "${MIN_CA_CERTS_VERSION}")
+        fi
+        if [[ "${TEST_PYTHON_TLS,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-python-tls)
+        fi
+        if [[ -n "${PYTHON_TLS_VENV}" ]]; then
+          EXTRA_ARGS+=(--python-tls-venv "${PYTHON_TLS_VENV}")
+        fi
+        if [[ "${TEST_UV,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-uv)
+        fi
+        if [[ "${TEST_VIRTUALENV,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-virtualenv)
+        fi
+        if [[ "${TEST_PYTHON_PATH,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-python-path)
+        fi
+        if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-autoresearch)
+        fi
+        if [[ "${TEST_DCGM_EXPORTER,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-dcgm-exporter)
+        fi
+        if [[ "${TEST_RAY,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-ray)
+        fi
+        # pip-check-allow and revoked-ca-names are newline lists. Entries
+        # are passed as single argv elements and NOT stripped of a leading
+        # '-' the way ports are: a pip check line can legitimately start
+        # with one, and these are matched as literal substrings.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--pip-check-allow "${line}")
+        done <<< "${PIP_CHECK_ALLOW}"
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--revoked-ca-name "${line}")
+        done <<< "${REVOKED_CA_NAMES}"
         # Split TEST_PORTS on newlines. Accept both "8080" and "- 8080"
         # so workflow input can match the generated manifest syntax.
         while IFS= read -r line; do
@@ -426,6 +654,13 @@ runs:
           [[ -z "${line}" || "${line}" == \#* ]] && continue
           EXTRA_ARGS+=(--exclude-instance "${line}")
         done <<< "${EXCLUDE_INSTANCES}"
+        # One rule per line; the generator parses 'GLOB: PAT, PAT' itself.
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -z "${line}" || "${line}" == \#* ]] && continue
+          EXTRA_ARGS+=(--exclude-instance-for "${line}")
+        done <<< "${EXCLUDE_INSTANCES_FOR}"
         # Same treatment for INSTANCES. Display names contain spaces
         # ('RTX A4000'), so each line must stay one argv element.
         while IFS= read -r line; do
@@ -447,7 +682,7 @@ runs:
       shell: bash
       env:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
-        # 'Configure RunPod credentials' and 'Write SSH private key' steps.
+        # 'Configure Runpod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
         # Unknown tier names are dropped by config._parse_cloud_types, which
         # falls back to SECURE, so the raw input is safe to propagate.
@@ -455,6 +690,10 @@ runs:
         # ON_SKIP is validated by config._coerce_on_skip (unknown values
         # collapse to 'fail') so we just propagate the raw input.
         ON_SKIP: ${{ inputs.on-skip }}
+        # Re-runs SKIP / UNVERIFIED images in-process before ON_SKIP decides
+        # the exit code — replaces the manual "re-run failed jobs".
+        SKIP_RETRIES: ${{ inputs.skip-retries }}
+        SKIP_RETRY_DELAY: ${{ inputs.skip-retry-delay }}
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}

@@ -1,7 +1,7 @@
 # Example manifest for local ComfyUI smoke tests.
 #
 # From the repository root (with RUNPOD_API_KEY set and an SSH key
-# registered on the RunPod account — see ../README.md):
+# registered on the Runpod account — see ../README.md):
 #
 #   python3 tests/test_images.py tests/comfyui/images.example.yaml comfyui
 #
@@ -13,7 +13,8 @@
 # ComfyUI-Manager, reboots ComfyUI, and verifies the node's class imports. The
 # default node has torch-dependent deps, so it exercises pip resolving against
 # the baked torch stack. It implies `test_comfyui` and needs a comfyui_manager
-# (4.x) image whose start.sh sets Manager network_mode = personal_cloud.
+# (4.x) image, where ComfyUI runs on loopback behind the password proxy and
+# Manager's loopback-gated installs are open.
 comfyui:
     images:
     # Swap for the tag you want to test. Shape is

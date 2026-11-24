@@ -1,6 +1,6 @@
-# Smoke tests for RunPod container images
+# Smoke tests for Runpod container images
 
-Spins up each image on a real RunPod pod, waits for it to stay healthy
+Spins up each image on a real Runpod pod, waits for it to stay healthy
 for `DWELL_SEC` seconds, runs image-appropriate CUDA, HTTP, and optional
 ComfyUI functional checks, then terminates the pod. Designed to catch the failure modes that **only
 appear on a real GPU host** and that local `docker run` would miss:
@@ -35,7 +35,7 @@ tests/
 ## Prerequisites
 
 1. **Python ≥ 3.9** (stdlib only — no pip install needed).
-2. **A RunPod API key** with **pod-management** permissions, in either
+2. **A Runpod API key** with **pod-management** permissions, in either
    `RUNPOD_API_KEY` or `~/.runpod/config.toml` as `apikey = '...'`:
 
    ```bash
@@ -48,7 +48,7 @@ tests/
    `GET /v2/account/ssh-keys`; a bad key fails fast before any pod is
    created.
 
-3. **SSH key registered on your RunPod account.** `test_images.py`
+3. **SSH key registered on your Runpod account.** `test_images.py`
    probes every pod over SSH for the real readiness signal and the
    GPU/CUDA functional check. Register the public half at
    <https://www.runpod.io/console/user/settings#ssh-keys> and keep the
@@ -61,7 +61,7 @@ tests/
 
 4. **(Recommended)** A Docker Hub registry credential on the account,
    named with `REGISTRY_AUTH_NAME` (or pinned by `REGISTRY_AUTH_ID`).
-   RunPod datacenters share an anonymous Hub IP pool that hits the
+   Runpod datacenters share an anonymous Hub IP pool that hits the
    `toomanyrequests` rate limit fast — without auth, parallel runs in
    particular produce a wave of "image pull backoff" failures that look
    like image bugs but aren't.
@@ -125,18 +125,19 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `POST /v2/pods` with `gpu.id` (or an auto-picked `cpu.id` + `vcpuCount`), `disk`, `ports`, `startSsh`, registry credential, and either `gpu.minCudaVersion` or `gpu.allowedCudaVersions`. Transient failures (429, 5xx, transport) are retried up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity — try next instance) / `CREATE_FAIL` (bad image tag, auth, malformed request — any non-capacity, non-transient error after retries) |
-| 2 | Poll `GET /v2/pods/{id}` until a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the only readiness signal. `status` is **not** one: RunPod reports `RUNNING` from the moment the pod is scheduled, while the image may still be downloading for another ten minutes, so it is read only for the terminal `EXITED`/`ERROR`/`TERMINATED` values, which stop the poll immediately. | `FAIL` on a terminal status, on a container-init rejection, or on a container-start failure in the logs; `STUCK` if no endpoint was ever offered or the container had not started yet; `UNVERIFIED` only if the container was demonstrably logging and still nothing answered |
+| 2 | Poll `GET /v2/pods/{id}` until a one-shot `ssh <user>@host -p port 'echo ready'` succeeds against **either** `ssh.direct` or `ssh.proxy` — see [SSH endpoints](#ssh-endpoints). SSH is the only readiness signal. `status` is **not** one: Runpod reports `RUNNING` from the moment the pod is scheduled, while the image may still be downloading for another ten minutes, so it is read only for the terminal `EXITED`/`ERROR`/`TERMINATED` values, which stop the poll immediately. | `FAIL` on a terminal status, on a container-init rejection, or on a container-start failure in the logs; `STUCK` if no endpoint was ever offered or the container had not started yet; `UNVERIFIED` only if the container was demonstrably logging and still nothing answered |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul + torchvision/torchaudio GPU ops; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
-| 4 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
-| 5 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
-| 6 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first; SSH diagnoses a failed proxy check | `FAIL` (ComfyUI unavailable or incorrectly exposed) |
-| 7 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
-| 8 | **ComfyUI-Manager install** (only when `test_comfyui_manager: true`) — install the node in `manager_node.json` via the Manager, reboot ComfyUI, then verify its class imports via `/object_info` | `FAIL` (install, reboot, or torch-dependent dep resolution failure) |
-| 9 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
-| 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 11 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
-| 12 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
-| 13 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
+| 4 | **Image hygiene checks** (each opt-in) — `pip check`, `virtualenv`, `uv`, system CA store, certifi bundle, in that order. See [Hygiene checks](#hygiene-checks) | `FAIL` (named per check — a conflicting pin, a CA upgrade that did nothing, a shadowing uv) |
+| 5 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
+| 6 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
+| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first, sending the pod's `COMFYUI_PASSWORD`; SSH diagnoses a failed proxy check. Then, through the proxy, `POST /prompt`, `GET /` and `GET /system_stats` without the password, and with a wrong one, must all return `401` | `FAIL` (ComfyUI unavailable, incorrectly exposed, or answering without its password) |
+| 8 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
+| 9 | **ComfyUI-Manager install** (only when `test_comfyui_manager: true`) — install the node in `manager_node.json` via the Manager, reboot ComfyUI, then verify its class imports via `/object_info` | `FAIL` (install, reboot, or torch-dependent dep resolution failure) |
+| 10 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
+| 11 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
+| 12 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
+| 13 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
+| 14 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
 result was `UNAVAILABLE`, `STUCK` or `UNVERIFIED`, and short-circuits on
@@ -154,10 +155,10 @@ job per (GPU, CUDA version) — see [CUDA axis](#cuda-axis).
 |---|---|---|
 | target | the container's sshd, straight over TCP | `ssh.runpod.io`, relayed |
 | login | `root` | an opaque routing token from `username` |
-| needs | RunPod to allocate a public port for `22/tcp` | only a machine assignment |
+| needs | Runpod to allocate a public port for `22/tcp` | only a machine assignment |
 | supports | everything | interactive shell and remote commands only — no SCP, SFTP or port forwarding |
 
-**RunPod does not always allocate the direct port**, and when it does it
+**Runpod does not always allocate the direct port**, and when it does it
 can be late — one measured pod was proxy-only at t+601s and got its port at
 t+700s. A pod that never gets one shows only "SSH" in the console, with no
 "SSH over exposed TCP" block, and `ssh.direct` stays null. Both cases are
@@ -186,7 +187,7 @@ first:
 | evidence | verdict |
 |---|---|
 | system log has no `create/start container` yet | still pulling → `STUCK` |
-| container log announced sshd | RunPod's path is broken → `STUCK` |
+| container log announced sshd | Runpod's path is broken → `STUCK` |
 | container log empty | not started → `STUCK` |
 | container started, no sshd line | ambiguous → `UNVERIFIED` |
 | neither stream readable | could not look → `UNVERIFIED` |
@@ -199,7 +200,7 @@ markers like `exec: "/start.sh": no such file or directory` never reach
 broken entrypoint to a capacity gap.
 
 The system log is checked first because it is authoritative on the one
-question the container's log cannot answer — whether RunPod has finished
+question the container's log cannot answer — whether Runpod has finished
 downloading the image at all. It narrates the hand-off in plain text:
 
 ```
@@ -235,16 +236,25 @@ The granular per-pod outcomes below collapse into them:
 | `FAIL` | `FAIL` | Pod was created and the container itself proved broken (CUDA check failed, JupyterLab didn't start, crashed during dwell, etc.). Moving to another GPU won't help — the image is the problem. | fix the image |
 | `FAIL` | `CREATE_FAIL` | Pod-create returned a non-capacity, non-transient orchestrator error (bad image tag, registry auth, malformed request, missing CUDA version). | fix the manifest / image ref / auth |
 | `FAIL` | `FAIL` (container init) | `nvidia-container-cli` rejected the container in the prestart hook — typically the image's `NVIDIA_REQUIRE_CUDA` floor is above the host driver, e.g. a `cu1290` image pinned to CUDA 12.4. Deterministic, so no other instance type is tried. | pin a CUDA version the image supports, or fix the image's requirement |
-| `FAIL` | `FAIL` (container start) | The container never started: unexecutable or missing entrypoint, wrong architecture, an OCI runtime refusal, or an OOM kill before sshd. Read from **both** log streams before a readiness timeout is attributed to the host — a container that was never created has no stdout of its own, so an OCI refusal appears only in RunPod's system log. From the outside it is indistinguishable from a slow host. | fix the image |
+| `FAIL` | `FAIL` (container start) | The container never started: unexecutable or missing entrypoint, wrong architecture, an OCI runtime refusal, or an OOM kill before sshd. Read from **both** log streams before a readiness timeout is attributed to the host — a container that was never created has no stdout of its own, so an OCI refusal appears only in Runpod's system log. From the outside it is indistinguishable from a slow host. | fix the image |
 | `UNVERIFIED` | any `UNVERIFIED` | The container was writing to its log but **never announced sshd**, and nothing answered within `CREATE_TIMEOUT` — with no init rejection or start failure. A wedged host and an entrypoint that never got as far as starting SSH cannot be told apart from here, so neither is claimed. Also used when the log API itself was unreachable, i.e. we could not look. | re-run; if it repeats on every host, suspect the image's `start.sh` |
-| `SKIP` | all `UNAVAILABLE` | RunPod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
-| `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but the evidence pointed away from the image: no SSH endpoint was ever offered, the container had not emitted a single log line (still pulling), or **the container's own log said sshd was up and nothing reached it anyway** — RunPod never provided a working path. | retry later — usually transient; if a large image times out every run, raise `create-timeout` |
+| `SKIP` | all `UNAVAILABLE` | Runpod had no capacity on **any** candidate instance type. | retry later, expand `instances:` list, or raise `max_price_per_hour` |
+| `SKIP` | some `STUCK` + rest `UNAVAILABLE` | At least one instance was scheduled but the evidence pointed away from the image: no SSH endpoint was ever offered, the container had not emitted a single log line (still pulling), or **the container's own log said sshd was up and nothing reached it anyway** — Runpod never provided a working path. | retry later — usually transient; if a large image times out every run, raise `create-timeout` |
 
 `FAIL` always exits `1`. `UNVERIFIED` also exits `1`, except under
 `ON_SKIP=pass` — only the catalog sweep sets that, and it knowingly accepts
 many flaky hosts per run, while every release gate uses `warn` or `fail`
 where an unverified image must not ship. `UNVERIFIED` is counted and printed
 in its own bucket regardless, so it is never mistaken for a capacity gap.
+
+Before `ON_SKIP` gets a say, `SKIP` and `UNVERIFIED` jobs are **retried
+automatically**: once every job has run, the ones that ended SKIP or
+UNVERIFIED (and only those) are run again, up to `SKIP_RETRIES` rounds (CI:
+`skip-retries`, default `5`), waiting `SKIP_RETRY_DELAY × round` seconds first
+(CI: `skip-retry-delay`, default `300` → 5, 10, 15, 20, 25 min). This takes the place
+of the manual "Re-run failed jobs" click when capacity is tight. `FAIL` is
+never retried. A retry that comes back SKIP does not downgrade an earlier
+`UNVERIFIED`. Retries are off under `ON_SKIP=pass`.
 
 `SKIP` is governed by `ON_SKIP` (env-var) / `on-skip` (CI input), one of:
 
@@ -259,12 +269,11 @@ so you can tell whether a `FAIL` correlates with a specific GPU type:
 
 ```
 ================================== SUMMARY =================================
-totals: 4 PASS, 1 FAIL, 1 SKIP
+totals: 3 PASS, 1 FAIL, 1 SKIP
 
   FAIL   runpod/pytorch:…cu1300-torch260… [RTX 5090] -- CUDA/GPU functional check failed
   SKIP   runpod/rocm:…rocm644-ubuntu2404… -- no capacity on any of 1 candidate instance type(s)
   PASS   runpod/base:…ubuntu2404 [CPU]
-  PASS   runpod/base:…cuda1281-ubuntu2204 [RTX A4000]
   PASS   runpod/base:…cuda1281-ubuntu2404 [RTX A5000]
   PASS   runpod/base:…cuda1300-ubuntu2404 [RTX 4090]
 ```
@@ -341,7 +350,20 @@ groupname:
     check_all_gpu: true       # test every matching GPU independently
     test_jupyter: true        # opt-in JupyterLab in-pod + proxy check
     test_ports:               # optional generic HTTP services
-    - 8080
+    - 8080                    # probes `/`; use `8080/health` to hit a path
+    test_pip_check: true      # `pip check` must be clean
+    pip_check_allow:          # ...except these inherited conflicts
+    - "datasets 4.4.1 has requirement fsspec"
+    test_ca_certs: true       # no revoked root in the system trust store
+    min_ca_certs_version: 20260816   # ...and the patched package arrived
+    test_python_tls: true     # ...nor in the certifi bundle
+    python_tls_venv: /path/to/venv/bin/activate   # if the app owns a venv
+    revoked_ca_names:         # overrides the default list in checks.py
+    - emSign
+    test_uv: true             # exactly one uv, and it resolves
+    test_virtualenv: true     # virtualenv works on every python3.X
+    test_dcgm_exporter: true  # dcgm-exporter serves the dashboard labels
+    test_python_path: true    # only the system python3 sees apt's modules
 ```
 
 Field reference:
@@ -353,16 +375,28 @@ Field reference:
 | `max_price_per_hour` | USD/hr budget — auto-pick any GPU at this price or below, cheapest first. Loses to explicit `instances:` if both are set. |
 | `min_vram_gb` | Extra filter for budget mode (default 0). |
 | `manufacturer` | `Nvidia` or `AMD` filter for budget mode (default: any). |
-| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group. |
+| `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:` or budget selection. Useful for blocking known-bad host pairings without rewriting the whole list. Patterns match **display** names, not catalog ids, so Blackwell needs `B200*`, `B300*`, `RTX 5090`, `RTX PRO *`, `PRO 6000 MIG *` — `"*Blackwell*"` matches nothing, and a bare `B300` misses `B300 MIG 34GB`. A block applies to the whole group; to block a GPU for only some images, generate the manifest with `--exclude-instance-for 'REF_GLOB: PATTERN, ...'` (action input `exclude-instances-for`), which moves the matching refs into their own group. |
 | `min_cuda_version` | `X.Y` floor sent as `gpu.minCudaVersion`. Used as a **fallback** when the image tag doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`); tags like `cu1281` / `cuda1281` / `cuda13.0` are parsed and win. Superseded by `cuda_versions` — the API rejects both fields on one request. |
-| `cuda_versions` | `all`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. Default: unset (no axis). |
+| `cuda_versions` | `all`, `allowed`, or a list of exact `X.Y` versions. Turns on the [CUDA axis](#cuda-axis): each candidate GPU is tested once per version, pinned with `gpu.allowedCudaVersions`. `allowed` is `all` minus versions below the image's floor (tag marker, else `min_cuda_version`, which `allowed` keeps for that purpose). Default: unset (no axis). |
 | `check_all_gpu` | `true` / `false` — use every catalog GPU matching `min_vram_gb` and `manufacturer`, with one independent result row per `(image, GPU)`. Mutually exclusive with budget selection in generated manifests and potentially expensive. Default: `false`. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening. Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
 | `test_torch_packages` | `true` / `false` — extends the CUDA check with a torchvision `nms` and a torchaudio `resample` on the GPU, plus a torchcodec WAV round trip on torch 2.9+ (the version from which the images ship it). All three become **required** where they are expected: an image in the group that doesn't have one fails. Use for `runpod/pytorch` and its `-cluster` layer; skip for images that ship torch alone (NGC `nvidia-pytorch`, `runpod/base` `-pytorch251` tags). Default: `false`. |
-| `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
+| `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the Runpod public proxy. An entry may be `<port>/<path>` (e.g. `80/health`) to probe a specific route instead of `/`. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
-| `test_comfyui_manager` | `true` / `false` — implies `test_comfyui`; installs the custom node in `comfyui/manager_node.json` through ComfyUI-Manager (`/v2/manager/queue`), reboots ComfyUI (`/v2/manager/reboot`), then verifies the node's class is importable via `/object_info`. The default node has torch-dependent deps, so it exercises pip resolving against the baked torch. Needs a `comfyui_manager` (4.x) image with Manager `network_mode = personal_cloud`. |
+| `test_comfyui_manager` | `true` / `false` — implies `test_comfyui`; installs the custom node in `comfyui/manager_node.json` through ComfyUI-Manager (`/v2/manager/queue`), reboots ComfyUI (`/v2/manager/reboot`), then verifies the node's class is importable via `/object_info`. The default node has torch-dependent deps, so it exercises pip resolving against the baked torch. Needs a `comfyui_manager` (4.x) image: ComfyUI listens on loopback behind the password proxy, so Manager's loopback-gated installs are open and `security_level = normal` decides the rest. |
+| `test_pip_check` | `true` / `false` — runs `pip check` in the pod and fails on any conflict not matched by `pip_check_allow`. Catches a bumped pin that no longer satisfies something already in the image, which a boot check cannot see. Default: `false`. |
+| `pip_check_allow` | List of substrings of `pip check` output to accept instead of failing on, for conflicts inherited from a vendor base image. Keep each entry narrow (`datasets 4.4.1 has requirement fsspec`, not `datasets`) so a *new* conflict in the same package still fails. Matched as plain substrings, not patterns. |
+| `test_ca_certs` | `true` / `false` — asserts no CA in `revoked_ca_names` is still trusted in the **system** store, and that HTTPS still validates against it. Shell-only, so it is safe for images with no Python. Worth enabling everywhere: `apt-get install --only-upgrade ca-certificates` exits 0 when the distro has not published the patched package yet, and this is what turns that silent non-fix into a red build. Default: `false`. |
+| `min_ca_certs_version` | dpkg version floor for the installed `ca-certificates` package, e.g. `20260816`. This is the direct check: the images ship whatever distrust decision the distro published, so what we assert is that its patched package actually arrived. Without it an `--only-upgrade` that found nothing to upgrade exits 0 and the image looks patched when it is not. Requires `test_ca_certs`. |
+| `test_python_tls` | `true` / `false` — the same assertion against the **certifi** bundle, which is the store `pip`, `requests` and ComfyUI use. Separate flag because upgrading the system store does not touch certifi, and not every image ships Python. Default: `false`. |
+| `python_tls_venv` | Path to an `activate` script sourced before the certifi check, for images whose application runs in its own virtualenv rather than the system interpreter (ComfyUI). Default: system `python`. |
+| `revoked_ca_names` | CA subject substrings that must not be trusted, matched case-insensitively against certificate subjects, so a family prefix (`emSign`) covers every root in it. Applies to both CA checks. Default: the list in `tests/runpod_smoke/checks.py` — extend that when a root is revoked, and use this field only for a one-off run. |
+| `test_uv` | `true` / `false` — exactly one `uv` on `$PATH`, no pip-installed copy shadowing it, and a real `uv venv` + `uv pip install`. The duplicate test is the point: the NGC bases ship a pip-installed uv that shadows the pinned binary, the Dockerfiles remove it, and this fails if a base image brings it back. Default: `false`. |
+| `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across three interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
+| `test_dcgm_exporter` | `true` / `false` — scrapes the in-pod dcgm-exporter on `:9400` (retrying for up to ~2 minutes while DCGM starts) and requires `DCGM_FI_DEV_GPU_UTIL` and `DCGM_FI_DEV_FB_USED` with a non-empty `hostname` label, the series the Grafana dashboards build their Node dropdowns from. For `runpod/pytorch-cluster`, which runs the exporter on every pod. Default: `false`. |
+| `test_ray` | `true` / `false` — starts a one-node Ray head in the pod, asserts Ray sees at least one GPU, runs a `num_gpus=1` task doing a torch CUDA matmul, checks `ray_` metrics on `:20217/metrics`, then stops Ray. For `runpod/ray-cluster`, whose own launch needs a multi-node cluster; multi-node formation is the contract test's job. Default: `false`. |
+| `test_python_path` | `true` / `false` — `/usr/lib/python3/dist-packages` (apt's `python3-*` modules) must be on `sys.path` for the system `/usr/bin/python3` and for no other `python3.X` in the image, and `python3` must resolve to the same version as `python`. Interpreters are enumerated, not listed. For `runpod/base`. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
 list for that group — no `instances:` / `max_price_per_hour:` /
@@ -380,7 +414,7 @@ action uploads it when `save-comfyui-images: "true"`.
 
 `--min-cuda-version` / `gpu.minCudaVersion` is only a **floor**: the
 scheduler may place the pod on any host at or above it. In practice that
-means a `cu1281` image gets tested on whatever driver RunPod happens to
+means a `cu1281` image gets tested on whatever driver Runpod happens to
 have free — observed values for the same GPU have ranged from 12.8 to
 13.2 across two runs an hour apart. So a plain `PASS` says "works
 somewhere", not "works on 12.8".
@@ -413,6 +447,17 @@ Two expansion modes, depending on `check_all_gpu`:
 
 The second mode exists so that adding an axis to a budget-filtered group
 doesn't silently turn one pod into a product of ~20 cards × N versions.
+
+`cuda_versions: allowed` is `all` limited to the versions the image can
+actually be scheduled on: at or above the tag's CUDA marker (`cu1290` →
+12.9 and up), or `min_cuda_version` for tags without one. A GPU whose free
+versions are all below that floor is recorded as SKIP with that reason.
+The release sweep (`.github/workflows/gpu-sweep-release.yml`) uses it.
+
+`instances:` together with `check_all_gpu: true` is a matrix over exactly
+those GPUs — one job each — rather than a fallback chain. The CI generator
+refuses the combination to keep its inputs unambiguous; hand-written or
+sweep manifests may use it.
 
 **Only pairings the catalog reports capacity for are attempted.**
 `GET /v2/catalog/gpus?include=AVAILABILITY&product=POD` returns, per GPU,
@@ -480,7 +525,7 @@ the flat list:
 ```
 
 `⚠️` and `·` are different events: yellow means a pod was created for that
-exact pairing and RunPod had no capacity; a dot means the pairing never
+exact pairing and Runpod had no capacity; a dot means the pairing never
 reached a create because the catalog said so up front.
 
 Both the table and the flat list are always written to
@@ -515,15 +560,14 @@ you're testing). Annotated example covering every supported pattern:
 # CPU-only base image — no instances:, no budget, just images.
 base_cpu:
     images:
-    - runpod/base:1.0.6-dev-ubuntu2204
     - runpod/base:1.0.6-dev-ubuntu2404
+    - runpod/base:1.0.6-dev-ubuntu2604
     test_jupyter: true              # base CPU image still ships JupyterLab
 
 # GPU base image, budget-selected. The CUDA functional check is auto-
 # applied because the tag contains 'cuda1281' / 'cuda1290' / 'cuda1300'.
 base_gpu:
     images:
-    - runpod/base:1.0.6-dev-cuda1281-ubuntu2204
     - runpod/base:1.0.6-dev-cuda1281-ubuntu2404
     - runpod/base:1.0.6-dev-cuda1300-ubuntu2404
     max_price_per_hour: 1.0
@@ -537,7 +581,6 @@ base_gpu:
 # we want — we'd never get a clean torch import over SSH otherwise.
 autoresearch:
     images:
-    - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2204
     - runpod/autoresearch:1.0.6-dev-cuda1281-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -559,7 +602,7 @@ nvidia-pytorch:
 # AMD ROCm — explicit instance list because only MI300X carries ROCm.
 rocm:
     images:
-    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2204-py310-pytorch251
+    - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch260
     - runpod/rocm:1.0.6-dev-rocm644-ubuntu2404-py312-pytorch271
     instances:
     - MI300X
@@ -571,7 +614,7 @@ rocm:
 # is available for execution on the device". Filter them out:
 pytorch:
     images:
-    - runpod/pytorch:1.0.6-dev-cu1281-torch260-ubuntu2204
+    - runpod/pytorch:1.0.6-dev-cu1281-torch260-ubuntu2404
     - runpod/pytorch:1.0.6-dev-cu1300-torch260-ubuntu2404
     max_price_per_hour: 1.0
     min_vram_gb: 16
@@ -589,10 +632,14 @@ pytorch:
 |---|---|---|
 | `CLOUD_TYPE` | `SECURE` | `SECURE`, `COMMUNITY`, both as a comma list, or `ALL`. Multiple tiers are planned and swept in one invocation — see [CUDA axis](#cuda-axis). |
 | `DISK_GB` | `100` | Container disk size for GPU pods. |
-| `CPU_DISK_GB` | `20` | Container disk size for CPU pods. RunPod caps this per CPU flavor (20 GB on the cheapest, 30 GB on larger ones); 20 is the universal safe value. |
+| `CPU_DISK_GB` | `20` | Container disk size for CPU pods. Runpod caps this per CPU flavor (20 GB on the cheapest, 30 GB on larger ones); 20 is the universal safe value. |
 | `CPU_CANDIDATES` | `""` (uses `cpu-secure,cpu-community`) | CPU "instance candidates". The flavor comes from `pick_cpu_flavor()`; what varies between candidates is placement — cloud (SECURE vs COMMUNITY) and optional data centres. Each label becomes one candidate iterated by the same per-instance retry loop GPU groups use, so when SECURE is saturated COMMUNITY almost always has free CPU capacity. Format: `label:CLOUD[:DC1+DC2+…],label:CLOUD[:DC_CSV],…` (use `+` not `,` to separate DC ids inside one candidate so the outer csv stays unambiguous). CLOUD must be SECURE or COMMUNITY. Malformed entries are silently dropped; an empty/all-broken value falls back to the default 2-candidate list. |
 | `RUNPOD_API_KEY` | _(from `~/.runpod/config.toml`)_ | Bearer token for every REST API v2 call. Set this in CI / containers without a config file. |
 | `MAX_CUDA_COMBOS` | `120` | Cap on the (GPU, CUDA) fan-out. Jobs past it are dropped with a warning so a stray `cuda_versions: all` can't run for a day. |
+| `SPEND_CAP_USD` | `0` (off) | Total USD the run may spend on GPU pods, from catalog $/hr × pod lifetime. Each pod reserves `SPEND_RESERVE_MINUTES` of its price before it is created; a pod that doesn't fit is never created and its job is SKIP (`spend cap reached`). With a cap, jobs are reordered so every (image, GPU) gets its newest CUDA version before any gets a second. Spend is printed in the summary and written to the results JSON. |
+| `SPEND_RESERVE_MINUTES` | `30` | Minutes of a GPU's price held per pod under `SPEND_CAP_USD`, and that pod's lifetime limit: a pod still running when its hold runs out is deleted and its job is SKIP (`spend cap`), never FAIL. Size it to `CREATE_TIMEOUT` plus the checks, or slow pods come back untested. |
+| `DEDUPE_CLOUD_TIERS` | _(off)_ | With several tiers, plan each (image, GPU, CUDA) job once, in the first tier that offers it (SECURE before COMMUNITY). For compatibility sweeps, where the tier says nothing about the image. |
+| `POD_NAME_SUFFIX` | _(empty)_ | Alphanumeric suffix appended to every pod name, so a CI run can find and delete exactly its own leftovers. `reap-pods.yml` still reads the epoch from field 2. |
 | `CPU_VCPU_COUNT` | `4` | vCPUs requested for CPU pods. Must be a power of two inside the chosen flavor's `vcpu.min..max`. |
 | `CPU_FLAVOR_ID` | _(empty)_ | Pin a CPU flavor (e.g. `cpu3c`) instead of auto-picking the cheapest fitting one from `GET /v2/catalog/cpus`. |
 | `SMOKE_RESULTS_JSON` | _(empty)_ | Path to write the machine-readable result report to. Empty = don't write it. The markdown step summary is written regardless. |
@@ -601,9 +648,11 @@ pytorch:
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
-| `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid RunPod rate limits and surprise bills. |
-| `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient RunPod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
+| `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid Runpod rate limits and surprise bills. |
+| `CREATE_RETRIES` | `3` | Retry pod-create up to N times on transient Runpod 5xx errors (`Something went wrong`, 502/503). Capacity shortages are NOT retried. |
 | `CREATE_RETRY_BACKOFF` | `10` | Seconds between retries (linear backoff). |
+| `SKIP_RETRIES` | `5` | Extra rounds for jobs that ended SKIP / UNVERIFIED. `0` disables. Ignored under `ON_SKIP=pass`. |
+| `SKIP_RETRY_DELAY` | `300` | Base wait before a retry round; round N waits N × this. |
 | `STALL_HINT_AFTER` | `180` | Seconds without an SSH endpoint before the script prints a hint about slow pulls / possible Docker Hub rate limit. |
 | `LOG_ERROR_SCAN` | `1` | `1`/`0` — scan REST API v2 container logs for error markers after the functional checks. |
 | `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex used by the container-log scan. |
@@ -612,7 +661,7 @@ pytorch:
 | `SSH_LOG_FETCH` | `1` | `1`/`0` — fetch only the GPU SMI diagnostic over SSH. Container logs use REST API v2. |
 | `RUNPOD_SSH_KEY` | _(empty)_ | Path to the private key matching a public key registered on the account (`startSsh` injects those as `PUBLIC_KEY`). Auto-discovered from `~/.runpod/ssh/` and `~/.ssh/` if unset. Must be mode `600`. |
 | `JUPYTER_WAIT_TIMEOUT` | `30` | Seconds the in-pod Jupyter probe waits for `:8888` to bind. |
-| `JUPYTER_PROXY_TIMEOUT` | `60` | Seconds the proxy probe retries while RunPod's ingress registers the new pod. |
+| `JUPYTER_PROXY_TIMEOUT` | `60` | Seconds the proxy probe retries while Runpod's ingress registers the new pod. |
 | `PORT_WAIT_TIMEOUT` | `300` | Seconds the SSH diagnostic probe waits for a `test_ports` service to bind and return HTTP 200. |
 | `PORT_PROXY_TIMEOUT` | `300` | Seconds the public-proxy check retries each `test_ports` service before failing. |
 | `COMFYUI_PORT` | `8188` | HTTP port exposed for the ComfyUI public-proxy checks. |
@@ -623,6 +672,8 @@ pytorch:
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `1800` | Maximum wait for each functional-test model download. |
 | `COMFYUI_GEN_TIMEOUT` | `600` | Maximum wait for workflow execution and its image output. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Directory where validated ComfyUI PNGs are retained for artifact upload. |
+
+Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`) and `FILEBROWSER_PASSWORD=smoke-filebrowser-password` (`config.FILEBROWSER_TEST_PASSWORD`), since the image starts neither ComfyUI nor FileBrowser (probed on 8080) without one.
 
 
 ## Functional check
@@ -656,6 +707,52 @@ groups don't silently skip the check:
   → no check. Pod must still boot and survive `DWELL_SEC`.
 
 
+## Hygiene checks
+
+<a id="hygiene-checks"></a>
+
+Six opt-in checks that look at how an image is **assembled** rather than at
+whether it boots. They exist because the failures they catch are invisible to
+every other step: the pod starts, the GPU works, and the defect only surfaces
+for a user weeks later, or in the next scan.
+
+| check | manifest field | what it catches |
+|---|---|---|
+| `pip check` | `test_pip_check` (+ `pip_check_allow`) | a bumped pin that no longer satisfies something already in the image |
+| virtualenv | `test_virtualenv` | a pinned virtualenv that stopped supporting one of the shipped interpreters |
+| python path | `test_python_path` | an interpreter added without the sitecustomize filter, so apt's `python3-*` modules shadow its pip packages; or `python3` no longer pointing at the same interpreter as `python` |
+| uv | `test_uv` | a vendor base re-introducing a pip-installed uv that shadows the pinned binary |
+| system CA store | `test_ca_certs` (+ `revoked_ca_names`) | a `--only-upgrade ca-certificates` that exited 0 without upgrading anything |
+| certifi bundle | `test_python_tls` (+ `python_tls_venv`) | the same revoked root still trusted by `pip` and `requests`, which never read the system store |
+| dcgm-exporter | `test_dcgm_exporter` | the exporter binary failing against the image's libdcgm, or a label renamed upstream, either of which leaves the Grafana dashboards empty |
+
+Two things are deliberate about this design.
+
+**The checks are opt-in, not auto-detected.** A check that skips itself when
+an image lacks Python reports a pass it never performed. Leaving the flag off
+is a decision someone made in the manifest; a silent skip is one nobody made.
+
+**The two CA checks are separate flags.** They look at two different trust
+stores. `apt-get install --only-upgrade ca-certificates` fixes the system
+store, which curl, apt and git read; it does nothing to the certifi bundle,
+which Python reads. An image can pass one and fail the other, and in the case
+that motivated these checks it would have.
+
+When a root is revoked, add it to `REVOKED_CA_NAMES` in
+`runpod_smoke/checks.py`, and raise `min_ca_certs_version` in the workflows
+to the package that carries the distrust. Name the individual root, not the
+family: distrust is decided per root, and Ubuntu's `ca-certificates` ships
+`emSign ECC Root CA - G3` disabled while still trusting C1, C3 and G1 — a
+bare `emSign` fails on three roots nobody revoked. Underscores and spaces
+are equivalent when matching, so one spelling covers both the `openssl`
+subject form and the certificate filenames. `revoked_ca_names:` in a
+manifest overrides the list for one group, for a one-off run.
+
+`pip_check_allow` entries are plain substrings, not patterns. Keep each one
+narrow enough to name a single known conflict: `datasets 4.4.1 has
+requirement fsspec` and not `datasets`, so a *new* conflict in the same
+package still fails the run.
+
 ## Jupyter check (opt-in via manifest `test_jupyter: true`)
 
 The public proxy is checked first. If it returns HTTP 200, the service is
@@ -686,7 +783,7 @@ The composite action at
 [`.github/actions/smoke-test/action.yml`](../.github/actions/smoke-test/action.yml)
 wraps everything in this script needs for a clean CI run:
 
-1. Exports the RunPod API key (`runpod-api-key` input) as
+1. Exports the Runpod API key (`runpod-api-key` input) as
    `RUNPOD_API_KEY` for every later step. No CLI to install.
 2. Writes the `ssh-private-key` input to `~/.ssh/id_runpod` and exports
    `RUNPOD_SSH_KEY` so the in-pod CUDA probe and log fetch work.
@@ -695,12 +792,14 @@ wraps everything in this script needs for a clean CI run:
    `profile`, `budget-usd-per-hour`, `min-vram-gb`, `manufacturer`,
    `test-jupyter`, `test-ports`, `test-comfyui`,
    `test-comfyui-functional`, `check-all-gpu`, `instances`,
-   `cuda-versions`, `min-cuda-version`, and `exclude-instances` inputs.
+   `cuda-versions`, `min-cuda-version`, `exclude-instances`, and
+   `exclude-instances-for` inputs.
    `instances` and `check-all-gpu` are mutually exclusive — passing both
    fails the generator instead of silently ignoring one.
 4. Invokes `python3 tests/test_images.py <generated-manifest>` with
    `MAX_PARALLEL=<max-parallel>`, `CLOUD_TYPE=<cloud-type>`,
-   `ON_SKIP=<on-skip>`, `CREATE_TIMEOUT=<create-timeout>` and
+   `ON_SKIP=<on-skip>`, `SKIP_RETRIES=<skip-retries>`,
+   `SKIP_RETRY_DELAY=<skip-retry-delay>`, `CREATE_TIMEOUT=<create-timeout>` and
    `REGISTRY_AUTH_NAME=<registry-auth-name>` (empty by default, i.e.
    anonymous pulls). A failed
    image makes the smoke-test action fail, which prevents a release from
@@ -739,11 +838,11 @@ fields.
 
 | symptom in logs | likely cause | fix |
 |---|---|---|
-| `no RunPod API key — set RUNPOD_API_KEY…` | key missing from env and `~/.runpod/config.toml` | `export RUNPOD_API_KEY=<KEY>` |
-| `RunPod API rejected the key (HTTP 401…)` | key expired or lacks pod-management permission | regenerate at <https://www.runpod.io/console/user/settings> |
+| `no Runpod API key — set RUNPOD_API_KEY…` | key missing from env and `~/.runpod/config.toml` | `export RUNPOD_API_KEY=<KEY>` |
+| `Runpod API rejected the key (HTTP 401…)` | key expired or lacks pod-management permission | regenerate at <https://www.runpod.io/console/user/settings> |
 | `warn: no GPU catalog` | `GET /v2/catalog/gpus` failed — usually a bad/absent key | fix the key; budget and `check_all_gpu` selection are disabled without it |
-| `registry auth '<name>' not found in this RunPod account` | `REGISTRY_AUTH_NAME` doesn't match any credential — typo, or a different account than the one that has it | the error lists the names the account does have; fix the name or add the credential in the RunPod console |
-| `unauthorized: incorrect username or password` in the pod's system log | the attached credential's Docker Hub login is stale (common after switching accounts) | replace the token on that credential in the RunPod console, or drop `REGISTRY_AUTH_NAME` to pull our public images anonymously |
+| `registry auth '<name>' not found in this Runpod account` | `REGISTRY_AUTH_NAME` doesn't match any credential — typo, or a different account than the one that has it | the error lists the names the account does have; fix the name or add the credential in the Runpod console |
+| `unauthorized: incorrect username or password` in the pod's system log | the attached credential's Docker Hub login is stale (common after switching accounts) | replace the token on that credential in the Runpod console, or drop `REGISTRY_AUTH_NAME` to pull our public images anonymously |
 | every pod SKIPs with an SSH failure | private key not mode `600`, or its public half isn't registered | `chmod 600 <key>`; verify the fingerprint appears in `GET /v2/account/ssh-keys` |
 | `no ssh endpoint assigned yet` for the whole timeout | the pod never got a machine, so neither `ssh.direct` nor `ssh.proxy` exists | genuine provisioning failure — retry, or check the pod in the console. A missing *direct* port alone no longer causes this: the proxy is used instead |
 | `cuda_versions is set but none of the N candidate GPUs reports any CUDA version in the SECURE cloud` | CUDA axis on a ROCm/AMD sweep, or every candidate lives in the other cloud tier | drop `cuda_versions` for ROCm — the axis is NVIDIA-only; otherwise rerun with the other `CLOUD_TYPE` |
@@ -751,12 +850,12 @@ fields.
 | every group says `no capacity on any of N candidate instance type(s)` | budget too low / VRAM too high / region saturated | raise `max_price_per_hour`, drop `min_vram_gb`, or set explicit `instances:` |
 | only the `base_cpu` group says `no capacity` while GPU groups pass | the cloud(s) you target don't have CPU capacity right now | by default we already try SECURE then COMMUNITY. If both are full, add DC-pinned candidates: `CPU_CANDIDATES="cpu-secure:SECURE,cpu-community:COMMUNITY,cpu-eu:COMMUNITY:EU-RO-1+EU-NL-1,cpu-us:COMMUNITY:US-OR-1"` |
 | pod stays in `ssh endpoint not assigned yet` past `STALL_HINT_AFTER` | slow image pull or Docker Hub `toomanyrequests` | add registry auth, reduce `MAX_PARALLEL`, or wait 6 h for the Hub rate limit to reset |
-| `ssh_probe=FAIL — Permission denied (publickey)` | wrong SSH key | export `RUNPOD_SSH_KEY=/path/to/private/key` whose public half is on the RunPod account |
+| `ssh_probe=FAIL — Permission denied (publickey)` | wrong SSH key | export `RUNPOD_SSH_KEY=/path/to/private/key` whose public half is on the Runpod account |
 | `no kernel image is available for execution on the device` on a Blackwell GPU | PyTorch ≤ 2.6 has no `sm_100`/`sm_120` kernels, and torchvision from the cu129 index has none either | add `exclude_instances: ["B200*", "B300*", "RTX 5090", "RTX PRO *", "PRO 6000 MIG *"]` — the display names never contain the word `Blackwell`, and a bare `B300` misses `B300 MIG 34GB` |
 | `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=X.Y` in pod logs | image needs a newer driver than the host has | set `min_cuda_version: "X.Y"` in the manifest (only needed for tags without a `cuXYZW`/`cudaXYZW` marker) |
-| `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (classic Ubuntu 22.04 `python3` → 3.10 vs `python` → 3.12) | fix `container-template/start.sh` to use `python -m jupyter lab` |
+| `jupyter check (in-pod) FAILED -- start.sh did not bring up JupyterLab` | `start.sh` is launching Jupyter with the wrong Python interpreter (the system `python3` can differ from `python` → 3.12, e.g. 3.14 on Ubuntu 26.04) | fix `container-template/start.sh` to use `python -m jupyter lab` |
 | `jupyter check (public proxy) FAILED` but in-pod check passed | port exposed as `8888/tcp` instead of `8888/http`, OR proxy hasn't registered the pod yet | check `pod create --ports` arg; bump `JUPYTER_PROXY_TIMEOUT` if proxy is just slow |
-| script hangs at `Cleaning up N leftover pod(s)…` | RunPod API is slow to respond to delete | wait it out; the `reap-pods.yml` cron sweeps anything we miss (`--terminate-after` is unreliable — dropped for CPU pods, not honored promptly for GPU — so don't count on it) |
+| script hangs at `Cleaning up N leftover pod(s)…` | Runpod API is slow to respond to delete | wait it out; the `reap-pods.yml` cron sweeps anything we miss (`--terminate-after` is unreliable — dropped for CPU pods, not honored promptly for GPU — so don't count on it) |
 
 
 ## Exit code
@@ -768,7 +867,7 @@ always fatal), if any image came back UNVERIFIED under
 `ON_SKIP=fail`. A run that produced **no result rows at all** also exits
 `1` whatever `ON_SKIP` says: nothing was attempted, so nothing passed.
 
-SKIPs mean the smoke test never actually ran on the image (RunPod had no
+SKIPs mean the smoke test never actually ran on the image (Runpod had no
 capacity on every candidate, or the pod never became addressable)
 — that's effectively zero validation, so the default is strict.
 Override with:

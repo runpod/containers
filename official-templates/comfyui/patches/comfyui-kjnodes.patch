@@ -1,0 +1,19 @@
+--- a/custom_nodes/ComfyUI-KJNodes/nodes/model_optimization_nodes.py
++++ b/custom_nodes/ComfyUI-KJNodes/nodes/model_optimization_nodes.py
+@@ -1644,14 +1644,8 @@
+                 if hasattr(mod, "ops") and hasattr(mod, "nodes"):
+                     return mod
+ 
+-        gguf_path = os.path.join(folder_paths.folder_names_and_paths["custom_nodes"][0][0], "ComfyUI-GGUF")
+-        for module_name in ["ComfyUI-GGUF", "custom_nodes.ComfyUI-GGUF", "comfyui-gguf", "custom_nodes.comfyui-gguf", gguf_path, gguf_path.lower()]:
+-            try:
+-                module = importlib.import_module(module_name)
+-                return module
+-            except ImportError:
+-                continue
+-
++        # Runpod image: no import-by-name fallback; only a ComfyUI-GGUF that
++        # ComfyUI itself loaded at startup is used.
+         raise ImportError(
+             "Compatible ComfyUI-GGUF not found. "
+             "Please install/update from: https://github.com/city96/ComfyUI-GGUF"

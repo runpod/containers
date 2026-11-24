@@ -28,7 +28,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(DCGM_FI_DEV_GPU_UTIL, Hostname)",
+        "query": "label_values(DCGM_FI_DEV_GPU_UTIL, hostname)",
         "refresh": 2,
         "sort": 1,
         "includeAll": true,
@@ -91,7 +91,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_GPU_UTIL{Hostname=~\"$Hostname\"})"
+          "expr": "avg(DCGM_FI_DEV_GPU_UTIL{hostname=~\"$Hostname\"})"
         }
       ],
       "gridPos": {
@@ -149,7 +149,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\"})"
+          "expr": "avg(DCGM_FI_DEV_MEM_COPY_UTIL{hostname=~\"$Hostname\"})"
         }
       ],
       "gridPos": {
@@ -207,7 +207,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_ENC_UTIL{Hostname=~\"$Hostname\"})"
+          "expr": "avg(DCGM_FI_DEV_ENC_UTIL{hostname=~\"$Hostname\"})"
         }
       ],
       "gridPos": {
@@ -265,7 +265,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_DEC_UTIL{Hostname=~\"$Hostname\"})"
+          "expr": "avg(DCGM_FI_DEV_DEC_UTIL{hostname=~\"$Hostname\"})"
         }
       ],
       "gridPos": {
@@ -314,7 +314,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_GPU_UTIL{Hostname=~\"$Hostname\"})",
+          "expr": "avg(DCGM_FI_DEV_GPU_UTIL{hostname=~\"$Hostname\"})",
           "legendFormat": "core (SM)"
         },
         {
@@ -323,7 +323,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\"})",
+          "expr": "avg(DCGM_FI_DEV_MEM_COPY_UTIL{hostname=~\"$Hostname\"})",
           "legendFormat": "memory"
         },
         {
@@ -332,7 +332,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_ENC_UTIL{Hostname=~\"$Hostname\"})",
+          "expr": "avg(DCGM_FI_DEV_ENC_UTIL{hostname=~\"$Hostname\"})",
           "legendFormat": "encoder"
         },
         {
@@ -341,7 +341,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg(DCGM_FI_DEV_DEC_UTIL{Hostname=~\"$Hostname\"})",
+          "expr": "avg(DCGM_FI_DEV_DEC_UTIL{hostname=~\"$Hostname\"})",
           "legendFormat": "decoder"
         }
       ],
@@ -391,8 +391,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "avg by (Hostname) (DCGM_FI_DEV_GPU_UTIL{Hostname=~\"$Hostname\"})",
-          "legendFormat": "{{Hostname}}"
+          "expr": "avg by (hostname) (DCGM_FI_DEV_GPU_UTIL{hostname=~\"$Hostname\"})",
+          "legendFormat": "{{hostname}}"
         }
       ],
       "gridPos": {
@@ -451,8 +451,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_GPU_UTIL{Hostname=~\"$Hostname\"})",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (hostname, gpu) (DCGM_FI_DEV_GPU_UTIL{hostname=~\"$Hostname\"})",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "description": "Per-GPU core (sm) utilization \u2014 one row per GPU.",
@@ -512,8 +512,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{Hostname=~\"$Hostname\"})",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (hostname, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{hostname=~\"$Hostname\"})",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "description": "Per-GPU memory utilization \u2014 one row per GPU.",
@@ -573,8 +573,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_ENC_UTIL{Hostname=~\"$Hostname\"})",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (hostname, gpu) (DCGM_FI_DEV_ENC_UTIL{hostname=~\"$Hostname\"})",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "description": "Per-GPU encoder utilization \u2014 one row per GPU.",
@@ -634,8 +634,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (Hostname, gpu) (DCGM_FI_DEV_DEC_UTIL{Hostname=~\"$Hostname\"})",
-          "legendFormat": "{{Hostname}}/gpu{{gpu}}"
+          "expr": "max by (hostname, gpu) (DCGM_FI_DEV_DEC_UTIL{hostname=~\"$Hostname\"})",
+          "legendFormat": "{{hostname}}/gpu{{gpu}}"
         }
       ],
       "description": "Per-GPU decoder utilization \u2014 one row per GPU.",

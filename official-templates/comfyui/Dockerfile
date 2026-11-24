@@ -20,6 +20,10 @@ ARG CUDA_VERSION_DASH=12-8
 ARG TORCH_INDEX_SUFFIX=cu128
 # torchaudio has no cu132 build; see docker-bake.hcl for why 13.2 uses +cpu.
 ARG TORCHAUDIO_INDEX_SUFFIX=cu128
+# Prebuilt SageAttention wheel for this exact torch + CUDA; empty skips it.
+ARG SAGEATTENTION_VERSION=""
+ARG SAGEATTENTION_WHEEL_URL=""
+ARG SAGEATTENTION_SHA256=""
 
 # Install minimal dependencies needed for building
 RUN apt-get update && \
@@ -43,8 +47,8 @@ RUN apt-get update && \
 
 # Install pip and pip-tools for lock file generation.
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.12 get-pip.py "pip==26.1.2" && \
-    python3.12 -m pip install --no-cache-dir "pip-tools==7.6.0" && \
+    python3.12 get-pip.py "pip==26.2.1" && \
+    python3.12 -m pip install --no-cache-dir "pip-tools==7.6.2" && \
     rm get-pip.py
 
 # Set CUDA environment for building
@@ -63,15 +67,6 @@ RUN curl -fSL "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/${COM
 # silently.
 RUN test "$(tr -d '[:space:]' < ComfyUI/manager_requirements.txt)" = "comfyui_manager==${MANAGER_VERSION}"
 
-# ComfyUI core: synthetic git so Manager can read its version. Done while
-# custom_nodes is still empty, so `git add -A` captures core only. ComfyUI core
-# is image-managed (upgraded by start.sh from the baked bundle), not via Manager.
-WORKDIR /tmp/build/ComfyUI
-RUN git init && git add -A && \
-    git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
-    git tag "${COMFYUI_VERSION}" && \
-    git remote add origin https://github.com/comfyanonymous/ComfyUI.git
-
 # Custom nodes: real git clones reset to the pinned commit. Real shared history
 # with origin lets ComfyUI-Manager's git update path fast-forward instead of
 # failing on the synthetic single-commit history these used to carry.
@@ -83,6 +78,28 @@ RUN git clone "https://github.com/kijai/ComfyUI-KJNodes.git" ComfyUI-KJNodes && 
     git clone "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git" ComfyUI-RunpodDirect && \
     git -C ComfyUI-RunpodDirect reset --hard "${RUNPODDIRECT_SHA}"
 
+# Runpod fixes to the pinned sources: one patch per issue in patches/, paths
+# relative to the ComfyUI root. git apply refuses a patch whose context has
+# moved, so a pin bump that touches patched code fails the build instead of
+# shipping without the fix: rebase the patch onto the new pin, or delete it
+# once upstream has the fix. A node's patch is committed in its own clone:
+# an uncommitted change there would block ComfyUI-Manager's `git pull`.
+COPY patches/ /tmp/patches/
+RUN git -C /tmp/build/ComfyUI apply --verbose /tmp/patches/*.patch && \
+    for repo in /tmp/build/ComfyUI/custom_nodes/*/; do \
+        git -C "$repo" diff --quiet || \
+        git -C "$repo" -c user.name=- -c user.email=- commit -qam "Runpod patches"; \
+    done
+
+# ComfyUI core: synthetic git so Manager can read its version, patches already
+# in the tagged commit. custom_nodes is excluded now that each node is its own
+# clone. Core is image-managed (start.sh upgrades it), not via Manager.
+WORKDIR /tmp/build/ComfyUI
+RUN git init && git add -A -- . ':!custom_nodes' && \
+    git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
+    git tag "${COMFYUI_VERSION}" && \
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git
+
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build
 RUN cat ComfyUI/requirements.txt ComfyUI/manager_requirements.txt > requirements.in && \
@@ -92,7 +109,8 @@ RUN cat ComfyUI/requirements.txt ComfyUI/manager_requirements.txt > requirements
         fi; \
     done && \
     echo "GitPython" >> requirements.in && \
-    echo "opencv-python" >> requirements.in && \
+    echo "opencv-python>=5.1.0.95" >> requirements.in && \
+    echo "opencv-python-headless>=5.1.0.95" >> requirements.in && \
     echo "jupyter" >> requirements.in && \
     echo "jupyter-resource-usage" >> requirements.in && \
     echo "jupyterlab-nvdashboard" >> requirements.in && \
@@ -100,8 +118,10 @@ RUN cat ComfyUI/requirements.txt ComfyUI/manager_requirements.txt > requirements
     echo "torch==${TORCH_VERSION}" >> requirements.in && \
     echo "torchvision==${TORCHVISION_VERSION}" >> requirements.in && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> requirements.in && \
-    echo "pillow>=12.1.1" >> requirements.in && \
+    echo "pillow>=13.0.0" >> requirements.in && \
     echo "tornado>=6.5.10" >> requirements.in && \
+    echo "certifi>=2026.10.19" >> requirements.in && \
+    echo "av>=19.0.0" >> requirements.in && \
     TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
     AUDIO_INDEX_URL="https://download.pytorch.org/whl/${TORCHAUDIO_INDEX_SUFFIX}" && \
     PIP_INDEX_URL=https://pypi.org/simple \
@@ -126,19 +146,131 @@ RUN MANAGER_UTIL="$(python3.12 -c 'import importlib.util, os; print(os.path.join
     sed -i 's/timeout=5)/timeout=30)/g' "$MANAGER_UTIL" && \
     python3.12 -m compileall -q "$MANAGER_UTIL"
 
+# ComfyUI listens on loopback behind the password proxy, and Manager loosens
+# its install gates on a loopback --listen. start.sh pins the config values
+# that close the gates in this Manager (see pin_manager_security). Newer
+# Manager releases add allow_flagged_nodepack_install, ORed with loopback, so
+# no config value closes it: fail here so a Manager bump decides about it.
+RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin))')" && \
+    if grep -rq 'allow_flagged_nodepack_install' "$MANAGER_PKG" --include='*.py'; then \
+        echo "ComfyUI-Manager gained allow_flagged_nodepack_install; review pin_manager_security in start.sh" >&2; exit 1; \
+    fi
+
+# Runpod fixes to Manager itself. Manager is a pip package, not part of the
+# ComfyUI tree, so its patches live apart from patches/ and are applied to the
+# installed package: the 403s on update_comfyui and comfyui_switch_version keep
+# the image's pinned ComfyUI version, the ones on share and on the four routes
+# that read a stored credential (openart, matrix, youml, comfyworkflows) keep
+# Manager from handing those back over HTTP, and the '@' check refuses a node
+# spec that would resolve to a target the caller did not name.
+# Every one lands twice. __init__.py imports either glob/ or legacy/ depending
+# on --enable-manager-legacy-ui, which this template documents, and the two
+# carry the same routes; patching only glob/ would leave the legacy UI open.
+# git apply refuses a patch whose context has moved, so a MANAGER_VERSION bump
+# that touches this code fails the build instead of shipping without the fixes.
+COPY manager-patches/ /tmp/manager-patches/
+RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin))')" && \
+    git -C "$MANAGER_PKG" apply --verbose -p1 /tmp/manager-patches/*.patch && \
+    python3.12 -m compileall -q "$MANAGER_PKG"
+
+# SageAttention needs a compile per torch + CUDA pair, so it comes as a pinned
+# wheel rather than through the lock. --no-deps keeps it from touching the
+# hash-locked torch; the wheel's own torch==<exact> pin is checked instead.
+# Not imported here: _qattn_sm90 links libcuda.so.1, which only a GPU host has.
+RUN if [ -n "${SAGEATTENTION_WHEEL_URL}" ]; then \
+        mkdir -p /tmp/sageattention && \
+        wheel="/tmp/sageattention/sageattention-${SAGEATTENTION_VERSION}-cp312-cp312-linux_x86_64.whl" && \
+        curl -fSL "${SAGEATTENTION_WHEEL_URL}" -o "${wheel}" && \
+        printf '%s  %s\n' "${SAGEATTENTION_SHA256}" "${wheel}" > /tmp/sageattention/wheel.sha256 && \
+        sha256sum -c /tmp/sageattention/wheel.sha256 && \
+        python3.12 -m pip install --no-cache-dir --no-deps --no-index --find-links /tmp/sageattention \
+            "sageattention==${SAGEATTENTION_VERSION}" && \
+        rm -rf /tmp/sageattention && \
+        TORCH_VERSION="${TORCH_VERSION}" python3.12 -c 'import importlib.metadata as m, os, sys; pin = "torch==" + os.environ["TORCH_VERSION"]; requires = m.requires("sageattention") or []; sys.exit(0 if pin in requires else f"sageattention requires {requires}, image has {pin}")'; \
+    else \
+        echo "No SageAttention wheel for this CUDA variant; skipping."; \
+    fi
+
 # Pre-populate ComfyUI-Manager cache so first cold start skips the slow registry fetch
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
 RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/cache "${COMFYUI_VERSION}"
 
-# Bake ComfyUI + custom nodes into a known location for runtime copy
+# Bake ComfyUI + custom nodes into a known location for runtime copy. The
+# patch hashes are part of the manifest so start.sh re-syncs existing volumes
+# when a patch is added or changed.
 RUN printf '%s\n' \
     "COMFYUI_VERSION=${COMFYUI_VERSION}" \
     "MANAGER_VERSION=${MANAGER_VERSION}" \
     "KJNODES_SHA=${KJNODES_SHA}" \
     "CIVICOMFY_SHA=${CIVICOMFY_SHA}" \
     "RUNPODDIRECT_SHA=${RUNPODDIRECT_SHA}" \
+    "$(sha256sum /tmp/patches/*.patch)" \
     > /tmp/build/ComfyUI/.runpod-bundle-version && \
     cp -r /tmp/build/ComfyUI /opt/comfyui-baked
+
+# ============================================================================
+# FileBrowser - built from source
+# ============================================================================
+# Upstream archived FileBrowser on 2026-09-01: FILEBROWSER_VERSION is its last
+# release and no security fixes will follow. Its release binary carries the Go
+# toolchain and modules of July 2026, so it is rebuilt here with a current Go
+# and the vulnerable modules raised. Drop these stages when FileBrowser is
+# replaced.
+FROM golang:1.26.11-bookworm AS filebrowser-src
+
+ARG FILEBROWSER_VERSION
+ARG FILEBROWSER_COMMIT
+
+# A git checkout, not the source tarball: Go stamps the module version from it
+# (v2.63.23+dirty once go.mod is raised), so scanners still match FileBrowser's
+# own advisories. A tarball build reports (devel) and they never match.
+RUN git clone --quiet --depth 1 --branch "${FILEBROWSER_VERSION}" \
+        https://github.com/filebrowser/filebrowser.git /src && \
+    test "$(git -C /src rev-parse HEAD)" = "${FILEBROWSER_COMMIT}"
+WORKDIR /src
+
+# The web UI, embedded into the binary from frontend/dist (frontend/assets.go).
+# Corepack runs the exact pnpm the project pins in package.json.
+FROM node:24-bookworm-slim AS filebrowser-frontend
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+COPY --from=filebrowser-src /src /src
+WORKDIR /src/frontend
+RUN corepack enable && \
+    pnpm install --frozen-lockfile && \
+    pnpm run build
+
+FROM filebrowser-src AS filebrowser-build
+
+# pipefail: the stamp check below pipes `go version -m` into awk, and a
+# failing go must fail the build, not hand awk empty input.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG FILEBROWSER_VERSION
+
+# GOTOOLCHAIN=local: build with this image's Go, never a downloaded one.
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+COPY --from=filebrowser-frontend /src/frontend/dist /src/frontend/dist
+RUN go get \
+        github.com/andybalholm/brotli@v1.3.0 \
+        github.com/klauspost/compress@v1.20.4 \
+        golang.org/x/crypto@v0.59.0 \
+        golang.org/x/image@v0.48.0 \
+        golang.org/x/net@v0.62.0 \
+        golang.org/x/sys@v0.50.0 \
+        golang.org/x/text@v0.44.0 && \
+    go mod tidy && \
+    go build -trimpath \
+        -ldflags "-s -w -X github.com/filebrowser/filebrowser/v2/version.Version=${FILEBROWSER_VERSION#v}" \
+        -o /out/filebrowser . && \
+    /out/filebrowser version && \
+    fb_mod="$(go version -m /out/filebrowser | awk '$1 == "mod" { print $2, $3 }')" && \
+    echo "FileBrowser module stamp: ${fb_mod}" && \
+    case "${fb_mod}" in \
+        "github.com/filebrowser/filebrowser/v2 ${FILEBROWSER_VERSION}" | \
+        "github.com/filebrowser/filebrowser/v2 ${FILEBROWSER_VERSION}+dirty") ;; \
+        *) echo "FileBrowser's module version is not ${FILEBROWSER_VERSION}: scanners would not match its advisories" >&2; exit 1 ;; \
+    esac
 
 # ============================================================================
 # Stage 2: Runtime - Clean image with pre-installed packages
@@ -157,10 +289,16 @@ ARG TORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
 
-# Which venv on the network volume this image owns. Only CUDA 13.2 gets its own;
-# 12.8 and 13.0 keep sharing .venv-cu128 so existing volumes are untouched.
-ARG COMFYUI_VENV_NAME=.venv-cu128
-ENV COMFYUI_VENV_NAME=${COMFYUI_VENV_NAME}
+# Which venv on the network volume this image owns — one per torch CUDA build,
+# since packages users install there (xformers, triton, sageattention,
+# onnxruntime-gpu, nunchaku) are compiled against it. 13.0 used to share
+# .venv-cu128; start.sh treats that as a move and reinstalls node deps.
+ENV COMFYUI_VENV_NAME=.venv-${TORCH_INDEX_SUFFIX}
+
+# Install NVIDIA's CUDA forward-compatibility driver libs (cuda-compat-*) so
+# the image can run on hosts whose driver is older than the image's CUDA.
+# start.sh only activates them after a cuInit() probe succeeds.
+ARG INSTALL_CUDA_COMPAT=false
 
 # ---- FileBrowser version pin (set in docker-bake.hcl) ----
 ARG FILEBROWSER_VERSION
@@ -170,11 +308,15 @@ ARG FILEBROWSER_SHA256
 # The pins carry a local version (+cu128), which PyPI does not serve — without
 # this index every runtime install that touches torch fails to resolve.
 ENV PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}"
+# pip's pinned here, so its "new release available" notice is noise — and users
+# reading Manager install logs take it for an error.
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN printf "torch==%s\ntorchvision==%s\ntorchaudio==%s\n" \
     "$TORCH_VERSION" "$TORCHVISION_VERSION" "$TORCHAUDIO_VERSION" \
     > /opt/comfyui-runtime-constraints.txt
 
-# Update and install runtime dependencies, CUDA, and common tools
+# Install runtime deps, CUDA, and tools. apt-get upgrade also pulls the
+# patched ca-certificates (CON-1869: drops emSign root, CVE-2026-111943).
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -205,6 +347,11 @@ RUN apt-get update && \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends cuda-minimal-build-${CUDA_VERSION_DASH} \
+    && if [ "${INSTALL_CUDA_COMPAT}" = "true" ]; then \
+        apt-get install -y --no-install-recommends cuda-compat-${CUDA_VERSION_DASH} && \
+        ln -sfn /usr/local/cuda/compat /opt/cuda-compat && \
+        test -e /opt/cuda-compat/libcuda.so.1; \
+    fi \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm cuda-keyring_1.1-1_all.deb \
@@ -227,12 +374,8 @@ COPY --from=builder /opt/comfyui-baked /opt/comfyui-baked
 RUN pip uninstall -y uv 2>/dev/null || true && \
     rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
-# Install FileBrowser (pinned version with checksum)
-RUN curl -fSL "https://github.com/filebrowser/filebrowser/releases/download/${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" -o /tmp/fb.tar.gz && \
-    printf '%s  /tmp/fb.tar.gz\n' "${FILEBROWSER_SHA256}" > /tmp/fb.sha256 && \
-    sha256sum -c /tmp/fb.sha256 && \
-    tar xzf /tmp/fb.tar.gz -C /usr/local/bin filebrowser && \
-    rm /tmp/fb.tar.gz /tmp/fb.sha256
+# FileBrowser, rebuilt from source in the stages above
+COPY --from=filebrowser-build /out/filebrowser /usr/local/bin/filebrowser
 
 # Set CUDA environment variables
 ENV PATH=/usr/local/cuda/bin:${PATH}
@@ -246,9 +389,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # Jupyter is included in the lock file and installed in the builder stage
 
-# Configure SSH for root login
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+# Key-only SSH: no root password is ever set. The greps fail the build if a
+# future base image drops the stock lines and the edits land nowhere.
+RUN sed -i 's/^#*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PermitUserEnvironment .*/PermitUserEnvironment yes/' /etc/ssh/sshd_config && \
+    grep -q '^PasswordAuthentication no$' /etc/ssh/sshd_config && \
+    grep -q '^PermitUserEnvironment yes$' /etc/ssh/sshd_config && \
     mkdir -p /run/sshd && \
     rm -f /etc/ssh/ssh_host_*
 
@@ -261,6 +407,13 @@ EXPOSE 8188 22 8888 8080
 
 # Copy start script
 COPY scripts/start.sh /start.sh
+
+# Password proxy in front of ComfyUI (see start.sh). It runs on the image's
+# interpreter with ComfyUI's own aiohttp, so the build fails here if that
+# stops importing rather than every pod failing at start.
+COPY scripts/auth_proxy.py /opt/comfyui-auth-proxy/auth_proxy.py
+RUN /usr/bin/python3.12 -I -c "import yarl; from aiohttp import web; web.AppKey" && \
+    /usr/bin/python3.12 -I -m py_compile /opt/comfyui-auth-proxy/auth_proxy.py
 
 # Set Python 3.12 as default
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \

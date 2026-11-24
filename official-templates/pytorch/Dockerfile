@@ -12,7 +12,7 @@ ARG TORCH
 # one argument per package instead of a single mashed-together string.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     read -ra TORCH_PKGS <<< "${TORCH}" && \
-    python -m pip install \
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install \
         --timeout 1000 \
         --retries 10 \
         --resume-retries 5 \
@@ -28,7 +28,7 @@ ARG TORCHAUDIO
 ARG AUDIO_INDEX
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     if [ -n "${TORCHAUDIO}" ]; then \
-        python -m pip install --no-deps "${TORCHAUDIO}" \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHAUDIO}" \
             --index-url "https://download.pytorch.org/whl/${AUDIO_INDEX}"; \
     fi
 
@@ -39,11 +39,28 @@ ARG TORCHCODEC
 ARG CODEC_SRC
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     if [ -n "${TORCHCODEC}" ]; then \
-        python -m pip install --no-deps "${TORCHCODEC}" \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${TORCHCODEC}" \
             --index-url "https://download.pytorch.org/whl/cu${CODEC_SRC}"; \
+    fi
+
+# NIXL (torch 2.15+): the backend behind torch.distributed._transport's
+# new_transport("nixl"), for KV-cache / tensor transfer in disaggregated
+# inference. NIXL is a space-separated list of pins (see docker-bake.hcl).
+# --no-deps: the `nixl` meta package requires BOTH nixl-cu12 and nixl-cu13
+# unconditionally, and nixl-cuXX requires an unpinned torch; only the backend
+# for this image's CUDA major is wanted, and torch must not move. Its other
+# dependency, numpy, is already present through torchvision. The wheel bundles
+# its own UCX, so no system packages are needed; RDMA transports additionally
+# use the host's ibverbs providers (present in the -cluster image).
+ARG NIXL
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ -n "${NIXL}" ]; then \
+        read -ra NIXL_PKGS <<< "${NIXL}" && \
+        PIP_CACHE_DIR=/root/.cache/pip python -m pip install --no-deps "${NIXL_PKGS[@]}" && \
+        python -c "import nixl; from nixl._api import nixl_agent"; \
     fi
 
 # Patched pins for packages that Grype reports as HIGH in the layers above.
 COPY --from=requirements requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    python -m pip install --upgrade -r /requirements.txt
+    PIP_CACHE_DIR=/root/.cache/pip python -m pip install --upgrade -r /requirements.txt

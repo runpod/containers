@@ -21,7 +21,7 @@ rocm-smi vs skip) from the **image ref itself**, not from the group name.
 
 Usage:
     generate_test_manifest.py --profile base \\
-        --refs '["docker.io/runpod/base:1.0.6-...-ubuntu2204", ...]' \\
+        --refs '["docker.io/runpod/base:1.0.6-...-ubuntu2404", ...]' \\
         --budget 1.0 \\
         --output manifest.yaml
 """
@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
@@ -36,8 +37,8 @@ from pathlib import Path
 
 # A tag is treated as GPU iff it contains any of these (case-insensitive)
 # substrings. Matches our actual tag conventions:
-#   runpod/base:...-cuda1281-ubuntu2204                  -> cuda
-#   runpod/base:...-rocm644-ubuntu2204-py310-pytorch251  -> rocm, py, pytorch
+#   runpod/base:...-cuda1281-ubuntu2404                  -> cuda
+#   runpod/base:...-rocm644-ubuntu2404-py312-pytorch260  -> rocm, py, pytorch
 #   runpod/pytorch:...-cuda1281-py3.10-pytorch251-...    -> cuda, py, pytorch
 # CPU base images carry only ubuntu+suffix, none of these substrings.
 GPU_TAG_PATTERN = re.compile(r"(cuda|pytorch|py|rocm)", re.IGNORECASE)
@@ -83,6 +84,18 @@ def render_yaml(groups: dict) -> str:
             "test_comfyui",
             "test_comfyui_functional",
             "test_comfyui_manager",
+            "test_vllm",
+            "test_pip_check",
+            "test_ca_certs",
+            "min_ca_certs_version",
+            "test_python_tls",
+            "python_tls_venv",
+            "test_uv",
+            "test_virtualenv",
+            "test_python_path",
+            "test_autoresearch",
+            "test_dcgm_exporter",
+            "test_ray",
         ):
             if key in body:
                 val = body[key]
@@ -92,7 +105,14 @@ def render_yaml(groups: dict) -> str:
         if body.get("test_ports"):
             lines.append("    test_ports:")
             for port in body["test_ports"]:
-                lines.append(f"    - {port}")
+                # Quote `<port>/<path>` entries so YAML keeps them as strings.
+                value = f'"{port}"' if "/" in str(port) else port
+                lines.append(f"    - {value}")
+        for list_key in ("pip_check_allow", "revoked_ca_names"):
+            if body.get(list_key):
+                lines.append(f"    {list_key}:")
+                for entry in body[list_key]:
+                    lines.append(f"    - {entry}")
         # cuda_versions is either the literal `all` or a list of X.Y
         # versions; the scalar form goes through the key loop above.
         if isinstance(body.get("cuda_versions"), list):
@@ -112,6 +132,27 @@ def render_yaml(groups: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def split_by_scoped_excludes(
+    refs: list[str],
+    scoped_excludes: list[tuple[str, list[str]]],
+) -> list[tuple[list[str], list[str]]]:
+    """Partition `refs` by the extra exclude patterns each one picks up.
+
+    Every (ref_glob, patterns) rule whose glob matches a ref contributes
+    its patterns to that ref; refs that end up with the same pattern list
+    share a partition. Returns (extra_patterns, refs) pairs in order of
+    first appearance, so the output is stable for a given input.
+    """
+    partitions: dict[tuple[str, ...], list[str]] = {}
+    for ref in refs:
+        extra: list[str] = []
+        for ref_glob, patterns in scoped_excludes:
+            if fnmatch.fnmatchcase(ref, ref_glob):
+                extra.extend(p for p in patterns if p not in extra)
+        partitions.setdefault(tuple(extra), []).append(ref)
+    return [(list(extra), group) for extra, group in partitions.items()]
+
+
 def build_groups(
     profile: str,
     refs: list[str],
@@ -121,13 +162,28 @@ def build_groups(
     manufacturer: str,
     test_jupyter: bool = False,
     test_torch_packages: bool = False,
-    test_ports: list[int] | None = None,
+    test_ports: list[str] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
     test_comfyui_manager: bool = False,
+    test_vllm: bool = False,
+    test_pip_check: bool = False,
+    pip_check_allow: list[str] | None = None,
+    test_ca_certs: bool = False,
+    min_ca_certs_version: str = "",
+    test_python_tls: bool = False,
+    python_tls_venv: str = "",
+    revoked_ca_names: list[str] | None = None,
+    test_uv: bool = False,
+    test_virtualenv: bool = False,
+    test_python_path: bool = False,
+    test_autoresearch: bool = False,
+    test_dcgm_exporter: bool = False,
+    test_ray: bool = False,
     check_all_gpu: bool = False,
     instances: list[str] | None = None,
     exclude_instances: list[str] | None = None,
+    scoped_excludes: list[tuple[str, list[str]]] | None = None,
     min_cuda_version: str | None = None,
     cuda_versions: list[str] | None = None,
     explicit_budget: bool = False,
@@ -155,6 +211,15 @@ def build_groups(
     landing on a Blackwell host fails with 'no kernel image is available
     for execution on the device'.
 
+    `scoped_excludes` is a list of (ref_glob, patterns) rules that narrow
+    such a block to the refs it is actually needed for. A block in
+    `exclude_instances` covers the whole group, so one bad image/GPU
+    pairing would otherwise cost that GPU for every image in the run.
+    GPU refs matching a rule's glob move into their own group with the
+    rule's patterns appended to its exclusions; refs matching no rule stay
+    in the usual group under the usual name. CPU refs are never split —
+    they don't select GPUs, and 'base_cpu' is a name the harness keys on.
+
     `cuda_versions` turns on the GPU x CUDA axis: `['all']` tests every
     version each GPU reports capacity for, an explicit list tests just
     those. Each version becomes its own job and is pinned with
@@ -172,7 +237,10 @@ def build_groups(
     instances = list(instances or [])
     test_ports = list(test_ports or [])
     cuda_versions = list(cuda_versions or [])
-    wants_all_cuda = any(v.strip().lower() == "all" for v in cuda_versions)
+    wants_allowed_cuda = any(v.strip().lower() == "allowed" for v in cuda_versions)
+    wants_all_cuda = wants_allowed_cuda or any(
+        v.strip().lower() == "all" for v in cuda_versions
+    )
 
     if instances and check_all_gpu:
         raise ValueError(
@@ -211,17 +279,72 @@ def build_groups(
             body["test_comfyui_functional"] = True
         if test_comfyui_manager:
             body["test_comfyui_manager"] = True
+        if test_vllm:
+            body["test_vllm"] = True
+        if test_pip_check:
+            body["test_pip_check"] = True
+            if pip_check_allow:
+                body["pip_check_allow"] = list(pip_check_allow)
+        if test_ca_certs:
+            body["test_ca_certs"] = True
+            if min_ca_certs_version:
+                body["min_ca_certs_version"] = min_ca_certs_version
+        if test_python_tls:
+            body["test_python_tls"] = True
+            if python_tls_venv:
+                body["python_tls_venv"] = python_tls_venv
+        if (test_ca_certs or test_python_tls) and revoked_ca_names:
+            body["revoked_ca_names"] = list(revoked_ca_names)
+        if test_uv:
+            body["test_uv"] = True
+        if test_virtualenv:
+            body["test_virtualenv"] = True
+        if test_python_path:
+            body["test_python_path"] = True
+        if test_autoresearch:
+            body["test_autoresearch"] = True
+        if test_dcgm_exporter:
+            body["test_dcgm_exporter"] = True
+        if test_ray:
+            body["test_ray"] = True
         if exclude_instances:
             body["exclude_instances"] = list(exclude_instances)
-        if gpu_group and wants_all_cuda:
+        if gpu_group and wants_allowed_cuda:
+            body["cuda_versions"] = "allowed"
+        elif gpu_group and wants_all_cuda:
             body["cuda_versions"] = "all"
         elif gpu_group and cuda_versions:
             body["cuda_versions"] = list(cuda_versions)
         # The floor is meaningless once exact versions are pinned, and
-        # sending both makes the API reject the create outright.
-        if min_cuda_version and not (gpu_group and (wants_all_cuda or cuda_versions)):
+        # sending both makes the API reject the create outright. `allowed`
+        # is the exception: the harness reads it as the axis floor for
+        # tags without a CUDA marker and never sends it to the API.
+        if min_cuda_version and (
+            wants_allowed_cuda
+            or not (gpu_group and (wants_all_cuda or cuda_versions))
+        ):
             body["min_cuda_version"] = min_cuda_version
         return body
+
+    def _gpu_groups(gpu_refs: list[str]) -> dict:
+        # Refs that picked up no scoped patterns keep the plain 'base_gpu'
+        # name, so callers without scoped rules see the manifest unchanged.
+        # The name is informational; the scoped ones are just numbered.
+        groups: dict = {}
+        scoped_n = 0
+        for extra, group_refs in split_by_scoped_excludes(
+            gpu_refs, scoped_excludes or []
+        ):
+            body = _decorate({"images": group_refs}, gpu_group=True)
+            if not extra:
+                groups["base_gpu"] = body
+                continue
+            merged = list(body.get("exclude_instances", []))
+            merged.extend(p for p in extra if p not in merged)
+            body["exclude_instances"] = merged
+            scoped_n += 1
+            groups[f"base_gpu_scoped{scoped_n}"] = body
+        return groups
 
     if profile == "base":
         # Split refs into CPU- vs GPU-targeted images by tag content.
@@ -235,7 +358,7 @@ def build_groups(
         if cpu:
             groups["base_cpu"] = _decorate({"images": cpu}, gpu_group=False)
         if gpu:
-            groups["base_gpu"] = _decorate({"images": gpu}, gpu_group=True)
+            groups.update(_gpu_groups(gpu))
         return groups
 
     if profile == "gpu":
@@ -243,11 +366,40 @@ def build_groups(
         # filter. The functional check (nvidia-smi vs torch.cuda vs rocm-smi)
         # is picked from the IMAGE REF by runpod_smoke.checks, so the group
         # name 'base_gpu' is purely conventional here.
-        return {
-            "base_gpu": _decorate({"images": refs}, gpu_group=True)
-        }
+        return _gpu_groups(refs)
 
     raise ValueError(f"unknown profile: {profile!r}")
+
+
+def _scoped_exclude_spec(value: str) -> tuple[str, list[str]]:
+    """Parse a `--exclude-instance-for` arg: 'REF_GLOB: PATTERN, PATTERN'.
+
+    Split on the LAST colon, since a ref glob may carry the image's own
+    colon ('runpod/pytorch:*-torch260-*') while GPU display names never
+    contain one.
+    """
+    ref_glob, sep, rest = value.rpartition(":")
+    ref_glob = ref_glob.strip()
+    patterns = [p.strip() for p in rest.split(",") if p.strip()]
+    if not sep or not ref_glob or not patterns:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: expected 'REF_GLOB: PATTERN[, PATTERN...]'"
+        )
+    return ref_glob, patterns
+
+
+def _port_spec(value: str) -> str:
+    """Validate a `--test-port` arg: `<port>` or `<port>/<path>`."""
+    port_text, sep, _path = value.partition("/")
+    try:
+        port = int(port_text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: port must be an integer, optionally '<port>/<path>'"
+        )
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"{value!r}: port out of range 1-65535")
+    return value if sep else str(port)
 
 
 def main() -> int:
@@ -310,13 +462,148 @@ def main() -> int:
         "--test-port",
         action="append",
         default=[],
-        type=int,
-        metavar="PORT",
-        help="HTTP port to expose and probe. Repeat for multiple ports.",
+        type=_port_spec,
+        metavar="PORT[/PATH]",
+        help=(
+            "HTTP port to expose and probe, optionally with a path to hit, "
+            "e.g. 80 or 80/health. Repeat for multiple ports."
+        ),
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")
     ap.add_argument("--test-comfyui-manager", action="store_true")
+    ap.add_argument(
+        "--test-vllm", action="store_true",
+        help="runpod/vllm-openai: auth gate and one completion via the proxy",
+    )
+    ap.add_argument(
+        "--test-pip-check",
+        action="store_true",
+        help=(
+            "Emit `test_pip_check: true` so the pod runs `pip check` and "
+            "fails on any dependency conflict not listed in "
+            "--pip-check-allow. Catches a bumped pin that no longer "
+            "satisfies something else already in the image."
+        ),
+    )
+    ap.add_argument(
+        "--pip-check-allow",
+        action="append",
+        default=[],
+        metavar="SUBSTRING",
+        help=(
+            "Substring of a `pip check` line to accept rather than fail on. "
+            "For conflicts inherited from a vendor base image. Repeat per "
+            "accepted conflict; keep each one narrow enough that a new "
+            "conflict in the same package still fails."
+        ),
+    )
+    ap.add_argument(
+        "--test-ca-certs",
+        action="store_true",
+        help=(
+            "Emit `test_ca_certs: true` so the pod proves no revoked CA "
+            "root is still trusted in the SYSTEM store, and that HTTPS "
+            "still validates against it. Shell-only, so it is safe for "
+            "images without Python."
+        ),
+    )
+    ap.add_argument(
+        "--min-ca-certs-version",
+        default="",
+        metavar="VERSION",
+        help=(
+            "dpkg version floor for the installed ca-certificates package, "
+            "e.g. '20260816'. Asserts the patched package actually reached "
+            "the image — an --only-upgrade that found nothing exits 0 and "
+            "otherwise looks like success. Requires --test-ca-certs."
+        ),
+    )
+    ap.add_argument(
+        "--test-python-tls",
+        action="store_true",
+        help=(
+            "Emit `test_python_tls: true` for the same check against the "
+            "certifi bundle, which is the store pip and requests use. "
+            "Separate flag because upgrading the system store does not "
+            "touch certifi, and not every image ships Python."
+        ),
+    )
+    ap.add_argument(
+        "--python-tls-venv",
+        default="",
+        metavar="PATH",
+        help=(
+            "Path to an `activate` script sourced before the certifi "
+            "check, for images whose application runs in its own "
+            "virtualenv (ComfyUI). Empty = system interpreter."
+        ),
+    )
+    ap.add_argument(
+        "--revoked-ca-name",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "CA subject substring that must NOT be trusted, matched "
+            "case-insensitively. Repeat per root family. Empty = the "
+            "default list in tests/runpod_smoke/checks.py."
+        ),
+    )
+    ap.add_argument(
+        "--test-uv",
+        action="store_true",
+        help=(
+            "Emit `test_uv: true`: exactly one uv on PATH, no pip-installed "
+            "copy shadowing it, and a real resolve. Guards the removal of "
+            "the uv that the NGC bases ship."
+        ),
+    )
+    ap.add_argument(
+        "--test-virtualenv",
+        action="store_true",
+        help=(
+            "Emit `test_virtualenv: true`: create a virtualenv with every "
+            "python3.X the image ships. For runpod/base, which pins one "
+            "virtualenv version across three interpreters."
+        ),
+    )
+    ap.add_argument(
+        "--test-python-path",
+        action="store_true",
+        help=(
+            "Emit `test_python_path: true`: apt's dist-packages is on sys.path "
+            "for the system python3 only, and python3 is the same interpreter "
+            "as python. For runpod/base."
+        ),
+    )
+    ap.add_argument(
+        "--test-autoresearch",
+        action="store_true",
+        help=(
+            "Emit `test_autoresearch: true`: run autoresearch's train.py end "
+            "to end on a short time budget, so a broken image or dep bump is "
+            "caught. For runpod/autoresearch only."
+        ),
+    )
+    ap.add_argument(
+        "--test-dcgm-exporter",
+        action="store_true",
+        help=(
+            "Emit `test_dcgm_exporter: true`: scrape the in-pod dcgm-exporter "
+            "on :9400 and require the series the Grafana dashboards read, "
+            "with a hostname label. For runpod/pytorch-cluster only."
+        ),
+    )
+    ap.add_argument(
+        "--test-ray",
+        action="store_true",
+        help=(
+            "Emit `test_ray: true`: start a one-node Ray head in the pod, run "
+            "a num_gpus=1 torch CUDA task through it and check Ray's metrics "
+            "port. For runpod/ray-cluster only."
+        ),
+    )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--exclude-instance",
@@ -328,6 +615,22 @@ def main() -> int:
             "every produced group's candidate pool. Repeat for multiple "
             "patterns. Example: --exclude-instance '*Blackwell*' "
             "--exclude-instance 'RTX A4000'. Empty = no exclusions."
+        ),
+    )
+    ap.add_argument(
+        "--exclude-instance-for",
+        action="append",
+        default=[],
+        type=_scoped_exclude_spec,
+        dest="scoped_excludes",
+        metavar="'REF_GLOB: PATTERN[, PATTERN...]'",
+        help=(
+            "Like --exclude-instance, but only for GPU refs matching "
+            "REF_GLOB (fnmatch, case-sensitive, against the full ref). "
+            "Matching refs get their own group so the block doesn't cost "
+            "the other images that GPU. Repeat per rule; a ref matching "
+            "several rules gets all their patterns. Example: "
+            "--exclude-instance-for '*-torch260-*: B200*, B300*'"
         ),
     )
     ap.add_argument(
@@ -390,6 +693,10 @@ def main() -> int:
         )
         return 1
 
+    for ref_glob, _ in args.scoped_excludes:
+        if not any(fnmatch.fnmatchcase(r, ref_glob) for r in refs):
+            print(f"note: --exclude-instance-for {ref_glob!r} matched no ref")
+
     groups = build_groups(
         args.profile,
         refs,
@@ -403,9 +710,24 @@ def main() -> int:
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
         test_comfyui_manager=args.test_comfyui_manager,
+        test_vllm=args.test_vllm,
+        test_pip_check=args.test_pip_check,
+        pip_check_allow=args.pip_check_allow,
+        test_ca_certs=args.test_ca_certs,
+        min_ca_certs_version=args.min_ca_certs_version,
+        test_python_tls=args.test_python_tls,
+        python_tls_venv=args.python_tls_venv,
+        revoked_ca_names=args.revoked_ca_name,
+        test_uv=args.test_uv,
+        test_virtualenv=args.test_virtualenv,
+        test_python_path=args.test_python_path,
+        test_autoresearch=args.test_autoresearch,
+        test_dcgm_exporter=args.test_dcgm_exporter,
+        test_ray=args.test_ray,
         check_all_gpu=args.check_all_gpu,
         instances=args.instances,
         exclude_instances=args.exclude_instance,
+        scoped_excludes=args.scoped_excludes,
         min_cuda_version=(args.min_cuda_version or None),
         cuda_versions=args.cuda_versions,
     )

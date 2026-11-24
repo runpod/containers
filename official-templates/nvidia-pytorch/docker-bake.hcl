@@ -1,6 +1,6 @@
 variable "TORCH_COMBINATIONS" {
   default = [
-    { pytorch = "25.11" }
+    { pytorch = "25.11", ubuntu = "24.04" }
   ]
 }
 
@@ -43,5 +43,6 @@ target "pytorch-matrix" {
 
   args = {
     BASE_IMAGE = "nvcr.io/nvidia/pytorch:${build.pytorch}-py3"
+    UBUNTU_VERSION = build.ubuntu
   }
 }

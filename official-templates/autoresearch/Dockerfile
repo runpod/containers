@@ -4,8 +4,8 @@ FROM ${BASE_IMAGE}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install runpodctl for pod management (scaling up GPUs)
-ARG RUNPODCTL_VERSION=v2.7.2
-ARG RUNPODCTL_SHA256=8216810f9210c3e18c648d828f4d378cdaac0930389b460b1574ff2a3dfd1624
+ARG RUNPODCTL_VERSION=v3.1.1
+ARG RUNPODCTL_SHA256=0d70f2d2317c9687aeb491d1f58c0e013b4ae8ff643b9e4794857ee2f5934a9a
 RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
     -O /tmp/runpodctl.tar.gz \
     "https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz" && \
@@ -15,7 +15,7 @@ RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
 
 # Clone autoresearch to /opt (safe from volume mounts). Pinned to a commit so
 # a rebuild reproduces the image instead of picking up new upstream work.
-ARG AUTORESEARCH_REF=d173f4ec6353213bf644631a8d30fa80974cc65f
+ARG AUTORESEARCH_REF=ad96a7767a70de8d79b84c97963aa80aa8b03df3
 RUN git init -q -b master /opt/autoresearch && \
     git -C /opt/autoresearch remote add origin https://github.com/runpod/autoresearch.git && \
     git -C /opt/autoresearch fetch -q --depth 1 origin "${AUTORESEARCH_REF}" && \
@@ -27,7 +27,7 @@ WORKDIR /opt/autoresearch
 # --frozen: install exactly from uv.lock, no resolver run.
 # --no-build: refuse source distributions — `setup.py` can execute arbitrary code during install, and we want only pre-built, audited wheels.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    export UV_HTTP_TIMEOUT=1000 && \
+    export UV_CACHE_DIR=/root/.cache/uv UV_LINK_MODE=copy UV_HTTP_TIMEOUT=1000 && \
     uv sync --frozen --no-build && \
     uv run --frozen --no-build prepare.py # Download data and train tokenizer (~2 min)
 

@@ -17,24 +17,43 @@ import threading
 import time
 from typing import Optional
 
-from . import config
+from . import config, spend
 from .checks import (
+    REVOKED_CA_NAMES,
     SshEndpoint,
+    autoresearch_check_command,
+    ray_check_command,
+    ca_certs_check_command,
     container_startup_failure,
     cuda_check_command,
+    dcgm_exporter_check_command,
     dump_pod_logs,
     fetch_pod_cuda_version,
     host_incompatibility,
+    pip_check_command,
+    python_path_check_command,
+    python_tls_check_command,
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
     run_jupyter_static_check,
     run_port_check,
     run_port_proxy_check,
+    run_simple_check,
     scan_pod_logs_for_errors,
     ssh_probe,
+    uv_check_command,
+    virtualenv_check_command,
+)
+from .vllm import (
+    check_vllm_auth,
+    check_vllm_completion,
+    probe_vllm_alive,
+    wait_for_vllm,
 )
 from .comfyui import (
+    auth_headers as comfyui_auth_headers,
+    check_comfyui_refuses_anonymous,
     probe_comfyui_alive,
     run_comfyui_check,
     run_comfyui_manager_check,
@@ -139,16 +158,20 @@ def _create_pod_with_retries(
     dc_ids = cpu_candidate.data_center_ids if cpu_candidate else ""
     raw = ""
     for attempt in range(1, config.CREATE_RETRIES + 1):
-        # New name on each attempt — RunPod may keep a server-side record
+        # New name on each attempt — Runpod may keep a server-side record
         # of rejected names briefly, and unique names also make logs
         # unambiguous.
         name = (
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
-        test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
+        if config.POD_NAME_SUFFIX:
+            name += f"-{config.POD_NAME_SUFFIX}"
+        test_ports = [port for port, _path in config.GROUP_TEST_PORTS.get(group) or []]
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
+        if config.GROUP_TEST_VLLM.get(group, False):
+            test_ports.append(config.VLLM_PORT)
         pod_id, kind, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
@@ -221,7 +244,7 @@ def _classify_non_running(
       * the pod never got far enough to be judged -> STUCK. Either no SSH
         endpoint was ever offered, or the container had not emitted a single
         log line, meaning the image was still being pulled. `status` is no
-        help in telling that apart: RunPod reports RUNNING from scheduling
+        help in telling that apart: Runpod reports RUNNING from scheduling
         time onward, long before the pull finishes.
       * the container was demonstrably running and still nothing answered
         -> UNVERIFIED. A wedged host and an image whose sshd never starts
@@ -242,7 +265,7 @@ def _classify_non_running(
         )
         return "FAIL", f"container init rejected the image: {blocker}"
     # Both streams: a container that could not be created never wrote a
-    # line of its own, so its only trace is in RunPod's system log.
+    # line of its own, so its only trace is in Runpod's system log.
     startup = container_startup_failure(
         diagnostics.sys_lines + diagnostics.container_lines
     )
@@ -289,6 +312,94 @@ def _run_cuda_step(
         dump_pod_logs(pod_id, image)
         return "FAIL", "CUDA/GPU functional check failed"
     log("cuda check passed", indent=2)
+    return None
+
+
+_HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
+_AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+_RAY_TIMEOUT = 300                # ray start + a GPU task + the metrics agent
+
+
+def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
+    """(label, command, timeout) for each hygiene check the group opted into,
+    in the order they run. Cheap, deterministic checks first so a broken pin is
+    reported before anything spends time on the network."""
+    revoked = tuple(
+        config.GROUP_REVOKED_CA_NAMES.get(group) or REVOKED_CA_NAMES
+    )
+    checks: list[tuple[str, str, int]] = []
+    if config.GROUP_TEST_PIP_CHECK.get(group, False):
+        allowed = tuple(config.GROUP_PIP_CHECK_ALLOW.get(group, ()))
+        checks.append(
+            ("pip check", pip_check_command(allowed), _HYGIENE_TIMEOUT)
+        )
+    if config.GROUP_TEST_VIRTUALENV.get(group, False):
+        checks.append(
+            ("virtualenv", virtualenv_check_command(), _HYGIENE_TIMEOUT)
+        )
+    if config.GROUP_TEST_PYTHON_PATH.get(group, False):
+        checks.append(
+            ("python path", python_path_check_command(), _HYGIENE_TIMEOUT)
+        )
+    if config.GROUP_TEST_UV.get(group, False):
+        checks.append(("uv", uv_check_command(), _HYGIENE_TIMEOUT))
+    if config.GROUP_TEST_CA_CERTS.get(group, False):
+        checks.append((
+            "CA trust store",
+            ca_certs_check_command(
+                revoked, config.GROUP_MIN_CA_CERTS_VER.get(group, ""),
+            ),
+            _HYGIENE_TIMEOUT,
+        ))
+    if config.GROUP_TEST_PYTHON_TLS.get(group, False):
+        checks.append((
+            "certifi / python TLS",
+            python_tls_check_command(
+                revoked, config.GROUP_PYTHON_TLS_VENV.get(group, ""),
+            ),
+            _HYGIENE_TIMEOUT,
+        ))
+    if config.GROUP_TEST_DCGM_EXPORTER.get(group, False):
+        checks.append((
+            "dcgm-exporter",
+            dcgm_exporter_check_command(),
+            _HYGIENE_TIMEOUT,
+        ))
+    if config.GROUP_TEST_AUTORESEARCH.get(group, False):
+        checks.append((
+            "autoresearch train.py",
+            autoresearch_check_command(),
+            _AUTORESEARCH_TIMEOUT,
+        ))
+    if config.GROUP_TEST_RAY.get(group, False):
+        checks.append(("Ray GPU", ray_check_command(), _RAY_TIMEOUT))
+    return checks
+
+
+def _run_hygiene_steps(
+    endpoint: SshEndpoint, pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
+    `test_python_tls`, `test_uv`, `test_virtualenv`, `test_dcgm_exporter`,
+    `test_autoresearch`, `test_python_path`).
+
+    Runs after the CUDA gate — these answer "is the image put together
+    correctly", which is only worth asking once the image boots and its
+    GPU stack works. All of them are stopped at the first failure so the
+    log ends on the thing that broke."""
+    checks = _hygiene_checks(group)
+    if not (endpoint and checks):
+        return None
+    for label, command, timeout in checks:
+        log(f"running {label} check for group '{group}'...", indent=2)
+        ok, output = run_simple_check(endpoint, command, timeout=timeout)
+        for line in (output or "").splitlines():
+            log(f"  {line}", indent=2)
+        if not ok:
+            log(f"{label} check FAILED", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"{label} check failed"
+        log(f"{label} check passed", indent=2)
     return None
 
 
@@ -344,13 +455,14 @@ def _run_jupyter_steps(
 
 def _check_port_proxy_first(
     endpoint: SshEndpoint, pod_id: str, test_port: int, label: str,
+    path: str = "/", headers: Optional[dict] = None,
 ) -> Optional[_Outcome]:
     """Check public reachability first; use SSH only to diagnose failure."""
     log(
         f"running {label} check (public proxy) for pod {pod_id}...",
         indent=2,
     )
-    ok, output = run_port_proxy_check(pod_id, test_port)
+    ok, output = run_port_proxy_check(pod_id, test_port, path, headers=headers)
     for line in output.splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -363,7 +475,8 @@ def _check_port_proxy_first(
         indent=2,
     )
     ok, detail = run_port_check(
-        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2)
+        endpoint, test_port, on_line=lambda line: log(f"  {line}", indent=2),
+        path=path,
     )
     if ok:
         failure = f"{label}: reachable in-pod but not via proxy"
@@ -379,9 +492,10 @@ def _run_port_steps(
     endpoint: SshEndpoint, pod_id: str, image: str, group: str,
 ) -> Optional[_Outcome]:
     """Run each generic `test_ports` check."""
-    for test_port in config.GROUP_TEST_PORTS.get(group) or []:
+    for test_port, test_path in config.GROUP_TEST_PORTS.get(group) or []:
+        label = f"port {test_port}" + (test_path if test_path != "/" else "")
         outcome = _check_port_proxy_first(
-            endpoint, pod_id, test_port, f"port {test_port}",
+            endpoint, pod_id, test_port, label, path=test_path,
         )
         if outcome is not None:
             dump_pod_logs(pod_id, image)
@@ -397,10 +511,17 @@ def _run_comfyui_steps(
         return None
     outcome = _check_port_proxy_first(
         endpoint, pod_id, config.COMFYUI_PORT, "ComfyUI reachability",
+        headers=comfyui_auth_headers(),
     )
     if outcome is not None:
         dump_pod_logs(pod_id, image)
         return outcome
+
+    ok, detail = check_comfyui_refuses_anonymous(pod_id)
+    log(f"ComfyUI password check: {detail}", indent=2)
+    if not ok:
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"ComfyUI answered without its password: {detail[:160]}"
 
     if config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
         log("running ComfyUI functional check (via proxy)...", indent=2)
@@ -432,6 +553,31 @@ def _run_comfyui_steps(
             dump_pod_logs(pod_id, image)
             return "FAIL", f"ComfyUI-Manager install check failed: {detail[:160]}"
 
+    return None
+
+
+def _run_vllm_steps(
+    pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """runpod/vllm-openai: wait for the model, then check the auth gate and
+    one completion through the public proxy."""
+    if not config.GROUP_TEST_VLLM.get(group, False):
+        return None
+    def on_line(line: str) -> None:
+        log(f"  {line}", indent=2)
+
+    log(f"waiting for vLLM on :{config.VLLM_PORT} (public proxy)...", indent=2)
+    for label, step in (
+        ("vLLM did not come up", wait_for_vllm),
+        ("vLLM auth gate", check_vllm_auth),
+        ("vLLM completion", check_vllm_completion),
+    ):
+        ok, detail = step(pod_id, on_line)
+        if not ok:
+            log(f"{label} FAILED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"{label}: {detail[:160]}"
+    log("vLLM auth gate and completion passed", indent=2)
     return None
 
 
@@ -510,6 +656,17 @@ def _run_post_dwell_steps(
                 f"dwell (post-dwell probe: {detail})"
             )
         log(f"ComfyUI re-probe passed ({detail})", indent=2)
+    if config.GROUP_TEST_VLLM.get(group, False):
+        log("re-probing vLLM after dwell...", indent=2)
+        ok, detail = probe_vllm_alive(pod_id)
+        if not ok:
+            log(f"vLLM re-probe FAILED after dwell ({detail})", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", (
+                f"vLLM stopped serving or opened up during the "
+                f"{config.DWELL_SEC}s dwell ({detail})"
+            )
+        log(f"vLLM re-probe passed ({detail})", indent=2)
     log("re-scanning container logs after dwell...", indent=2)
     return _run_log_scan_step(pod_id, image)
 
@@ -530,11 +687,14 @@ def test_pair(
                          it. Distinct so the summary doesn't mis-attribute
                          the failure to the container. `detail` is the raw
                          orchestrator error.
-        'UNAVAILABLE'  — RunPod has no capacity for this instance — try next
-        'STUCK'        — pod was created but RunPod never assigned an SSH
+        'UNAVAILABLE'  — Runpod has no capacity for this instance — try next
+        'STUCK'        — pod was created but Runpod never assigned an SSH
                          endpoint within CREATE_TIMEOUT. Almost always a bad
                          host in the scheduler pool, not an image bug — caller
                          should try a different instance type.
+        'BUDGET'       — SPEND_CAP_USD has no room for this pod, so none was
+                         created; or the pod outlived its spend hold and was
+                         deleted mid-check. Says nothing about the image.
 
     `group` is the manifest section name (e.g. 'pytorch', 'base_gpu') and
     is used to select the appropriate GPU/CUDA functional check."""
@@ -543,10 +703,18 @@ def test_pair(
     _set_host_cuda("")
     is_cpu, gpu_id = _log_attempt_header(image, instance, group, cuda_pin, cloud)
 
+    # CPU pods aren't priced from the GPU catalog and no sweep uses them.
+    token, why = (0, "") if is_cpu else spend.reserve(instance, cloud)
+    if token is None:
+        log(f"not creating a pod: {why}", indent=2)
+        return "BUDGET", why
+    started = time.monotonic()
+
     pod_id, early, early_detail = _create_pod_with_retries(
         image, instance, gpu_id, is_cpu, group, cuda_pin, cloud,
     )
     if early:
+        spend.release(token)
         return early, early_detail
     # _create_pod_with_retries' contract: when `early` is empty, pod_id is
     # guaranteed non-None. Assert so the type checker can narrow.
@@ -559,58 +727,112 @@ def test_pair(
         indent=2,
     )
 
+    # Under a spend cap the hold is the pod's budget, so the pod lives no
+    # longer than it: a slow pull or a hung check would otherwise bill past
+    # what the cap approved. The checks it cut short say nothing about the
+    # image, so that cell is reported untested (BUDGET), not FAIL.
+    expired = threading.Event()
+    deleted_at: list[float] = []
+    watchdog: Optional[threading.Timer] = None
+    if token:
+        def _expire() -> None:
+            expired.set()
+            log(
+                f"pod {pod_id} reached its {config.SPEND_RESERVE_MINUTES:g}-minute "
+                "spend hold — deleting it",
+                indent=2,
+            )
+            cleanup_pod(pod_id)
+            deleted_at.append(time.monotonic())
+
+        remaining = config.SPEND_RESERVE_MINUTES * 60 - (time.monotonic() - started)
+        watchdog = threading.Timer(max(0.0, remaining), _expire)
+        watchdog.daemon = True
+        watchdog.start()
+
+    outcome: _Outcome = ("FAIL", "")
     try:
-        state, wait_detail, endpoint = wait_for_running(pod_id)
-        if state != "RUNNING":
-            return _classify_non_running(state, wait_detail, pod_id, image)
-
-        log(f"smoke check passed: {wait_detail}", indent=2)
-        st = pod_state(pod_id)
-        # Every later check reuses the endpoint that answered readiness,
-        # carried by value. Re-reading ssh.direct would throw away a working
-        # proxy connection, and addressing a proxy by (host, port) alone
-        # would collide with every other pod on ssh.runpod.io.
-        assert endpoint is not None
-
-        # pod_state already carries cudaVersion, so the common path costs no
-        # extra request. It is nullable until the scheduler has assigned a
-        # machine, hence the retrying fallback.
-        host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
-        if host_cuda:
-            _set_host_cuda(host_cuda)
-            log(f"host CUDA: {host_cuda}", indent=2)
-
-        # Sequence the checks. Each returns None on pass/skip, or a FAIL
-        # outcome to surface to the caller. Kept as straight-line code
-        # (no fancy abstraction) so the failure points stay easy to read
-        # in stack traces / logs.
-        outcome = _run_cuda_step(endpoint, image, group, pod_id)
-        if outcome is not None:
-            return outcome
-        outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_port_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
-        if outcome is not None:
-            return outcome
-        outcome = _run_log_scan_step(pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_dwell_step(endpoint, pod_id, image)
-        if outcome is not None:
-            return outcome
-        outcome = _run_post_dwell_steps(pod_id, image, group)
-        if outcome is not None:
-            return outcome
-
-        dump_pod_logs(pod_id, image)
-        return "PASS", ""
+        outcome = _check_pod(pod_id, image, group)
+    except Exception:
+        if not expired.is_set():
+            raise
     finally:
-        # Always clean up this specific pod, even on exception.
-        cleanup_pod(pod_id)
+        if watchdog is not None:
+            watchdog.cancel()
+        # Always clean up this specific pod, even on exception. An expired
+        # hold's timer thread has already deleted it.
+        if not expired.is_set():
+            cleanup_pod(pod_id)
+        # Billing stopped when the timer's delete returned, not when the
+        # interrupted check gave up afterwards.
+        ended = deleted_at[0] if deleted_at else time.monotonic()
+        spend.settle(token, ended - started)
+    if expired.is_set() and outcome[0] != "PASS":
+        return "BUDGET", (
+            f"spend cap: the pod outlived its {config.SPEND_RESERVE_MINUTES:g}-minute "
+            "spend hold and was deleted before its checks finished"
+        )
+    return outcome
+
+
+
+def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
+    """Wait for the pod and run every check in order. The caller owns the
+    pod's deletion and its spend."""
+    state, wait_detail, endpoint = wait_for_running(pod_id)
+    if state != "RUNNING":
+        return _classify_non_running(state, wait_detail, pod_id, image)
+
+    log(f"smoke check passed: {wait_detail}", indent=2)
+    st = pod_state(pod_id)
+    # Every later check reuses the endpoint that answered readiness,
+    # carried by value. Re-reading ssh.direct would throw away a working
+    # proxy connection, and addressing a proxy by (host, port) alone
+    # would collide with every other pod on ssh.runpod.io.
+    assert endpoint is not None
+
+    # pod_state already carries cudaVersion, so the common path costs no
+    # extra request. It is nullable until the scheduler has assigned a
+    # machine, hence the retrying fallback.
+    host_cuda = st.get("cuda_version") or fetch_pod_cuda_version(pod_id)
+    if host_cuda:
+        _set_host_cuda(host_cuda)
+        log(f"host CUDA: {host_cuda}", indent=2)
+
+    # Sequence the checks. Each returns None on pass/skip, or a FAIL
+    # outcome to surface to the caller. Kept as straight-line code
+    # (no fancy abstraction) so the failure points stay easy to read
+    # in stack traces / logs.
+    outcome = _run_cuda_step(endpoint, image, group, pod_id)
+    if outcome is not None:
+        return outcome
+    outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_port_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_vllm_steps(pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_log_scan_step(pod_id, image)
+    if outcome is not None:
+        return outcome
+    outcome = _run_dwell_step(endpoint, pod_id, image)
+    if outcome is not None:
+        return outcome
+    outcome = _run_post_dwell_steps(pod_id, image, group)
+    if outcome is not None:
+        return outcome
+
+    dump_pod_logs(pod_id, image)
+    return "PASS", ""
 
 
 def test_image(
@@ -629,7 +851,7 @@ def test_image(
 
     Iterates instance types until one PASSes. Stops early on FAIL (real
     image bug — no point trying another GPU). UNAVAILABLE (capacity),
-    STUCK (RunPod gave us a dead host) and UNVERIFIED (an endpoint that
+    STUCK (Runpod gave us a dead host) and UNVERIFIED (an endpoint that
     never answered) all just move on to the next instance.
     CREATE_FAIL also short-circuits: a non-capacity orchestrator error
     (e.g. bad image tag, registry auth) won't be fixed by another GPU.
@@ -644,6 +866,8 @@ def test_image(
     unverified: list[tuple[str, str]] = []
     last_create_error = ""
     last_create_inst = ""
+    budget_detail = ""
+    budget_inst = ""
     for inst in instances:
         set_worker_context(inst)
         try:
@@ -668,6 +892,11 @@ def test_image(
             last_create_error = detail
             last_create_inst = inst
             continue
+        if result == "BUDGET":
+            # Holds only grow until pods finish, and candidates are tried in
+            # order, so the rest of the list wouldn't fit either.
+            budget_detail, budget_inst = detail, inst
+            break
         if result == "STUCK":
             stuck_instances.append(inst)
         if result == "UNVERIFIED":
@@ -697,8 +926,11 @@ def test_image(
             ", ".join(insts),
             "",
         )
+    if budget_detail:
+        log(f"not tested: {budget_detail}", indent=1)
+        return "SKIP", budget_detail, budget_inst, ""
     if stuck_instances:
-        # We tried every instance and RunPod never gave us a working host
+        # We tried every instance and Runpod never gave us a working host
         # on any of them — surface that distinctly from "no capacity at
         # all".
         log(
@@ -709,7 +941,7 @@ def test_image(
         return (
             "SKIP",
             (
-                "RunPod never assigned an SSH endpoint"
+                "Runpod never assigned an SSH endpoint"
                 + _over_candidates(len(stuck_instances))
                 + " — likely a scheduler issue, try again later"
             ),
