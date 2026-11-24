@@ -249,7 +249,12 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("'^cuda: OK'", command)
         self.assertIn("'^vulkan: OK'", command)
         self.assertIn("jupyter kernelspec list", command)
-        self.assertIn("grep -qw rust", command)
+        # Anchored to the name column, so `rust-old` or a path does not match.
+        self.assertIn("grep -qE '^[[:space:]]*rust[[:space:]]'", command)
+        # Pinned to the image's EGL ICD, so the toolkit's GLX ICD cannot mask it.
+        self.assertIn(
+            "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_egl_icd.json", command,
+        )
 
     def test_dcgm_check_requires_the_dashboard_labels(self):
         command = checks.dcgm_exporter_check_command()

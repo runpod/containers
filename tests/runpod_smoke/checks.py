@@ -815,10 +815,15 @@ def burn_check_command() -> str:
       still fails;
     - `jupyter kernelspec list` has the evcxr `rust` kernel.
 
+    vulkaninfo and the starter run with VK_ICD_FILENAMES pinned to the EGL
+    ICD. The loader would otherwise also read the GLX ICD the toolkit mounts,
+    and on a host where that one works, a broken EGL ICD would go unnoticed.
+
     The binary runs directly instead of through `cargo run`, so a stale build
     fingerprint cannot turn the check into a multi-minute rebuild."""
     return (
         "set -eo pipefail; "
+        "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_egl_icd.json; "
         "vulkaninfo --summary | tee /tmp/vulkaninfo.txt; "
         "grep -qi 'deviceName.*nvidia' /tmp/vulkaninfo.txt "
         "|| { echo 'vulkaninfo lists no NVIDIA device' >&2; exit 1; }; "
@@ -828,7 +833,7 @@ def burn_check_command() -> str:
         "grep -q '^vulkan: OK' /tmp/burn.txt "
         "|| { echo 'no vulkan: OK from the starter' >&2; exit 1; }; "
         "jupyter kernelspec list | tee /tmp/kernels.txt; "
-        "grep -qw rust /tmp/kernels.txt "
+        "grep -qE '^[[:space:]]*rust[[:space:]]' /tmp/kernels.txt "
         "|| { echo 'no rust kernel in jupyter kernelspec list' >&2; exit 1; }; "
         "echo 'burn starter ok'"
     )
