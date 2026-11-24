@@ -581,12 +581,14 @@ def _run_vllm_steps(
     return None
 
 
-def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
+def _run_log_scan_step(
+    pod_id: str, image: str, tail: int = 0,
+) -> Optional[_Outcome]:
     """Scan the REST API container-log backfill for boot error markers."""
     if not config.LOG_ERROR_SCAN:
         return None
     log("scanning container logs for error markers (via API)...", indent=2)
-    ok, report = scan_pod_logs_for_errors(pod_id)
+    ok, report = scan_pod_logs_for_errors(pod_id, tail=tail)
     for line in report.splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -604,7 +606,7 @@ def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
 
 
 def _run_dwell_step(
-    endpoint: SshEndpoint, pod_id: str, image: str,
+    endpoint: SshEndpoint, pod_id: str, image: str, log_tail: int = 0,
 ) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
@@ -668,7 +670,7 @@ def _run_post_dwell_steps(
             )
         log(f"vLLM re-probe passed ({detail})", indent=2)
     log("re-scanning container logs after dwell...", indent=2)
-    return _run_log_scan_step(pod_id, image)
+    return _run_log_scan_step(pod_id, image, tail=log_tail)
 
 
 def test_pair(
@@ -821,10 +823,17 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
     outcome = _run_vllm_steps(pod_id, image, group)
     if outcome is not None:
         return outcome
-    outcome = _run_log_scan_step(pod_id, image)
+    # The Manager step runs before this and logs a pip resolve plus a reboot,
+    # so the boot markers need a wider window to still be in the backfill.
+    log_tail = (
+        config.LOG_API_TAIL_VERBOSE
+        if config.GROUP_TEST_COMFYUI_MANAGER.get(group, False)
+        else 0
+    )
+    outcome = _run_log_scan_step(pod_id, image, tail=log_tail)
     if outcome is not None:
         return outcome
-    outcome = _run_dwell_step(endpoint, pod_id, image)
+    outcome = _run_dwell_step(endpoint, pod_id, image, log_tail=log_tail)
     if outcome is not None:
         return outcome
     outcome = _run_post_dwell_steps(pod_id, image, group)

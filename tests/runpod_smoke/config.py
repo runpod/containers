@@ -165,6 +165,10 @@ LOG_ERROR_PATTERN = os.environ.get(
     "LOG_ERROR_PATTERN", r"\berr(or)?s?\b|\bcrash(ed|es|ing)?\b"
 )
 LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
+# A ComfyUI-Manager install logs a full pip resolve and then a ComfyUI reboot,
+# thousands of lines, which would push the boot markers out of the default
+# window before the scan runs. 5000 is the log API's maximum.
+LOG_API_TAIL_VERBOSE = int(os.environ.get("LOG_API_TAIL_VERBOSE", "5000"))
 
 # System logs contain host-side failures that never reach container stdout:
 # image-pull errors and `runc` container-init aborts, for example.

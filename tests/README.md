@@ -657,6 +657,7 @@ pytorch:
 | `LOG_ERROR_SCAN` | `1` | `1`/`0` — scan REST API v2 container logs for error markers after the functional checks. |
 | `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex used by the container-log scan. |
 | `LOG_API_TAIL` | `1000` | Number of historical lines to fetch from the REST API v2 log stream. |
+| `LOG_API_TAIL_VERBOSE` | `5000` | Backfill window for a group running `test_comfyui_manager`. That step logs a full pip resolve and a ComfyUI reboot before the scan, which would push the boot markers out of the default window. 5000 is the API's maximum. |
 | `SYS_LOG_ERROR_PATTERN` | error/failure/crash regex | Case-insensitive regex for host-side REST API system-log diagnostics during a failed boot. |
 | `SSH_LOG_FETCH` | `1` | `1`/`0` — fetch only the GPU SMI diagnostic over SSH. Container logs use REST API v2. |
 | `RUNPOD_SSH_KEY` | _(empty)_ | Path to the private key matching a public key registered on the account (`startSsh` injects those as `PUBLIC_KEY`). Auto-discovered from `~/.runpod/ssh/` and `~/.ssh/` if unset. Must be mode `600`. |

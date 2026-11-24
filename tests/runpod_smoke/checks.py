@@ -1524,17 +1524,20 @@ _LOG_SCAN_ATTEMPTS = 3
 _LOG_SCAN_RETRY_SLEEP_SEC = 10
 
 
-def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
+def scan_pod_logs_for_errors(pod_id: str, tail: int = 0) -> tuple[bool, str]:
     """Scan container stdout for configured errors.
 
     Empty API responses are retried and then fail as unverified: every
     supported image emits boot logs, so zero lines cannot prove a clean boot.
+
+    `tail` overrides the default backfill window, for groups whose own steps
+    log enough to push the boot markers out of it.
     """
     if not api.load_api_key():
         return True, "(no API key — log scan skipped)"
     failures: list[str] = []
     for attempt in range(1, _LOG_SCAN_ATTEMPTS + 1):
-        lines = fetch_pod_logs_api(pod_id)
+        lines = fetch_pod_logs_api(pod_id, tail=tail)
         if lines:
             break
         failures.append(
