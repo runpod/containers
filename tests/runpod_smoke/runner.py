@@ -606,7 +606,7 @@ def _run_log_scan_step(
 
 
 def _run_dwell_step(
-    endpoint: SshEndpoint, pod_id: str, image: str, log_tail: int = 0,
+    endpoint: SshEndpoint, pod_id: str, image: str,
 ) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
@@ -636,7 +636,7 @@ def _run_dwell_step(
 
 
 def _run_post_dwell_steps(
-    pod_id: str, image: str, group: str,
+    pod_id: str, image: str, group: str, log_tail: int = 0,
 ) -> Optional[_Outcome]:
     """Re-probe ComfyUI and scan logs after the dwell window."""
     if config.DWELL_SEC <= 0:
@@ -833,10 +833,10 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
     outcome = _run_log_scan_step(pod_id, image, tail=log_tail)
     if outcome is not None:
         return outcome
-    outcome = _run_dwell_step(endpoint, pod_id, image, log_tail=log_tail)
+    outcome = _run_dwell_step(endpoint, pod_id, image)
     if outcome is not None:
         return outcome
-    outcome = _run_post_dwell_steps(pod_id, image, group)
+    outcome = _run_post_dwell_steps(pod_id, image, group, log_tail=log_tail)
     if outcome is not None:
         return outcome
 
