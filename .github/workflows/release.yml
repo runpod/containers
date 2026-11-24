@@ -170,6 +170,17 @@ jobs:
       families: ${{ needs.plan.outputs.families }}
       run-functional-tests: true
 
+  vllm:
+    needs: plan
+    if: >-
+      !cancelled()
+      && needs.plan.result == 'success'
+      && contains(fromJSON(needs.plan.outputs.workflows), 'vllm')
+    uses: ./.github/workflows/vllm.yml
+    secrets: inherit
+    with:
+      families: ${{ needs.plan.outputs.families }}
+
   sandbox:
     needs: plan
     if: >-
@@ -199,7 +210,7 @@ jobs:
   # scan that fails on one image must not keep unrelated ones unreleased while
   # their images are already pushed.
   release:
-    needs: [plan, base, nvidia, rocm, comfyui, sandbox, k3s-node]
+    needs: [plan, base, nvidia, rocm, comfyui, vllm, sandbox, k3s-node]
     if: >-
       !cancelled()
       && github.event_name == 'push'
