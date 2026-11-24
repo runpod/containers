@@ -83,8 +83,9 @@ RUN curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.t
 COPY patches/ /tmp/patches/
 RUN git -C /tmp/build/ComfyUI apply --verbose /tmp/patches/*.patch
 
-# Init git repos with upstream remotes so ComfyUI-Manager can detect versions
-# and users can update via Manager at their own risk
+# Init git repos with upstream remotes so ComfyUI-Manager can read each node's
+# version. Updating one through Manager is not possible, and not meant to be:
+# there is no tracking branch, and the bundled nodes travel with the image.
 WORKDIR /tmp/build/ComfyUI
 RUN git init && git add -A && \
     git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
