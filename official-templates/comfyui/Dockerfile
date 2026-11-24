@@ -67,46 +67,41 @@ RUN curl -fSL "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/${COM
 # silently.
 RUN test "$(tr -d '[:space:]' < ComfyUI/manager_requirements.txt)" = "comfyui_manager==${MANAGER_VERSION}"
 
-# Custom nodes: real git clones reset to the pinned commit, so the history they
-# share with origin lets ComfyUI-Manager update them. The synthetic one-commit
-# history these used to carry failed every pull as unrelated histories.
-# blob:none keeps that history without every old blob (~35 MB of .git); what a
-# checkout needs is fetched on demand.
 WORKDIR /tmp/build/ComfyUI/custom_nodes
-RUN git clone --filter=blob:none "https://github.com/kijai/ComfyUI-KJNodes.git" ComfyUI-KJNodes && \
-    git -C ComfyUI-KJNodes reset --hard "${KJNODES_SHA}" && \
-    git clone --filter=blob:none "https://github.com/MoonGoblinDev/Civicomfy.git" Civicomfy && \
-    git -C Civicomfy reset --hard "${CIVICOMFY_SHA}" && \
-    git clone --filter=blob:none "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git" ComfyUI-RunpodDirect && \
-    git -C ComfyUI-RunpodDirect reset --hard "${RUNPODDIRECT_SHA}"
+RUN curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.tar.gz" -o kjnodes.tar.gz && \
+    mkdir -p ComfyUI-KJNodes && tar xzf kjnodes.tar.gz --strip-components=1 -C ComfyUI-KJNodes && rm kjnodes.tar.gz && \
+    curl -fSL "https://github.com/MoonGoblinDev/Civicomfy/archive/${CIVICOMFY_SHA}.tar.gz" -o civicomfy.tar.gz && \
+    mkdir -p Civicomfy && tar xzf civicomfy.tar.gz --strip-components=1 -C Civicomfy && rm civicomfy.tar.gz && \
+    curl -fSL "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
+    mkdir -p ComfyUI-RunpodDirect && tar xzf runpoddirect.tar.gz --strip-components=1 -C ComfyUI-RunpodDirect && rm runpoddirect.tar.gz
 
 # Runpod fixes to the pinned sources: one patch per issue in patches/, paths
-# relative to the ComfyUI root. git apply refuses a patch whose context has
-# moved, so a pin bump that touches patched code fails the build instead of
-# shipping without the fix: rebase the patch onto the new pin, or delete it
-# once upstream has the fix.
-# A node's patch is committed in its own clone: uncommitted, it would block
-# Manager's pull. That commit puts the branch ahead of the pinned SHA, so
-# pull.rebase replays it onto what Manager pulls instead of stopping on
-# divergent branches, and the identity is what the rebase commits as.
+# relative to the ComfyUI root, applied before the git commit below. git apply
+# refuses a patch whose context has moved, so a pin bump that touches patched
+# code fails the build instead of shipping without the fix: rebase the patch
+# onto the new pin, or delete it once upstream has the fix.
 COPY patches/ /tmp/patches/
-RUN git -C /tmp/build/ComfyUI apply --verbose /tmp/patches/*.patch && \
-    for repo in /tmp/build/ComfyUI/custom_nodes/*/; do \
-        git -C "$repo" config user.name "Runpod" && \
-        git -C "$repo" config user.email "noreply@runpod.io" && \
-        git -C "$repo" config pull.rebase true && \
-        { git -C "$repo" diff --quiet || \
-          git -C "$repo" commit -qam "Runpod image patches"; }; \
-    done
+RUN git -C /tmp/build/ComfyUI apply --verbose /tmp/patches/*.patch
 
-# ComfyUI core: synthetic git so Manager can read its version, patches already
-# in the tagged commit. Upstream gitignores custom_nodes, so the node clones
-# stay out of it. Core is image-managed (start.sh upgrades it), not via Manager.
+# Init git repos with upstream remotes so ComfyUI-Manager can detect versions
+# and users can update via Manager at their own risk
 WORKDIR /tmp/build/ComfyUI
 RUN git init && git add -A && \
     git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
     git tag "${COMFYUI_VERSION}" && \
-    git remote add origin https://github.com/comfyanonymous/ComfyUI.git
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
+    git -C custom_nodes/ComfyUI-KJNodes init && \
+    git -C custom_nodes/ComfyUI-KJNodes add -A && \
+    git -C custom_nodes/ComfyUI-KJNodes -c user.name=- -c user.email=- commit -q -m "ComfyUI-KJNodes ${KJNODES_SHA}" && \
+    git -C custom_nodes/ComfyUI-KJNodes remote add origin https://github.com/kijai/ComfyUI-KJNodes.git && \
+    git -C custom_nodes/Civicomfy init && \
+    git -C custom_nodes/Civicomfy add -A && \
+    git -C custom_nodes/Civicomfy -c user.name=- -c user.email=- commit -q -m "Civicomfy ${CIVICOMFY_SHA}" && \
+    git -C custom_nodes/Civicomfy remote add origin https://github.com/MoonGoblinDev/Civicomfy.git && \
+    git -C custom_nodes/ComfyUI-RunpodDirect init && \
+    git -C custom_nodes/ComfyUI-RunpodDirect add -A && \
+    git -C custom_nodes/ComfyUI-RunpodDirect -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
+    git -C custom_nodes/ComfyUI-RunpodDirect remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build
@@ -205,16 +200,13 @@ RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/c
 
 # Bake ComfyUI + custom nodes into a known location for runtime copy. The
 # patch hashes are part of the manifest so start.sh re-syncs existing volumes
-# when a patch is added or changed. NODE_LAYOUT does the same for the move to
-# real clones: the pins are unchanged, so nothing else in here would differ and
-# a volume would keep the old synthetic .git that cannot be updated.
+# when a patch is added or changed.
 RUN printf '%s\n' \
     "COMFYUI_VERSION=${COMFYUI_VERSION}" \
     "MANAGER_VERSION=${MANAGER_VERSION}" \
     "KJNODES_SHA=${KJNODES_SHA}" \
     "CIVICOMFY_SHA=${CIVICOMFY_SHA}" \
     "RUNPODDIRECT_SHA=${RUNPODDIRECT_SHA}" \
-    "NODE_LAYOUT=git-clone" \
     "$(sha256sum /tmp/patches/*.patch)" \
     > /tmp/build/ComfyUI/.runpod-bundle-version && \
     cp -r /tmp/build/ComfyUI /opt/comfyui-baked
