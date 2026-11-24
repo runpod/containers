@@ -123,8 +123,10 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # build. The build itself does not need it (deadsnakes is added by hand below).
 # release_pkgs and nvidia_holds are split on purpose: they are lists of
 # package names.
-# apt and apt-utils are named explicitly so a security bump to them edits this
-# line: `apt-get upgrade` alone is served from the cached layer (CVE-2026-109518).
+# The builder cache persists between CI runs, so an unchanged line kept serving
+# packages Ubuntu had since patched (CVE-2026-109518 in apt, the nginx CVEs of
+# 2026-11-20). CI sets APT_REFRESH to the UTC date, so this layer and the ones
+# after it rebuild once a day; locally it stays empty.
 #
 # Every NVIDIA package is held for the upgrade. NVIDIA itself only holds
 # cuBLAS, NCCL and cuDNN, so a plain `apt-get upgrade` re-installed the rest of
@@ -139,6 +141,7 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 #
 # Static archives of the media and BLAS -dev packages are skipped (~90 MB);
 # `apt-get install --reinstall <package>` restores one.
+ARG APT_REFRESH=
 # hadolint ignore=SC2086
 RUN printf '%s\n' \
       'path-exclude=/usr/lib/x86_64-linux-gnu/libav*.a' \

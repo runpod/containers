@@ -17,6 +17,9 @@ target "common-base" {
     requirements = "official-templates/base"
     scrub_stale_metadata = "scripts"
   }
+  args = {
+    APT_REFRESH = APT_REFRESH
+  }
 }
 
 target "cpu-ubuntu2404" {

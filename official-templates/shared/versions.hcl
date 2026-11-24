@@ -15,6 +15,12 @@ variable "REPO_SUFFIX" {
   default = ""
 }
 
+# Busts the cached apt layer of official-templates/base/Dockerfile once a day
+# so it picks up Ubuntu security updates. Set by CI (docker-setup action).
+variable "APT_REFRESH" {
+  default = ""
+}
+
 # CUDA bases only. nvidia/cuda publishes ubuntu26.04 images from CUDA 13.3
 # on, so none of the versions below has one; add 26.04 here (and to the
 # matching ubuntu lists) together with a CUDA version that ships it. The CPU
