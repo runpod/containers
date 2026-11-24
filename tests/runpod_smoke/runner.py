@@ -45,6 +45,12 @@ from .checks import (
     uv_check_command,
     virtualenv_check_command,
 )
+from .vllm import (
+    check_vllm_auth,
+    check_vllm_completion,
+    probe_vllm_alive,
+    wait_for_vllm,
+)
 from .comfyui import (
     auth_headers as comfyui_auth_headers,
     check_comfyui_refuses_anonymous,
@@ -163,6 +169,8 @@ def _create_pod_with_retries(
         test_ports = [port for port, _path in config.GROUP_TEST_PORTS.get(group) or []]
         if config.GROUP_TEST_COMFYUI.get(group, False):
             test_ports.append(config.COMFYUI_PORT)
+        if config.GROUP_TEST_VLLM.get(group, False):
+            test_ports.append(config.VLLM_PORT)
         pod_id, kind, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
@@ -531,6 +539,31 @@ def _run_comfyui_steps(
     return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
 
 
+def _run_vllm_steps(
+    pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """runpod/vllm-openai: wait for the model, then check the auth gate and
+    one completion through the public proxy."""
+    if not config.GROUP_TEST_VLLM.get(group, False):
+        return None
+    def on_line(line: str) -> None:
+        log(f"  {line}", indent=2)
+
+    log(f"waiting for vLLM on :{config.VLLM_PORT} (public proxy)...", indent=2)
+    for label, step in (
+        ("vLLM did not come up", wait_for_vllm),
+        ("vLLM auth gate", check_vllm_auth),
+        ("vLLM completion", check_vllm_completion),
+    ):
+        ok, detail = step(pod_id, on_line)
+        if not ok:
+            log(f"{label} FAILED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"{label}: {detail[:160]}"
+    log("vLLM auth gate and completion passed", indent=2)
+    return None
+
+
 def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
     """Scan the REST API container-log backfill for boot error markers."""
     if not config.LOG_ERROR_SCAN:
@@ -606,6 +639,17 @@ def _run_post_dwell_steps(
                 f"dwell (post-dwell probe: {detail})"
             )
         log(f"ComfyUI re-probe passed ({detail})", indent=2)
+    if config.GROUP_TEST_VLLM.get(group, False):
+        log("re-probing vLLM after dwell...", indent=2)
+        ok, detail = probe_vllm_alive(pod_id)
+        if not ok:
+            log(f"vLLM re-probe FAILED after dwell ({detail})", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", (
+                f"vLLM stopped serving or opened up during the "
+                f"{config.DWELL_SEC}s dwell ({detail})"
+            )
+        log(f"vLLM re-probe passed ({detail})", indent=2)
     log("re-scanning container logs after dwell...", indent=2)
     return _run_log_scan_step(pod_id, image)
 
@@ -755,6 +799,9 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
     if outcome is not None:
         return outcome
     outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+    if outcome is not None:
+        return outcome
+    outcome = _run_vllm_steps(pod_id, image, group)
     if outcome is not None:
         return outcome
     outcome = _run_log_scan_step(pod_id, image)
