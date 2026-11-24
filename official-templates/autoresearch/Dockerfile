@@ -4,8 +4,8 @@ FROM ${BASE_IMAGE}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install runpodctl for pod management (scaling up GPUs)
-ARG RUNPODCTL_VERSION=v3.0.1
-ARG RUNPODCTL_SHA256=8529411a10a06a80f88216f4f89a1f22e6943eada01d2d634cc6324dd62542e3
+ARG RUNPODCTL_VERSION=v3.1.1
+ARG RUNPODCTL_SHA256=0d70f2d2317c9687aeb491d1f58c0e013b4ae8ff643b9e4794857ee2f5934a9a
 RUN wget -q --https-only --secure-protocol=TLSv1_2 --max-redirect=3 \
     -O /tmp/runpodctl.tar.gz \
     "https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64.tar.gz" && \
