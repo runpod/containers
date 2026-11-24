@@ -23,8 +23,7 @@ gh label create "$LABEL" --color ededed \
   --description "Opened by the weekly staleness scraper" >/dev/null 2>&1 || true
 
 # Back to a clean develop between families. Uses origin/develop rather than a
-# local branch: on a test run the checkout is the PR's head and no local
-# `develop` exists.
+# local branch: the checkout is detached and carries no local `develop`.
 reset_tree() {
   git checkout --force --quiet --detach origin/develop
   git clean -fdq

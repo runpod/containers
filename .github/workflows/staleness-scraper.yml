@@ -1,9 +1,8 @@
 name: Template Staleness Scraper
 
-# Weekly check for upstream releases we do not yet ship (pytorch, comfyui,
-# autoresearch, base, pytorch-cluster, filebrowser, k3s-node and the sandbox-*
-# families; ray-cluster is detection-only and opens no PR).
-# Opens a draft PR per stale family. Rules live in .claude/staleness-playbook.md.
+# Weekly check for upstream releases we do not yet ship, one job per family in
+# the matrix below. Opens a draft PR per stale family; ray-cluster is
+# detection-only and opens none. Rules live in .claude/staleness-playbook.md.
 #
 # Split in two on purpose. `research` runs the agent, which is told to read
 # release notes, changelogs and web pages that other people write; injected text
@@ -12,8 +11,9 @@ name: Template Staleness Scraper
 # only through Write/Edit, into the checkout. It has no `curl`: being able to
 # pick where downloaded bytes land is enough to write .git/config, whose
 # core.fsmonitor command the next `git status` would run, or a file under
-# _work/_actions that a later step executes. Checksums go through
-# sha256-url, a root-owned copy of scripts/sha256_url.sh, which owns the temporary file and returns only a digest.
+# _work/_actions that a later step executes. Checksums go through sha256-url, a
+# root-owned copy of scripts/sha256_url.sh, which owns the temporary file it
+# downloads to and returns only a digest.
 # What survives is that the agent can write a bad diff, and a human reads it.
 # `publish` holds the write token and runs no model at all, so there is nothing
 # in it to talk into doing something else. Permissions are per job, which is why
@@ -22,17 +22,6 @@ on:
   schedule:
     - cron: "0 7 * * 1" # Mondays 07:00 UTC. Scheduled runs use the default branch.
   workflow_dispatch:
-  # Temporary, until this is on main and the cron can fire: a PR that changes the
-  # scraper runs it against that PR's own copy, and every push re-runs it. The
-  # paths filter keeps it off unrelated PRs, where thirteen agent jobs would be
-  # pure waste. REMOVE this trigger, and the three things below that read
-  # `github.event_name`, once the weekly run has proved itself.
-  pull_request:
-    paths:
-      - .github/workflows/staleness-scraper.yml
-      - .github/scripts/publish_scraper_prs.sh
-      - .github/scripts/sha256_url.sh
-      - .claude/staleness-playbook.md
 
 # Least privilege by default; each job widens only what it needs.
 permissions: {}
@@ -100,9 +89,7 @@ jobs:
           # Work off develop: that is what the bump is measured against and what
           # `publish` branches from. The workflow file itself comes from the
           # default branch (main), where the cron and workflow_dispatch fire.
-          # On a test PR use that PR's head instead, so the run exercises the
-          # workflow, scripts and playbook the PR is changing.
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          ref: develop
           # The repo is public, so fetching needs no credential: keep one out of
           # .git/config entirely rather than leave a readable token next to an
           # agent that reads untrusted text.
@@ -386,9 +373,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          # The PR's own publish_scraper_prs.sh on a test run; the branches it
-          # creates still come off origin/develop either way.
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'develop' }}
+          ref: develop
           fetch-depth: 0
 
       - name: Download every family's result
