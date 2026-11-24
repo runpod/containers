@@ -1,0 +1,225 @@
+name: vLLM Image Build
+
+# Reusable building block invoked by the release orchestrator (release.yml),
+# which passes in the families it planned. Not triggered on its own — the
+# orchestrator owns triggers, concurrency and release.
+on:
+  workflow_call:
+    inputs:
+      families:
+        description: >-
+          JSON array of families to build, from .github/scripts/plan_families.py.
+          A family absent from it keeps its published images and version.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      suffix: ${{ steps.v.outputs.suffix }}
+      env: ${{ steps.v.outputs.env }}
+      repo-suffix: ${{ steps.v.outputs.repo-suffix }}
+      should-build: ${{ steps.v.outputs.should-build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: vllm
+        id: v
+        uses: ./.github/actions/compute-version
+        with:
+          family: vllm
+
+  build-vllm:
+    needs: versions
+    if: >-
+      contains(fromJSON(inputs.families), 'vllm')
+      && needs.versions.outputs.should-build == 'true'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/vllm
+
+      - name: Build vllm image
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.version }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/vllm/docker-bake.hcl
+          load: true
+          push: false
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Verify vllm
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          set -euo pipefail
+          say() { printf "  %-14s %s\n" "$1" "$2"; }
+
+          IMAGE=$(jq -er '.[] | select(contains("runpod/vllm-openai"))' <<< "$REFS")
+          echo "Verifying $IMAGE"
+
+          test "$(docker inspect -f '{{json .Config.Entrypoint}}' "$IMAGE")" = '["/start.sh"]'
+          say entrypoint "/start.sh"
+
+          docker run --rm --entrypoint bash "$IMAGE" -c \
+            'ssh-keygen -A -q && /usr/sbin/sshd -t && test "$HF_HOME" = /workspace/.huggingface'
+          say sshd "installed, config valid; HF_HOME on /workspace"
+
+          # No key: vLLM must not start.
+          cid=$(docker run -d "$IMAGE" Qwen/Qwen3-0.6B)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 20); do
+            docker logs "$cid" 2>&1 | grep -q 'vLLM was NOT started' && break
+            sleep 1
+          done
+          logs=$(docker logs "$cid" 2>&1)
+          grep -q 'vLLM was NOT started: VLLM_API_KEY is not set' <<< "$logs"
+          if grep -q 'Starting vLLM' <<< "$logs"; then
+            echo "::error::vLLM started without VLLM_API_KEY"
+            exit 1
+          fi
+          test "$(docker inspect -f '{{.State.Running}}' "$cid")" = true
+          say gate "no key: held, vLLM not started"
+          docker rm -f "$cid" >/dev/null
+
+          # vLLM's real app, built through its own --middleware hook: every
+          # route it registers must answer our 401 without the key.
+          docker run --rm -e PYTHONPATH=/opt/runpod/vllm \
+            -v "$PWD/.github/scripts/vllm_route_sweep.py:/tmp/vllm_route_sweep.py:ro" \
+            --entrypoint python3 "$IMAGE" -W ignore /tmp/vllm_route_sweep.py
+          say routes "every route of vLLM's app needs the key; probes open"
+
+          # start.sh asks vLLM's own parser whether the start command sets
+          # --api-key; 3 means yes, 0 means no.
+          check() {
+            docker run --rm --entrypoint bash "$IMAGE" -c \
+              'printf "api-key: x\n" > /tmp/c.yaml; python3 /opt/runpod/vllm/runpod_vllm_cmdcheck.py "$@"; echo $?' _ "$@"
+          }
+          for cmd in "m --api-key x" "m --api_key x" "m --api-ke=x" "m --config /tmp/c.yaml"; do
+            # shellcheck disable=SC2086
+            test "$(check $cmd)" = 3 || { echo "::error::cmdcheck missed: $cmd"; exit 1; }
+          done
+          test "$(check m --max-model-len 4096 --api-server-count 1)" = 0 \
+            || { echo "::error::cmdcheck flagged a start command without a key"; exit 1; }
+          say cmdcheck "--api-key found in any spelling and in --config; not flagged otherwise"
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/vllm-refs
+          printf '%s\n' "$REFS" > /tmp/vllm-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: vllm-refs
+          path: /tmp/vllm-refs/refs.json
+          retention-days: 3
+          if-no-files-found: error
+
+  test-vllm:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [versions, build-vllm]
+    if: needs.build-vllm.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vllm-refs
+          path: /tmp/vllm-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/vllm-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
+          manufacturer: "NVIDIA"
+          budget-usd-per-hour: "1.5"
+          min-vram-gb: "24"
+          # The tag carries no CUDA marker; upstream vLLM is built on CUDA 13.0.
+          min-cuda-version: "13.0"
+          create-timeout: "1200"
+          exclude-instances: "*MIG*"
+          test-vllm: "true"
