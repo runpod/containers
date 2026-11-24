@@ -218,19 +218,27 @@ jobs:
             output.
 
             /tmp/scraper-status -- starts at `ok`, which is also the right
-            answer when you made edits or found nothing to do. Replace it with
-            `failed: <one-line reason>` if something blocked you. That is your
-            veto and the one way to stop what you produced from being
-            published, so use it whenever you are unsure of what you left.
+            answer when you made edits or found nothing to do. `ok` is a claim
+            that you reached the end, so if you stop for any other reason --
+            the playbook is missing, a `gh` or WebFetch call keeps failing, a
+            version you cannot verify, turns running out -- replace it with
+            `failed: <one-line reason>` before you stop. Leaving it alone there
+            turns the run green on work you did not do. That is your veto and
+            the one way to stop what you produced from being published.
 
             If `${{ matrix.family }}` is already current, change no files. Still
             follow the playbook's checks on any PR this job already has open for
             it; reporting that there is nothing to add is a normal `ok`.
+          # Every tool that reads a file or writes one is named with a path,
+          # never bare: a bare name grants the tool everywhere, and Grep and
+          # Glob reach the whole filesystem that way. `**` is relative, so it
+          # means the checkout. With nothing secret readable there is nothing
+          # for WebFetch to carry out, which is why its domains stay open.
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ matrix.turns }}
             --disallowedTools "Read(//proc/**)"
-            --allowedTools "Read,Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),Glob,Grep,WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools inspect:*)"
+            --allowedTools "Read(**),Read(//tmp/scraper-pr.json),Read(//tmp/scraper-notes.md),Read(//tmp/scraper-status),Glob(**),Grep(**),Edit(${{ env.ALLOWED_PATHS }}**),Edit(//tmp/scraper-pr.json),Edit(//tmp/scraper-notes.md),Edit(//tmp/scraper-status),WebSearch,WebFetch,Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh release view:*),Bash(gh release list:*),Bash(sha256-url:*),Bash(docker buildx bake --print:*),Bash(docker buildx imagetools inspect:*)"
 
       # Everything the next job needs, and nothing that is not a file: the diff
       # the agent produced plus the three files it filled in.
