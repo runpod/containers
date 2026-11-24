@@ -59,9 +59,15 @@ COPY nvidia_egl_icd.json /usr/share/vulkan/icd.d/nvidia_egl_icd.json
 
 # Cargo's registry and git checkouts, and the starter below, are shared through
 # the `rust` group, so a non-root user added to it can build without
-# downloading everything again. The toolchain and /opt/cargo/bin stay writable
-# by root only: they are first on PATH, so anyone who could write them could
-# plant a binary that root then runs.
+# downloading everything again.
+#
+# Membership in `rust` is trusted as much as root. A member can edit the
+# extracted crate sources (every build.rs included), the registry index and
+# cache, and the starter's target/, and root runs that code the next time it
+# builds or runs anything with cargo. Only add users you would give root to.
+# The toolchain and /opt/cargo/bin stay writable by root only, which keeps a
+# member from replacing rustc or cargo themselves, but that is not a security
+# boundary while the shared crates are writable.
 #
 # Every cargo build also locks and updates files in the root of CARGO_HOME
 # (.package-cache, .package-cache-mutate, and the .global-cache SQLite database
