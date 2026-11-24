@@ -241,6 +241,10 @@ def create_pod(
     if group and config.GROUP_TEST_COMFYUI.get(group, False):
         env["COMFYUI_PASSWORD"] = config.COMFYUI_TEST_PASSWORD
         env["FILEBROWSER_PASSWORD"] = config.FILEBROWSER_TEST_PASSWORD
+    # runpod/vllm-openai does not start vLLM without a key or a model.
+    if group and config.GROUP_TEST_VLLM.get(group, False):
+        env["VLLM_API_KEY"] = config.VLLM_TEST_API_KEY
+        body["cmd"] = list(config.VLLM_TEST_CMD)
     if env:
         body["env"] = env
     if config.REGISTRY_AUTH_ID:

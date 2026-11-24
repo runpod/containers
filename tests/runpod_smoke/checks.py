@@ -322,6 +322,18 @@ _TORCH_PACKAGES_PROGRAM = (
     "    assert samples.sample_rate == 16000, f'decoded at {samples.sample_rate} Hz'\n"
     "    assert samples.data.shape == (1, 16000), f'decoded {tuple(samples.data.shape)}'\n"
     "    print(f'torchcodec={torchcodec.__version__} wav round trip ok')\n"
+    # torch 2.15's NIXL transport imports the optional `nixl` package, which
+    # the images ship from 2.15 on. Creating an agent loads the CUDA backend
+    # wheel and its UCX plugin, which an import alone does not.
+    "if (major, minor) < (2, 15):\n"
+    "    print(f'nixl: not shipped for torch {torch.__version__}')\n"
+    "else:\n"
+    "    import importlib.metadata, nixl\n"
+    "    from torch.distributed import _transport\n"
+    "    assert 'nixl' in _transport.available_transports(), _transport.available_transports()\n"
+    "    agent = nixl.nixl_agent('smoke')\n"
+    "    assert 'UCX' in agent.backends, f'nixl backends: {agent.backends}'\n"
+    "    print(f'nixl={importlib.metadata.version(\"nixl\")} ({nixl.nixl_agent.__module__}) UCX agent ok')\n"
 )
 
 

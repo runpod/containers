@@ -1,0 +1,2 @@
+# Keep the CRLF line endings that upstream uses; git apply needs them byte-exact.
+*.patch -text

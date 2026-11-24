@@ -206,11 +206,24 @@ def uncovered_reason(display_name: str) -> str:
     return f"no CUDA versions in the {cloud} cloud right now"
 
 
-def cuda_axis_for(group: str, display_name: str) -> list[str]:
+def cuda_axis_floor(group: str, image: str) -> Optional[str]:
+    """The lowest host CUDA version `image` may run on under
+    `cuda_versions: allowed`, or None when the group isn't in that mode or
+    the image has no floor (every offered version then counts)."""
+    if not config.GROUP_CUDA_ALLOWED.get(group, False):
+        return None
+    return detect_cuda_version(image) or config.GROUP_CUDA_FLOOR.get(group)
+
+
+def cuda_axis_for(group: str, display_name: str, image: str = "") -> list[str]:
     """Versions to test `display_name` on for `group`, newest first.
 
     [] means "no CUDA axis for this group" — the caller then emits a single
     unpinned job and the floor is derived from the image tag as before.
+
+    Under `cuda_versions: allowed`, versions below the image's floor are
+    dropped: RunPod never schedules the image there, so a FAIL on one would
+    be a fact about the scheduler config, not about the GPU.
     """
     all_mode = config.GROUP_CUDA_ALL.get(group, False)
     requested = config.GROUP_CUDA_VERSIONS.get(group) or []
@@ -221,7 +234,26 @@ def cuda_axis_for(group: str, display_name: str) -> list[str]:
         picked = offered
     else:
         picked = [v for v in requested if v in offered]
+    floor = cuda_axis_floor(group, image)
+    if floor:
+        picked = [v for v in picked if _version_key(v) >= _version_key(floor)]
     return sorted(picked, key=_version_key, reverse=True)
+
+
+def below_floor_reason(group: str, display_name: str, image: str) -> str:
+    """Non-empty when the GPU has free CUDA versions but all of them are
+    under the image's floor — distinct from "no capacity", and it should
+    read that way in the matrix."""
+    floor = cuda_axis_floor(group, image)
+    if not floor:
+        return ""
+    offered = cuda_versions_offered(display_name)
+    if not offered:
+        return ""
+    return (
+        f"only {', '.join(sorted(offered, key=_version_key))} had capacity, "
+        f"all below the image's CUDA floor {floor}"
+    )
 
 
 def _version_key(version: str) -> tuple:

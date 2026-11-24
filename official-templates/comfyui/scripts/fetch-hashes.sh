@@ -10,8 +10,9 @@
 
 set -euo pipefail
 
+# ComfyUI-Manager is not here: it is installed from PyPI at the version ComfyUI
+# pins in manager_requirements.txt, so it moves with COMFYUI_VERSION.
 NODES="
-ltdrdata/ComfyUI-Manager|MANAGER_SHA
 kijai/ComfyUI-KJNodes|KJNODES_SHA
 MoonGoblinDev/Civicomfy|CIVICOMFY_SHA
 MadiatorLabs/ComfyUI-RunpodDirect|RUNPODDIRECT_SHA

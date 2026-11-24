@@ -37,11 +37,14 @@ variable "CLUSTER_BUILDS" {
     { cuda_code = "1300", torch_code = "2120", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1300", torch_code = "2121", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+    # torch 2.15 (cu132 wheels): the default image for Instant Clusters.
+    { cuda_code = "1300", torch_code = "2150", ubuntu_name = "ubuntu2404" },
 
     { cuda_code = "1320", torch_code = "291", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1320", torch_code = "2120", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1320", torch_code = "2121", ubuntu_name = "ubuntu2404" },
     { cuda_code = "1320", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2150", ubuntu_name = "ubuntu2404" },
   ]
 }
 
