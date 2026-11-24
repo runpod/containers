@@ -29,7 +29,7 @@ class TorchCheckProgram(unittest.TestCase):
         # Not every image matching the torch regex ships them — NGC
         # nvidia-pytorch and runpod/base -pytorch251 tags carry torch alone.
         body = _python_body(PYTORCH_IMAGE)
-        for package in ("torchvision", "torchaudio", "torchcodec"):
+        for package in ("torchvision", "torchaudio", "torchcodec", "nixl"):
             self.assertNotIn(package, body)
 
     def test_opted_in_groups_require_the_packages(self):
@@ -38,6 +38,7 @@ class TorchCheckProgram(unittest.TestCase):
         self.assertIn("import torchvision", body)
         self.assertIn("import torchaudio", body)
         self.assertIn("import torchcodec", body)
+        self.assertIn("import importlib.metadata, nixl", body)
         self.assertNotIn("find_spec", body)
 
     def test_rocm_images_do_not_take_the_torch_path(self):
