@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ---- Version pins (set in docker-bake.hcl) ----
 ARG COMFYUI_VERSION
-ARG MANAGER_SHA
+ARG MANAGER_VERSION
 ARG KJNODES_SHA
 ARG CIVICOMFY_SHA
 ARG RUNPODDIRECT_SHA
@@ -60,31 +60,21 @@ WORKDIR /tmp/build
 RUN curl -fSL "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/${COMFYUI_VERSION}.tar.gz" -o comfyui.tar.gz && \
     mkdir -p ComfyUI && tar xzf comfyui.tar.gz --strip-components=1 -C ComfyUI && rm comfyui.tar.gz
 
+# ComfyUI ships ComfyUI-Manager as a pip package it pins itself, and `main.py
+# --enable-manager` loads that package. MANAGER_VERSION only mirrors the pin so
+# the shipped Manager is visible in docker-bake.hcl and in the bundle manifest;
+# a ComfyUI bump that moves the pin fails here instead of changing Manager
+# silently.
+RUN test "$(tr -d '[:space:]' < ComfyUI/manager_requirements.txt)" = "comfyui_manager==${MANAGER_VERSION}"
+
 WORKDIR /tmp/build/ComfyUI/custom_nodes
-RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA}.tar.gz" -o manager.tar.gz && \
-    mkdir -p ComfyUI-Manager && tar xzf manager.tar.gz --strip-components=1 -C ComfyUI-Manager && rm manager.tar.gz && \
-    curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.tar.gz" -o kjnodes.tar.gz && \
+RUN curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.tar.gz" -o kjnodes.tar.gz && \
     mkdir -p ComfyUI-KJNodes && tar xzf kjnodes.tar.gz --strip-components=1 -C ComfyUI-KJNodes && rm kjnodes.tar.gz && \
     curl -fSL "https://github.com/MoonGoblinDev/Civicomfy/archive/${CIVICOMFY_SHA}.tar.gz" -o civicomfy.tar.gz && \
     mkdir -p Civicomfy && tar xzf civicomfy.tar.gz --strip-components=1 -C Civicomfy && rm civicomfy.tar.gz && \
     curl -fSL "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
     mkdir -p ComfyUI-RunpodDirect && tar xzf runpoddirect.tar.gz --strip-components=1 -C ComfyUI-RunpodDirect && rm runpoddirect.tar.gz
 
-# Manager's get_pip_cmd() probes `python -m pip --version` with a 5s timeout and
-# treats a timeout as "pip is missing" — on a slow network volume a working pip
-# reads as absent. Patched before the git commit below so the tree stays clean.
-# The count assertion fails the build if the upstream pattern moves.
-RUN test "$(grep -c 'timeout=5)' ComfyUI-Manager/glob/manager_util.py)" = 2 && \
-    sed -i 's/timeout=5)/timeout=30)/g' ComfyUI-Manager/glob/manager_util.py
-
-# ComfyUI listens on loopback behind the password proxy, and Manager loosens
-# its install gates on a loopback --listen. start.sh pins the config values
-# that close the gates in this Manager (see pin_manager_security). Newer
-# Manager releases add allow_flagged_nodepack_install, ORed with loopback, so
-# no config value closes it: fail here so a Manager bump decides about it.
-RUN if grep -rq 'allow_flagged_nodepack_install' ComfyUI-Manager --include='*.py'; then \
-        echo "ComfyUI-Manager gained allow_flagged_nodepack_install; review pin_manager_security in start.sh" >&2; exit 1; \
-    fi
 # Runpod fixes to the pinned sources: one patch per issue in patches/, paths
 # relative to the ComfyUI root, applied before the git commit below. git apply
 # refuses a patch whose context has moved, so a pin bump that touches patched
@@ -100,10 +90,6 @@ RUN git init && git add -A && \
     git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
     git tag "${COMFYUI_VERSION}" && \
     git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
-    git -C custom_nodes/ComfyUI-Manager init && \
-    git -C custom_nodes/ComfyUI-Manager add -A && \
-    git -C custom_nodes/ComfyUI-Manager -c user.name=- -c user.email=- commit -q -m "ComfyUI-Manager ${MANAGER_SHA}" && \
-    git -C custom_nodes/ComfyUI-Manager remote add origin https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git -C custom_nodes/ComfyUI-KJNodes init && \
     git -C custom_nodes/ComfyUI-KJNodes add -A && \
     git -C custom_nodes/ComfyUI-KJNodes -c user.name=- -c user.email=- commit -q -m "ComfyUI-KJNodes ${KJNODES_SHA}" && \
@@ -119,7 +105,7 @@ RUN git init && git add -A && \
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build
-RUN cat ComfyUI/requirements.txt > requirements.in && \
+RUN cat ComfyUI/requirements.txt ComfyUI/manager_requirements.txt > requirements.in && \
     for node_dir in ComfyUI/custom_nodes/*/; do \
         if [ -f "$node_dir/requirements.txt" ]; then \
             cat "$node_dir/requirements.txt" >> requirements.in; \
@@ -152,6 +138,44 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     TORCH_VERSION="${TORCH_VERSION}" TORCHVISION_VERSION="${TORCHVISION_VERSION}" TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION}" \
     python3.12 -c 'import importlib.metadata as m, os, sys; expected = {"torch": os.environ["TORCH_VERSION"], "torchvision": os.environ["TORCHVISION_VERSION"], "torchaudio": os.environ["TORCHAUDIO_VERSION"]}; mismatches = [f"{pkg}: expected {version}, got {m.version(pkg)}" for pkg, version in expected.items() if m.version(pkg) != version]; sys.exit("\n".join(mismatches) if mismatches else 0)'
 
+# Manager's get_pip_cmd() probes `python -m pip --version` with a 5s timeout and
+# treats a timeout as "pip is missing" — on a slow network volume a working pip
+# reads as absent, and Manager then falls back to uv, which this image removes.
+# The count assertion fails the build if the upstream pattern moves. find_spec
+# locates the package without importing it: comfyui_manager/__init__.py pulls in
+# comfy.cli_args, which is not importable outside a ComfyUI checkout.
+RUN MANAGER_UTIL="$(python3.12 -c 'import importlib.util, os; print(os.path.join(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin), "common", "manager_util.py"))')" && \
+    test "$(grep -c 'timeout=5)' "$MANAGER_UTIL")" = 2 && \
+    sed -i 's/timeout=5)/timeout=30)/g' "$MANAGER_UTIL" && \
+    python3.12 -m compileall -q "$MANAGER_UTIL"
+
+# ComfyUI listens on loopback behind the password proxy, and Manager loosens
+# its install gates on a loopback --listen. start.sh pins the config values
+# that close the gates in this Manager (see pin_manager_security). Newer
+# Manager releases add allow_flagged_nodepack_install, ORed with loopback, so
+# no config value closes it: fail here so a Manager bump decides about it.
+RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin))')" && \
+    if grep -rq 'allow_flagged_nodepack_install' "$MANAGER_PKG" --include='*.py'; then \
+        echo "ComfyUI-Manager gained allow_flagged_nodepack_install; review pin_manager_security in start.sh" >&2; exit 1; \
+    fi
+
+# Runpod fixes to Manager itself. Manager is a pip package, not part of the
+# ComfyUI tree, so its patches live apart from patches/ and are applied to the
+# installed package: the 403s on update_comfyui and comfyui_switch_version keep
+# the image's pinned ComfyUI version, the ones on share and on the four routes
+# that read a stored credential (openart, matrix, youml, comfyworkflows) keep
+# Manager from handing those back over HTTP, and the '@' check refuses a node
+# spec that would resolve to a target the caller did not name.
+# Every one lands twice. __init__.py imports either glob/ or legacy/ depending
+# on --enable-manager-legacy-ui, which this template documents, and the two
+# carry the same routes; patching only glob/ would leave the legacy UI open.
+# git apply refuses a patch whose context has moved, so a MANAGER_VERSION bump
+# that touches this code fails the build instead of shipping without the fixes.
+COPY manager-patches/ /tmp/manager-patches/
+RUN MANAGER_PKG="$(python3.12 -c 'import importlib.util, os; print(os.path.dirname(importlib.util.find_spec("comfyui_manager").origin))')" && \
+    git -C "$MANAGER_PKG" apply --verbose -p1 /tmp/manager-patches/*.patch && \
+    python3.12 -m compileall -q "$MANAGER_PKG"
+
 # SageAttention needs a compile per torch + CUDA pair, so it comes as a pinned
 # wheel rather than through the lock. --no-deps keeps it from touching the
 # hash-locked torch; the wheel's own torch==<exact> pin is checked instead.
@@ -172,14 +196,14 @@ RUN if [ -n "${SAGEATTENTION_WHEEL_URL}" ]; then \
 
 # Pre-populate ComfyUI-Manager cache so first cold start skips the slow registry fetch
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
-RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/cache
+RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/cache "${COMFYUI_VERSION}"
 
 # Bake ComfyUI + custom nodes into a known location for runtime copy. The
 # patch hashes are part of the manifest so start.sh re-syncs existing volumes
 # when a patch is added or changed.
 RUN printf '%s\n' \
     "COMFYUI_VERSION=${COMFYUI_VERSION}" \
-    "MANAGER_SHA=${MANAGER_SHA}" \
+    "MANAGER_VERSION=${MANAGER_VERSION}" \
     "KJNODES_SHA=${KJNODES_SHA}" \
     "CIVICOMFY_SHA=${CIVICOMFY_SHA}" \
     "RUNPODDIRECT_SHA=${RUNPODDIRECT_SHA}" \

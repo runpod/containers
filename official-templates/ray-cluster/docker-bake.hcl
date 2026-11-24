@@ -44,50 +44,52 @@ variable "RAY_CLUSTER_BUILDS" {
     { cuda_code = "1290", torch_code = "2130", ubuntu_name = "ubuntu2404" },
 
     { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1300", torch_code = "2150", ubuntu_name = "ubuntu2404" },
 
     { cuda_code = "1320", torch_code = "2130", ubuntu_name = "ubuntu2404" },
+    { cuda_code = "1320", torch_code = "2150", ubuntu_name = "ubuntu2404" },
   ]
 }
 
 group "default" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
-  ]
+  ], ["ray-cluster-inference"])
 }
 
 # Per-CUDA-major groups so CI can shard the matrix across separate runners
 # (mirrors pytorch-cluster).
 group "cu1281" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1281"
-  ]
+  ], inference_targets("1281"))
 }
 
 group "cu1290" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1290"
-  ]
+  ], inference_targets("1290"))
 }
 
 group "cu1300" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1300"
-  ]
+  ], inference_targets("1300"))
 }
 
 group "cu1320" {
-  targets = [
+  targets = concat([
     for b in RAY_CLUSTER_BUILDS :
     "ray-cluster-${b.ubuntu_name}-cu${b.cuda_code}-torch${b.torch_code}"
     if b.cuda_code == "1320"
-  ]
+  ], inference_targets("1320"))
 }
 
 target "ray-cluster-base" {
@@ -117,5 +119,32 @@ target "ray-cluster-matrix" {
   # the released tag. Published under runpod/ray-cluster.
   tags = [
     "runpod/ray-cluster${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-cu${build.cuda_code}-torch${build.torch_code}-${build.ubuntu_name}",
+  ]
+}
+
+# The inference variant (inference/): vLLM on one Ray build, the one whose torch
+# vLLM pins (see inference/Dockerfile). Built FROM that target in the same run
+# rather than a published tag, so the two always share a Ray image and version,
+# and published under the same repo with an -inference tag.
+variable "INFERENCE_BASE" {
+  default = { cuda_code = "1300", torch_code = "2130", ubuntu_name = "ubuntu2404" }
+}
+
+# The inference target, for the CUDA group of INFERENCE_BASE only: that group
+# builds the target it is FROM.
+function "inference_targets" {
+  params = [cuda_code]
+  result = cuda_code == INFERENCE_BASE.cuda_code ? ["ray-cluster-inference"] : []
+}
+
+target "ray-cluster-inference" {
+  context    = "official-templates/ray-cluster/inference"
+  dockerfile = "Dockerfile"
+  platforms  = ["linux/amd64"]
+  contexts = {
+    ray-cluster = "target:ray-cluster-${INFERENCE_BASE.ubuntu_name}-cu${INFERENCE_BASE.cuda_code}-torch${INFERENCE_BASE.torch_code}"
+  }
+  tags = [
+    "runpod/ray-cluster${REPO_SUFFIX}:${RELEASE_VERSION}${RELEASE_SUFFIX}-inference-cu${INFERENCE_BASE.cuda_code}-torch${INFERENCE_BASE.torch_code}-${INFERENCE_BASE.ubuntu_name}",
   ]
 }

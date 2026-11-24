@@ -213,9 +213,12 @@ it.
   up — including changes from a run that failed, or from a queued run that
   GitHub dropped when a third push arrived.
 - Each planned family is built, pushed at its own `X.Y.Z`, then tagged
-  `<family>-vX.Y.Z` with a GitHub Release. A family is released only if the
-  workflow that builds it succeeded; a broken family does not hold back the
-  others, and it is planned again on the next push.
+  `<family>-vX.Y.Z` with a GitHub Release. A family is released only if its
+  own `build-<family>` / `test-<family>` jobs succeeded (every matrix leg),
+  and so did those of every family it builds FROM that was rebuilt in the
+  same run: pytorch is held back when `test-base` fails, since its image sits
+  on that untested base. Other families in the same workflow are not held
+  back. A family left unreleased is planned again on the next push.
 - The release body is built from the commits that touched **this family**
   (or what it builds FROM) since its previous tag: one `###` section per
   commit with its subject and the squash description that came with it, then a compare link against that
@@ -302,10 +305,12 @@ Key behaviours:
   are all `chore:`/`ci:`/`docs:`, its bump is `none`, and it is neither built
   nor released — its published images keep their version instead of being
   overwritten.
-- **Each family waits only on itself.** The `release` job is a matrix over the
-  planned families; a leg publishes only if the workflow that builds its family
-  succeeded. One failing scan no longer keeps the other families unreleased
-  while their images are already pushed.
+- **Each family waits only on itself and what it builds FROM.** The `release`
+  job is a matrix over the planned families; a leg publishes only if the
+  family's own `build-`/`test-` jobs succeeded, and so did those of every
+  family it builds FROM that was rebuilt in the same run. One failing scan no
+  longer keeps unrelated families in the same workflow unreleased while their
+  images are already pushed.
 - **A dependent uses the published base when its base is not rebuilt.**
   pytorch layers onto the last released `runpod/base` unless base is in the
   same plan (`BASE_VERSION` / `PYTORCH_BASE_VERSION` in the bake files), so

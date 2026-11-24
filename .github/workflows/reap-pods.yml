@@ -6,13 +6,16 @@ name: Reap Leaked Smoke-Test Pods
 # try/finally and via SIGINT/SIGTERM handlers. But when a PR gets a new
 # push, `cancel-in-progress` cancels the running test job and GitHub
 # SIGKILLs the runner after a short grace period — often before
-# cleanup_all() has finished `runpodctl pod delete` for every pod. Those
-# pods then linger and burn credits.
+# cleanup_all() has finished deleting every pod. Those pods then linger
+# and burn credits.
 #
 # It ONLY ever touches pods named `smoketest-<epoch>-...` (the naming from
 # runner._create_pod_with_retries), and it reads each pod's age straight
-# out of that name — so it never depends on the `pod list` JSON schema and
-# never deletes a human's pod.
+# out of that name — so it never deletes a human's pod.
+#
+# Talks to Runpod REST API v2 directly with curl, the same API the smoke
+# tests use (tests/runpod_smoke/api.py). REST v1 (rest.runpod.io/v1), which
+# runpodctl 2.x called, has been shut down.
 
 on:
   schedule:
@@ -40,32 +43,21 @@ jobs:
   reap:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
-      - name: Install runpodctl
-        shell: bash
-        env:
-          VERSION: "v2.3.0"
-          SHA256: "908f2210571e8a26a1cba6fb45f09556b34dcad3e1b20dd502df2adf7a57c169"
-        run: |
-          set -euo pipefail
-          curl -fsSL --proto '=https' --tlsv1.2 \
-            "https://github.com/runpod/runpodctl/releases/download/${VERSION}/runpodctl-linux-amd64.tar.gz" \
-            -o /tmp/runpodctl.tar.gz
-          echo "${SHA256}  /tmp/runpodctl.tar.gz" | sha256sum -c -
-          sudo tar -xz -C /usr/local/bin -f /tmp/runpodctl.tar.gz runpodctl
-          rm /tmp/runpodctl.tar.gz
-          runpodctl version
-
       - name: Reap stale smoke-test pods
         shell: bash
         env:
-          # runpodctl reads its key from RUNPOD_API_KEY. Same secret the
-          # smoke-test job uses, so it has pod-management permissions.
+          # Same secret the smoke-test job uses, so it has pod-management
+          # permissions.
           RUNPOD_API_KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           EVENT: ${{ github.event_name }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_MAX_AGE: ${{ inputs.max_age_minutes }}
         run: |
           set -euo pipefail
+
+          API="https://api.runpod.io/v2"
+          # api.runpod.io sits behind Cloudflare; send an explicit UA.
+          UA="containers-reap-pods/1.0 (+github-actions)"
 
           # Scheduled runs actually delete. Manual runs default to dry-run
           # so an operator can preview first.
@@ -86,41 +78,95 @@ jobs:
           NOW=$(date -u +%s)
           echo "dry_run=${DRY_RUN} | max_age=${MAX_AGE_MIN}m (${MAX_AGE_SEC}s)"
 
-          # Fail loud/fast if the key is missing or wrong — otherwise the
-          # empty pod list below would look like a clean account.
-          if ! runpodctl user >/dev/null 2>&1; then
-            echo "::error::runpodctl not authenticated (check TESTING_RUNPOD_API_KEY)"
+          if [ -z "${RUNPOD_API_KEY}" ]; then
+            echo "::error::RUNPOD_API_KEY is empty (check TESTING_RUNPOD_API_KEY)"
             exit 1
           fi
+
+          BODY="$(mktemp)"
+          trap 'rm -f "${BODY}"' EXIT
+
+          # api METHOD PATH -> prints the HTTP status (000 = no reply) and
+          # leaves the response body in ${BODY}. curl --retry covers
+          # transient failures (timeouts, 408/429/5xx).
+          api() {
+            curl -sS --proto '=https' --tlsv1.2 \
+              --retry 3 --retry-connrefused --max-time 60 \
+              -X "$1" -A "${UA}" \
+              -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+              -H "Accept: application/json" \
+              -o "${BODY}" -w '%{http_code}' \
+              "${API}$2" || true
+          }
 
           # Do NOT swallow a failed listing: an empty result here would look
           # like a clean account and the reaper would silently no-op while
-          # pods keep burning credits. Fail loud instead.
-          if ! LIST="$(runpodctl pod list -o json)"; then
-            echo "::error::'runpodctl pod list' failed"
-            exit 1
-          fi
-          echo "::group::raw pod list"
-          echo "${LIST}" | jq '.' 2>/dev/null || echo "${LIST}"
+          # pods keep burning credits. Fail loud on any non-200, a missing
+          # `pods` array, or a broken cursor chain. GET /v2/pods returns
+          # pods in every status (EXITED ones still bill for disk) and is
+          # cursor-paginated: {"pods": [...], "pagination": {"hasNextPage",
+          # "nextCursor"}}.
+          rows=""
+          cursor=""
+          seen_cursors=" "
+          while :; do
+            path="/pods"
+            if [ -n "${cursor}" ]; then
+              path="/pods?cursor=$(jq -rn --arg c "${cursor}" '$c | @uri')"
+            fi
+            status="$(api GET "${path}")"
+            if [ "${status}" != "200" ]; then
+              case "${status}" in
+                401|403) hint=" — API key rejected (check TESTING_RUNPOD_API_KEY)" ;;
+                *) hint="" ;;
+              esac
+              echo "::error::GET ${API}${path} failed: HTTP ${status}${hint}"
+              head -c 500 "${BODY}" || true
+              echo
+              exit 1
+            fi
+
+            if ! page_rows="$(jq -r '
+              if (.pods | type) != "array" then error("response has no pods array") else . end
+              | .pods[]
+              | [(.name // ""), (.id // ""), (.status // "")]
+              | map(tostring | gsub("[\u001f\n\r]"; " "))
+              | join("\u001f")
+            ' "${BODY}")"; then
+              echo "::error::failed to parse GET /v2/pods response"
+              head -c 500 "${BODY}" || true
+              echo
+              exit 1
+            fi
+            if [ -n "${page_rows}" ]; then
+              rows="${rows}${page_rows}"$'\n'
+            fi
+
+            if [ "$(jq -r '.pagination.hasNextPage // false' "${BODY}")" != "true" ]; then
+              break
+            fi
+            cursor="$(jq -r '.pagination.nextCursor // ""' "${BODY}")"
+            if [ -z "${cursor}" ]; then
+              echo "::error::GET /v2/pods reported more pages but no nextCursor"
+              exit 1
+            fi
+            case "${seen_cursors}" in
+              *" ${cursor} "*)
+                echo "::error::GET /v2/pods repeated cursor '${cursor}'"
+                exit 1
+                ;;
+            esac
+            seen_cursors="${seen_cursors}${cursor} "
+          done
+
+          echo "::group::pod list (name / id / status)"
+          printf '%s' "${rows}" | tr '\037' '\t'
           echo "::endgroup::"
 
-          # Normalize to `name<TAB>id` regardless of whether the CLI returns
-          # a bare array or wraps it under a key. A parse failure is fatal for
-          # the same reason as above — empty rows must not be mistaken for
-          # "no pods".
-          if ! rows="$(
-            printf '%s' "${LIST}" | jq -r '
-              (if type=="array" then . else (.pods // .data // [.]) end)[]
-              | [(.name // .Name // ""), (.id // .Id // .podId // "")]
-              | @tsv
-            '
-          )"; then
-            echo "::error::failed to parse 'runpodctl pod list' JSON output"
-            exit 1
-          fi
-
           scanned=0 deleted=0 kept=0 failed=0
-          while IFS=$'\t' read -r name id; do
+          # \x1f, not tab: tab is IFS whitespace, so an empty id would collapse
+          # and the status would be read as the id.
+          while IFS=$'\x1f' read -r name id pod_status; do
             [ -z "${name}" ] && continue
             case "${name}" in smoketest-*) ;; *) continue ;; esac
             scanned=$((scanned + 1))
@@ -151,18 +197,26 @@ jobs:
             fi
 
             if [ "${DRY_RUN}" = "true" ]; then
-              echo "[dry-run] would delete ${name} (${id}) age ${age}s"
+              echo "[dry-run] would delete ${name} (${id}, ${pod_status}) age ${age}s"
               deleted=$((deleted + 1))
-            elif runpodctl pod delete "${id}"; then
-              echo "deleted ${name} (${id}) age ${age}s"
-              deleted=$((deleted + 1))
-            else
-              # A failed delete is NOT a reap — count it separately so the
-              # summary doesn't overstate progress, and fail the job so a pod
-              # that won't die keeps surfacing until someone intervenes.
-              echo "::warning::failed to delete ${name} (${id})"
-              failed=$((failed + 1))
+              continue
             fi
+
+            # 2xx = deleted; 404 = already gone (matches pod._terminate_pod).
+            status="$(api DELETE "/pods/$(jq -rn --arg i "${id}" '$i | @uri')")"
+            case "${status}" in
+              2??|404)
+                echo "deleted ${name} (${id}, ${pod_status}) age ${age}s [HTTP ${status}]"
+                deleted=$((deleted + 1))
+                ;;
+              *)
+                # A failed delete is NOT a reap — count it separately so the
+                # summary doesn't overstate progress, and fail the job so a pod
+                # that won't die keeps surfacing until someone intervenes.
+                echo "::warning::failed to delete ${name} (${id}): HTTP ${status} $(head -c 300 "${BODY}" || true)"
+                failed=$((failed + 1))
+                ;;
+            esac
           done <<EOF
           ${rows}
           EOF
