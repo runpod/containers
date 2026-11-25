@@ -348,10 +348,40 @@ Key behaviours:
    is where you validate the set on a pod.
 4. When the batch is ready, open `develop → main` and **merge it with a merge
    commit**. Its own title is not read for versioning, so `chore: release …`
-   is fine. The release is fully automatic from here.
+   is fine. Usually the PR is already open: see
+   [Scheduled release PR](#scheduled-release-pr). The release is fully
+   automatic from here.
 5. Verify: a `<family>-vX.Y.Z` tag and Release appear for each family the
    batch touched, and those families publish `X.Y.Z` images. Families nobody
    touched stay where they were.
+
+### Scheduled release PR
+
+`scheduled-release.yml` opens the `develop → main` PR every **Sunday and
+Wednesday at 18:00 UTC** (GitHub may start it up to an hour late), so its rc
+builds and checks finish overnight and the PR is ready to review on Monday and
+Thursday morning. If a release PR is already open, it only refreshes the body;
+the checks already follow every push to `develop`.
+
+- **Cut-off:** whatever is on `develop` at 18:00 goes in. A later push to
+  `develop` restarts the PR's rc builds, so merge late work after the release
+  or expect the PR to be green later.
+- **The body** lists the commits, and for each planned family its last release,
+  bump and next version, read the same way `compute-version` reads them. It
+  warns when `develop` no longer merges cleanly into `main` (merge `main` back
+  after a hotfix) and when the last `release.yml` run on `develop` was not green.
+- **Nothing to release:** when `develop` has no commits that `main` lacks, no
+  PR is opened.
+- **Merging stays manual.** Check the rc builds and tests on the PR, approve
+  it, and **merge with a merge commit**. The PR is opened as the owner of
+  `RELEASE_PAT`, who therefore cannot approve it: someone else has to.
+- **Pause:** set the repository variable `SCHEDULED_RELEASE_ENABLED` to
+  anything other than `true` (or delete it). Scheduled runs then skip.
+- **Run by hand:** Actions → *Scheduled Release PR* → *Run workflow*.
+  `dry_run` (the default) only writes the plan into the job summary;
+  unticked, it opens or updates the PR just like the cron does.
+- `schedule` only fires from the default branch (`main`), so changes to the
+  workflow take effect after the next release.
 
 ### Ship a hotfix / patch
 
@@ -498,7 +528,16 @@ either.
   `ANTHROPIC_API_KEY`, which is now the scraper's alone: the PR reviewer moved to
   `PR_REVIEW_ANTHROPIC_API_KEY`. Keep a spend limit on it, since this job runs
   unattended every week across every family.
-- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
+- **`RELEASE_PAT`:** `scheduled-release.yml` opens the release PR with this
+  token. A PR opened with `GITHUB_TOKEN` would start no workflows: no rc
+  builds, and the required `shellcheck`/`sonarqube` would sit on "Expected".
+  Use a fine-grained PAT limited to this repository with **Contents: read** and
+  **Pull requests: read and write**, nothing more. It needs no ruleset bypass,
+  because it never merges. It expires: renew it before then, or the scheduled
+  run fails with an authentication error and no PR is opened.
+- **Variables:** `SCHEDULED_RELEASE_ENABLED` — `true` turns on the scheduled
+  release PR; anything else pauses it.
+  `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
   credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
   `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests
   pull anonymously and fail with `unauthorized`; set to a name the account
