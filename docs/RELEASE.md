@@ -123,7 +123,7 @@ themselves:
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
 | `feat!:` / any type with `!` in the title, or a `BREAKING CHANGE:` footer | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
 | `ci:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build`   | none   | no release      |
-| `Revert "…"` (GitHub's Revert button, `git revert`), unless it reverts a non-bumping type | `Revert "feat: add comfyui template (#12)"` | patch | `1.0.8` |
+| `Revert "…"` (GitHub's Revert button, `git revert`), whatever it reverts, a release included | `Revert "chore: release 2026-11-24 (#265)"` | patch | `1.0.8` |
 
 Notes:
 
@@ -536,7 +536,9 @@ either.
   as skipped, and the set fans out per family and CUDA version, so no single
   build job can be required. Require `build-result` instead: it waits on
   `pr-source-gate`, `plan` and every build job, and fails if any of them
-  failed or was cancelled (skipped is fine). `release.yml` has no `paths:`
+  failed or was cancelled (skipped is fine). It runs with `if: always()`,
+  even in a cancelled run, because GitHub counts a skipped required check as
+  passed. `release.yml` has no `paths:`
   filter, so it starts on every PR and the check is never left "Expected";
   `plan` does the path gating, and a PR that touches no family builds nothing
   and passes in under a minute. Required on both branches: `shellcheck`,

@@ -53,8 +53,11 @@ assert_bump "revert of a feat is patch" patch $'Revert "feat: add comfyui templa
 This reverts commit 0123456789abcdef0123456789abcdef01234567.'
 assert_bump "revert of a breaking change is patch" patch $'Revert "feat!: drop ubuntu 20.04"'
 assert_bump "revert of a revert is patch" patch $'Revert "Revert "fix: correct cuda path""'
-assert_bump "revert of a release is patch" patch $'Revert "Merge pull request #265 from runpod/develop"'
-assert_bump "revert of a docs change is none" none $'Revert "docs: fix a typo"'
+assert_bump "revert of a release PR is patch" patch $'Revert "chore: release 2026-11-24 (#265)"
+
+Reverts runpod/containers#265'
+assert_bump "revert of a merge commit is patch" patch $'Revert "Merge pull request #265 from runpod/develop"'
+assert_bump "revert of a docs change is patch" patch $'Revert "docs: fix a typo"'
 assert_bump "revert without quotes is none" none $'Revert the cuda change'
 
 if [ "$FAILS" -ne 0 ]; then

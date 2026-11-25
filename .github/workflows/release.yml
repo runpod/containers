@@ -382,9 +382,11 @@ jobs:
   # out per family and CUDA version, so their names differ from run to run and
   # none of them can be required on its own. A skipped dependency (a family
   # outside the plan, the gate on a PR into develop) is not a failure.
+  # always(), not !cancelled(): a skipped required check counts as passed, so
+  # in a cancelled run this job must still run and fail.
   build-result:
     needs: [pr-source-gate, plan, base, nvidia, rocm, comfyui, vllm, sandbox, k3s-node]
-    if: "!cancelled()"
+    if: always()
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Fail if any dependency failed or was cancelled

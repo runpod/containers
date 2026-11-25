@@ -6,27 +6,20 @@
 # subject, or a git-trailer footer `BREAKING CHANGE:` / `BREAKING-CHANGE:` at
 # the start of a line. See https://www.conventionalcommits.org/en/v1.0.0/
 #
-# `Revert "<subject>"` (GitHub's Revert button, `git revert`) is a patch unless
-# the reverted subject is a Conventional type that does not bump (docs:, ci:).
-# main takes merge commits only, so a revert-* PR cannot be retitled at merge
-# time: its commit subject is what this reads, and a none would leave the bad
-# image the newest release. A reverted release reads `Revert "Merge pull
-# request …"`, which has no type, so it is a patch too.
+# Any `Revert "…"` (GitHub's Revert button, `git revert`) is a patch, whatever
+# it reverts. main takes merge commits only, so a revert-* PR cannot be
+# retitled at merge time, and its subject carries the reverted PR's title: a
+# reverted release reads `Revert "chore: release …"`. Reading that as none
+# would leave the bad image the newest release. A family's bump only counts
+# commits under its paths, so a revert outside them releases nothing.
 
 detect_bump() {
   local text="$1"
   text="$(printf '%s' "$text" | tr -d '\r')"
   local subject="${text%%$'\n'*}"
-  local revert='^Revert "(.*)"$'
 
-  if [[ "$subject" =~ $revert ]]; then
-    local reverted="${BASH_REMATCH[1]}"
-    if printf '%s\n' "$reverted" | grep -qiE '^[a-z]+(\([^)]*\))?!?:' \
-      && [ "$(detect_bump "$reverted")" = "none" ]; then
-      echo "none"
-    else
-      echo "patch"
-    fi
+  if printf '%s\n' "$subject" | grep -qE '^Revert "'; then
+    echo "patch"
   elif printf '%s\n' "$subject" | grep -qiE '^[a-z]+(\([^)]*\))?!:'; then
     echo "major"
   elif printf '%s\n' "$text" | grep -qE '^BREAKING[ -]CHANGE:'; then
