@@ -130,7 +130,7 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 4 | **Image hygiene checks** (each opt-in) — `pip check`, `virtualenv`, `uv`, system CA store, certifi bundle, in that order. See [Hygiene checks](#hygiene-checks) | `FAIL` (named per check — a conflicting pin, a CA upgrade that did nothing, a shadowing uv) |
 | 5 | **JupyterLab proxy-first check** (only when `test_jupyter: true`) — checks the public proxy; SSH probes `/api/status` only to diagnose a proxy failure | `FAIL` (Jupyter did not start, or is not exposed as `8888/http`) |
 | 6 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
-| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first, sending the pod's `COMFYUI_PASSWORD`; SSH diagnoses a failed proxy check. Then, through the proxy, `POST /prompt`, `GET /` and `GET /system_stats` without the password, and with a wrong one, must all return `401` | `FAIL` (ComfyUI unavailable, incorrectly exposed, or answering without its password) |
+| 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first, sending the pod's `COMFYUI_PASSWORD`; SSH diagnoses a failed proxy check. Then, through the proxy, `POST /prompt`, `GET /` and `GET /system_stats` without the password, and with a wrong one, must all return `401`. Then FileBrowser on public `:8080`: `GET /api/resources` without a session and an `admin` login with a wrong password or `adminadmin12` must return `401`, and a login with `FILEBROWSER_PASSWORD` must return `200` and a session that lists `/workspace` | `FAIL` (ComfyUI unavailable, incorrectly exposed, or answering without its password; FileBrowser open without a session or not taking `FILEBROWSER_PASSWORD`) |
 | 8 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
 | 9 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
 | 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
@@ -394,6 +394,7 @@ Field reference:
 | `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across three interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
 | `test_dcgm_exporter` | `true` / `false` — scrapes the in-pod dcgm-exporter on `:9400` (retrying for up to ~2 minutes while DCGM starts) and requires `DCGM_FI_DEV_GPU_UTIL` and `DCGM_FI_DEV_FB_USED` with a non-empty `hostname` label, the series the Grafana dashboards build their Node dropdowns from. For `runpod/pytorch-cluster`, which runs the exporter on every pod. Default: `false`. |
 | `test_ray` | `true` / `false` — starts a one-node Ray head in the pod, asserts Ray sees at least one GPU, runs a `num_gpus=1` task doing a torch CUDA matmul, checks `ray_` metrics on `:20217/metrics`, then stops Ray. For `runpod/ray-cluster`, whose own launch needs a multi-node cluster; multi-node formation is the contract test's job. Default: `false`. |
+| `test_burn` | `true` / `false` — for `runpod/burn`. Requires `vulkaninfo --summary` to list an NVIDIA device, runs the prebuilt `/opt/burn-starter` binary and requires both `cuda: OK` and `vulkan: OK` (the same matmul on each backend, compared with the CPU), and requires a `rust` kernel in `jupyter kernelspec list`. The binary runs directly rather than through `cargo run`, so a stale build fingerprint cannot turn the check into a rebuild. Default: `false`. |
 | `test_python_path` | `true` / `false` — `/usr/lib/python3/dist-packages` (apt's `python3-*` modules) must be on `sys.path` for the system `/usr/bin/python3` and for no other `python3.X` in the image, and `python3` must resolve to the same version as `python`. Interpreters are enumerated, not listed. For `runpod/base`. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
@@ -709,7 +710,7 @@ groups don't silently skip the check:
 
 <a id="hygiene-checks"></a>
 
-Six opt-in checks that look at how an image is **assembled** rather than at
+Eight opt-in checks that look at how an image is **assembled** rather than at
 whether it boots. They exist because the failures they catch are invisible to
 every other step: the pod starts, the GPU works, and the defect only surfaces
 for a user weeks later, or in the next scan.
@@ -723,6 +724,7 @@ for a user weeks later, or in the next scan.
 | system CA store | `test_ca_certs` (+ `revoked_ca_names`) | a `--only-upgrade ca-certificates` that exited 0 without upgrading anything |
 | certifi bundle | `test_python_tls` (+ `python_tls_venv`) | the same revoked root still trusted by `pip` and `requests`, which never read the system store |
 | dcgm-exporter | `test_dcgm_exporter` | the exporter binary failing against the image's libdcgm, or a label renamed upstream, either of which leaves the Grafana dashboards empty |
+| Burn | `test_burn` | the CUDA backend not finding nvrtc, the Vulkan loader not finding the NVIDIA driver through the EGL ICD the image adds, or the evcxr Jupyter kernel missing |
 
 Two things are deliberate about this design.
 

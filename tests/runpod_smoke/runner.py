@@ -22,6 +22,7 @@ from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
     autoresearch_check_command,
+    burn_check_command,
     ray_check_command,
     ca_certs_check_command,
     container_startup_failure,
@@ -54,6 +55,7 @@ from .vllm import (
 from .comfyui import (
     auth_headers as comfyui_auth_headers,
     check_comfyui_refuses_anonymous,
+    check_filebrowser_requires_password,
     probe_comfyui_alive,
     run_comfyui_check,
 )
@@ -316,6 +318,7 @@ def _run_cuda_step(
 
 _HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
 _AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+_BURN_TIMEOUT = 300               # cubecl JIT-compiles the kernels on first use
 _RAY_TIMEOUT = 300                # ray start + a GPU task + the metrics agent
 
 
@@ -370,6 +373,8 @@ def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
             autoresearch_check_command(),
             _AUTORESEARCH_TIMEOUT,
         ))
+    if config.GROUP_TEST_BURN.get(group, False):
+        checks.append(("Burn starter", burn_check_command(), _BURN_TIMEOUT))
     if config.GROUP_TEST_RAY.get(group, False):
         checks.append(("Ray GPU", ray_check_command(), _RAY_TIMEOUT))
     return checks
@@ -380,7 +385,7 @@ def _run_hygiene_steps(
 ) -> Optional[_Outcome]:
     """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
     `test_python_tls`, `test_uv`, `test_virtualenv`, `test_dcgm_exporter`,
-    `test_autoresearch`, `test_python_path`).
+    `test_autoresearch`, `test_burn`, `test_python_path`).
 
     Runs after the CUDA gate — these answer "is the image put together
     correctly", which is only worth asking once the image boots and its
@@ -521,6 +526,12 @@ def _run_comfyui_steps(
     if not ok:
         dump_pod_logs(pod_id, image)
         return "FAIL", f"ComfyUI answered without its password: {detail[:160]}"
+
+    ok, detail = check_filebrowser_requires_password(pod_id)
+    log(f"FileBrowser password check: {detail}", indent=2)
+    if not ok:
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"FileBrowser password check failed: {detail[:160]}"
     if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
         return None
 
