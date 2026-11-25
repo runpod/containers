@@ -15,6 +15,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -411,17 +412,83 @@ class FailureBudgetTest(unittest.TestCase):
 
 @unittest.skipIf(aiohttp is None, "aiohttp is not installed")
 class StartupTest(unittest.TestCase):
-    def test_refuses_to_start_without_a_password(self):
-        env = {"PATH": os.environ["PATH"], "COMFYUI_PROXY_PORT": "0"}
-        for name in ("HOME", "PYTHONUSERBASE"):
-            if name in os.environ:
-                env[name] = os.environ[name]
-        result = subprocess.run(
-            [sys.executable, str(PROXY)],
-            env=env, capture_output=True, text=True, timeout=30,
-        )
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("COMFYUI_PASSWORD is empty", result.stderr)
+    def test_no_password_creates_setup_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"PATH": os.environ["PATH"], "COMFYUI_PROXY_PORT": "0",
+                   "COMFYUI_AUTH_FILE": str(Path(directory) / "auth")}
+            process = subprocess.Popen([sys.executable, "-u", str(PROXY)],
+                                       env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                line = process.stdout.readline()
+                self.assertTrue(line.startswith("ComfyUI first-run setup code:"))
+                self.assertNotIn(PASSWORD, line)
+            finally:
+                process.terminate()
+                process.communicate(timeout=10)
+
+
+@unittest.skipIf(aiohttp is None, "aiohttp is not installed")
+class FirstRunTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.auth_file = Path(self.temp.name) / "auth"
+        env = {"COMFYUI_AUTH_FILE": str(self.auth_file)}
+        spec = importlib.util.spec_from_file_location("comfyui_auth_proxy_setup", PROXY)
+        self.proxy = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(os.environ, env, clear=True):
+            spec.loader.exec_module(self.proxy)
+        self.assertIsNotNone(self.proxy.SETUP_CODE)
+        runner = web.AppRunner(self.proxy.make_app(), access_log=None)
+        await runner.setup()
+        self.addAsyncCleanup(runner.cleanup)
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        self.url = f"http://127.0.0.1:{runner.addresses[0][1]}"
+        self.client = aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar())
+        self.addAsyncCleanup(self.client.close)
+
+    async def test_setup_requires_code_and_persists_only_hash(self):
+        async with self.client.get(self.url + "/prompt", allow_redirects=False) as response:
+            self.assertEqual(response.status, 303)
+            self.assertEqual(response.headers["Location"], "/__runpod/setup")
+        async with self.client.get(self.url + "/__runpod/setup") as response:
+            self.assertEqual(response.status, 200)
+            self.assertNotIn(self.proxy.SETUP_CODE, await response.text())
+        form = {"code": "wrong", "password": PASSWORD, "confirm": PASSWORD}
+        async with self.client.post(self.url + "/__runpod/setup", data=form,
+                                    headers={"Sec-Fetch-Site": "cross-site"}) as response:
+            self.assertEqual(response.status, 403)
+            self.assertFalse(self.auth_file.exists())
+        async with self.client.post(self.url + "/__runpod/setup", data=form,
+                                    headers={"Sec-Fetch-Site": "same-origin"}) as response:
+            self.assertEqual(response.status, 200)
+            self.assertFalse(self.auth_file.exists())
+        form["code"] = self.proxy.SETUP_CODE
+        async with self.client.post(self.url + "/__runpod/setup", data=form,
+                                    headers={"Sec-Fetch-Site": "same-origin"}, allow_redirects=False) as response:
+            self.assertEqual(response.status, 303)
+            self.assertIn("comfyui_auth", response.headers["Set-Cookie"])
+        stored = self.auth_file.read_text()
+        self.assertTrue(stored.startswith("scrypt$"))
+        self.assertNotIn(PASSWORD, stored)
+        self.assertEqual(self.auth_file.stat().st_mode & 0o777, 0o600)
+        self.assertTrue(self.proxy.matches(PASSWORD))
+        self.assertFalse(self.proxy.matches("wrong-password"))
+        spec = importlib.util.spec_from_file_location("comfyui_auth_proxy_restart", PROXY)
+        restarted = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(os.environ, {"COMFYUI_AUTH_FILE": str(self.auth_file)}, clear=True):
+            spec.loader.exec_module(restarted)
+        self.assertIsNone(restarted.SETUP_CODE)
+        self.assertTrue(restarted.matches(PASSWORD))
+
+    async def test_setup_rejects_short_password_and_mismatched_confirmation(self):
+        for password, confirm in (("short", "short"), (PASSWORD, "different-password")):
+            form = {"code": self.proxy.SETUP_CODE, "password": password, "confirm": confirm}
+            async with self.client.post(self.url + "/__runpod/setup", data=form,
+                                        headers={"Sec-Fetch-Site": "same-origin"}) as response:
+                self.assertEqual(response.status, 200)
+                self.assertFalse(self.auth_file.exists())
 
 
 if __name__ == "__main__":

@@ -78,22 +78,24 @@ class ComfyUIAuthMode(Sandbox):
                 self.assertEqual(mode, "off")
                 self.assertIn("REASON=is shorter than 12 characters", out)
         self.assertEqual(self.mode({"COMFYUI_PASSWORD": "x" * 12})[0], "proxy")
-        _, out = self.mode({})
-        self.assertIn("REASON=is not set", out)
+        self.assertEqual(self.mode({})[0], "setup")
 
     def test_password_puts_the_proxy_in_front(self) -> None:
         mode, out = self.mode({"COMFYUI_PASSWORD": SECRET})
         self.assertEqual(mode, "proxy")
         self.assertNotIn(SECRET, out)
 
-    def test_neither_variable_does_not_start_comfyui(self) -> None:
-        self.assertEqual(self.mode({})[0], "off")
-        self.assertEqual(self.mode({"COMFYUI_PASSWORD": ""})[0], "off")
+    def test_missing_password_opens_setup(self) -> None:
+        self.assertEqual(self.mode({})[0], "setup")
+        self.assertEqual(self.mode({"COMFYUI_PASSWORD": ""})[0], "setup")
+        auth_file = self.work / "auth"
+        auth_file.write_text("saved hash")
+        self.assertEqual(self.mode({"COMFYUI_AUTH_FILE": str(auth_file)})[0], "proxy")
 
     def test_there_is_no_opt_out(self) -> None:
         """COMFYUI_DISABLE_AUTH, which an earlier rc honoured, changes nothing."""
         mode, out = self.mode({"COMFYUI_DISABLE_AUTH": "true"})
-        self.assertEqual(mode, "off")
+        self.assertEqual(mode, "setup")
         self.assertNotIn("NO authentication", out)
         mode, out = self.mode({"COMFYUI_DISABLE_AUTH": "true", "COMFYUI_PASSWORD": SECRET})
         self.assertEqual(mode, "proxy")
