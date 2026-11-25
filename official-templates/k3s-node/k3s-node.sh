@@ -158,8 +158,11 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
     return 1
   }
   until peers; do echo "k3s-node: waiting for a server in DNS ($WG_HOST)" >&2; sleep 2; done
+  # Re-resolve while waiting too: a server task that is replaced during this wait has a new
+  # public IP, and without the refresh the node would keep dialing the dead one forever.
   until SERVER=$(live_server) && [ -n "$SERVER" ]; do
     echo "k3s-node: waiting for a server handshake" >&2; sleep 2
+    peers 2>/dev/null || :
   done
   export K3S_URL="${K3S_URL:-https://$SERVER:6443}"
   echo "k3s-node: wg0 $WG_ADDRESS -> $K3S_URL via s*.$WG_HOST:$WG_PORT" >&2
