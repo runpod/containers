@@ -49,15 +49,31 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/${TAR_DEB}" \
 # vendored node-* tree (babel, handlebars, pacote) old enough to fail the
 # HIGH/CRITICAL gate. 24 is the current LTS and the first line whose bundled
 # npm carries a patched pacote.
-ARG NODE_VERSION=24.21.0
-ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+#
+# npm is then replaced with a pinned release: the npm bundled with Node 24
+# (11.19.x) vendors brace-expansion, ip-address, undici, tar and
+# postcss-selector-parser with HIGH advisories, and no Node build fixes that.
+# Keep this pin when NODE_VERSION is bumped, unless that Node already bundles
+# this npm or newer. Stay on npm 11: 12 blocks git/remote deps and dependency
+# lifecycle scripts by default, which breaks what agents do in a sandbox.
+ARG NODE_VERSION=24.22.3
+ARG NODE_SHA256=4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb
+ARG NPM_VERSION=11.21.2
+ARG NPM_SHA256=8ad8563b81e71b90ef405b140bccf3ba9b5e7884ab210bd49ee4e2f4bc6f61f5
 RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz \
         "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" && \
     echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
         --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md && \
     rm /tmp/node.tar.xz && \
-    node --version && npm --version
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/npm.tgz \
+        "https://registry.npmjs.org/npm/-/npm-${NPM_VERSION}.tgz" && \
+    echo "${NPM_SHA256}  /tmp/npm.tgz" | sha256sum -c - && \
+    npm install --global --no-fund --no-audit /tmp/npm.tgz && \
+    npm cache clean --force && \
+    rm /tmp/npm.tgz && \
+    node --version && \
+    test "$(npm --version)" = "${NPM_VERSION}"
 
 # Pinned by digest, not just by tag — a warm pool is keyed on the image, so an
 # upstream rebuild or a re-pushed tag would silently split the pool.
