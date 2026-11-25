@@ -38,15 +38,12 @@ RUN python -m pip install --no-cache-dir "ray[default,serve]==${RAY_VERSION}" -r
 
 # Static defaults. The dashboard and metrics ports are where the host polls and
 # scrapes; it reads them from the container env, so an override is honoured.
-# NCCL_NET_GDR_LEVEL only takes effect when NCCL uses IB.
+# No NCCL_* defaults: the host writes the fabric settings to /etc/nccl.conf.
 ENV RAY_CLUSTER_RAY_VERSION=${RAY_VERSION} \
     RAY_GCS_PORT=6379 \
     RAY_DASHBOARD_PORT=8265 \
     RAY_METRICS_PORT=20217 \
-    RAY_USAGE_STATS_ENABLED=0 \
-    NCCL_SOCKET_FAMILY=AF_INET \
-    NCCL_DEBUG=WARN \
-    NCCL_NET_GDR_LEVEL=PHB
+    RAY_USAGE_STATS_ENABLED=0
 
 COPY --chmod=755 ray/entrypoint.sh /opt/runpod/ray/entrypoint
 

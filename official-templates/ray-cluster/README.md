@@ -12,7 +12,7 @@ Ray cluster pods run only on this image or one built `FROM` it. The host daemon 
 |---|---|---|
 | Ray, Python, CUDA, torch versions | Image | Pinned at build time; head and workers share one image |
 | Launch (`ray start --head` / `--address`) | Image | `ENTRYPOINT` `/opt/runpod/ray/entrypoint`, then `exec` into the CMD |
-| Static defaults (`RAY_GCS_PORT=6379`, `RAY_DASHBOARD_PORT=8265`, `RAY_METRICS_PORT=20217`, `RAY_USAGE_STATS_ENABLED=0`, `NCCL_SOCKET_FAMILY=AF_INET`, `NCCL_DEBUG=WARN`, `NCCL_NET_GDR_LEVEL=PHB`) | Image | Dockerfile `ENV` |
+| Static defaults (`RAY_GCS_PORT=6379`, `RAY_DASHBOARD_PORT=8265`, `RAY_METRICS_PORT=20217`, `RAY_USAGE_STATS_ENABLED=0`) | Image | Dockerfile `ENV`. No `NCCL_*` defaults: the host's `/etc/nccl.conf` pins the fabric, and NCCL's own defaults cover the rest |
 | Topology the image depends on: `NODE_RANK`, `NUM_NODES`, cluster membership in `/etc/hosts` (`node-0` … `node-N`) | Host | `buildClusterEnv` for the env; the host keeps `/etc/hosts` current while the pod runs, appending members as they start |
 | Topology passed through, not used by the image (`PRIMARY_ADDR`, `MASTER_ADDR`, `NODE_ADDR`, `NODE_ROLE`, `WORLD_SIZE`, …) and NIC/RDMA (`NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME`, `NCCL_IB_*`) | Host | `buildClusterEnv`. The addresses are fixed at create, and unset when the head isn't running then, which is why the image uses `node-0` instead |
 | Observability ports: `RAY_DASHBOARD_PORT`, `RAY_METRICS_PORT` | Image | Dockerfile `ENV`, overridable; the host reads them from the container's env, and the entrypoint refuses an unset or invalid value |
