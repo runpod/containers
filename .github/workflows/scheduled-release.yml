@@ -95,7 +95,7 @@ jobs:
 
           LAST_DEVELOP="$(gh run list --workflow release.yml --branch "${RELEASE_HEAD}" \
             --event push --limit 1 --json conclusion,status,url \
-            --jq '.[0] | "\(.status)/\(.conclusion // "-") \(.url)"' || true)"
+            --jq '.[0] // empty | "\(.status)/\(.conclusion // "-") \(.url)"' || true)"
 
           {
             echo "Scheduled release: \`${RELEASE_HEAD}\` → \`${RELEASE_BASE}\`, ${AHEAD} commit(s)."
