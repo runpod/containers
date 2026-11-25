@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import io
 import os
 import signal
 import subprocess
@@ -170,11 +171,40 @@ class Middleware(unittest.TestCase):
         asyncio.run(run())
         self.assertEqual(self.inner.calls[-1]["type"], "lifespan")
 
-    def test_refuses_to_load_without_a_key(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+
+
+class Unprotected(unittest.TestCase):
+    """No VLLM_API_KEY: every request passes, and the logs keep saying so."""
+
+    def load(self, env):
+        with mock.patch.dict(os.environ, env, clear=True):
             module = load_middleware()
-            with self.assertRaises(RuntimeError):
-                module.BearerAuth(Recorder())
+            inner = Recorder()
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                app = module.BearerAuth(inner)
+        return module, app, inner, err.getvalue()
+
+    def test_every_route_is_open_and_the_logs_say_so(self):
+        _, app, inner, logged = self.load({})
+        self.assertIn("vLLM is NOT PROTECTED", logged)
+        for path in ("/v1/chat/completions", "/invocations", "/tokenize"):
+            status, _ = request(app, path, method="POST")
+            self.assertEqual(status, 200)
+        self.assertEqual(len(inner.calls), 3)
+
+    def test_a_whitespace_key_is_no_key(self):
+        _, _, _, logged = self.load({"VLLM_API_KEY": "  \n"})
+        self.assertIn("vLLM is NOT PROTECTED", logged)
+
+    def test_the_warning_repeats_while_in_use(self):
+        module, app, _, _ = self.load({})
+        start = time.monotonic()
+        for elapsed, repeats in ((module.WARN_EVERY_SEC - 1, False),
+                                 (module.WARN_EVERY_SEC + 1, True)):
+            with mock.patch.object(module.time, "monotonic", return_value=start + elapsed), \
+                    mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                request(app, "/health")
+            self.assertEqual("NOT PROTECTED" in err.getvalue(), repeats, elapsed)
 
 
 FAKE_VLLM = """#!/bin/bash
@@ -238,18 +268,23 @@ class StartScript(unittest.TestCase):
         _, env = self.recorded()
         self.assertEqual(env["ENV_KEY"], KEY)
 
-    def test_there_is_no_unauthenticated_mode(self):
-        """The removed VLLM_DISABLE_AUTH opt-out must not start vLLM keyless."""
-        self.assert_refuses({"VLLM_DISABLE_AUTH": "true"})
-
-    def test_neither_set_does_not_start_vllm_and_says_why(self):
-        self.assert_refuses({})
-        self.assert_refuses({"VLLM_API_KEY": "   "})
+    def test_no_key_starts_vllm_unprotected_and_says_so(self):
+        for env in ({}, {"VLLM_API_KEY": "   "}):
+            out = self.start(env, "m")
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertIn("vLLM is NOT PROTECTED", out.stdout)
+            self.assertNotIn("Authentication on", out.stdout)
+            args, rec_env = self.recorded()
+            self.assertEqual(args[:2], ["serve", "m"])
+            # The middleware loads in its open mode and repeats the warning.
+            self.assertIn("--middleware", args)
+            # vLLM's own /v1 check must not take the blank value as a key.
+            self.assertEqual(rec_env["ENV_KEY"], "<unset>")
 
     def test_empty_start_command_does_not_start_vllm(self):
         """`vllm serve` with no model exits at once: a restart loop on Runpod."""
-        self.assert_refuses({"VLLM_API_KEY": KEY}, cmd=(),
-                            reason="the container start command is empty")
+        for env in ({"VLLM_API_KEY": KEY}, {}):
+            self.assert_refuses(env, cmd=(), reason="the container start command is empty")
 
     def test_ssh_setup_is_skipped_when_not_root(self):
         out = self.start({"VLLM_API_KEY": KEY}, "m")
@@ -269,6 +304,12 @@ class StartScript(unittest.TestCase):
             self.assert_refuses({"VLLM_API_KEY": KEY}, cmd=cmd,
                                 reason="--api-key is set in the container start command")
 
+    def test_api_key_on_cmd_is_refused_without_vllm_api_key_too(self):
+        """It would guard only /v1, and the start command shows it in the
+        Pod settings: VLLM_API_KEY is the one way to set a key."""
+        self.assert_refuses({}, cmd=("m", "--api-key", "other"),
+                            reason="--api-key is set in the container start command")
+
     def test_vllm_parser_finding_a_key_does_not_start_vllm(self):
         """E.g. api-key in a --config file: only vLLM's own parser sees it."""
         self.fake_python3(exit_code=3)
@@ -287,7 +328,7 @@ class StartScript(unittest.TestCase):
         fake.write_text(f"#!/bin/bash\nexit {exit_code}\n")
         fake.chmod(0o755)
 
-    def assert_refuses(self, env, cmd=("m",), reason="VLLM_API_KEY is not set"):
+    def assert_refuses(self, env, cmd, reason):
         if self.record.exists():
             self.record.unlink()
         proc = subprocess.Popen(
