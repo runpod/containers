@@ -97,6 +97,63 @@ def check_comfyui_refuses_anonymous(pod_id: str) -> tuple[bool, str]:
     return True, "; ".join(lines)
 
 
+def _filebrowser_request(
+    url: str, method: str = "GET", headers: Optional[dict] = None,
+    timeout: int = 20,
+) -> tuple[int, list[str]]:
+    """Return the status and the Set-Cookie headers."""
+    request = urllib.request.Request(
+        url, data=b"" if method == "POST" else None, method=method,
+        headers={"User-Agent": _UA, **(headers or {})},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.headers.get_all("Set-Cookie") or []
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers.get_all("Set-Cookie") or []
+
+
+def check_filebrowser_requires_password(pod_id: str) -> tuple[bool, str]:
+    """Through the public proxy, FileBrowser lists /workspace only after admin
+    signs in with the pod's FILEBROWSER_PASSWORD."""
+    base = f"https://{pod_id}-{config.FILEBROWSER_PORT}.proxy.runpod.net"
+    listing = base + "/api/resources?" + urllib.parse.urlencode(
+        {"source": "workspace", "path": "/"}
+    )
+    login = base + "/api/auth/login?username=admin"
+    probes = [
+        # (label, url, method, headers, expected status)
+        ("GET /api/resources, no session", listing, "GET", {}, 401),
+        ("login, wrong password", login, "POST",
+         {"X-Password": "not-the-password"}, 401),
+        ("login, classic default", login, "POST",
+         {"X-Password": "adminadmin12"}, 401),
+        ("login, FILEBROWSER_PASSWORD", login, "POST",
+         {"X-Password": config.FILEBROWSER_TEST_PASSWORD}, 200),
+    ]
+    lines = []
+    cookies: list[str] = []
+    for label, url, method, headers, expected in probes:
+        try:
+            code, cookies = _filebrowser_request(url, method, headers)
+        except OSError as exc:
+            return False, f"{label}: {type(exc).__name__}: {exc}"
+        lines.append(f"{label}: HTTP {code}")
+        if code != expected:
+            return False, "; ".join(lines) + f" (expected {expected})"
+    if not cookies:
+        return False, "; ".join(lines) + " (login set no session cookie)"
+    session = "; ".join(cookie.split(";", 1)[0] for cookie in cookies)
+    try:
+        code, _ = _filebrowser_request(listing, headers={"Cookie": session})
+    except OSError as exc:
+        return False, f"GET /api/resources, session: {type(exc).__name__}: {exc}"
+    lines.append(f"GET /api/resources, session: HTTP {code}")
+    if code != 200:
+        return False, "; ".join(lines) + " (expected 200)"
+    return True, "; ".join(lines)
+
+
 def _wait_for_system_stats(base: str, emit: Callable[[str], None]) -> bool:
     deadline = time.monotonic() + config.COMFYUI_WAIT_TIMEOUT
     attempt = 0

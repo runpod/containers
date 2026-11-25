@@ -204,10 +204,11 @@ Shared pins (one each, across all ComfyUI versions), 12-char short SHAs:
 - `KJNODES_SHA`: latest default-branch commit of `kijai/ComfyUI-KJNodes`.
 - `CIVICOMFY_SHA`: latest default-branch commit of `MoonGoblinDev/Civicomfy`.
 - `RUNPODDIRECT_SHA`: latest default-branch commit of `MadiatorLabs/ComfyUI-RunpodDirect`.
-- `FILEBROWSER_VERSION` / `FILEBROWSER_COMMIT`: leave both alone. Upstream
-  `filebrowser/filebrowser` is archived (2026-09-01) and `v2.63.23` is its last
-  release, so there is nothing to bump. The separate `filebrowser` family tracks
-  the maintained fork instead.
+- `FILEBROWSER_VERSION` / `FILEBROWSER_SHA256`: latest stable release of
+  FileBrowser Quantum, the same binary as the `filebrowser` family. Take
+  `version` and `sha256` exactly as that family's section describes. This pin
+  drives no image tag, so it is an in-place bump. The `filebrowser` run adds the
+  same release on its own side, which keeps the two images on one FileBrowser.
 
 If only some pins moved, bump just those.
 
@@ -378,8 +379,9 @@ bake file, and the scripts beside it are ours, not upstream's.
 
 ## filebrowser
 
-Its own family, separate from the FileBrowser that ships inside comfyui: this one
-tracks **FileBrowser Quantum** (`gtsteffaniak/filebrowser`), the maintained fork.
+Tracks **FileBrowser Quantum** (`gtsteffaniak/filebrowser`). comfyui ships the
+same binary as an in-place pin, which the comfyui run bumps from its own section;
+leave comfyui's files alone here.
 
 `FILEBROWSER_VERSIONS` in `official-templates/filebrowser/docker-bake.hcl` is a
 list of `{ version, sha256 }`. Add the new release **alongside** the existing
