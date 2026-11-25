@@ -130,10 +130,17 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -147,10 +154,21 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-base
+          path: |
+            ${{ steps.sbom.outputs.dir }}/*.spdx.json
+            ${{ steps.sbom.outputs.dir }}/*.cdx.json
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Save refs artifact
         shell: bash

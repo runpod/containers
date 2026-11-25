@@ -1,0 +1,162 @@
+name: SBOM
+description: >-
+  Generate an SBOM for each built image with Syft, from the local Docker daemon
+  (before push). Writes syft-json (consumed by the grype action), SPDX JSON
+  (attested by the cosign action) and CycloneDX JSON, plus an index that maps
+  each registry/image@sha256 digest ref to its files.
+
+inputs:
+  ref-digests:
+    description: "JSON object mapping each image reference to its sha256 digest (image-name output `ref-digests`)"
+    required: true
+  max-parallel:
+    description: "Maximum number of Syft runs to execute concurrently"
+    required: false
+    default: "2"
+
+outputs:
+  dir:
+    description: "Directory holding the generated SBOM files and index.json"
+    value: ${{ steps.gen.outputs.dir }}
+  index:
+    description: >-
+      Path to index.json: {"<registry/image@sha256:...>": {"ref", "name",
+      "syft", "spdx", "cdx"}}. Keys use the same form as image-name `digests`.
+    value: ${{ steps.gen.outputs.index }}
+
+runs:
+  using: composite
+  steps:
+    # Pinned to the Syft version Grype v0.114.0 is built against
+    # (github.com/anchore/syft v1.45.1 in grype's go.mod), so scanning the
+    # SBOM gives the same package catalog Grype produced scanning the image
+    # directly. Bump together with the grype action.
+    - name: Install Syft
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=1.45.1
+        sha256=20c84195e24927f50a3b2269946be51f4c4abc9d2f145fee7388b4199149f716
+        curl -fsSL "https://github.com/anchore/syft/releases/download/v${version}/syft_${version}_linux_amd64.tar.gz" \
+          -o /tmp/syft.tar.gz
+        echo "${sha256}  /tmp/syft.tar.gz" | sha256sum -c -
+        tar xz -C /tmp -f /tmp/syft.tar.gz syft
+        sudo mv /tmp/syft /usr/local/bin/syft
+        syft version
+
+    - name: Generate SBOMs
+      id: gen
+      shell: bash
+      env:
+        REF_DIGESTS: ${{ inputs.ref-digests }}
+        MAX_PARALLEL: ${{ inputs.max-parallel }}
+        # Package-level SBOM only: no per-file metadata/digests and no
+        # package->file "contains" relationships (every file dpkg/pip lists).
+        # On runpod/base:2.1.0-ubuntu2404 this cuts SPDX from 26.5 MB to
+        # 6.8 MB (CycloneDX 11.5 -> 3.7 MB) with the same 1869 packages and
+        # identical Grype matches; the attestation is uploaded whole to Rekor.
+        # package-file-ownership-overlap (used to drop duplicate packages)
+        # is a separate setting and stays on.
+        SYFT_FILE_METADATA_SELECTION: none
+        SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP: "false"
+      run: |
+        set -uo pipefail
+        out="${RUNNER_TEMP}/sbom"
+        mkdir -p "${out}"
+
+        # One SBOM per unique image digest (several tags can share one).
+        # Key = tag stripped from the ref + "@" + digest, mirroring how the
+        # image-name action builds `digests`, so the cosign action can look
+        # each signed digest up directly.
+        index="$(echo "${REF_DIGESTS}" | jq -c --arg out "${out}" '
+          def without_tag:
+            split("/")[-1] as $name
+            | if ($name | contains(":")) then sub(":[^:]*$"; "") else . end;
+          to_entries
+          | map({key: ((.key | without_tag) + "@" + .value), ref: .key})
+          | group_by(.key)
+          | map(.[0])
+          | map(
+              (.ref | sub("^docker\\.io/"; "") | gsub("/"; "-") | gsub(":"; "_")) as $name
+              | {key: .key, value: {
+                  ref: .ref,
+                  name: $name,
+                  syft: "\($out)/\($name).syft.json",
+                  spdx: "\($out)/\($name).spdx.json",
+                  cdx:  "\($out)/\($name).cdx.json"
+                }})
+          | from_entries')"
+
+        count="$(echo "${index}" | jq 'length')"
+        if [ "${count}" -eq 0 ]; then
+          echo "No image digests to generate SBOMs for"
+          exit 1
+        fi
+        echo "${index}" > "${out}/index.json"
+
+        max_parallel="${MAX_PARALLEL:-2}"
+        if ! [[ "${max_parallel}" =~ ^[1-9][0-9]*$ ]]; then
+          echo "Invalid max-parallel='${max_parallel}', falling back to 2"
+          max_parallel=2
+        fi
+
+        mapfile -t keys < <(echo "${index}" | jq -r 'keys[]')
+        echo "Generating ${count} SBOM(s), up to ${max_parallel} in parallel"
+
+        tmpdir="$(mktemp -d)"
+        gen_one() {
+          local idx="$1" key="$2" entry ref
+          entry="$(echo "${index}" | jq -c --arg k "${key}" '.[$k]')"
+          ref="$(echo "${entry}" | jq -r .ref)"
+          # --scope squashed matches the grype action: packages present in
+          # the final filesystem, not ones deleted in a later layer.
+          if syft "docker:${ref}" \
+              --scope squashed \
+              -q \
+              -o "syft-json=$(echo "${entry}" | jq -r .syft)" \
+              -o "spdx-json=$(echo "${entry}" | jq -r .spdx)" \
+              -o "cyclonedx-json=$(echo "${entry}" | jq -r .cdx)" \
+              > "${tmpdir}/${idx}.log" 2>&1; then
+            echo 0 > "${tmpdir}/${idx}.rc"
+          else
+            echo 1 > "${tmpdir}/${idx}.rc"
+          fi
+        }
+
+        running=0
+        for idx in "${!keys[@]}"; do
+          gen_one "${idx}" "${keys[$idx]}" &
+          running=$((running + 1))
+          if [ "${running}" -ge "${max_parallel}" ]; then
+            wait -n
+            running=$((running - 1))
+          fi
+        done
+        wait
+
+        failed=()
+        for idx in "${!keys[@]}"; do
+          key="${keys[$idx]}"
+          echo "::group::Syft — ${key}"
+          cat "${tmpdir}/${idx}.log" 2>/dev/null
+          if [ "$(cat "${tmpdir}/${idx}.rc" 2>/dev/null)" = "0" ]; then
+            echo "${index}" | jq -r --arg k "${key}" '.[$k] | .syft, .spdx, .cdx' \
+              | while read -r f; do
+                  printf '  %-90s %s\n' "$(basename "${f}")" "$(du -h "${f}" | cut -f1)"
+                done
+            jq -r '"  packages: \(.artifacts | length)"' \
+              "$(echo "${index}" | jq -r --arg k "${key}" '.[$k].syft')"
+          else
+            failed+=("${key}")
+          fi
+          echo "::endgroup::"
+        done
+
+        if [ ${#failed[@]} -gt 0 ]; then
+          echo "::error::SBOM generation failed for:"
+          printf '  - %s\n' "${failed[@]}"
+          exit 1
+        fi
+
+        echo "dir=${out}" >> "${GITHUB_OUTPUT}"
+        echo "index=${out}/index.json" >> "${GITHUB_OUTPUT}"

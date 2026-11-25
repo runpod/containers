@@ -5,6 +5,14 @@ inputs:
   image-digests:
     description: "JSON array of image digests in registry/image@sha256:... format"
     required: true
+  sbom-index:
+    description: >-
+      Optional path to the sbom action's index.json. When set, each signed
+      digest also gets its SPDX SBOM attached as a keyless in-toto attestation
+      (cosign attest --type spdxjson), stored as sha256-<digest>.att, and the
+      attestation is verified. A digest with no SBOM in the index fails the step.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -13,6 +21,7 @@ runs:
       shell: bash
       env:
         IMAGE_DIGESTS: ${{ inputs.image-digests }}
+        SBOM_INDEX: ${{ inputs.sbom-index }}
         SERVER_URL: ${{ github.server_url }}
         REPOSITORY: ${{ github.repository }}
       run: |
@@ -32,4 +41,41 @@ runs:
             --certificate-oidc-issuer "${OIDC_ISSUER}" \
             "${ref}"
           echo "::endgroup::"
+
+          if [ -n "${SBOM_INDEX}" ]; then
+            sbom="$(jq -r --arg k "${ref}" '.[$k].spdx // empty' "${SBOM_INDEX}")"
+            if [ -z "${sbom}" ] || [ ! -s "${sbom}" ]; then
+              echo "::error::No SPDX SBOM in ${SBOM_INDEX} for ${ref}"
+              exit 1
+            fi
+
+            echo "::group::Attest SBOM ${ref} ($(du -h "${sbom}" | cut -f1))"
+            cosign attest --yes --type spdxjson --predicate "${sbom}" "${ref}"
+            echo "::endgroup::"
+
+            # Smoke test, like `verify` above: also checks the attested
+            # predicate is the SBOM we generated, not just that one exists.
+            # A re-run can rebuild the same digest from cache, so the digest
+            # may carry several attestations (one JSON line each); ours must
+            # be among them.
+            echo "::group::Verify SBOM attestation ${ref}"
+            want="$(jq -cS . "${sbom}" | sha256sum | cut -d' ' -f1)"
+            attestations="$(mktemp)"
+            cosign verify-attestation \
+              --type spdxjson \
+              --certificate-identity-regexp "${IDENTITY_REGEX}" \
+              --certificate-oidc-issuer "${OIDC_ISSUER}" \
+              "${ref}" > "${attestations}"
+            got="$(jq -r '.payload' "${attestations}" | while IFS= read -r payload; do
+                printf '%s' "${payload}" | base64 -d | jq -cS '.predicate' \
+                  | sha256sum | cut -d' ' -f1
+              done)"
+            rm -f "${attestations}"
+            if ! grep -qxF "${want}" <<< "${got}"; then
+              echo "::error::Attested SBOM for ${ref} does not match ${sbom}"
+              exit 1
+            fi
+            echo "Attested SBOM matches ${sbom}"
+            echo "::endgroup::"
+          fi
         done

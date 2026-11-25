@@ -221,6 +221,17 @@ jobs:
           echo "::endgroup::"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
+      # SBOMs uploaded by this family's build job (artifact `sbom-<family>`).
+      # Families that do not generate SBOMs yet match nothing: the download
+      # succeeds with 0 artifacts and the release gets no SBOM assets.
+      - name: Download SBOMs
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: sbom-${{ matrix.family }}
+          path: ${{ runner.temp }}/sbom
+          merge-multiple: true
+
       - name: Create tag and GitHub Release
         if: steps.gate.outputs.release == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
@@ -229,6 +240,9 @@ jobs:
           name: ${{ steps.v.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            ${{ runner.temp }}/sbom/*.spdx.json
+            ${{ runner.temp }}/sbom/*.cdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
