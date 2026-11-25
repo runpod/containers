@@ -123,6 +123,7 @@ themselves:
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
 | `feat!:` / any type with `!` in the title, or a `BREAKING CHANGE:` footer | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
 | `ci:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build`   | none   | no release      |
+| `Revert "…"` (GitHub's Revert button, `git revert`), unless it reverts a non-bumping type | `Revert "feat: add comfyui template (#12)"` | patch | `1.0.8` |
 
 Notes:
 
@@ -554,7 +555,9 @@ either.
   admins may bypass it on a pull request, for the merge of
   `main` back into `develop` after a hotfix. Rulesets on the same branch
   stack and the strictest value wins, so these two set no approvals of their
-  own.
+  own. A `revert-*` PR into `main` is merged with a merge commit too, so it
+  cannot be retitled: its `Revert "…"` commit is read as a patch, and the
+  revert is released.
 - **Who may target `main`:** `branch-policy.yml` fails any PR into `main` whose
   source branch is not `develop`, `hotfix/*` or `revert-*` (GitHub's Revert
   button), or that comes from a fork. A branch that only *looks* like a hotfix

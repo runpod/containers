@@ -5,13 +5,29 @@
 # lines like `* feat: …` cannot phantom-bump. A major bump is `type!:` in the
 # subject, or a git-trailer footer `BREAKING CHANGE:` / `BREAKING-CHANGE:` at
 # the start of a line. See https://www.conventionalcommits.org/en/v1.0.0/
+#
+# `Revert "<subject>"` (GitHub's Revert button, `git revert`) is a patch unless
+# the reverted subject is a Conventional type that does not bump (docs:, ci:).
+# main takes merge commits only, so a revert-* PR cannot be retitled at merge
+# time: its commit subject is what this reads, and a none would leave the bad
+# image the newest release. A reverted release reads `Revert "Merge pull
+# request …"`, which has no type, so it is a patch too.
 
 detect_bump() {
   local text="$1"
   text="$(printf '%s' "$text" | tr -d '\r')"
   local subject="${text%%$'\n'*}"
+  local revert='^Revert "(.*)"$'
 
-  if printf '%s\n' "$subject" | grep -qiE '^[a-z]+(\([^)]*\))?!:'; then
+  if [[ "$subject" =~ $revert ]]; then
+    local reverted="${BASH_REMATCH[1]}"
+    if printf '%s\n' "$reverted" | grep -qiE '^[a-z]+(\([^)]*\))?!?:' \
+      && [ "$(detect_bump "$reverted")" = "none" ]; then
+      echo "none"
+    else
+      echo "patch"
+    fi
+  elif printf '%s\n' "$subject" | grep -qiE '^[a-z]+(\([^)]*\))?!:'; then
     echo "major"
   elif printf '%s\n' "$text" | grep -qE '^BREAKING[ -]CHANGE:'; then
     echo "major"
