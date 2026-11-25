@@ -1301,25 +1301,15 @@ jobs:
 
       # CPU-only: runs the loaded images under plain Docker with fixture
       # topology env and checks what runpod/host depends on (ports, label,
-      # 2-node formation). Gates the push. Also captures the /nodes and
-      # /metrics payloads the host pins as test fixtures.
+      # 2-node formation). Gates the push.
       - name: Image contract test
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
-          RAY_CONTRACT_FIXTURE_DIR: ${{ runner.temp }}/ray-contract-fixtures
         run: |
           set -euo pipefail
           mapfile -t refs < <(jq -r '.[]' <<< "$REFS")
           official-templates/ray-cluster/tests/contract.sh "${refs[@]}"
-
-      - name: Upload contract fixtures
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ray-contract-fixtures-${{ matrix.cuda }}
-          path: ${{ runner.temp }}/ray-contract-fixtures
-          retention-days: 30
-          if-no-files-found: error
 
       - name: Grype scan
         uses: ./.github/actions/grype

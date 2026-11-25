@@ -36,8 +36,6 @@
 #      raylet exited and rejoin the new head by itself.
 #
 # Usage: contract.sh <image-ref> [<image-ref>...]
-# Set RAY_CONTRACT_FIXTURE_DIR to save the head's /nodes and /metrics payloads
-# (host-test fixtures for pkg/rayready and pkg/raymetrics).
 set -euo pipefail
 
 readonly CONTRACT=v1
@@ -366,17 +364,8 @@ check_image() {
         fail "RUNPOD_POD_ID front door: want / to bounce through Grafana's /runpod-login and /jobs to stay, got: $locations"
     pass "dashboard front door on Runpod: / bounces through Grafana's login, a deep link keeps its path"
 
-    if [[ -n "${RAY_CONTRACT_FIXTURE_DIR:-}" ]]; then
-        local dir
-        dir="$RAY_CONTRACT_FIXTURE_DIR/$(tr '/:' '__' <<< "$image")"
-        mkdir -p "$dir"
-        "${in_worker[@]}" curl -fsS -H "Authorization: Bearer $TOKEN" "http://$HEAD_IP:$DASHBOARD_PORT$NODES_PATH" > "$dir/nodes.json"
-        "${in_worker[@]}" curl -fsS "http://$HEAD_IP:$METRICS_PORT/metrics" > "$dir/metrics.txt"
-        pass "fixtures saved to $dir"
-    fi
-
-    # 6. Rejoin. Last, so the fixtures above come from a first formation. The
-    # worker isn't restarted: its own loop must bring it into the new cluster.
+    # 6. Rejoin. The worker isn't restarted: its own loop must bring it into
+    # the new cluster.
     docker restart "$run_id-head" > /dev/null
     wait_for "head /api/gcs_healthz success after restart" 180 head_healthy
     wait_for "worker noticing its raylet exited" 300 worker_rejoining

@@ -121,12 +121,12 @@ Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BAS
 - that after the head restarts, the worker (left running) rejoins the new head by itself;
 - that the dashboard API answers 401 with no token, 403 with a wrong one, and 200 with the bearer token or the cookie `/api/authenticate` sets; that the dashboard agent on 52365 answers 401 to a job submission with no token, while its `/api/healthz` stays public; and that the front door on 8266 turns `?token=` into that cookie with a redirect, while Ray still answers 401 there without one. With `RUNPOD_POD_ID` set, a login at `/` redirects to Grafana's `…-8889…/runpod-login?token=` and a deep link to its own path (Grafana's proxy is covered by `tests/unit/test_grafana_auth_proxy.py`). The head takes its token from `RAY_DASHBOARD_PASSWORD` and the worker from `JUPYTER_PASSWORD`, so the worker joining proves both resolve to the same cluster token.
 
-CI runs it before pushing, and uploads the head's node-list and `/metrics` payloads (`RAY_CONTRACT_FIXTURE_DIR`) as the fixtures runpod/host pins in its parser tests.
+CI runs it before pushing.
 
 ## Keeping in sync with the host
 
 On a Ray version bump, verify these together with runpod/host:
 
-- **The node-list payload shape.** `pkg/rayready` parses the State API's `/api/v0/nodes` (`node_ip`, `state`, `num_filtered`), not the dashboard's `/nodes?view=summary`, which is a cache that can trail the GCS. A Ray relabel would make every node read DEAD and hold the cluster never-ready. Refresh the host fixtures from the contract-test artifact.
+- **The node-list payload shape.** `pkg/rayready` parses the State API's `/api/v0/nodes` (`node_ip`, `state`, `num_filtered`), not the dashboard's `/nodes?view=summary`, which is a cache that can trail the GCS. A Ray relabel would make every node read DEAD and hold the cluster never-ready. Refresh the host's pinned payloads (`pkg/rayready/testdata`, `pkg/raymetrics/testdata`) from a cluster on the new version.
 - **Token authentication.** `pkg/rayready`'s State API poll needs the cluster token as a bearer header; `/api/gcs_healthz` and the metrics port stay public. Ray versions that move these public paths change what the host can reach without the token.
 - **The port variables.** The host reads `RAY_DASHBOARD_PORT` and `RAY_METRICS_PORT` from the container's env. Renaming either, or starting Ray on a port they don't name, is a contract version bump: a new label value and a matching host release. Changing their default values is not.
