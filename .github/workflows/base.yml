@@ -1353,9 +1353,9 @@ jobs:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       # CPU-only: runs the loaded images under plain Docker with fixture
-      # topology env and checks what runpod/host depends on (ports, label,
-      # 2-node formation). Gates the push. Also captures the /nodes and
-      # /metrics payloads the host pins as test fixtures.
+      # topology env and checks the image contract (ports, label, 2-node
+      # formation). Gates the push. Also captures the /nodes and /metrics
+      # payloads as fixtures.
       - name: Image contract test
         shell: bash
         env:
