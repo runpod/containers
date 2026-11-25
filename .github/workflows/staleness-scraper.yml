@@ -59,6 +59,8 @@ jobs:
             turns: 60
           - family: autoresearch
             turns: 60
+          - family: burn
+            turns: 60
           - family: base
             turns: 90
           - family: pytorch-cluster

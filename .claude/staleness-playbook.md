@@ -5,7 +5,7 @@ You are running headless in GitHub Actions. Your job: find upstream releases we 
 not yet ship, and, where you can verify the build inputs exist, open a draft PR that
 adds them following the exact conventions already in the repo.
 
-Covered families: **pytorch**, **comfyui**, **autoresearch**, **base**,
+Covered families: **pytorch**, **comfyui**, **autoresearch**, **burn**, **base**,
 **pytorch-cluster**, **ray-cluster** (detection only), **filebrowser**,
 **k3s-node**, **vllm**, and the four sandboxes (**sandbox-ubuntu**,
 **sandbox-browser**, **sandbox-harbor**, **sandbox-openclaw**). That is the list of families in
@@ -230,6 +230,34 @@ bake file:
 This is a plain pin bump (not an add-alongside): replace both values. If
 runpodctl is already current, do nothing. autoresearch has no version list in its
 README, so no README change.
+
+## burn
+
+Three in-place pins in `official-templates/burn/Dockerfile`, plus Burn itself,
+which is detection only. None of them drives an image tag, so each is a plain
+in-place bump, never an add-alongside.
+
+- `RUSTUP_VERSION` / `RUSTUP_SHA256`: latest stable `rust-lang/rustup` release.
+  The checksum is for the **x86_64** `rustup-init`, the only platform the image
+  builds: run `sha256-url` against
+  `https://static.rust-lang.org/rustup/archive/<version>/x86_64-unknown-linux-gnu/rustup-init`.
+  Bump both together, never one alone.
+- `RUST_VERSION`: latest stable Rust release (`rust-lang/rust` tags like
+  `1.101.0`; ignore beta and nightly). The README states it ("Rust 1.100.0"), so
+  update that number too.
+- `EVCXR_VERSION`: latest release of the `evcxr_jupyter` crate (read
+  `https://crates.io/api/v1/crates/evcxr_jupyter` with WebFetch;
+  `crate.max_stable_version`). Its `rust-version` must not be above
+  `RUST_VERSION`; if it is, bump Rust in the same PR or leave evcxr and say why.
+  The README names no evcxr version.
+
+**Burn** (`burn = "=X.Y.Z"` in `official-templates/burn/starter/Cargo.toml`) is
+**detection only, do not apply.** The starter's `Cargo.lock` pins every
+transitive dependency and the image builds with `--locked`, so a bump needs a
+lock file regenerated with `cargo update`, which you cannot run. Check
+`tracel-ai/burn` for a stable release newer than ours, and if there is one,
+write it into `/tmp/scraper-notes.md` with its minimum Rust version, saying it
+needs a hand-regenerated `Cargo.lock`. Change no files for it.
 
 ## base
 

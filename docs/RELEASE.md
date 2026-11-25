@@ -266,7 +266,7 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/scripts/plan_families.py`               | Turns a diff (or each family's last tag) into the families to build, in dependency order. Also answers which workflows to call and which repos we publish to. |
 | `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, plans the families (`plan` job), calls only the build workflows it needs, and creates one `<family>-vX.Y.Z` tag + Release per family. |
 | `.github/actions/compute-version/action.yml`     | For one family: its next version, suffix, `previous-version`, and the `should-build` / `should-release` flags, from its own tag series + the commit type. |
-| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, filebrowser; builds the ones in the plan. |
+| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, burn, filebrowser; builds the ones in the plan. |
 | `.github/workflows/sandbox.yml`                  | **Reusable**. Covers sandbox-ubuntu, sandbox-openclaw, sandbox-harbor, sandbox-browser. |
 | `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml`, `k3s-node.yml` | **Reusable**. One family each. |
 | `.github/actions/prepull-base-images/action.yml` | Pulls each target's `BASE_IMAGE` with crane into an OCI layout and hands bake an override file, because BuildKit's own pull of multi-GB bases intermittently fails mid-layer. Resolves the same bake files as the build step, so the parent variables live on the **job**, not on either step. |
