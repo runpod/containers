@@ -123,7 +123,7 @@ workflow name, ref, commit SHA, and trigger. This is exactly what
 | `.github/actions/cosign/action.yml`     | Reusable sign + verify composite action.                                     |
 | `.github/actions/image-name/action.yml` | Extracts image refs, signable digests, and ref-to-digest mappings from `docker buildx bake` metadata. |
 | `.github/actions/docker-push/action.yml` | Pushes tags and verifies Docker Hub resolved each exact ref to the expected digest. |
-| `.github/workflows/base.yml`            | Builds and signs `runpod/base`, `runpod/pytorch`, `runpod/autoresearch`.     |
+| `.github/workflows/base.yml`            | Builds and signs `runpod/base`, `runpod/pytorch`, `runpod/pytorch-cluster`, `runpod/ray-cluster`, `runpod/autoresearch`, `runpod/burn`, `runpod/filebrowser`. |
 | `.github/workflows/nvidia.yml`          | Builds and signs `runpod/nvidia-*` images.                                   |
 | `.github/workflows/rocm.yml`            | Builds and signs `runpod/rocm` images.                                       |
 

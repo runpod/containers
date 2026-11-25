@@ -73,37 +73,40 @@ if [ "${1:-}" = agent ]; then
   fi
 fi
 
-# A K8S node pod starts before its control plane exists. It gets K3S_TOKEN and WG_ENDPOINT (the
-# stack's API record) once the stack is up; that pod edit restarts it. Until then it waits,
-# instead of crash-looping without a server.
-if [ "${1:-}" = agent ] && { [ -z "${K3S_TOKEN:-}" ] || [ -z "${K3S_URL:-}${WG_ENDPOINT:-}" ]; }; then
-  echo "k3s-node: K3S_TOKEN and WG_ENDPOINT not set (waiting for control plane to be available)" >&2
+# A K8S node pod starts before its control plane exists. It gets K3S_TOKEN, WG_ENDPOINT (the
+# stack's API record), WG_PRIVATE_KEY and WG_SERVER_KEYS (E-4102) once the stack is up and the
+# provisioner replied; that pod edit restarts it. Until then it waits, instead of crash-looping
+# without a server. K3S_URL without WG_ENDPOINT joins without the tunnel (local testing).
+if [ "${1:-}" = agent ] && { [ -z "${K3S_TOKEN:-}" ] || [ -z "${K3S_URL:-}${WG_ENDPOINT:-}" ] \
+    || { [ -n "${WG_ENDPOINT:-}" ] && { [ -z "${WG_PRIVATE_KEY:-}" ] || [ -z "${WG_SERVER_KEYS:-}" ]; }; }; }; then
+  echo "k3s-node: waiting for control plane (K3S_TOKEN, WG_ENDPOINT, WG_PRIVATE_KEY, WG_SERVER_KEYS)" >&2
   exec sleep infinity
 fi
 
-# K3S_TOKEN is k3s's secure form, K10<CA hash>::node:<agent token>: the agent checks the server's CA
-# against the hash (runpod/k3s-controlplane E-4020). The WireGuard keys and the node password derive
-# from the bare agent token, the part after the last colon, so they match the servers' wg sidecar.
-# A bare token has no colon and stays as it is.
+# K3S_TOKEN is this pod's own bootstrap token in k3s's secure form, K10<CA hash>::<id>.<secret>
+# (E-4102): the agent checks the server's CA against the hash (runpod/k3s-controlplane E-4020).
+# The part after the last colon, "<id>.<secret>", feeds only the node password below; the CA hash
+# stays out of it, so a CA rotation keeps the password. A bare token has no colon and stays as it
+# is (local testing).
 if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ]; then
-  AGENT_TOKEN="${K3S_TOKEN##*:}"
+  NODE_SECRET="${K3S_TOKEN##*:}"
 fi
 
-# WireGuard to the servers: the cluster has three (slots 0-2), and the agent tunnels to each.
-# Server slot lives at s<slot>.<cluster host> (from WG_ENDPOINT, the API name), with the tunnel
-# address 10.200.100.1+slot and the key "wireguard-server-<slot>". Every key follows from the
-# agent token (AGENT_TOKEN, above), as in the servers' wg sidecar (runpod/k3s-controlplane
-# images/k3s-wireguard): the node's (and its tunnel address 10.200.0.2+rank) from NODE_RANK. So
-# every node pod has the same env, and nothing hands out keys.
+# WireGuard to the servers: the agent tunnels to each server slot. Server slot lives at
+# s<slot>.<cluster host> (from WG_ENDPOINT, the API name), with the tunnel address
+# 10.200.100.1+slot. The node's tunnel address is 10.200.0.2+rank (NODE_RANK).
+# The keys are this pod's own (E-4102): WG_PRIVATE_KEY, and in WG_SERVER_KEYS the slots' public
+# keys (base64, comma-separated, slot 0 first; their count is the slot count). RunPod sets both
+# from the control plane's reply. Nothing derives from a shared value, no pod holds another
+# node's key, and the servers admit only the live nodes' keys.
 # A slot record at 127.0.0.1 means its task has not registered yet: no peer. A restarted server
 # task has a new public IP, and a slot's record comes alive later: re-resolve every 5 s.
 # The agent joins through the first server with a handshake (K3S_URL); it then learns every
 # server's tunnel address from the kubernetes endpoints and balances over them.
 if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
-  WG_SERVERS="${WG_SERVERS:-3}"
   WG_HOST="${WG_ENDPOINT%:*}"
   WG_PORT="${WG_ENDPOINT##*:}"
-  WG_MAX_NODES="${WG_MAX_NODES:-200}"
+  WG_MAX_NODES="${WG_MAX_NODES:-254}"
   case "${NODE_RANK:-}" in
     ''|*[!0-9]*) echo "k3s-node: NODE_RANK is not set" >&2; exit 1 ;;
   esac
@@ -113,13 +116,19 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
   WG_ADDRESS="10.200.0.$((2 + NODE_RANK))"
   # The keys live in /etc/wireguard: Ubuntu 26.04 hosts confine /usr/bin/wg with an AppArmor
   # profile that, under sysbox, also applies in this container, and allows only that directory.
-  ( umask 077; mkdir -p /etc/wireguard && printf 'wireguard-node-%s' "$NODE_RANK" \
-      | openssl dgst -sha256 -hmac "$AGENT_TOKEN" -binary | base64 > /etc/wireguard/wg0.key )
-  for slot in $(seq 0 $((WG_SERVERS - 1))); do
-    printf 'wireguard-server-%s' "$slot" \
-      | openssl dgst -sha256 -hmac "$AGENT_TOKEN" -binary | base64 | wg pubkey \
-      > "/etc/wireguard/server-$slot.pub"
+  ( umask 077; mkdir -p /etc/wireguard && printf '%s\n' "$WG_PRIVATE_KEY" > /etc/wireguard/wg0.key ) || exit 1
+  # Slots are positional, so an empty or malformed field must fail, not shift the later keys.
+  slot=0
+  rest="$WG_SERVER_KEYS,"
+  while [ -n "$rest" ]; do
+    key="${rest%%,*}"; rest="${rest#*,}"
+    case "$key" in
+      ''|*[!A-Za-z0-9+/=]*) echo "k3s-node: WG_SERVER_KEYS slot $slot is not a base64 key" >&2; exit 1 ;;
+    esac
+    printf '%s\n' "$key" > "/etc/wireguard/server-$slot.pub"
+    slot=$((slot + 1))
   done
+  WG_SERVERS=$slot
   ip link del wg0 2>/dev/null || true
   ip link add wg0 type wireguard
   wg set wg0 private-key /etc/wireguard/wg0.key
@@ -160,9 +169,9 @@ fi
 # The node password: k3s stores a random one in /etc/rancher/node/password on the first join, and
 # the server keeps it per node name (secret <node>.node-password.k3s). A recreated node pod (image
 # bump, pod edit, host reboot) has a new container filesystem, so a new password, and the server
-# rejects it ("Node password rejected"). Derive it from the agent token and NODE_RANK instead
-# (PBKDF2-HMAC-SHA256): the same node rank always presents the same password. If the derivation
-# fails, the node does not start.
+# rejects it ("Node password rejected"). Derive it from the token's secret part (NODE_SECRET) and
+# NODE_RANK instead (PBKDF2-HMAC-SHA256): the same pod always presents the same password. If the
+# derivation fails, the node does not start.
 if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ] && [ -n "${NODE_RANK:-}" ]; then
   (
     umask 077
@@ -171,7 +180,7 @@ if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ] && [ -n "${NODE_RANK:-}" ]; t
     node_password=$(
       openssl kdf -keylen 32 \
         -kdfopt digest:SHA256 \
-        -kdfopt "pass:$AGENT_TOKEN" \
+        -kdfopt "pass:$NODE_SECRET" \
         -kdfopt "salt:node-password-$NODE_RANK" \
         -kdfopt iter:600000 \
         PBKDF2

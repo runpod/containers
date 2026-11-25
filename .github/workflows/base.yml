@@ -1,9 +1,9 @@
 name: Base Images Build
 
 # Reusable building block invoked by the release orchestrator (release.yml),
-# which passes in the families it planned. Covers the
-# base -> pytorch -> {autoresearch, pytorch-cluster -> ray-cluster} dependency
-# chain; each family has its own version series and only the planned ones are
+# which passes in the families it planned. Covers the dependency chain
+#   base -> {autoresearch, burn, filebrowser, pytorch -> pytorch-cluster -> ray-cluster}
+# Each family has its own version series and only the planned ones are
 # built. Not triggered on its own (no push/pull_request/concurrency here) — the
 # orchestrator owns triggers, gating, concurrency and the final release.
 on:
@@ -57,6 +57,8 @@ jobs:
       ray-cluster-build: ${{ steps.ray-cluster.outputs.should-build }}
       autoresearch: ${{ steps.autoresearch.outputs.version }}
       autoresearch-build: ${{ steps.autoresearch.outputs.should-build }}
+      burn: ${{ steps.burn.outputs.version }}
+      burn-build: ${{ steps.burn.outputs.should-build }}
       filebrowser: ${{ steps.filebrowser.outputs.version }}
       filebrowser-build: ${{ steps.filebrowser.outputs.should-build }}
     steps:
@@ -95,6 +97,12 @@ jobs:
         uses: ./.github/actions/compute-version
         with:
           family: autoresearch
+
+      - name: burn
+        id: burn
+        uses: ./.github/actions/compute-version
+        with:
+          family: burn
 
       - name: filebrowser
         id: filebrowser
@@ -449,6 +457,192 @@ jobs:
             RTX 5090
             RTX PRO *
             PRO 6000 MIG *
+            RTX 2000 Ada
+
+  build-burn:
+    needs: [versions, build-base]
+    # Skipped base means base was not planned, so we layer on the published
+    # one; failed base means we must not build on it at all.
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'burn')
+      && needs.versions.outputs.burn-build == 'true'
+      && (needs.build-base.result == 'success'
+          || needs.build-base.result == 'skipped')
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      id-token: write
+    # Each image is a CUDA-devel base plus the Rust toolchain and a compiled
+    # Burn starter project. Shard by CUDA version like autoresearch, so one
+    # runner never holds the whole matrix.
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/burn-${{ matrix.cuda }}
+
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/burn/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
+      - name: Build burn images (${{ matrix.cuda }})
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.burn }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/burn/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
+          targets: ${{ matrix.cuda }}
+          load: true
+          push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          fail-on-findings: "true"
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/burn-refs
+          printf '%s\n' "$REFS" > /tmp/burn-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: burn-refs-${{ matrix.cuda }}
+          path: /tmp/burn-refs/refs.json
+          retention-days: 3
+          if-no-files-found: error
+
+  test-burn:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: [versions, build-burn]
+    if: "!cancelled() && needs.build-burn.result == 'success'"
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: burn-refs-${{ matrix.cuda }}
+          path: /tmp/burn-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/burn-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # Run the prebuilt starter: a matmul on the CUDA and Vulkan
+          # backends, each checked against the CPU.
+          test-burn: true
+          # A 1024x1024 matmul needs well under 1 GB; the floor only keeps out
+          # tiny slices. A low one widens the GPU pool and shortens the queue.
+          min-vram-gb: "8"
+          create-timeout: "1200"
+          # Blackwell stays in: Burn's CUDA backend JIT-compiles through
+          # nvrtc and every CUDA column here (12.8+) targets sm_100/sm_120.
+          # MIG slices are out because they do not support graphics APIs, so
+          # the Vulkan backend cannot run there. Match every MIG slice
+          # ('B300 MIG 34GB', 'PRO 6000 MIG ...'), not one card's.
+          exclude-instances: |
+            * MIG *
             RTX 2000 Ada
 
   build-filebrowser:

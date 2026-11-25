@@ -803,6 +803,42 @@ def autoresearch_check_command(
     )
 
 
+def burn_check_command() -> str:
+    """Check what the Burn image adds on top of runpod/base, none of which the
+    pod needs to boot:
+
+    - `vulkaninfo --summary` lists an NVIDIA device, i.e. the Vulkan loader
+      finds the driver through the EGL ICD the image adds;
+    - the prebuilt starter prints `cuda: OK` and `vulkan: OK`: the same matmul
+      on each backend matches the CPU result. The output is grepped rather
+      than trusting the exit code alone, so a run that skipped a backend
+      still fails;
+    - `jupyter kernelspec list` has the evcxr `rust` kernel.
+
+    vulkaninfo and the starter run with VK_ICD_FILENAMES pinned to the EGL
+    ICD. The loader would otherwise also read the GLX ICD the toolkit mounts,
+    and on a host where that one works, a broken EGL ICD would go unnoticed.
+
+    The binary runs directly instead of through `cargo run`, so a stale build
+    fingerprint cannot turn the check into a multi-minute rebuild."""
+    return (
+        "set -eo pipefail; "
+        "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_egl_icd.json; "
+        "vulkaninfo --summary | tee /tmp/vulkaninfo.txt; "
+        "grep -qi 'deviceName.*nvidia' /tmp/vulkaninfo.txt "
+        "|| { echo 'vulkaninfo lists no NVIDIA device' >&2; exit 1; }; "
+        "/opt/burn-starter/target/release/burn-starter | tee /tmp/burn.txt; "
+        "grep -q '^cuda: OK' /tmp/burn.txt "
+        "|| { echo 'no cuda: OK from the starter' >&2; exit 1; }; "
+        "grep -q '^vulkan: OK' /tmp/burn.txt "
+        "|| { echo 'no vulkan: OK from the starter' >&2; exit 1; }; "
+        "jupyter kernelspec list | tee /tmp/kernels.txt; "
+        "grep -qE '^[[:space:]]*rust[[:space:]]' /tmp/kernels.txt "
+        "|| { echo 'no rust kernel in jupyter kernelspec list' >&2; exit 1; }; "
+        "echo 'burn starter ok'"
+    )
+
+
 # Series the Grafana dashboards resolve their template variables from
 # (`label_values(<series>, hostname)` in official-templates/pytorch-cluster/
 # config/dashboards). If one of these stops carrying a `hostname` label, the
