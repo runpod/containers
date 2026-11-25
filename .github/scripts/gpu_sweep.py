@@ -52,6 +52,7 @@ ALLOWED_CHECKS = {
     "test_comfyui",
     "test_comfyui_functional",
     "test_autoresearch",
+    "test_burn",
 }
 
 STATE_RANK = {"fail": 2, "pass": 1, "untested": 0}

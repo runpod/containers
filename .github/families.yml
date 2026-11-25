@@ -69,6 +69,14 @@ families:
     image_repo: runpod/autoresearch
     workflow: base
 
+  burn:
+    paths:
+      - official-templates/burn/**
+      - official-templates/shared/**
+    depends_on: [base]
+    image_repo: runpod/burn
+    workflow: base
+
   filebrowser:
     paths:
       - official-templates/filebrowser/**

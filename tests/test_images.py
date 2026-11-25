@@ -278,6 +278,10 @@ def _apply_hygiene_flags(grp: str, contents: dict) -> None:
         config.GROUP_TEST_AUTORESEARCH[grp] = True
         log(f"group '{grp}': test_autoresearch=true (train.py runs end to end)")
 
+    if _normalize_bool(contents.get("test_burn")):
+        config.GROUP_TEST_BURN[grp] = True
+        log(f"group '{grp}': test_burn=true (starter runs on CUDA and Vulkan)")
+
     if _normalize_bool(contents.get("test_dcgm_exporter")):
         config.GROUP_TEST_DCGM_EXPORTER[grp] = True
         log(
