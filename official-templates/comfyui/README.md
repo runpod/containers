@@ -173,12 +173,26 @@ Installing from a git URL or a pip package name does not.
 
 ### FileBrowser (`8080`)
 
-Sign in as `admin` with `FILEBROWSER_PASSWORD`. Without it, FileBrowser does
-not start. FileBrowser requires at least 12 characters and rejects common
-passwords. If yours is rejected, the log says so and FileBrowser does not
-start. The admin password is reset to
-`FILEBROWSER_PASSWORD` on every start. This also replaces the `adminadmin12`
-default that older versions of this image created.
+FileBrowser is [FileBrowser Quantum](https://github.com/gtsteffaniak/filebrowser).
+Sign in as `admin` with `FILEBROWSER_PASSWORD`. Without it, or with one shorter
+than 12 characters, FileBrowser does not start and the pod log says why. The
+admin password is reset to `FILEBROWSER_PASSWORD` on every start. This also
+replaces the `adminadmin12` default that older versions of this image created.
+
+On the first sign-in after FileBrowser creates its database, it shows a one-time
+notice: "A new database was created on startup". That is expected on a new
+volume and on the first start after upgrading from an image with classic
+FileBrowser.
+
+**Upgrading a volume from an image with classic FileBrowser:** on the first
+start, FileBrowser imports the users from the classic database
+(`/workspace/runpod-slim/filebrowser.db`) into its own
+(`/workspace/runpod-slim/filebrowser.sqlite`). Share links are not carried
+over; create them again. The classic `filebrowser.db`, and
+`/workspace/runpod-slim/.filebrowser.json` if your volume has one, are left in
+place; once FileBrowser works, you can delete them to reclaim the space. Only
+FileBrowser's logins and shares are affected: your models, inputs and outputs
+are not touched.
 
 ### JupyterLab (`8888`)
 
@@ -261,4 +275,4 @@ Do not `pip install sageattention` on top: the PyPI package is the older 1.x rel
 - `/workspace/runpod-slim/ComfyUI`: ComfyUI install
 - `/workspace/runpod-slim/ComfyUI/user/__manager/config.ini`: ComfyUI-Manager settings
 - `/workspace/runpod-slim/comfyui_args.txt`: ComfyUI args
-- `/workspace/runpod-slim/filebrowser.db`: FileBrowser DB
+- `/workspace/runpod-slim/filebrowser.sqlite`: FileBrowser DB (`filebrowser.db` is the classic FileBrowser DB from older images; see [FileBrowser](#filebrowser-8080))

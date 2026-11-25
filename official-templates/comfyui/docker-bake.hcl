@@ -19,14 +19,13 @@ variable "CIVICOMFY_SHA" {
 variable "RUNPODDIRECT_SHA" {
   default = "1c0dd562dc3f"
 }
-# FileBrowser is archived upstream (2026-09-01); v2.63.23 is its last release.
-# The Dockerfile builds it from source with a current Go and patched modules.
-# FILEBROWSER_COMMIT is the commit the tag points to; the build checks it.
+# FileBrowser Quantum (gtsteffaniak/filebrowser) release tag and the sha256 of
+# its linux-amd64-filebrowser asset. Same pin as the filebrowser family.
 variable "FILEBROWSER_VERSION" {
-  default = "v2.63.23"
+  default = "v2.0.1-stable"
 }
-variable "FILEBROWSER_COMMIT" {
-  default = "e8a388f840173580116f2743813d03b22286e44e"
+variable "FILEBROWSER_SHA256" {
+  default = "42df10b6f2fcd4db17a53f64a9449e677a528164002fd13b050d348d7c477517"
 }
 
 # The 13.2 image is the only one on the newer stack: the cu132 index has no
@@ -179,7 +178,7 @@ target "comfyui-matrix" {
     CIVICOMFY_SHA       = CIVICOMFY_SHA
     RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
     FILEBROWSER_VERSION = FILEBROWSER_VERSION
-    FILEBROWSER_COMMIT  = FILEBROWSER_COMMIT
+    FILEBROWSER_SHA256  = FILEBROWSER_SHA256
     TORCH_VERSION       = build.torch_version
     TORCHVISION_VERSION = build.torchvision_version
     TORCHAUDIO_VERSION  = build.torchaudio_version

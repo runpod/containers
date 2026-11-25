@@ -55,6 +55,7 @@ from .vllm import (
 from .comfyui import (
     auth_headers as comfyui_auth_headers,
     check_comfyui_refuses_anonymous,
+    check_filebrowser_requires_password,
     probe_comfyui_alive,
     run_comfyui_check,
 )
@@ -525,6 +526,12 @@ def _run_comfyui_steps(
     if not ok:
         dump_pod_logs(pod_id, image)
         return "FAIL", f"ComfyUI answered without its password: {detail[:160]}"
+
+    ok, detail = check_filebrowser_requires_password(pod_id)
+    log(f"FileBrowser password check: {detail}", indent=2)
+    if not ok:
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"FileBrowser password check failed: {detail[:160]}"
     if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
         return None
 

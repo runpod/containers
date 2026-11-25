@@ -378,8 +378,9 @@ bake file, and the scripts beside it are ours, not upstream's.
 
 ## filebrowser
 
-Its own family, separate from the FileBrowser that ships inside comfyui: this one
-tracks **FileBrowser Quantum** (`gtsteffaniak/filebrowser`), the maintained fork.
+Tracks **FileBrowser Quantum** (`gtsteffaniak/filebrowser`). comfyui ships the
+same binary as an in-place pin, which the comfyui run bumps from its own section;
+leave comfyui's files alone here.
 
 `FILEBROWSER_VERSIONS` in `official-templates/filebrowser/docker-bake.hcl` is a
 list of `{ version, sha256 }`. Add the new release **alongside** the existing
