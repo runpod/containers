@@ -932,7 +932,7 @@ def ray_check_command(metrics_port: int = 20217) -> str:
     The image's own multi-node launch needs a cluster (NODE_RANK and the
     host's /etc/hosts), so this exercises the same Ray install by hand: Ray
     must see the pod's GPU, schedule a `num_gpus=1` task that runs a torch
-    CUDA op, and serve `ray_` metrics on the contract metrics port. Ray is
+    CUDA op, and serve `ray_` metrics on the metrics port. Ray is
     stopped on the way out either way, so later checks see a clean pod."""
     return (
         "set -e; "

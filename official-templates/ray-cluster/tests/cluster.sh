@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Image contract test for the ray-cluster image (contract v1). CPU-only, no
-# Runpod credentials: runs the built image under plain Docker with fixture
+# Cluster test for the ray-cluster image. CPU-only, no Runpod credentials: runs the built image under plain Docker with fixture
 # topology env, the way the host daemon would, and checks the parts runpod/host
 # depends on.
 #
-#   1. the contract label and ENTRYPOINT are present, and the image's ENV sets
+#   1. the com.runpod.ray-cluster.contract label and ENTRYPOINT are present, and the image's ENV sets
 #      RAY_DASHBOARD_PORT and RAY_METRICS_PORT, which the host reads;
 #   2. an empty or invalid port, or a dashboard or metrics port set through
 #      RAY_START_EXTRA_ARGS, fails the boot with an error naming the variable;
@@ -35,10 +34,11 @@
 #   6. a restarted head is a new GCS: the worker, left running, must notice its
 #      raylet exited and rejoin the new head by itself.
 #
-# Usage: contract.sh <image-ref> [<image-ref>...]
+# Usage: cluster.sh <image-ref> [<image-ref>...]
 set -euo pipefail
 
-readonly CONTRACT=v1
+# The com.runpod.ray-cluster.contract value the host requires.
+readonly LABEL_VERSION=v1
 # The formation's dashboard and metrics ports, set through RAY_DASHBOARD_PORT
 # and RAY_METRICS_PORT to values other than the image's defaults. The metrics
 # port stays below the ephemeral range and outside Ray's worker ports.
@@ -49,8 +49,8 @@ readonly FRONT_PORT=8266
 readonly AGENT_PORT=52365
 # The cluster token: the head gets it as RAY_DASHBOARD_PASSWORD, the worker as
 # JUPYTER_PASSWORD. The head's own JUPYTER_PASSWORD is the wrong token.
-readonly TOKEN=contract-test-token
-readonly HEAD_JUPYTER_PASSWORD=contract-test-jupyter
+readonly TOKEN=cluster-test-token
+readonly HEAD_JUPYTER_PASSWORD=cluster-test-jupyter
 readonly SUBNET=172.31.250.0/24
 readonly HEAD_IP=172.31.250.10
 readonly WORKER_IP=172.31.250.11
@@ -66,7 +66,7 @@ pass() { echo "ok: $*"; }
 
 [[ $# -gt 0 ]] || fail "usage: $0 <image-ref> [<image-ref>...]"
 
-run_id="raycontract-$$"
+run_id="raycluster-$$"
 cleanup() {
     docker rm -f "$run_id-head" "$run_id-worker" > /dev/null 2>&1 || true
     docker network rm "$run_id" > /dev/null 2>&1 || true
@@ -177,10 +177,10 @@ check_image() {
     # 1. Label and entrypoint.
     local label entrypoint
     label=$(docker image inspect -f '{{index .Config.Labels "com.runpod.ray-cluster.contract"}}' "$image")
-    [[ "$label" == "$CONTRACT" ]] || fail "label com.runpod.ray-cluster.contract != $CONTRACT"
+    [[ "$label" == "$LABEL_VERSION" ]] || fail "label com.runpod.ray-cluster.contract != $LABEL_VERSION"
     entrypoint=$(docker image inspect -f '{{json .Config.Entrypoint}}' "$image")
     [[ "$entrypoint" == '["/opt/runpod/ray/entrypoint"]' ]] || fail "ENTRYPOINT is not /opt/runpod/ray/entrypoint"
-    pass "contract label $CONTRACT and ENTRYPOINT"
+    pass "label com.runpod.ray-cluster.contract=$LABEL_VERSION and ENTRYPOINT"
 
     # The host reads the dashboard and metrics ports from the container env,
     # so the image must set both.
@@ -378,4 +378,4 @@ check_image() {
 for image in "$@"; do
     check_image "$image"
 done
-echo "contract $CONTRACT: all checks passed"
+echo "all checks passed"

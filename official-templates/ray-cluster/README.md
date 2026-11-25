@@ -2,11 +2,11 @@
 
 Runpod's supported Ray cluster image for Instant Clusters. It layers Ray on `runpod/pytorch-cluster`, so it inherits the RDMA/InfiniBand user-space stack and the monitoring stack (DCGM + node_exporter on every node; Prometheus + Grafana on the head), and adds a Ray head/worker launch with Ray's metrics wired into that stack.
 
-Published as `runpod/ray-cluster:<version>-cu<cuda>-torch<torch>-<ubuntu>`. Design: [Ray Clusters for Inference (v2: Supported Ray Image)](https://app.notion.com/p/runpod/Ray-Clusters-for-Inference-v2-Supported-Ray-Image-3f4ff732fc34813daebccb35ab5d4712); host side in runpod/host `docs/ray-init-refactor.md`.
+Published as `runpod/ray-cluster:<version>-cu<cuda>-torch<torch>-<ubuntu>`. Design: [Ray Clusters for Inference](https://app.notion.com/p/runpod/Ray-Clusters-for-Inference-v2-Supported-Ray-Image-3f4ff732fc34813daebccb35ab5d4712); host side in runpod/host `pkg/rayready` and `pkg/raymetrics`.
 
-## Contract v1 with the host
+## The host and the image
 
-Ray cluster pods run only on this image or one built `FROM` it. The host daemon (runpod/host) validates that the pod is on a designated image, injects topology env, and observes Ray from outside the container. It injects no script, and from the pod it reads only the dashboard and metrics ports and the Ray token from the container's env, so the image owns everything else. The image carries the label `com.runpod.ray-cluster.contract=v1`, which derived images inherit.
+Ray cluster pods run only on this image or one built `FROM` it: the host daemon (runpod/host) checks the image's `com.runpod.ray-cluster.contract` label (`v1`, which derived images inherit) before creating the pod, sets the topology env, and observes Ray from outside the container. From the pod it reads only the dashboard and metrics ports and the Ray token, from the container's env; the image owns everything else.
 
 | Concern | Owner | Mechanism |
 |---|---|---|
@@ -17,13 +17,13 @@ Ray cluster pods run only on this image or one built `FROM` it. The host daemon 
 | Topology passed through, not used by the image (`PRIMARY_ADDR`, `MASTER_ADDR`, `NODE_ADDR`, `NODE_ROLE`, `WORLD_SIZE`, …) and NIC/RDMA (`NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME`, `NCCL_IB_*`) | Host | `buildClusterEnv`. The addresses are fixed at create, and unset when the head isn't running then, which is why the image uses `node-0` instead |
 | Observability ports: `RAY_DASHBOARD_PORT`, `RAY_METRICS_PORT` | Image | Dockerfile `ENV`, overridable; the host reads them from the container's env, and the entrypoint refuses an unset or invalid value |
 | Ray token authentication (dashboard API, GCS) | Image | The entrypoint sets `RAY_AUTH_MODE=token` with the cluster's shared secret; the host must send `Authorization: Bearer <token>` on the State API poll |
-| Fabric NIC selection | Host | `NCCL_SOCKET_IFNAME` pinned from ground truth; no in-container self-heal |
+| Fabric NIC selection | Host | `NCCL_SOCKET_IFNAME` pinned from ground truth |
 | Readiness, liveness, Runpod metrics | Host | `pkg/rayready` polls the head dashboard; `pkg/raymetrics` scrapes every node's metrics port |
 | Customer metrics (Grafana, dashboard Metrics tab) | Image | Prometheus + Grafana on the head |
 
 ## What the entrypoint does
 
-`/opt/runpod/ray/entrypoint` is the only Ray launch logic. In order:
+`/opt/runpod/ray/entrypoint` starts Ray. In order:
 
 1. **Validates the ports.** `RAY_DASHBOARD_PORT`, `RAY_METRICS_PORT` and `RAY_GCS_PORT` (6379 if unset) must each be a TCP port (1-65535); they are re-exported without leading zeros. The host reads the dashboard and metrics ports from the same variables, so an unset or empty one is refused too, and `RAY_START_EXTRA_ARGS` must not contain `--metrics-export-port` or `--dashboard-port`. A refusal prints an error naming the variable and exits non-zero before starting Ray.
    **Turns on Ray's token authentication** (`RAY_AUTH_MODE=token`). The token is `RAY_AUTH_TOKEN` (or `RAY_AUTH_TOKEN_PATH`) if you set one, else `RAY_DASHBOARD_PASSWORD`, else `JUPYTER_PASSWORD`, exported as `RAY_AUTH_TOKEN` so the CMD, Jupyter and SSH sessions inherit it. Every node must resolve the same token, or workers can't join. With no secret at all it exits non-zero rather than run an open dashboard; `RAY_AUTH_MODE=disabled` is the explicit opt-out. Any other `RAY_AUTH_MODE` is refused (matched case-insensitively), as is a `RAY_AUTH_TOKEN_PATH` that isn't a non-empty file.
@@ -33,7 +33,7 @@ Ray cluster pods run only on this image or one built `FROM` it. The host daemon 
 5. On a worker, steps 3 and 4 run in a background loop, so the CMD (and with it SSH) starts at once even if the head never comes up. The loop then keeps the worker in the cluster: it checks every 10s that the raylet is running and, once it isn't (the head restarted, or the raylet died), runs `ray stop --force`, waits for the head the same way as step 3, and joins again. A restarted head is a new cluster, so this restores the node but not the jobs, actors or Serve apps that were running; resubmit those. It also means `ray stop` on a worker is undone within seconds: stop the pod to take a worker out.
 6. `exec "$@"` into the CMD (`/start.sh` by default: SSH, Jupyter, and the monitoring bringup in `/post_start.sh`). On a worker, `JUPYTER_PASSWORD` and `JUPYTER_DISABLE_AUTH` are cleared first, so Jupyter runs on the head only; map 8888 on the head. Any node can still `ray.init()` into the cluster. Clearing `JUPYTER_PASSWORD` does not remove the secret from a worker: when it was the token source, the same value stays in the CMD's environment (and SSH sessions) as `RAY_AUTH_TOKEN`, which Ray needs there.
 
-It does not install packages, write readiness markers, or probe the fabric. A pod with no `NODE_RANK` (not a cluster pod) skips straight to the CMD without Ray. The head's Ray is not restarted if it crashes while its container keeps running; the host reports the cluster down until the pod is restarted.
+A pod with no `NODE_RANK` (not a cluster pod) skips straight to the CMD without Ray. The head's Ray is not restarted if it crashes while its container keeps running; the host reports the cluster down until the pod is restarted.
 
 It also logs a warning if the installed Ray differs from the version the image was built with (`RAY_CLUSTER_RAY_VERSION`), since the host's parsers are pinned to that version.
 
@@ -45,7 +45,7 @@ It also logs a warning if the installed Ray differs from the version the image w
 
 ## Inference variant
 
-`runpod/ray-cluster:<version>-inference-cu1300-torch2130-ubuntu2404` (`inference/`) is this image plus vLLM 0.32.0 behind LiteLLM's proxy, serving one Hugging Face model across the whole cluster with no image build. It keeps the entrypoint and contract v1 unchanged; only the CMD differs (`/opt/runpod/inference/start`):
+`runpod/ray-cluster:<version>-inference-cu1300-torch2130-ubuntu2404` (`inference/`) is this image plus vLLM 0.32.0 behind LiteLLM's proxy, serving one Hugging Face model across the whole cluster with no image build. It keeps the entrypoint unchanged; only the CMD differs (`/opt/runpod/inference/start`):
 
 - **Worker:** joins Ray and runs nothing else.
 - **Head:** downloads the model, waits, with no deadline, until `NUM_NODES` nodes have joined Ray, then runs `vllm serve $MODEL_REPO` on `127.0.0.1:8000` with the Ray executor, tensor parallelism set to the GPUs per node and pipeline parallelism set to the node count (every node needs the same GPU count), and LiteLLM's proxy on **4000** (LiteLLM's default) in front of it.
@@ -104,14 +104,14 @@ This data stays in the cluster. Runpod's copy is the host's own scrape (`host_ra
 ```bash
 ./bake.sh ray-cluster            # all targets
 ./bake.sh ray-cluster cu1300     # one CUDA-major shard
-official-templates/ray-cluster/tests/contract.sh runpod/ray-cluster:<tag>
+official-templates/ray-cluster/tests/cluster.sh runpod/ray-cluster:<tag>
 ```
 
 Each matrix entry builds `FROM` a published `runpod/pytorch-cluster:<CLUSTER_BASE_VERSION>-…` tag (see `docker-bake.hcl`), so that image must exist first. In CI, `build-ray-cluster` (in `.github/workflows/base.yml`) runs after `build-pytorch-cluster`. `ray-cluster` is its own release family (`ray-cluster-vX.Y.Z` tags, see `.github/families.yml`), so its version need not match the cluster image it builds on.
 
-`tests/contract.sh` is CPU-only and needs no Runpod credentials. It runs the image under plain Docker with fixture topology env and checks:
+`tests/cluster.sh` is CPU-only and needs no Runpod credentials. It runs the image under plain Docker with fixture topology env and checks:
 
-- the contract label and `ENTRYPOINT`;
+- the `com.runpod.ray-cluster.contract` label and `ENTRYPOINT`;
 - that the inherited monitoring bringup picks the head by `NODE_RANK=0`, not by the `node-0` hostname (so Prometheus/Grafana and the Ray scrape job land on the same node; pytorch-cluster releases after 1.4.1 have this check);
 - a table of boot refusals, each reporting its error before Ray starts: a dashboard or metrics port unset, empty or out of range, or set through `RAY_START_EXTRA_ARGS`; a `RAY_GCS_PORT` or `NODE_RANK` out of range, not a number, overflowing or carrying a shell command; no auth secret; a `RAY_AUTH_MODE` other than `token`/`disabled`; a missing or empty `RAY_AUTH_TOKEN_PATH`;
 - a table of accepted boots, checked from what they log: port bounds, leading zeros dropped, the auth mode matched case-insensitively, and the token precedence (`RAY_AUTH_TOKEN`, then `RAY_DASHBOARD_PASSWORD`, then `JUPYTER_PASSWORD`, or `RAY_AUTH_TOKEN_PATH`);
@@ -129,4 +129,4 @@ On a Ray version bump, verify these together with runpod/host:
 
 - **The node-list payload shape.** `pkg/rayready` parses the State API's `/api/v0/nodes` (`node_ip`, `state`, `num_filtered`), not the dashboard's `/nodes?view=summary`, which is a cache that can trail the GCS. A Ray relabel would make every node read DEAD and hold the cluster never-ready. Refresh the host's pinned payloads (`pkg/rayready/testdata`, `pkg/raymetrics/testdata`) from a cluster on the new version.
 - **Token authentication.** `pkg/rayready`'s State API poll needs the cluster token as a bearer header; `/api/gcs_healthz` and the metrics port stay public. Ray versions that move these public paths change what the host can reach without the token.
-- **The port variables.** The host reads `RAY_DASHBOARD_PORT` and `RAY_METRICS_PORT` from the container's env. Renaming either, or starting Ray on a port they don't name, is a contract version bump: a new label value and a matching host release. Changing their default values is not.
+- **The port variables.** The host reads `RAY_DASHBOARD_PORT` and `RAY_METRICS_PORT` from the container's env. Renaming either, or starting Ray on a port they don't name, needs a new `com.runpod.ray-cluster.contract` value and a matching host release. Changing their default values is not.

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Ray cluster image entrypoint (contract v1). The only Ray launch logic on a
-# Runpod Ray cluster: the host daemon injects topology env and observes from
-# outside the container, and this script turns that env into a running Ray
-# node before handing off to the container's CMD.
+# Ray cluster image entrypoint. The host daemon sets the topology env and
+# observes Ray from outside the container; this script turns that env into a
+# running Ray node before handing off to the container's CMD.
 #
 # It does exactly this, in order:
 #   1. validate the ports (RAY_DASHBOARD_PORT, RAY_METRICS_PORT, RAY_GCS_PORT),
@@ -26,9 +25,7 @@
 # sync, so node-0 is absent while the head is stopped and returns at the
 # head's current address once it runs again.
 #
-# It does not install packages, write readiness markers, or probe the fabric:
-# the host pins the fabric NIC and polls readiness itself. runpod/host
-# (pkg/rayready, pkg/raymetrics) reads the dashboard and metrics ports from this
+# runpod/host (pkg/rayready, pkg/raymetrics) reads the dashboard and metrics ports from this
 # container's RAY_DASHBOARD_PORT and RAY_METRICS_PORT, which the image sets in
 # its ENV, so they are honoured as set, and Ray must not be started on any
 # other port.

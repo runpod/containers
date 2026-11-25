@@ -1302,14 +1302,14 @@ jobs:
       # CPU-only: runs the loaded images under plain Docker with fixture
       # topology env and checks what runpod/host depends on (ports, label,
       # 2-node formation). Gates the push.
-      - name: Image contract test
+      - name: Ray cluster test
         shell: bash
         env:
           REFS: ${{ steps.refs.outputs.refs }}
         run: |
           set -euo pipefail
           mapfile -t refs < <(jq -r '.[]' <<< "$REFS")
-          official-templates/ray-cluster/tests/contract.sh "${refs[@]}"
+          official-templates/ray-cluster/tests/cluster.sh "${refs[@]}"
 
       - name: Grype scan
         uses: ./.github/actions/grype
@@ -1351,7 +1351,7 @@ jobs:
   # Single-pod GPU smoke test: with no NODE_RANK the entrypoint boots the CMD
   # without Ray, so this covers SSH/Jupyter on the image, and test-ray starts
   # a one-node Ray head by hand to run a GPU task. Multi-node formation is
-  # covered by the contract test above.
+  # covered by the cluster test above.
   test-ray-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: [versions, build-ray-cluster]

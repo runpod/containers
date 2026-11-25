@@ -16,7 +16,7 @@
 # (see base.yml build-ray-cluster). The default is a released pytorch-cluster
 # version for local runs; bump it when a newer cluster release is published.
 # 1.4.1 still picks the monitoring head by hostname, not NODE_RANK, so the
-# contract test's head-check step fails on it until the next cluster release.
+# cluster test's head-check step fails on it until the next cluster release.
 variable "CLUSTER_BASE_VERSION" {
   default = "1.4.1"
 }

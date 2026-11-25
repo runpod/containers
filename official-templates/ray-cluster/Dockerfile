@@ -3,13 +3,12 @@
 # user-space stack and the monitoring stack (DCGM + node_exporter on every node;
 # Prometheus + Grafana on the head), with Ray's metrics wired into it.
 #
-# Contract v1 with runpod/host: the host injects only topology env and observes
-# Ray from outside the container, on the dashboard (readiness/liveness) and Ray
-# metrics ports it reads from this container's RAY_DASHBOARD_PORT and
-# RAY_METRICS_PORT. The image owns launch: the ENTRYPOINT starts Ray on those
-# ports, then execs the CMD. Customers extend it with
-# `FROM runpod/ray-cluster:<tag>`, keeping the ENTRYPOINT and the Ray version.
-# See README.md and runpod/host docs/ray-init-refactor.md.
+# runpod/host sets the topology env and observes Ray from outside the
+# container, on the dashboard (readiness/liveness) and Ray metrics ports it
+# reads from this container's RAY_DASHBOARD_PORT and RAY_METRICS_PORT. The
+# ENTRYPOINT starts Ray on those ports, then execs the CMD. Customers extend it
+# with `FROM runpod/ray-cluster:<tag>`, keeping the ENTRYPOINT and the Ray
+# version. See README.md.
 #
 # BASE_IMAGE is a published runpod/pytorch-cluster tag (see docker-bake.hcl).
 
@@ -97,6 +96,8 @@ EXPOSE 8266 ${RAY_DASHBOARD_PORT} ${RAY_METRICS_PORT} 52365 ${RAY_GCS_PORT}
 # No HEALTHCHECK: readiness and liveness are the host's (pkg/rayready polls the
 # head dashboard), and nothing acts on Docker's health status.
 
+# The host runs Ray cluster pods only on an image with a
+# com.runpod.ray-cluster.contract value it supports; derived images inherit it.
 LABEL com.runpod.template.variant="ray-cluster" \
       com.runpod.ray-cluster.contract="v1"
 
