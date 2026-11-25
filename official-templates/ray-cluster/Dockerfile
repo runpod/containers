@@ -4,11 +4,12 @@
 # Prometheus + Grafana on the head), with Ray's metrics wired into it.
 #
 # Contract v1 with runpod/host: the host injects only topology env and observes
-# Ray from outside the container (dashboard 8265 for readiness/liveness, Ray
-# metrics on 20217). The image owns launch: the ENTRYPOINT starts Ray, then
-# execs the CMD. Customers extend it with `FROM runpod/ray-cluster:<tag>`,
-# keeping the ENTRYPOINT, the Ray version and the contract ports. See
-# README.md and runpod/host docs/ray-init-refactor.md.
+# Ray from outside the container, on the dashboard (readiness/liveness) and Ray
+# metrics ports it reads from this container's RAY_DASHBOARD_PORT and
+# RAY_METRICS_PORT. The image owns launch: the ENTRYPOINT starts Ray on those
+# ports, then execs the CMD. Customers extend it with
+# `FROM runpod/ray-cluster:<tag>`, keeping the ENTRYPOINT and the Ray version.
+# See README.md and runpod/host docs/ray-init-refactor.md.
 #
 # BASE_IMAGE is a published runpod/pytorch-cluster tag (see docker-bake.hcl).
 
@@ -35,8 +36,8 @@ RUN python -m pip install --no-cache-dir "ray[default,serve]==${RAY_VERSION}" -r
     rm -rf "$jars" && \
     [[ ! -e "$jars" ]]
 
-# Static defaults. The two ports are fixed by contract v1 and the entrypoint
-# refuses overrides; they are exported so customer code can read them.
+# Static defaults. The dashboard and metrics ports are where the host polls and
+# scrapes; it reads them from the container env, so an override is honoured.
 # NCCL_NET_GDR_LEVEL only takes effect when NCCL uses IB.
 ENV RAY_CLUSTER_RAY_VERSION=${RAY_VERSION} \
     RAY_GCS_PORT=6379 \
@@ -74,23 +75,27 @@ COPY --chmod=755 post_start.sh /post_start.sh
 # directory, so splice one include into its http block.
 COPY config/nginx/ray-dashboard.conf /etc/nginx/ray-dashboard.conf
 COPY config/nginx/ray-dashboard-login.conf /etc/nginx/ray-dashboard-login.conf
-RUN sed -i 's|^http {$|&\n    include /etc/nginx/ray-dashboard.conf;|' /etc/nginx/nginx.conf && \
+# hadolint ignore=SC2016
+RUN printf 'set $ray_dashboard 127.0.0.1:%s;\n' "${RAY_DASHBOARD_PORT}" > /etc/nginx/ray-dashboard-address.conf && \
+    sed -i 's|^http {$|&\n    include /etc/nginx/ray-dashboard.conf;|' /etc/nginx/nginx.conf && \
     grep -q 'include /etc/nginx/ray-dashboard.conf;' /etc/nginx/nginx.conf && \
     nginx -t
 
 #   8266  Ray dashboard for the cluster owner's browser: nginx turns the
-#         console's `?token=` into Ray's session cookie, then proxies to 8265.
-#         Map this one in the Runpod template.
-#   8265  Ray dashboard: host readiness/liveness poll (host-internal; browsers
-#         and API clients use 8266). Token-authenticated by Ray itself (the
-#         entrypoint sets RAY_AUTH_MODE=token).
-#   20217 Ray metrics: host scrape and the head's Prometheus (host-internal)
+#         console's `?token=` into Ray's session cookie, then proxies to the
+#         dashboard. Map this one in the Runpod template.
+#   RAY_DASHBOARD_PORT  Ray dashboard: host readiness/liveness poll
+#         (host-internal; browsers and API clients use 8266).
+#         Token-authenticated by Ray itself (the entrypoint sets
+#         RAY_AUTH_MODE=token).
+#   RAY_METRICS_PORT  Ray metrics: host scrape and the head's Prometheus
+#         (host-internal)
 #   52365 Ray dashboard agent: the head's dashboard reaches each node's agent
 #         for jobs and logs (host-internal; token-authenticated by Ray, except
 #         its /api/healthz and /api/local_raylet_healthz)
 #   6379  Ray GCS: workers register here (host-internal; token-gated gRPC)
 # 8889 Grafana (token-authenticated) is inherited from the -cluster base.
-EXPOSE 8266 8265 20217 52365 6379
+EXPOSE 8266 ${RAY_DASHBOARD_PORT} ${RAY_METRICS_PORT} 52365 ${RAY_GCS_PORT}
 
 # No HEALTHCHECK: readiness and liveness are the host's (pkg/rayready polls the
 # head dashboard), and nothing acts on Docker's health status.

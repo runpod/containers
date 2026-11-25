@@ -102,11 +102,11 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(up{job=\"ray\", instance=~\".+:20217\"})",
+          "expr": "sum(up{job=\"ray\", ray_endpoint=\"node\"})",
           "refId": "A"
         }
       ],
-      "description": "Ray nodes whose metrics endpoint (:20217) is up. Ray's service-discovery file also lists the head's autoscaler and dashboard metrics ports, so counting every ray target would overcount."
+      "description": "Ray nodes whose metrics endpoint (RAY_METRICS_PORT) is up. Ray's service-discovery file also lists the head's autoscaler and dashboard metrics ports, so counting every ray target would overcount."
     },
     {
       "type": "stat",
