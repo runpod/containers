@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Ray cluster image entrypoint (contract v1). The only Ray launch logic on a
-# Runpod Ray cluster: the host daemon injects topology env and observes from
-# outside the container, and this script turns that env into a running Ray
-# node before handing off to the container's CMD.
+# Ray cluster image entrypoint. The host daemon sets the topology env and
+# observes Ray from outside the container; this script turns that env into a
+# running Ray node before handing off to the container's CMD.
 #
 # It does exactly this, in order:
-#   1. enforce the contract ports (dashboard 8265, metrics 20217), and turn on
-#      Ray's token authentication with the cluster's shared secret;
+#   1. validate the ports (RAY_DASHBOARD_PORT, RAY_METRICS_PORT, RAY_GCS_PORT),
+#      and turn on Ray's token authentication with the cluster's shared secret;
 #   2. take the role from NODE_RANK (rank 0 is the head) and this node's
 #      address from its node-<NODE_RANK> entry in /etc/hosts;
 #   3. on a worker, wait with no deadline for the head GCS at node-0;
-#   4. `ray start` with the contract ports, plus $RAY_START_EXTRA_ARGS;
+#   4. `ray start` on those ports, plus $RAY_START_EXTRA_ARGS;
 #   5. on a worker, do 3 and 4 in the background and keep rejoining there:
 #      its raylet exits with the head, and a restarted head is a new cluster
 #      nothing else rejoins;
@@ -26,15 +25,12 @@
 # sync, so node-0 is absent while the head is stopped and returns at the
 # head's current address once it runs again.
 #
-# It does not install packages, write readiness markers, or probe the fabric:
-# the host pins the fabric NIC and polls readiness itself. The ports are a
-# contract with runpod/host (pkg/rayready, pkg/raymetrics), which reads nothing
-# from the pod, so an override would make the node invisible to the host. That
-# is why an override fails the boot instead of being honoured.
+# runpod/host (pkg/rayready, pkg/raymetrics) reads the dashboard and metrics ports from this
+# container's RAY_DASHBOARD_PORT and RAY_METRICS_PORT, which the image sets in
+# its ENV, so they are honoured as set, and Ray must not be started on any
+# other port.
 set -uo pipefail
 
-readonly CONTRACT_DASHBOARD_PORT=8265
-readonly CONTRACT_METRICS_PORT=20217
 readonly DASHBOARD_AGENT_PORT=52365
 
 log() { echo "[ray-entrypoint] $*"; }
@@ -56,33 +52,40 @@ fi
 [[ "$NODE_RANK" =~ ^[0-9]{1,5}$ ]] || die "NODE_RANK '$NODE_RANK' is not a node rank"
 export NODE_RANK=$((10#$NODE_RANK))
 
-# --- 1. Contract ports ------------------------------------------------------ #
-require_port() { # <var> <contract value>
-    local name=$1 want=$2 got=${!1:-$2}
-    [[ "$got" == "$want" ]] ||
-        die "$name is fixed at $want by the Ray cluster image contract (got '$got'). Remove the override and move your own service to a different port."
+# --- 1. Ports --------------------------------------------------------------- #
+# require_port <var>: <var> must hold a TCP port (1-65535); it is re-exported
+# without leading zeros, so the host, this script and the CMD agree on it. The
+# values reach a `bash -c` string in wait_for_head and the nginx config, so
+# only a plain port number gets that far. Unset or empty is refused like any
+# other invalid value: the host reads the same variable and would not find Ray.
+require_port() { # <var>
+    local name=$1 value=${!1:-}
+    if ! [[ "$value" =~ ^[0-9]{1,5}$ ]] || ((10#$value < 1 || 10#$value > 65535)); then
+        die "$name '$value' is not a TCP port (1-65535)"
+    fi
+    export "$name=$((10#$value))"
 }
-require_port RAY_DASHBOARD_PORT "$CONTRACT_DASHBOARD_PORT"
-require_port RAY_METRICS_PORT "$CONTRACT_METRICS_PORT"
+require_port RAY_DASHBOARD_PORT
+require_port RAY_METRICS_PORT
+export RAY_GCS_PORT=${RAY_GCS_PORT:-6379}
+require_port RAY_GCS_PORT
+gcs_port=$RAY_GCS_PORT
 
-# Not a contract port, but it reaches a `bash -c` string in wait_for_head, so
-# only a plain port number gets that far.
-gcs_port=${RAY_GCS_PORT:-6379}
-if ! [[ "$gcs_port" =~ ^[0-9]{1,5}$ ]] || ((10#$gcs_port < 1 || 10#$gcs_port > 65535)); then
-    die "RAY_GCS_PORT '$gcs_port' is not a TCP port (1-65535)"
-fi
-gcs_port=$((10#$gcs_port))
-
+# The ports go to Ray only from their variables, which the host reads.
 read -ra extra_args <<< "${RAY_START_EXTRA_ARGS:-}"
 for arg in "${extra_args[@]}"; do
     case "$arg" in
         --metrics-export-port | --metrics-export-port=*)
-            die "RAY_START_EXTRA_ARGS must not set --metrics-export-port: RAY_METRICS_PORT is fixed at $CONTRACT_METRICS_PORT" ;;
+            die "RAY_START_EXTRA_ARGS must not set --metrics-export-port: set RAY_METRICS_PORT instead" ;;
         --dashboard-port | --dashboard-port=*)
-            die "RAY_START_EXTRA_ARGS must not set --dashboard-port: RAY_DASHBOARD_PORT is fixed at $CONTRACT_DASHBOARD_PORT" ;;
+            die "RAY_START_EXTRA_ARGS must not set --dashboard-port: set RAY_DASHBOARD_PORT instead" ;;
         *) ;;
     esac
 done
+
+# The front door on 8266 proxies to the dashboard (ray-dashboard.conf).
+# shellcheck disable=SC2016 # $ray_dashboard is nginx's
+printf 'set $ray_dashboard 127.0.0.1:%s;\n' "$RAY_DASHBOARD_PORT" > /etc/nginx/ray-dashboard-address.conf
 
 # --- 1b. Token authentication ---------------------------------------------- #
 # Unauthenticated, the dashboard's API is job submission, i.e. remote code
@@ -105,7 +108,7 @@ RAY_AUTH_MODE=${RAY_AUTH_MODE,,}
 [[ "$RAY_AUTH_MODE" == token || "$RAY_AUTH_MODE" == disabled ]] ||
     die "RAY_AUTH_MODE '$RAY_AUTH_MODE' is not 'token' or 'disabled'"
 if [[ "$RAY_AUTH_MODE" == disabled ]]; then
-    log "warn: RAY_AUTH_MODE=disabled: the Ray dashboard and GCS accept unauthenticated requests, including job submission. Never map 8265 publicly."
+    log "warn: RAY_AUTH_MODE=disabled: the Ray dashboard and GCS accept unauthenticated requests, including job submission. Never map $RAY_DASHBOARD_PORT publicly."
 else
     if [[ -z "${RAY_AUTH_TOKEN:-}" && -z "${RAY_AUTH_TOKEN_PATH:-}" ]]; then
         if [[ -n "${RAY_DASHBOARD_PASSWORD:-}" ]]; then
@@ -152,7 +155,7 @@ for _ in $(seq 1 30); do
     sleep 2
 done
 [[ -n "$node_ip" ]] || die "$self is not in /etc/hosts; the host lists every cluster member there"
-log "role=$role node=$self node_ip=$node_ip num_nodes=${NUM_NODES:-?}"
+log "role=$role node=$self node_ip=$node_ip num_nodes=${NUM_NODES:-?} metrics_port=$RAY_METRICS_PORT"
 
 # A derived image that upgraded Ray drifts from the host's pinned parsers.
 if [[ -n "${RAY_CLUSTER_RAY_VERSION:-}" ]]; then
@@ -163,7 +166,7 @@ fi
 
 common_args=(
     --node-ip-address="$node_ip"
-    --metrics-export-port="$CONTRACT_METRICS_PORT"
+    --metrics-export-port="$RAY_METRICS_PORT"
     --dashboard-agent-listen-port="$DASHBOARD_AGENT_PORT"
 )
 
@@ -207,15 +210,15 @@ if [[ "$role" == head ]]; then
     fi
 
     # --- 4. Start the head ---------------------------------------------- #
-    log "starting Ray head: gcs :$gcs_port, dashboard 0.0.0.0:$CONTRACT_DASHBOARD_PORT, metrics :$CONTRACT_METRICS_PORT"
+    log "starting Ray head: gcs :$gcs_port, dashboard 0.0.0.0:$RAY_DASHBOARD_PORT, metrics :$RAY_METRICS_PORT"
     ray start --head \
         --port="$gcs_port" \
         --dashboard-host=0.0.0.0 \
-        --dashboard-port="$CONTRACT_DASHBOARD_PORT" \
+        --dashboard-port="$RAY_DASHBOARD_PORT" \
         "${common_args[@]}" "${extra_args[@]}" ||
         die "ray start --head failed; see /tmp/ray/session_latest/logs"
-    wait_listening "$CONTRACT_DASHBOARD_PORT" "Ray dashboard"
-    wait_listening "$CONTRACT_METRICS_PORT" "Ray metrics endpoint"
+    wait_listening "$RAY_DASHBOARD_PORT" "Ray dashboard"
+    wait_listening "$RAY_METRICS_PORT" "Ray metrics endpoint"
     log "Ray head started"
     exec "$@"
 fi

@@ -4,8 +4,8 @@
 # LITELLM_MASTER_KEY, MAX_MODEL_LENGTH, VLLM_EXTRA_ARGS). See README.md.
 #
 # Built FROM the ray-cluster target of the same bake run (the `ray-cluster`
-# context, see docker-bake.hcl), so it keeps contract v1 with runpod/host
-# unchanged: the inherited ENTRYPOINT starts Ray, then runs this image's CMD.
+# context, see docker-bake.hcl): the inherited ENTRYPOINT starts Ray, then runs
+# this image's CMD.
 
 # A bake target context, not a registry image: no tag to pin.
 # hadolint ignore=DL3006

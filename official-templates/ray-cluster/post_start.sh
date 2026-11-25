@@ -12,6 +12,9 @@
 #      rule used below.
 #   2. On the head, scrape every Ray node through the service-discovery file Ray
 #      maintains, so new or rejoined nodes are picked up without config changes.
+#      The nodes' own metrics endpoints (RAY_METRICS_PORT, which the entrypoint
+#      validated) are labelled ray_endpoint="node", apart from the head's other
+#      Ray metrics ports in the same file.
 #      RAY_CLUSTER_METRICS=0 instead stops the head's Prometheus + Grafana, for
 #      customers who bring their own stack.
 #
@@ -55,6 +58,11 @@ else
         echo "  - job_name: ray"
         echo "    file_sd_configs:"
         echo "      - files: ['${RAY_SD_FILE}']"
+        echo "    relabel_configs:"
+        echo "      - source_labels: [__address__]"
+        echo "        regex: '.+:${RAY_METRICS_PORT}'"
+        echo "        target_label: ray_endpoint"
+        echo "        replacement: node"
     } >> "$PROM_CONFIG"
     # Prometheus runs without --web.enable-lifecycle, so restart to reload.
     supervisorctl restart prometheus > /dev/null 2>&1

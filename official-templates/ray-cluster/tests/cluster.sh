@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Image contract test for the ray-cluster image (contract v1). CPU-only, no
-# Runpod credentials: runs the built image under plain Docker with fixture
+# Cluster test for the ray-cluster image. CPU-only, no Runpod credentials: runs the built image under plain Docker with fixture
 # topology env, the way the host daemon would, and checks the parts runpod/host
 # depends on.
 #
-#   1. the contract label and ENTRYPOINT are present;
-#   2. a port override (env or RAY_START_EXTRA_ARGS) fails the boot with an
-#      error naming the variable;
+#   1. the com.runpod.ray-cluster.contract label and ENTRYPOINT are present, and the image's ENV sets
+#      RAY_DASHBOARD_PORT and RAY_METRICS_PORT, which the host reads;
+#   2. an empty or invalid port, or a dashboard or metrics port set through
+#      RAY_START_EXTRA_ARGS, fails the boot with an error naming the variable;
 #   3. a pod with no NODE_RANK boots its CMD without Ray;
 #   4. a 2-node cluster forms from only the topology the image depends on
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
@@ -16,8 +16,10 @@
 #      host's sync does. Then: the head dashboard's /api/gcs_healthz reports
 #      success and its State API node list ($NODES_PATH) has both nodes ALIVE
 #      at their addresses (what pkg/rayready polls and parses), and both serve
-#      Ray metrics on 20217. The dashboard and metrics checks run from the
-#      worker, over the docker bridge, as the host does.
+#      Ray metrics. The cluster runs on non-default dashboard and metrics
+#      ports, so every check below also proves an override is honoured. The
+#      dashboard and metrics checks run from the worker, over the docker
+#      bridge, as the host does.
 #   5. Ray token auth: the dashboard reports token mode; its API answers 401
 #      with no token and 403 with a wrong one (the head's JUPYTER_PASSWORD,
 #      which RAY_DASHBOARD_PASSWORD outranks), and 200 with the bearer token;
@@ -32,21 +34,23 @@
 #   6. a restarted head is a new GCS: the worker, left running, must notice its
 #      raylet exited and rejoin the new head by itself.
 #
-# Usage: contract.sh <image-ref> [<image-ref>...]
-# Set RAY_CONTRACT_FIXTURE_DIR to save the head's /nodes and /metrics payloads
-# (host-test fixtures for pkg/rayready and pkg/raymetrics).
+# Usage: cluster.sh <image-ref> [<image-ref>...]
 set -euo pipefail
 
-readonly CONTRACT=v1
-readonly DASHBOARD_PORT=8265
+# The com.runpod.ray-cluster.contract value the host requires.
+readonly LABEL_VERSION=v1
+# The formation's dashboard and metrics ports, set through RAY_DASHBOARD_PORT
+# and RAY_METRICS_PORT to values other than the image's defaults. The metrics
+# port stays below the ephemeral range and outside Ray's worker ports.
+readonly DASHBOARD_PORT=8275
+readonly METRICS_PORT=20227
 # nginx's browser front door to the dashboard (config/nginx/ray-dashboard.conf).
 readonly FRONT_PORT=8266
-readonly METRICS_PORT=20217
 readonly AGENT_PORT=52365
 # The cluster token: the head gets it as RAY_DASHBOARD_PASSWORD, the worker as
 # JUPYTER_PASSWORD. The head's own JUPYTER_PASSWORD is the wrong token.
-readonly TOKEN=contract-test-token
-readonly HEAD_JUPYTER_PASSWORD=contract-test-jupyter
+readonly TOKEN=cluster-test-token
+readonly HEAD_JUPYTER_PASSWORD=cluster-test-jupyter
 readonly SUBNET=172.31.250.0/24
 readonly HEAD_IP=172.31.250.10
 readonly WORKER_IP=172.31.250.11
@@ -62,7 +66,7 @@ pass() { echo "ok: $*"; }
 
 [[ $# -gt 0 ]] || fail "usage: $0 <image-ref> [<image-ref>...]"
 
-run_id="raycontract-$$"
+run_id="raycluster-$$"
 cleanup() {
     docker rm -f "$run_id-head" "$run_id-worker" > /dev/null 2>&1 || true
     docker network rm "$run_id" > /dev/null 2>&1 || true
@@ -173,10 +177,19 @@ check_image() {
     # 1. Label and entrypoint.
     local label entrypoint
     label=$(docker image inspect -f '{{index .Config.Labels "com.runpod.ray-cluster.contract"}}' "$image")
-    [[ "$label" == "$CONTRACT" ]] || fail "label com.runpod.ray-cluster.contract != $CONTRACT"
+    [[ "$label" == "$LABEL_VERSION" ]] || fail "label com.runpod.ray-cluster.contract != $LABEL_VERSION"
     entrypoint=$(docker image inspect -f '{{json .Config.Entrypoint}}' "$image")
     [[ "$entrypoint" == '["/opt/runpod/ray/entrypoint"]' ]] || fail "ENTRYPOINT is not /opt/runpod/ray/entrypoint"
-    pass "contract label $CONTRACT and ENTRYPOINT"
+    pass "label com.runpod.ray-cluster.contract=$LABEL_VERSION and ENTRYPOINT"
+
+    # The host reads the dashboard and metrics ports from the container env,
+    # so the image must set both.
+    local env default_dashboard_port
+    env=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image")
+    grep -qE '^RAY_METRICS_PORT=[0-9]+$' <<< "$env" || fail "the image ENV does not set RAY_METRICS_PORT"
+    default_dashboard_port=$(sed -n 's/^RAY_DASHBOARD_PORT=\([0-9][0-9]*\)$/\1/p' <<< "$env")
+    [[ -n "$default_dashboard_port" ]] || fail "the image ENV does not set RAY_DASHBOARD_PORT"
+    pass "image ENV sets RAY_DASHBOARD_PORT and RAY_METRICS_PORT"
 
     # The inherited monitoring bringup (pytorch-cluster after 1.4.1) picks the
     # head by NODE_RANK, like the entrypoint, not by hostname: each hostname
@@ -191,8 +204,11 @@ check_image() {
     # 2. Boot input. Refusals, one row each: <description>|<error the boot
     # must report>|<env>... All are refused before Ray starts.
     local refusals=(
-        "metrics port override|RAY_METRICS_PORT is fixed at $METRICS_PORT|RAY_METRICS_PORT=8080"
-        "dashboard port override|RAY_DASHBOARD_PORT is fixed at $DASHBOARD_PORT|RAY_DASHBOARD_PORT=8266"
+        "metrics port empty|RAY_METRICS_PORT '' is not a TCP port|RAY_METRICS_PORT="
+        "dashboard port empty|RAY_DASHBOARD_PORT '' is not a TCP port|RAY_DASHBOARD_PORT="
+        "metrics port 0, below range|RAY_METRICS_PORT '0' is not a TCP port|RAY_METRICS_PORT=0"
+        "dashboard port 65536, above range|RAY_DASHBOARD_PORT '65536' is not a TCP port|RAY_DASHBOARD_PORT=65536"
+        "metrics port command injection|RAY_METRICS_PORT|RAY_METRICS_PORT=20217; id"
         "metrics port in extra args|must not set --metrics-export-port|RAY_START_EXTRA_ARGS=--num-cpus=1 --metrics-export-port=9999"
         "dashboard port in extra args, split form|must not set --dashboard-port|RAY_START_EXTRA_ARGS=--dashboard-port 9000"
         "GCS port 0, below range|is not a TCP port|RAY_GCS_PORT=0"
@@ -216,6 +232,7 @@ check_image() {
         "GCS port 1, lower bound|GCS at node-0:1|RAY_GCS_PORT=1|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "GCS port 65535, upper bound|GCS at node-0:65535|RAY_GCS_PORT=65535|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "GCS port leading zeros dropped|GCS at node-0:80|RAY_GCS_PORT=00080|RAY_DASHBOARD_PASSWORD=$TOKEN"
+        "metrics port leading zeros dropped|metrics_port=9000|RAY_METRICS_PORT=09000|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "rank leading zeros dropped|role=worker node=node-1 |NODE_RANK=01|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "auth mode is case-insensitive|token authentication on (token from RAY_DASHBOARD_PASSWORD)|RAY_AUTH_MODE=TOKEN|RAY_DASHBOARD_PASSWORD=$TOKEN"
         "Disabled is the opt-out|warn: RAY_AUTH_MODE=disabled|RAY_AUTH_MODE=Disabled"
@@ -227,10 +244,11 @@ check_image() {
     run_rows expect_boot_log "$image" "${accepts[@]}"
 
     # The explicit opt-out boots, with the dashboard reporting auth disabled.
+    # It runs on the image's default ports, which the formation below doesn't.
     local mode
     mode=$(docker run --rm -e NODE_RANK=0 --add-host node-0:127.0.0.1 --shm-size=1g \
         -e RAY_AUTH_MODE=disabled "$image" \
-        curl -fsS "http://127.0.0.1:$DASHBOARD_PORT/api/authentication_mode" 2> /dev/null | tail -n 1) ||
+        curl -fsS "http://127.0.0.1:$default_dashboard_port/api/authentication_mode" 2> /dev/null | tail -n 1) ||
         fail "RAY_AUTH_MODE=disabled did not boot"
     [[ "$mode" == *'"disabled"'* ]] || fail "RAY_AUTH_MODE=disabled: dashboard reports $mode"
     pass "RAY_AUTH_MODE=disabled opts out of token auth"
@@ -246,7 +264,8 @@ check_image() {
     # its node-<rank> hostname, as on Runpod (the inherited monitoring stack
     # keys the head off it).
     docker network create --subnet "$SUBNET" "$run_id" > /dev/null
-    local topo=(-e NUM_NODES=2 --shm-size=1g --network "$run_id")
+    local topo=(-e NUM_NODES=2 -e RAY_DASHBOARD_PORT="$DASHBOARD_PORT" -e RAY_METRICS_PORT="$METRICS_PORT"
+        --shm-size=1g --network "$run_id")
 
     # The worker starts while the head isn't running: node-0 is not in its
     # /etc/hosts yet. It must wait, not exit or start Ray, and run its CMD
@@ -345,17 +364,8 @@ check_image() {
         fail "RUNPOD_POD_ID front door: want / to bounce through Grafana's /runpod-login and /jobs to stay, got: $locations"
     pass "dashboard front door on Runpod: / bounces through Grafana's login, a deep link keeps its path"
 
-    if [[ -n "${RAY_CONTRACT_FIXTURE_DIR:-}" ]]; then
-        local dir
-        dir="$RAY_CONTRACT_FIXTURE_DIR/$(tr '/:' '__' <<< "$image")"
-        mkdir -p "$dir"
-        "${in_worker[@]}" curl -fsS -H "Authorization: Bearer $TOKEN" "http://$HEAD_IP:$DASHBOARD_PORT$NODES_PATH" > "$dir/nodes.json"
-        "${in_worker[@]}" curl -fsS "http://$HEAD_IP:$METRICS_PORT/metrics" > "$dir/metrics.txt"
-        pass "fixtures saved to $dir"
-    fi
-
-    # 6. Rejoin. Last, so the fixtures above come from a first formation. The
-    # worker isn't restarted: its own loop must bring it into the new cluster.
+    # 6. Rejoin. The worker isn't restarted: its own loop must bring it into
+    # the new cluster.
     docker restart "$run_id-head" > /dev/null
     wait_for "head /api/gcs_healthz success after restart" 180 head_healthy
     wait_for "worker noticing its raylet exited" 300 worker_rejoining
@@ -368,4 +378,4 @@ check_image() {
 for image in "$@"; do
     check_image "$image"
 done
-echo "contract $CONTRACT: all checks passed"
+echo "all checks passed"
