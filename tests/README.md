@@ -394,6 +394,7 @@ Field reference:
 | `test_virtualenv` | `true` / `false` — creates a virtualenv with every `python3.X` the image ships. For `runpod/base`, which pins one virtualenv version across three interpreters: a pin that stops supporting the oldest fails only for whoever uses it. Default: `false`. |
 | `test_dcgm_exporter` | `true` / `false` — scrapes the in-pod dcgm-exporter on `:9400` (retrying for up to ~2 minutes while DCGM starts) and requires `DCGM_FI_DEV_GPU_UTIL` and `DCGM_FI_DEV_FB_USED` with a non-empty `hostname` label, the series the Grafana dashboards build their Node dropdowns from. For `runpod/pytorch-cluster`, which runs the exporter on every pod. Default: `false`. |
 | `test_ray` | `true` / `false` — starts a one-node Ray head in the pod, asserts Ray sees at least one GPU, runs a `num_gpus=1` task doing a torch CUDA matmul, checks `ray_` metrics on `:20217/metrics`, then stops Ray. For `runpod/ray-cluster`, whose own launch needs a multi-node cluster; multi-node formation is the contract test's job. Default: `false`. |
+| `test_burn` | `true` / `false` — for `runpod/burn`. Requires `vulkaninfo --summary` to list an NVIDIA device, runs the prebuilt `/opt/burn-starter` binary and requires both `cuda: OK` and `vulkan: OK` (the same matmul on each backend, compared with the CPU), and requires a `rust` kernel in `jupyter kernelspec list`. The binary runs directly rather than through `cargo run`, so a stale build fingerprint cannot turn the check into a rebuild. Default: `false`. |
 | `test_python_path` | `true` / `false` — `/usr/lib/python3/dist-packages` (apt's `python3-*` modules) must be on `sys.path` for the system `/usr/bin/python3` and for no other `python3.X` in the image, and `python3` must resolve to the same version as `python`. Interpreters are enumerated, not listed. For `runpod/base`. Default: `false`. |
 
 The `base_cpu` group is special: the manifest needs ONLY an `images:`
@@ -709,7 +710,7 @@ groups don't silently skip the check:
 
 <a id="hygiene-checks"></a>
 
-Six opt-in checks that look at how an image is **assembled** rather than at
+Eight opt-in checks that look at how an image is **assembled** rather than at
 whether it boots. They exist because the failures they catch are invisible to
 every other step: the pod starts, the GPU works, and the defect only surfaces
 for a user weeks later, or in the next scan.
@@ -723,6 +724,7 @@ for a user weeks later, or in the next scan.
 | system CA store | `test_ca_certs` (+ `revoked_ca_names`) | a `--only-upgrade ca-certificates` that exited 0 without upgrading anything |
 | certifi bundle | `test_python_tls` (+ `python_tls_venv`) | the same revoked root still trusted by `pip` and `requests`, which never read the system store |
 | dcgm-exporter | `test_dcgm_exporter` | the exporter binary failing against the image's libdcgm, or a label renamed upstream, either of which leaves the Grafana dashboards empty |
+| Burn | `test_burn` | the CUDA backend not finding nvrtc, the Vulkan loader not finding the NVIDIA driver through the EGL ICD the image adds, or the evcxr Jupyter kernel missing |
 
 Two things are deliberate about this design.
 

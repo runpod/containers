@@ -1,0 +1,45 @@
+### Runpod Burn
+
+**A GPU-ready environment for [Burn](https://github.com/tracel-ai/burn), the deep learning framework written in Rust.**
+
+Built on our base images: SSH, JupyterLab, and the CUDA toolkit come from there. This image adds the Rust toolchain and a compiled Burn project, so you can run Burn on the GPU right after the pod starts.
+
+### What's included
+
+- **Rust**: Rust 1.100.0 with `rustfmt`, `clippy`, `rust-analyzer`, and `rust-src`. The toolchain lives in `/opt/rustup` and `/opt/cargo`, so mounting a volume on `/workspace` does not hide it. Only root can change the toolchain itself. The cargo registry and the starter belong to the `rust` group, so to build as another user, add that user to it (`usermod -aG rust <user>`). Members can change crate sources and build output that root later compiles and runs, so add only users you would trust with root. Login shells get `cargo` on `PATH` from `/etc/profile.d/rust-env.sh`.
+- **Burn 0.22.1, already compiled**: `/opt/burn-starter` depends on Burn with the `cuda`, `vulkan`, and `flex` features, and its `Cargo.lock` pins every dependency. It was built when the image was made, so the cargo registry already has Burn and its dependencies. For training, add the `autodiff` feature; cargo then compiles the extra crates once.
+- **CUDA and Vulkan backends**: The CUDA backend uses the toolkit from the base image. The Vulkan backend (wgpu) needs the host's NVIDIA Vulkan driver. The image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` so the container runtime mounts it, and adds a Vulkan ICD that loads the driver through EGL, because the GLX one the runtime mounts does not work without an X server. `vulkan-tools` is installed, so `vulkaninfo --summary` shows what the pod can see. On hosts where the GLX ICD also works, the same GPU is listed twice, once per ICD. Both drive the same hardware; the starter uses `Device::vulkan(Default::default())`, which lets wgpu pick. To pin one, set `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_egl_icd.json`, which works on every host, headless or not.
+- **Rust in Jupyter**: [evcxr](https://github.com/evcxr/evcxr) is installed as a system-wide JupyterLab kernel named `rust`.
+
+### Getting started
+
+Check that both GPU backends work:
+
+```bash
+cd /opt/burn-starter
+cargo run --release           # both backends
+cargo run --release -- cuda   # or just one
+```
+
+To start your own project on the persistent volume, copy the starter's sources but not its `target/` directory, which holds several GB of build output. The dependencies are already downloaded, but cargo compiles them again for the new project:
+
+```bash
+mkdir -p /workspace/my-model
+cp -r /opt/burn-starter/{Cargo.toml,Cargo.lock,src} /workspace/my-model/
+cd /workspace/my-model
+cargo run --release
+```
+
+### Available configurations
+
+- **Burn**: 0.22.1
+- **CUDA**: 12.8.1, 12.9.0, 13.0.0, and 13.2.0. The tag says which toolkit the image has and which host driver it needs.
+- **Ubuntu**: 24.04 (Noble)
+
+### Links
+
+- [Burn repository](https://github.com/tracel-ai/burn)
+- [The Burn Book](https://burn.dev/books/burn/)
+- [Burn examples](https://github.com/tracel-ai/burn/tree/main/examples)
+
+Please also see [../base/README.md](../base/README.md)
