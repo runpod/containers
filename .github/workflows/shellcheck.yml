@@ -20,3 +20,5 @@ jobs:
         uses: reviewdog/action-shellcheck@4c07458293ac342d477251099501a718ae5ef86e
         with:
           fail_level: warning
+          # github-pr-check intermittently fails with 404 when PATCHing the check run it just created.
+          reporter: github-pr-annotations
