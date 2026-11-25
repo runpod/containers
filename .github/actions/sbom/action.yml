@@ -158,5 +158,56 @@ runs:
           exit 1
         fi
 
+        # Job summary: counts per package type for every image, then each
+        # image's package list. A step summary is capped at 1 MiB, so a list
+        # that would not fit is left out (the artifact has them all).
+        summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+        mapfile -t syft_files < <(echo "${index}" | jq -r '.[].syft')
+        types="$(jq -cs '[.[].artifacts[].type] | unique' "${syft_files[@]}")"
+        {
+          echo "### SBOM"
+          echo
+          echo "Syft $(syft version -o json | jq -r .version), package-level, ${count} image(s)."
+          echo
+          echo "| Image | Digest | Packages | $(echo "${types}" | jq -r 'join(" | ")') | SPDX | CycloneDX |"
+          echo "|---|---|--:|$(echo "${types}" | jq -r 'map("--:") | join("|")')|--:|--:|"
+          for key in "${keys[@]}"; do
+            entry="$(echo "${index}" | jq -c --arg k "${key}" '.[$k]')"
+            jq -r --argjson types "${types}" \
+                  --arg ref "$(echo "${entry}" | jq -r .ref)" \
+                  --arg digest "${key##*@sha256:}" \
+                  --arg spdx "$(du -h "$(echo "${entry}" | jq -r .spdx)" | cut -f1)" \
+                  --arg cdx "$(du -h "$(echo "${entry}" | jq -r .cdx)" | cut -f1)" '
+              (.artifacts | group_by(.type) | map({(.[0].type): length}) | add // {}) as $by
+              | "| `\($ref | split("/")[-1])` | `\($digest[0:12])` | \(.artifacts | length) | "
+                + ($types | map(($by[.] // 0) | tostring) | join(" | "))
+                + " | \($spdx) | \($cdx) |"' "$(echo "${entry}" | jq -r .syft)"
+          done
+          echo
+        } >> "${summary}"
+
+        limit=1000000
+        omitted=0
+        for key in "${keys[@]}"; do
+          entry="$(echo "${index}" | jq -c --arg k "${key}" '.[$k]')"
+          jq -r --arg ref "$(echo "${entry}" | jq -r .ref)" '
+            def cell: tostring | gsub("\\|"; "\\|");
+            "<details><summary><code>\($ref | split("/")[-1])</code>: \(.artifacts | length) packages</summary>\n",
+            "| Type | Package | Version |",
+            "|---|---|---|",
+            (.artifacts | sort_by(.type, (.name | ascii_downcase)) | .[]
+              | "| \(.type) | \(.name | cell) | \(.version | cell) |"),
+            "\n</details>\n"' "$(echo "${entry}" | jq -r .syft)" > "${tmpdir}/list.md"
+          used="$(wc -c < "${summary}" 2>/dev/null || echo 0)"
+          if [ $((used + $(wc -c < "${tmpdir}/list.md") + 200)) -le "${limit}" ]; then
+            cat "${tmpdir}/list.md" >> "${summary}"
+          else
+            omitted=$((omitted + 1))
+          fi
+        done
+        if [ "${omitted}" -gt 0 ]; then
+          echo "Package lists for ${omitted} image(s) did not fit the job summary; they are in the SBOM artifact." >> "${summary}"
+        fi
+
         echo "dir=${out}" >> "${GITHUB_OUTPUT}"
         echo "index=${out}/index.json" >> "${GITHUB_OUTPUT}"

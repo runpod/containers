@@ -234,6 +234,39 @@ jobs:
           cat "${BODY}"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
+      # Same assets release.yml attaches. download-artifact still lists an
+      # expired artifact and then fails on it, so look it up first: a missing
+      # or expired SBOM must not block a break-glass release.
+      - name: Find SBOM artifact
+        id: sbom
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FAMILY: ${{ inputs.family }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          STATE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?name=sbom-${FAMILY}" \
+            --jq 'if .total_count == 0 then "none" elif any(.artifacts[]; .expired | not) then "ok" else "expired" end')"
+          case "${STATE}" in
+            ok) echo "found=true" >> "$GITHUB_OUTPUT" ;;
+            expired)
+              echo "::warning::sbom-${FAMILY} in run ${SOURCE_RUN_ID} has expired; releasing without SBOM assets"
+              echo "found=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "No sbom-${FAMILY} artifact in run ${SOURCE_RUN_ID}; releasing without SBOM assets"
+              echo "found=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Download SBOMs
+        if: steps.sbom.outputs.found == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: sbom-${{ inputs.family }}
+          path: ${{ runner.temp }}/sbom
+          merge-multiple: true
+
       - name: Create tag and GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
@@ -241,6 +274,9 @@ jobs:
           name: ${{ inputs.tag }}
           target_commitish: ${{ steps.source.outputs.head_sha }}
           body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            ${{ runner.temp }}/sbom/*.spdx.json
+            ${{ runner.temp }}/sbom/*.cdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

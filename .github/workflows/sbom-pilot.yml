@@ -1,7 +1,11 @@
 name: SBOM pilot
 
 on:
+  # Only PRs into develop: they publish to the private -dev repos. A PR into
+  # main would push public release candidates past release.yml's
+  # pr-source-gate.
   pull_request:
+    branches: [develop]
     paths:
       - ".github/actions/sbom/**"
       - ".github/actions/grype/**"

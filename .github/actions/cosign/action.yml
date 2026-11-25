@@ -29,6 +29,15 @@ runs:
         IDENTITY_REGEX="^${SERVER_URL}/${REPOSITORY}/\.github/workflows/.+"
         OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
+        if [ -n "${SBOM_INDEX}" ]; then
+          {
+            echo "### SBOM attestations"
+            echo
+            echo "| Image | Digest | SPDX | Verified | Rekor |"
+            echo "|---|---|--:|---|---|"
+          } >> "${GITHUB_STEP_SUMMARY}"
+        fi
+
         echo "${IMAGE_DIGESTS}" | jq -r '.[]' | while IFS= read -r ref; do
           [ -z "${ref}" ] && continue
           echo "::group::Sign ${ref}"
@@ -49,8 +58,14 @@ runs:
               exit 1
             fi
 
-            echo "::group::Attest SBOM ${ref} ($(du -h "${sbom}" | cut -f1))"
-            cosign attest --yes --type spdxjson --predicate "${sbom}" "${ref}"
+            size="$(du -h "${sbom}" | cut -f1)"
+            echo "::group::Attest SBOM ${ref} (${size})"
+            if ! attest_log="$(cosign attest --yes --type spdxjson --predicate "${sbom}" "${ref}" 2>&1)"; then
+              printf '%s\n' "${attest_log}"
+              exit 1
+            fi
+            printf '%s\n' "${attest_log}"
+            log_index="$(sed -n 's/.*tlog entry created with index: \([0-9]*\).*/\1/p' <<< "${attest_log}" | tail -1)"
             echo "::endgroup::"
 
             # Smoke test, like `verify` above: also checks the attested
@@ -77,5 +92,10 @@ runs:
             fi
             echo "Attested SBOM matches ${sbom}"
             echo "::endgroup::"
+
+            tag="$(jq -r --arg k "${ref}" '.[$k].ref | split("/")[-1]' "${SBOM_INDEX}")"
+            rekor="${log_index:+[${log_index}](https://search.sigstore.dev/?logIndex=${log_index})}"
+            echo "| \`${tag}\` | \`$(cut -c1-12 <<< "${ref##*@sha256:}")\` | ${size} | ✅ | ${rekor:-n/a} |" \
+              >> "${GITHUB_STEP_SUMMARY}"
           fi
         done
