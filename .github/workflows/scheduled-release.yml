@@ -1,0 +1,197 @@
+name: Scheduled Release PR
+
+# Opens (or refreshes) the `develop → main` release PR twice a week, so its rc
+# builds and checks have run overnight and a human only reviews and merges it
+# in the morning. Merging stays manual, with a MERGE COMMIT (see
+# docs/RELEASE.md).
+on:
+  schedule:
+    # Sun + Wed 18:00 UTC, ready for Mon/Thu morning. Runs from main only.
+    - cron: "0 18 * * 0,3"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan only: write the summary, do not open or edit the PR"
+        type: boolean
+        default: true
+  # Self-test: plan only, never touches a PR.
+  pull_request:
+    paths:
+      - ".github/workflows/scheduled-release.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-release-pr
+  cancel-in-progress: false
+
+env:
+  RELEASE_BASE: main
+  RELEASE_HEAD: develop
+
+jobs:
+  plan:
+    # Pause switch for the cron: unset or anything but 'true' skips it.
+    if: github.event_name != 'schedule' || vars.SCHEDULED_RELEASE_ENABLED == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      ahead: ${{ steps.plan.outputs.ahead }}
+      existing_pr: ${{ steps.plan.outputs.existing_pr }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Full history and tags: versions are read from each family's tags.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Plan the release
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          source .github/actions/compute-version/detect-bump.sh
+          # shellcheck source=/dev/null
+          source .github/actions/compute-version/resolve-version.sh
+
+          BASE="origin/${RELEASE_BASE}"
+          HEAD="origin/${RELEASE_HEAD}"
+          git fetch --quiet origin "${RELEASE_BASE}" "${RELEASE_HEAD}"
+
+          AHEAD="$(git rev-list --count "${BASE}..${HEAD}")"
+          EXISTING_PR="$(gh pr list --base "${RELEASE_BASE}" --head "${RELEASE_HEAD}" \
+            --state open --json number --jq '.[0].number // empty')"
+          echo "ahead=${AHEAD}" >> "$GITHUB_OUTPUT"
+          echo "existing_pr=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
+
+          BODY="${RUNNER_TEMP}/pr-body.md"
+          if [ "${AHEAD}" -eq 0 ]; then
+            echo "Nothing to release: \`${RELEASE_HEAD}\` has no commits that \`${RELEASE_BASE}\` lacks." \
+              | tee "${BODY}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Families the PR's own release.yml run will plan, same diff.
+          FAMILIES="$(git diff --name-only "${BASE}...${HEAD}" \
+            | python3 .github/scripts/plan_families.py --changed-files -)"
+
+          # Versions are read off a local merge commit, exactly as compute-version
+          # reads them on the PR's merge ref.
+          SIM_HEAD=""
+          git checkout --quiet --detach "${BASE}"
+          if git -c user.name=ci -c user.email=ci@localhost \
+               merge --quiet --no-ff --no-edit "${HEAD}" >/dev/null 2>&1; then
+            SIM_HEAD="$(git rev-parse HEAD)"
+          else
+            git merge --abort || true
+          fi
+
+          LAST_DEVELOP="$(gh run list --workflow release.yml --branch "${RELEASE_HEAD}" \
+            --event push --limit 1 --json conclusion,status,url \
+            --jq '.[0] // empty | "\(.status)/\(.conclusion // "-") \(.url)"' || true)"
+
+          {
+            echo "Scheduled release: \`${RELEASE_HEAD}\` → \`${RELEASE_BASE}\`, ${AHEAD} commit(s)."
+            echo
+            echo "> [!IMPORTANT]"
+            echo "> Merge with **Create a merge commit**, never squash. A squash leaves one commit"
+            echo "> titled after this PR, every family reads \`bump=none\`, and nothing is released."
+            echo
+            if [ -z "${SIM_HEAD}" ]; then
+              echo "> [!WARNING]"
+              echo "> \`${RELEASE_HEAD}\` does not merge cleanly into \`${RELEASE_BASE}\`. Merge \`${RELEASE_BASE}\` back into \`${RELEASE_HEAD}\` first (hotfix?)."
+              echo
+            fi
+            echo "### Families"
+            echo
+            if [ "${FAMILIES}" = "[]" ]; then
+              echo "No image family changed: this release builds and tags nothing."
+            elif [ -z "${SIM_HEAD}" ]; then
+              echo "${FAMILIES}"
+            else
+              echo "| Family | Last release | Bump | Next |"
+              echo "|---|---|---|---|"
+              for fam in $(jq -r '.[]' <<<"${FAMILIES}"); do
+                LATEST="$(latest_release_tag "${fam}-")"
+                PREV="${LATEST#"${fam}-"v}"
+                mapfile -t PATHS < <(python3 .github/scripts/plan_families.py --paths "${fam}")
+                BUMP="$(bump_for_range "${LATEST}" "${PATHS[@]}")"
+                if [ -z "${PREV}" ]; then
+                  # next_version starts every new family at 1.0.0 whatever its commits say.
+                  BUMP="first release"
+                  NEXT="$(next_version "" none)"
+                elif [ "${BUMP}" = "none" ]; then
+                  NEXT="(no release)"
+                else
+                  NEXT="$(next_version "${PREV}" "${BUMP}")"
+                fi
+                echo "| ${fam} | ${PREV:-none} | ${BUMP} | ${NEXT} |"
+              done
+            fi
+            echo
+            echo "### Commits"
+            echo
+            git log --no-merges --format='- %s' "${BASE}..${HEAD}"
+            echo
+            echo "Last \`release.yml\` run on \`${RELEASE_HEAD}\`: ${LAST_DEVELOP:-unknown}"
+          } > "${BODY}"
+          cat "${BODY}" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "${SIM_HEAD}" ]; then
+            echo "::warning::${RELEASE_HEAD} does not merge cleanly into ${RELEASE_BASE}"
+          fi
+          case "${LAST_DEVELOP}" in
+            completed/success*) ;;
+            *) echo "::warning::Last release.yml run on ${RELEASE_HEAD} is not green: ${LAST_DEVELOP:-none}" ;;
+          esac
+
+      - name: Upload PR body
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-pr-body
+          path: ${{ runner.temp }}/pr-body.md
+          retention-days: 7
+
+  pr:
+    needs: plan
+    if: >-
+      needs.plan.outputs.ahead != '0'
+      && (github.event_name == 'schedule'
+          || (github.event_name == 'workflow_dispatch' && !inputs.dry_run))
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions: {}
+    steps:
+      - name: Download PR body
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-pr-body
+
+      - name: Open or update the release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_REPO: ${{ github.repository }}
+          EXISTING_PR: ${{ needs.plan.outputs.existing_pr }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::Secret RELEASE_PAT is not set, see docs/RELEASE.md (Repository requirements)"
+            exit 1
+          fi
+          if [ -n "${EXISTING_PR}" ]; then
+            # The checks already follow develop's pushes; only the body is stale.
+            gh pr edit "${EXISTING_PR}" --body-file pr-body.md
+            URL="$(gh pr view "${EXISTING_PR}" --json url --jq .url)"
+            ACTION="Updated"
+          else
+            URL="$(gh pr create --base "${RELEASE_BASE}" --head "${RELEASE_HEAD}" \
+              --title "chore: release $(date -u +%F)" --body-file pr-body.md)"
+            ACTION="Opened"
+          fi
+          echo "${ACTION} ${URL}" | tee -a "$GITHUB_STEP_SUMMARY"
