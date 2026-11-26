@@ -266,7 +266,7 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/scripts/plan_families.py`               | Turns a diff (or each family's last tag) into the families to build, in dependency order. Also answers which workflows to call and which repos we publish to. |
 | `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, plans the families (`plan` job), calls only the build workflows it needs, and creates one `<family>-vX.Y.Z` tag + Release per family. |
 | `.github/actions/compute-version/action.yml`     | For one family: its next version, suffix, `previous-version`, and the `should-build` / `should-release` flags, from its own tag series + the commit type. |
-| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, filebrowser; builds the ones in the plan. |
+| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, burn, filebrowser; builds the ones in the plan. |
 | `.github/workflows/sandbox.yml`                  | **Reusable**. Covers sandbox-ubuntu, sandbox-openclaw, sandbox-harbor, sandbox-browser. |
 | `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml`, `k3s-node.yml` | **Reusable**. One family each. |
 | `.github/actions/prepull-base-images/action.yml` | Pulls each target's `BASE_IMAGE` with crane into an OCI layout and hands bake an override file, because BuildKit's own pull of multi-GB bases intermittently fails mid-layer. Resolves the same bake files as the build step, so the parent variables live on the **job**, not on either step. |
@@ -348,10 +348,40 @@ Key behaviours:
    is where you validate the set on a pod.
 4. When the batch is ready, open `develop → main` and **merge it with a merge
    commit**. Its own title is not read for versioning, so `chore: release …`
-   is fine. The release is fully automatic from here.
+   is fine. Usually the PR is already open: see
+   [Scheduled release PR](#scheduled-release-pr). The release is fully
+   automatic from here.
 5. Verify: a `<family>-vX.Y.Z` tag and Release appear for each family the
    batch touched, and those families publish `X.Y.Z` images. Families nobody
    touched stay where they were.
+
+### Scheduled release PR
+
+`scheduled-release.yml` opens the `develop → main` PR every **Sunday and
+Wednesday at 18:00 UTC** (GitHub may start it up to an hour late), so its rc
+builds and checks finish overnight and the PR is ready to review on Monday and
+Thursday morning. If a release PR is already open, it only refreshes the body;
+the checks already follow every push to `develop`.
+
+- **Cut-off:** whatever is on `develop` at 18:00 goes in. A later push to
+  `develop` restarts the PR's rc builds, so merge late work after the release
+  or expect the PR to be green later.
+- **The body** lists the commits, and for each planned family its last release,
+  bump and next version, read the same way `compute-version` reads them. It
+  warns when `develop` no longer merges cleanly into `main` (merge `main` back
+  after a hotfix) and when the last `release.yml` run on `develop` was not green.
+- **Nothing to release:** when `develop` has no commits that `main` lacks, no
+  PR is opened.
+- **Merging stays manual.** Check the rc builds and tests on the PR, approve
+  it, and **merge with a merge commit**. The PR is opened as the owner of
+  `RELEASE_PAT`, who therefore cannot approve it: someone else has to.
+- **Pause:** set the repository variable `SCHEDULED_RELEASE_ENABLED` to
+  anything other than `true` (or delete it). Scheduled runs then skip.
+- **Run by hand:** Actions → *Scheduled Release PR* → *Run workflow*.
+  `dry_run` (the default) only writes the plan into the job summary;
+  unticked, it opens or updates the PR just like the cron does.
+- `schedule` only fires from the default branch (`main`), so changes to the
+  workflow take effect after the next release.
 
 ### Ship a hotfix / patch
 
@@ -443,7 +473,14 @@ either.
    - the smoke test passes `registry-auth-name`, or its pod cannot pull the
      private image;
    - a private `runpod/<name>-dev` repo exists on Docker Hub.
-3. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
+3. Decide how the family is watched for upstream releases. The weekly staleness
+   scraper only looks at families named in `.claude/staleness-playbook.md`, so
+   either add a section describing which pins it should track and how to verify
+   each one, plus an entry in the `.github/workflows/staleness-scraper.yml`
+   matrix, or add it to the playbook's "ignore the other two" sentence, with
+   the reason. Skipping this does not fail anything; the family's pins simply
+   stop being watched.
+4. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
 
 ### Seed a family that already has published images
 
@@ -473,7 +510,34 @@ either.
   `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
   `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
-- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
+  The staleness scraper needs no *GitHub* credential of its own: it runs on the
+  workflow's own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
+  upstream text holds a read-only one. `research` runs the agent with
+  `contents: read`, and the `Edit` rules it is given confine every tool of its
+  that writes to `official-templates/` and three handover files. `publish`
+  holds the write token, runs no model, and applies the agent's patch only if
+  every path in it is under `official-templates/`. GitHub starts
+  no workflow from an event that token creates, so the draft PRs the scraper
+  opens arrive with **no checks** at all.
+  Pushing to such a PR, or closing and reopening it, raises a real event and runs
+  the full CI. Start it that way after reading the diff, rather than giving the
+  job a long-lived token. Merging is gated on `shellcheck` and `sonarqube` only,
+  the two checks `develop` requires; the image build is `release.yml`, which is
+  path-filtered and so can never be required, so read its result before merging
+  a bump instead of trusting the merge button. It does use
+  `ANTHROPIC_API_KEY`, which is now the scraper's alone: the PR reviewer moved to
+  `PR_REVIEW_ANTHROPIC_API_KEY`. Keep a spend limit on it, since this job runs
+  unattended every week across every family.
+- **`RELEASE_PAT`:** `scheduled-release.yml` opens the release PR with this
+  token. A PR opened with `GITHUB_TOKEN` would start no workflows: no rc
+  builds, and the required `shellcheck`/`sonarqube` would sit on "Expected".
+  Use a fine-grained PAT limited to this repository with **Contents: read** and
+  **Pull requests: read and write**, nothing more. It needs no ruleset bypass,
+  because it never merges. It expires: renew it before then, or the scheduled
+  run fails with an authentication error and no PR is opened.
+- **Variables:** `SCHEDULED_RELEASE_ENABLED` — `true` turns on the scheduled
+  release PR; anything else pauses it.
+  `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
   credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
   `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests
   pull anonymously and fail with `unauthorized`; set to a name the account

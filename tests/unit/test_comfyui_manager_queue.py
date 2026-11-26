@@ -159,6 +159,8 @@ class RunnerOutcome(unittest.TestCase):
                                   return_value=None), \
                 mock.patch.object(runner, "check_comfyui_refuses_anonymous",
                                   return_value=(True, "401")), \
+                mock.patch.object(runner, "check_filebrowser_requires_password",
+                                  return_value=(True, "401")), \
                 mock.patch.object(runner, "comfyui_auth_headers",
                                   return_value={}), \
                 mock.patch.object(runner, "dump_pod_logs"), \

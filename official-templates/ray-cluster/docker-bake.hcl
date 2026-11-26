@@ -28,9 +28,8 @@ variable "CLUSTER_BASE_REPO_SUFFIX" {
 }
 
 variable "RAY_VERSION" {
-  # Ray >= 2.54 so token authentication covers the dashboard agent too. The
-  # host's parsers (pkg/rayready, pkg/raymetrics) are validated against this
-  # version: bump it together with their fixtures. Keep in sync with the
+  # Ray >= 2.54 so token authentication covers the dashboard agent too. Keep
+  # in sync with the
   # Dockerfile's RAY_VERSION default and re-resolve requirements.txt.
   default = "2.59.0"
 }

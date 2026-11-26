@@ -72,14 +72,6 @@ for arg in "$@"; do
     esac
 done
 
-# There is no unauthenticated mode: without a key, vLLM does not start.
-if [ -z "$key" ]; then
-    refuse "VLLM_API_KEY is not set." \
-        "This image requires a key on every route of :${LISTEN_PORT}." \
-        "Redeploy the Pod with the environment variable" \
-        "  VLLM_API_KEY=<a long random secret>"
-fi
-
 # Without a model, `vllm serve` exits at once and Runpod restarts it in a loop.
 if [ "$#" -eq 0 ]; then
     refuse "the container start command is empty." \
@@ -98,9 +90,21 @@ if [ "$rc" -eq 3 ]; then
     refuse_api_key
 fi
 
-export VLLM_API_KEY="$key"
-echo "Authentication on: every route except /health, /ping and /metrics"
-echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
+if [ -n "$key" ]; then
+    unset RUNPOD_VLLM_UNPROTECTED
+    export VLLM_API_KEY="$key"
+    echo "Authentication on: every route except /health, /ping and /metrics"
+    echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
+else
+    # A whitespace-only value would otherwise become vLLM's own /v1 key.
+    unset VLLM_API_KEY
+    # Without it the middleware refuses to load with no key.
+    export RUNPOD_VLLM_UNPROTECTED=true
+    # The middleware repeats this once vLLM is up and while it is in use.
+    PYTHONPATH="$AUTH_MODULE_DIR" python3 -c \
+        'import runpod_vllm_auth as m; print(m.UNPROTECTED_WARNING)' 2>/dev/null \
+        || echo "WARNING: vLLM is NOT PROTECTED: VLLM_API_KEY is not set."
+fi
 export PYTHONPATH="${AUTH_MODULE_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 
 echo "Starting vLLM on ${LISTEN_HOST}:${LISTEN_PORT}"

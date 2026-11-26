@@ -22,6 +22,7 @@ from .checks import (
     REVOKED_CA_NAMES,
     SshEndpoint,
     autoresearch_check_command,
+    burn_check_command,
     ray_check_command,
     ca_certs_check_command,
     container_startup_failure,
@@ -54,6 +55,7 @@ from .vllm import (
 from .comfyui import (
     auth_headers as comfyui_auth_headers,
     check_comfyui_refuses_anonymous,
+    check_filebrowser_requires_password,
     probe_comfyui_alive,
     run_comfyui_check,
     run_comfyui_manager_check,
@@ -84,11 +86,38 @@ def _set_host_cuda(version: str) -> None:
     _thread_local.host_cuda = version
 
 
+def _host_cuda_now() -> str:
+    """The host CUDA version recorded for this thread's current attempt."""
+    return getattr(_thread_local, "host_cuda", "") or ""
+
+
 def _take_host_cuda() -> str:
     """Read and clear the version left by the last test_pair on this thread."""
     version = getattr(_thread_local, "host_cuda", "") or ""
     _thread_local.host_cuda = ""
     return version
+
+
+# What each pod attempt actually checked, for reports that must say what a
+# run covered (the single-pod fallback for cluster images). Worker threads
+# run attempts in parallel, so the in-flight list is thread-local and the
+# finished record is published under a lock.
+_attempt = threading.local()
+_POD_RUNS_LOCK = threading.Lock()
+# (image, group) -> {"instance", "pod_id", "host_cuda", "steps"} of the last
+# attempt that created a pod. steps: [(check label, "ok" | "FAIL")] in order.
+POD_RUNS: dict[tuple[str, str], dict] = {}
+
+
+def _record_step(label: str, outcome: Optional[_Outcome]) -> None:
+    steps = getattr(_attempt, "steps", None)
+    if steps is not None:
+        steps.append((label, "ok" if outcome is None else "FAIL"))
+
+
+def pod_run(image: str, group: str) -> Optional[dict]:
+    with _POD_RUNS_LOCK:
+        return POD_RUNS.get((image, group))
 
 
 def _log_attempt_header(
@@ -318,6 +347,7 @@ def _run_cuda_step(
 
 _HYGIENE_TIMEOUT = 180            # default per-check SSH timeout
 _AUTORESEARCH_TIMEOUT = 600       # train.py compiles for real, so give it room
+_BURN_TIMEOUT = 300               # cubecl JIT-compiles the kernels on first use
 _RAY_TIMEOUT = 300                # ray start + a GPU task + the metrics agent
 
 
@@ -372,6 +402,8 @@ def _hygiene_checks(group: str) -> list[tuple[str, str, int]]:
             autoresearch_check_command(),
             _AUTORESEARCH_TIMEOUT,
         ))
+    if config.GROUP_TEST_BURN.get(group, False):
+        checks.append(("Burn starter", burn_check_command(), _BURN_TIMEOUT))
     if config.GROUP_TEST_RAY.get(group, False):
         checks.append(("Ray GPU", ray_check_command(), _RAY_TIMEOUT))
     return checks
@@ -382,7 +414,7 @@ def _run_hygiene_steps(
 ) -> Optional[_Outcome]:
     """Opt-in image hygiene checks (`test_pip_check`, `test_ca_certs`,
     `test_python_tls`, `test_uv`, `test_virtualenv`, `test_dcgm_exporter`,
-    `test_autoresearch`, `test_python_path`).
+    `test_autoresearch`, `test_burn`, `test_python_path`).
 
     Runs after the CUDA gate — these answer "is the image put together
     correctly", which is only worth asking once the image boots and its
@@ -398,8 +430,10 @@ def _run_hygiene_steps(
             log(f"  {line}", indent=2)
         if not ok:
             log(f"{label} check FAILED", indent=2)
+            _record_step(label, ("FAIL", ""))
             dump_pod_logs(pod_id, image)
             return "FAIL", f"{label} check failed"
+        _record_step(label, None)
         log(f"{label} check passed", indent=2)
     return None
 
@@ -523,6 +557,12 @@ def _run_comfyui_steps(
     if not ok:
         dump_pod_logs(pod_id, image)
         return "FAIL", f"ComfyUI answered without its password: {detail[:160]}"
+
+    ok, detail = check_filebrowser_requires_password(pod_id)
+    log(f"FileBrowser password check: {detail}", indent=2)
+    if not ok:
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"FileBrowser password check failed: {detail[:160]}"
 
     if config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
         log("running ComfyUI functional check (via proxy)...", indent=2)
@@ -735,6 +775,7 @@ def test_pair(
         f"(timeout {config.CREATE_TIMEOUT}s)",
         indent=2,
     )
+    _attempt.steps = []
 
     # Under a spend cap the hold is the pod's budget, so the pod lives no
     # longer than it: a slow pull or a hung check would otherwise bill past
@@ -776,6 +817,14 @@ def test_pair(
         # interrupted check gave up afterwards.
         ended = deleted_at[0] if deleted_at else time.monotonic()
         spend.settle(token, ended - started)
+        with _POD_RUNS_LOCK:
+            POD_RUNS[(image, group)] = {
+                "instance": instance,
+                "pod_id": pod_id,
+                "host_cuda": _host_cuda_now(),
+                "steps": list(getattr(_attempt, "steps", None) or []),
+            }
+        _attempt.steps = None
     if expired.is_set() and outcome[0] != "PASS":
         return "BUDGET", (
             f"spend cap: the pod outlived its {config.SPEND_RESERVE_MINUTES:g}-minute "
@@ -790,7 +839,9 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
     pod's deletion and its spend."""
     state, wait_detail, endpoint = wait_for_running(pod_id)
     if state != "RUNNING":
+        _record_step("SSH ready", ("FAIL", ""))
         return _classify_non_running(state, wait_detail, pod_id, image)
+    _record_step("SSH ready", None)
 
     log(f"smoke check passed: {wait_detail}", indent=2)
     st = pod_state(pod_id)
@@ -812,22 +863,40 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
     # outcome to surface to the caller. Kept as straight-line code
     # (no fancy abstraction) so the failure points stay easy to read
     # in stack traces / logs.
+    torch_packages = config.GROUP_TEST_TORCH_PACKAGES.get(group, False)
+    if cuda_check_command(image, torch_packages):
+        label = (
+            "CUDA / torch + torchvision/audio/codec" if torch_packages
+            else "CUDA / torch"
+        )
+    else:
+        label = ""
     outcome = _run_cuda_step(endpoint, image, group, pod_id)
+    if label:
+        _record_step(label, outcome)
     if outcome is not None:
         return outcome
     outcome = _run_hygiene_steps(endpoint, pod_id, image, group)
     if outcome is not None:
         return outcome
     outcome = _run_jupyter_steps(endpoint, pod_id, image, group)
+    if config.GROUP_TEST_JUPYTER.get(group, False):
+        _record_step("Jupyter via proxy", outcome)
     if outcome is not None:
         return outcome
     outcome = _run_port_steps(endpoint, pod_id, image, group)
+    if config.GROUP_TEST_PORTS.get(group):
+        _record_step("test ports", outcome)
     if outcome is not None:
         return outcome
     outcome = _run_comfyui_steps(endpoint, pod_id, image, group)
+    if config.GROUP_TEST_COMFYUI.get(group, False):
+        _record_step("ComfyUI", outcome)
     if outcome is not None:
         return outcome
     outcome = _run_vllm_steps(pod_id, image, group)
+    if config.GROUP_TEST_VLLM.get(group, False):
+        _record_step("vLLM", outcome)
     if outcome is not None:
         return outcome
     # The Manager step runs before this and logs a pip resolve plus a reboot,
@@ -838,12 +907,15 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
         else 0
     )
     outcome = _run_log_scan_step(pod_id, image, tail=log_tail)
+    if config.LOG_ERROR_SCAN:
+        _record_step("log scan", outcome)
     if outcome is not None:
         return outcome
     outcome = _run_dwell_step(endpoint, pod_id, image)
-    if outcome is not None:
-        return outcome
-    outcome = _run_post_dwell_steps(pod_id, image, group, log_tail=log_tail)
+    if outcome is None:
+        outcome = _run_post_dwell_steps(pod_id, image, group, log_tail=log_tail)
+    if config.DWELL_SEC > 0:
+        _record_step(f"alive after {config.DWELL_SEC}s", outcome)
     if outcome is not None:
         return outcome
 
@@ -877,6 +949,11 @@ def test_image(
     whether this image works" must not be filed under "no capacity".
     """
     log(f"image: {image}")
+    attempt = test_pair
+    if config.GROUP_CLUSTER.get(group, False):
+        # Imported here: cluster_runner reuses this module's step helpers.
+        from .cluster_runner import test_cluster_pair
+        attempt = test_cluster_pair
     stuck_instances: list[str] = []
     unavailable_instances: list[str] = []
     unverified: list[tuple[str, str]] = []
@@ -887,7 +964,7 @@ def test_image(
     for inst in instances:
         set_worker_context(inst)
         try:
-            result, detail = test_pair(image, inst, group, cuda_pin, cloud)
+            result, detail = attempt(image, inst, group, cuda_pin, cloud)
         finally:
             set_worker_context(None)
         host_cuda = _take_host_cuda()
