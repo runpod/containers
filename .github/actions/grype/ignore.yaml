@@ -20,6 +20,18 @@ ignore:
   # the apt ffmpeg and any other FFmpeg version or build still fail. Review when PyAV or opencv-python
   # publishes a wheel whose libavcodec reports FFmpeg >= 9.1
   # (`grep -a 'FFmpeg version'`).
+  - vulnerability: CVE-2026-135706
+    package:
+      name: ffmpeg
+      version: "9.0.2"
+      type: binary
+      location: "**/*.libs/libav*"
+  - vulnerability: CVE-2026-135709
+    package:
+      name: ffmpeg
+      version: "9.0.2"
+      type: binary
+      location: "**/*.libs/libav*"
   - vulnerability: CVE-2026-135722
     package:
       name: ffmpeg
