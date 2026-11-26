@@ -4,13 +4,17 @@
 # main takes merge commits only, so a hotfix/* or revert-* PR is released from
 # its own commit subjects, not from the PR title, and nothing can be reworded
 # at merge time. A subject without a Conventional type (`Fix cuda path`)
-# reads as bump none and the merge releases nothing. Matches what
-# detect-bump.sh understands: `type:`, `type(scope):`, `type!:`, `Revert "`.
+# reads as bump none and the merge releases nothing. Only the types in
+# docs/RELEASE.md count, since detect-bump.sh scores any other word as none
+# (`Hotfix: …`); scope, `!` and `Revert "` are accepted as it reads them.
+# A ci:/docs: hotfix is allowed on purpose: it fixes main without a release.
+
+TYPES='feat|fix|perf|build|chore|ci|docs|refactor|test'
 
 unconventional_subjects() {
   local range="$1"
   git log --no-merges --format='%h %s' "${range}" \
-    | grep -viE '^[0-9a-f]+ ([a-z]+(\([^)]*\))?!?:|Revert ")' || true
+    | grep -viE "^[0-9a-f]+ ((${TYPES})(\([^)]*\))?!?:|Revert \")" || true
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

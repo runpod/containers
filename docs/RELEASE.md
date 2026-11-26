@@ -122,7 +122,7 @@ themselves:
 | `feat:`                                   | `feat: add comfyui template`     | minor  | `1.1.0`         |
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
 | `feat!:` / any type with `!` in the title, or a `BREAKING CHANGE:` footer | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
-| `ci:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build`   | none   | no release      |
+| `ci:` / `build:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build` | none | no release |
 | `Revert "…"` (GitHub's Revert button, `git revert`), whatever it reverts, a release included | `Revert "chore: release 2026-11-24 (#265)"` | patch | `1.0.8` |
 
 Notes:
@@ -572,7 +572,8 @@ either.
   and gates `plan` on it, so a rejected PR builds no images at all.
   `pr-source` is a required check on `main`, so such a PR cannot be merged.
   For a `hotfix/*` or `revert-*` PR it also fails on any commit whose subject
-  has no Conventional type (`Fix cuda path`): merged with a merge commit, the
+  has none of the types in [Versioning rules](#versioning-rules) or
+  `Revert "` (`Fix cuda path`, `Hotfix: …`): merged with a merge commit, the
   PR is released from those subjects, and one without a type releases
   nothing. `develop` is not checked; its commits are squashed PR titles.
 - **Branch protection:** the repository ruleset `protect develop and main`
@@ -608,7 +609,7 @@ either.
 | `build-result` is red but every build looks green  | Its log lists each dependency's result. Usually `pr-source-gate` failed (the PR into `main` comes from the wrong branch) or a run was cancelled; re-run the workflow. |
 | Merge button offers only one method                | Expected: `develop` takes squash only, `main` merge commits only (rulesets `develop: squash only` / `main: merge commit only`). |
 | PR into `main` fails on "does not follow the release process" | Its source branch is not `develop`, `hotfix/*` or `revert-*`. Retarget it to `develop`, or cut `hotfix/<name>` off `main` if it cannot wait. |
-| Hotfix PR fails `pr-source` on "no Conventional Commit type" | A commit on the branch has a subject like `Fix cuda path`. Reword it to `fix: …` (or squash the branch into one `fix: …` commit) and force-push; a merge into `main` would otherwise release nothing. |
+| Hotfix PR fails `pr-source` on "no Conventional Commit type" | A commit on the branch has a subject like `Fix cuda path` or `Hotfix: …`. Reword it to `fix: …` (or squash the branch into one `fix: …` commit) and force-push; a merge into `main` would otherwise release nothing. |
 | A develop build pushed to the **public** repo      | That family's `docker-bake.hcl` is missing `${REPO_SUFFIX}` in a tag, or its job does not pass it. See *Add a new template*. |
 | A dev build fails pulling its parent with `401 … insufficient scopes` | The parent has no `-dev.<N>` tag yet, so the build fell back to its last public release, and the dev OIDC connection has no read on the public repos. Grant it; this is not a suffix bug. |
 | A dev build layered on an older parent than expected | It takes the newest `-dev.<N>`, which is the last push to `develop` that built that family. A change sitting in an open PR is deliberately not a parent. |

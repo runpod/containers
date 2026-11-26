@@ -62,6 +62,23 @@ commit "fix:no space is still read"
 assert_eq "only the bad one is listed" "address review" "$(subjects)"
 
 new_repo
+commit "Hotfix: correct cuda path"
+commit "bugfix(base): correct cuda path"
+commit "revert: the cuda change"
+assert_eq "an undocumented type is listed" \
+  "revert: the cuda change|bugfix(base): correct cuda path|Hotfix: correct cuda path" \
+  "$(subjects | paste -sd '|' -)"
+
+new_repo
+commit "perf: faster start"
+commit "build(nix): pin the flake"
+commit "docs: fix a typo"
+commit "chore: bump a pin"
+commit "refactor: split start.sh"
+commit "test: cover the hotfix check"
+assert_eq "every documented type passes" "" "$(subjects)"
+
+new_repo
 commit "fix: correct cuda path"
 git checkout -q main
 commit "feat: something on main"
