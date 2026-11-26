@@ -74,17 +74,17 @@ if [ "${1:-}" = agent ]; then
 fi
 
 # A K8S node pod starts before its control plane exists. It gets K3S_TOKEN, WG_ENDPOINT (the
-# stack's API record), WG_PRIVATE_KEY and WG_SERVER_KEYS (E-4102) once the stack is up and the
-# provisioner replied; that pod edit restarts it. Until then it waits, instead of crash-looping
-# without a server. K3S_URL without WG_ENDPOINT joins without the tunnel (local testing).
+# control plane's API address), WG_PRIVATE_KEY and WG_SERVER_KEYS once the control plane is up;
+# that pod edit restarts it. Until then it waits, instead of crash-looping without a server.
+# K3S_URL without WG_ENDPOINT joins without the tunnel (local testing).
 if [ "${1:-}" = agent ] && { [ -z "${K3S_TOKEN:-}" ] || [ -z "${K3S_URL:-}${WG_ENDPOINT:-}" ] \
     || { [ -n "${WG_ENDPOINT:-}" ] && { [ -z "${WG_PRIVATE_KEY:-}" ] || [ -z "${WG_SERVER_KEYS:-}" ]; }; }; }; then
   echo "k3s-node: waiting for control plane (K3S_TOKEN, WG_ENDPOINT, WG_PRIVATE_KEY, WG_SERVER_KEYS)" >&2
   exec sleep infinity
 fi
 
-# K3S_TOKEN is this pod's own bootstrap token in k3s's secure form, K10<CA hash>::<id>.<secret>
-# (E-4102): the agent checks the server's CA against the hash (runpod/k3s-controlplane E-4020).
+# K3S_TOKEN is this pod's own bootstrap token in k3s's secure form, K10<CA hash>::<id>.<secret>:
+# the agent checks the server's CA against the hash.
 # The part after the last colon, "<id>.<secret>", feeds only the node password below; the CA hash
 # stays out of it, so a CA rotation keeps the password. A bare token has no colon and stays as it
 # is (local testing).
@@ -92,16 +92,16 @@ if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ]; then
   NODE_SECRET="${K3S_TOKEN##*:}"
 fi
 
-# WireGuard to the servers: the agent tunnels to each server slot. Server slot lives at
-# s<slot>.<cluster host> (from WG_ENDPOINT, the API name), with the tunnel address
-# 10.200.100.1+slot. The node's tunnel address is 10.200.0.2+rank (NODE_RANK).
-# The keys are this pod's own (E-4102): WG_PRIVATE_KEY, and in WG_SERVER_KEYS the slots' public
-# keys (base64, comma-separated, slot 0 first; their count is the slot count). RunPod sets both
-# from the control plane's reply. Nothing derives from a shared value, no pod holds another
-# node's key, and the servers admit only the live nodes' keys.
-# A slot record at 127.0.0.1 means its task has not registered yet: no peer. A restarted server
-# task has a new public IP, and a slot's record comes alive later: re-resolve every 5 s.
-# The agent joins through the first server with a handshake (K3S_URL); it then learns every
+# WireGuard to the servers: the agent tunnels to each server slot. Server slot <n> is at
+# s<n>.<cluster host> (the host part of WG_ENDPOINT). The tunnel addresses follow from the slot
+# and from NODE_RANK.
+# The keys are this pod's own: WG_PRIVATE_KEY, and in WG_SERVER_KEYS the slots' public keys
+# (base64, comma-separated, slot 0 first; their count is the slot count). Runpod sets both when
+# the control plane is up. No key derives from a shared value, no pod holds the key of another
+# node, and the servers admit only the keys of the live nodes.
+# A slot that resolves to 127.0.0.1 has no server yet: no peer for it. A restarted server can get
+# a new IP, and a slot can get a server later: so the peers are re-resolved every 5 s.
+# The agent joins through the first server with a handshake (K3S_URL). Then it learns every
 # server's tunnel address from the kubernetes endpoints and balances over them.
 if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
   WG_HOST="${WG_ENDPOINT%:*}"
@@ -114,8 +114,8 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
     echo "k3s-node: NODE_RANK $NODE_RANK: the servers admit ranks 0 to $((WG_MAX_NODES - 1))" >&2; exit 1
   fi
   WG_ADDRESS="10.200.0.$((2 + NODE_RANK))"
-  # The keys live in /etc/wireguard: Ubuntu 26.04 hosts confine /usr/bin/wg with an AppArmor
-  # profile that, under sysbox, also applies in this container, and allows only that directory.
+  # The keys live in /etc/wireguard: some hosts confine /usr/bin/wg with an AppArmor profile that,
+  # under sysbox, also applies in this container, and allows only that directory.
   ( umask 077; mkdir -p /etc/wireguard && printf '%s\n' "$WG_PRIVATE_KEY" > /etc/wireguard/wg0.key ) || exit 1
   # Slots are positional, so an empty or malformed field must fail, not shift the later keys.
   slot=0
@@ -135,7 +135,7 @@ if [ "${1:-}" = agent ] && [ -n "${WG_ENDPOINT:-}" ]; then
   ip addr add "$WG_ADDRESS/32" dev wg0
   ip link set wg0 up
   ip route replace 10.200.100.0/24 dev wg0
-  peers() {  # one peer per slot whose record points at a live task; 0 once any peer is set
+  peers() {  # one peer per slot that has a server; returns 0 once any peer is set
     any=1
     for slot in $(seq 0 $((WG_SERVERS - 1))); do
       name="s$slot.$WG_HOST"
@@ -198,12 +198,12 @@ if [ "${1:-}" = agent ] && [ -n "${K3S_TOKEN:-}" ] && [ -n "${NODE_RANK:-}" ]; t
   ) || exit 1
 fi
 
-# The cluster network: on a node group with one, the host gives every cluster pod its own overlay
-# address (NODE_ADDR, e.g. 10.65.0.3/24) on a VXLAN between the hosts. The node registers with it,
-# and flannel sends pod traffic over it: node to node directly, not through the server's tunnel.
-# Without it, every node has the host's container address (the same on every host).
-# The overlay is always on ens1. NODE_ADDR may be an IP or a hostname; a hostname resolves to its
-# first IPv4 address, retried for up to a minute since the record may not exist yet at start.
+# The cluster network: when the host gives the node pod a private address between the nodes
+# (NODE_ADDR, an address with a prefix length), the node registers with it, and flannel sends pod
+# traffic over it: node to node directly, not through the server's tunnel. Without it, every node
+# has the same container address, so the nodes cannot reach each other directly.
+# That network is on ens1. NODE_ADDR may be an IP or a hostname. A hostname resolves to its first
+# IPv4 address, retried for up to a minute, because the record may not exist yet at start.
 if [ "${1:-}" = agent ] && [ -n "${NODE_ADDR:-}" ]; then
   node_host="${NODE_ADDR%/*}"
   node_iface=ens1
