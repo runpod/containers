@@ -276,7 +276,7 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml`, `k3s-node.yml` | **Reusable**. One family each. |
 | `.github/actions/prepull-base-images/action.yml` | Pulls each target's `BASE_IMAGE` with crane into an OCI layout and hands bake an override file, because BuildKit's own pull of multi-GB bases intermittently fails mid-layer. Resolves the same bake files as the build step, so the parent variables live on the **job**, not on either step. |
 | `.github/workflows/branch-policy.yml`            | Fails a PR into `main` from anything but `develop`, `hotfix/*` or `revert-*`. No `paths:` filter, so it is the check to require. |
-| `.github/actions/check-pr-source/action.yml`     | The rule itself: allowed source branches, the fork check, and the proof that a `hotfix/*` branch really was cut off `main`. Called by `branch-policy.yml` and by the orchestrator's `pr-source-gate` job. |
+| `.github/actions/check-pr-source/action.yml`     | The rule itself: allowed source branches, the fork check, the proof that a `hotfix/*` branch really was cut off `main`, and Conventional subjects on `hotfix/*` / `revert-*` commits (`commit-subjects.sh`, tested by `check-pr-source.yml`). Called by `branch-policy.yml` and by the orchestrator's `pr-source-gate` job. |
 | `.github/workflows/cleanup.yml`, `cleanup-closed-pr.yml` | Sweep aged-out `-rc.`/`-dev.` tags from the public and the `-dev` repos. |
 | `.github/scripts/latest_dev_version.py`          | Newest `-dev.<N>` among the tag names on stdin (`crane ls`), ordered by version then `<N>`: what a dev build layers on when that family is not rebuilt in the same run. |
 | `.github/actions/resolve-parent-image/action.yml` | Picks a parent image for the not-rebuilt case: the dev tag above, the public release on prod, and the public release as the dev fallback. |
@@ -370,8 +370,9 @@ When it cannot wait:
    carries only the fix.
 2. Commit the fix as `fix: …`. `main` only takes merge commits, so the bump
    and the notes are read from the hotfix branch's own commits, not from the
-   PR title: every commit on it needs a Conventional subject. One commit is
-   simplest; squash locally before opening the PR if you made several.
+   PR title: every commit on it needs a Conventional subject, and `pr-source`
+   fails on any that has none. One commit is simplest; squash locally before
+   opening the PR if you made several.
 3. Open it as a PR into `main`. It builds RC images into the **public** repos,
    since a PR into `main` is prod.
 4. Merge it with a merge commit. Only the families the fix touched are
@@ -570,6 +571,10 @@ either.
   in its `pr-source-gate` job (both call `.github/actions/check-pr-source`)
   and gates `plan` on it, so a rejected PR builds no images at all.
   `pr-source` is a required check on `main`, so such a PR cannot be merged.
+  For a `hotfix/*` or `revert-*` PR it also fails on any commit whose subject
+  has no Conventional type (`Fix cuda path`): merged with a merge commit, the
+  PR is released from those subjects, and one without a type releases
+  nothing. `develop` is not checked; its commits are squashed PR titles.
 - **Branch protection:** the repository ruleset `protect develop and main`
   covers both branches: no deletion, no force-push, a pull request with one
   approving review, and `shellcheck` and `sonarqube`. The two merge-method
@@ -603,6 +608,7 @@ either.
 | `build-result` is red but every build looks green  | Its log lists each dependency's result. Usually `pr-source-gate` failed (the PR into `main` comes from the wrong branch) or a run was cancelled; re-run the workflow. |
 | Merge button offers only one method                | Expected: `develop` takes squash only, `main` merge commits only (rulesets `develop: squash only` / `main: merge commit only`). |
 | PR into `main` fails on "does not follow the release process" | Its source branch is not `develop`, `hotfix/*` or `revert-*`. Retarget it to `develop`, or cut `hotfix/<name>` off `main` if it cannot wait. |
+| Hotfix PR fails `pr-source` on "no Conventional Commit type" | A commit on the branch has a subject like `Fix cuda path`. Reword it to `fix: …` (or squash the branch into one `fix: …` commit) and force-push; a merge into `main` would otherwise release nothing. |
 | A develop build pushed to the **public** repo      | That family's `docker-bake.hcl` is missing `${REPO_SUFFIX}` in a tag, or its job does not pass it. See *Add a new template*. |
 | A dev build fails pulling its parent with `401 … insufficient scopes` | The parent has no `-dev.<N>` tag yet, so the build fell back to its last public release, and the dev OIDC connection has no read on the public repos. Grant it; this is not a suffix bug. |
 | A dev build layered on an older parent than expected | It takes the newest `-dev.<N>`, which is the last push to `develop` that built that family. A change sitting in an open PR is deliberately not a parent. |
