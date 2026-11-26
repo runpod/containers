@@ -4,8 +4,9 @@ vLLM's own --api-key only guards /v1, /v2, /inference and /cohere. This is an
 allowlist instead, so routes added upstream are guarded by default. Loaded via
 `vllm serve --middleware`, which passes no arguments, hence the env read.
 
-Without a key every request passes, and the warning is repeated in the logs
-while the server is in use.
+Without a key it refuses to load, unless start.sh has set OPEN_ENV to say the
+Pod runs unprotected on purpose. Then every request passes, and the warning
+is repeated in the logs while the server is in use.
 """
 
 import hashlib
@@ -19,6 +20,8 @@ import time
 PUBLIC_PATHS = frozenset({"/health", "/ping", "/metrics"})
 
 KEY_ENV = "VLLM_API_KEY"
+# Set by start.sh only; any other way of loading this without a key fails.
+OPEN_ENV = "RUNPOD_VLLM_UNPROTECTED"
 
 # Repeated on traffic, at most this often, so it stays near the latest logs.
 WARN_EVERY_SEC = 600
@@ -57,6 +60,11 @@ class BearerAuth:
         self._key_digest = _digest(key) if key else None
         self._warned_at = None
         if self._key_digest is None:
+            if os.environ.get(OPEN_ENV) != "true":
+                raise RuntimeError(
+                    f"{KEY_ENV} is not set: refusing to serve vLLM without "
+                    f"authentication outside /start.sh. Set {KEY_ENV}."
+                )
             self._warn_unprotected()
 
     def _warn_unprotected(self) -> None:

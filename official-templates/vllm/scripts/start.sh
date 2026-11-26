@@ -91,12 +91,15 @@ if [ "$rc" -eq 3 ]; then
 fi
 
 if [ -n "$key" ]; then
+    unset RUNPOD_VLLM_UNPROTECTED
     export VLLM_API_KEY="$key"
     echo "Authentication on: every route except /health, /ping and /metrics"
     echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
 else
     # A whitespace-only value would otherwise become vLLM's own /v1 key.
     unset VLLM_API_KEY
+    # Without it the middleware refuses to load with no key.
+    export RUNPOD_VLLM_UNPROTECTED=true
     # The middleware repeats this once vLLM is up and while it is in use.
     PYTHONPATH="$AUTH_MODULE_DIR" python3 -c \
         'import runpod_vllm_auth as m; print(m.UNPROTECTED_WARNING)' 2>/dev/null \

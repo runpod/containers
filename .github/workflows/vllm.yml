@@ -122,7 +122,7 @@ jobs:
           docker run --rm -e PYTHONPATH=/opt/runpod/vllm \
             -v "$PWD/.github/scripts/vllm_route_sweep.py:/tmp/vllm_route_sweep.py:ro" \
             --entrypoint python3 "$IMAGE" -W ignore /tmp/vllm_route_sweep.py
-          say routes "every route of vLLM's app needs the key; probes open"
+          say routes "every route of vLLM's app needs the key; probes open; no key outside start.sh fails"
 
           # start.sh asks vLLM's own parser whether the start command sets
           # --api-key; 3 means yes, 0 means no.

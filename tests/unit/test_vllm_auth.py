@@ -173,8 +173,12 @@ class Middleware(unittest.TestCase):
 
 
 
+OPEN = {"RUNPOD_VLLM_UNPROTECTED": "true"}
+
+
 class Unprotected(unittest.TestCase):
-    """No VLLM_API_KEY: every request passes, and the logs keep saying so."""
+    """No VLLM_API_KEY under start.sh: every request passes, and the logs keep
+    saying so. Loaded any other way without a key, it refuses."""
 
     def load(self, env):
         with mock.patch.dict(os.environ, env, clear=True):
@@ -185,7 +189,7 @@ class Unprotected(unittest.TestCase):
         return module, app, inner, err.getvalue()
 
     def test_every_route_is_open_and_the_logs_say_so(self):
-        _, app, inner, logged = self.load({})
+        _, app, inner, logged = self.load(OPEN)
         self.assertIn("vLLM is NOT PROTECTED", logged)
         for path in ("/v1/chat/completions", "/invocations", "/tokenize"):
             status, _ = request(app, path, method="POST")
@@ -193,11 +197,23 @@ class Unprotected(unittest.TestCase):
         self.assertEqual(len(inner.calls), 3)
 
     def test_a_whitespace_key_is_no_key(self):
-        _, _, _, logged = self.load({"VLLM_API_KEY": "  \n"})
+        _, _, _, logged = self.load({**OPEN, "VLLM_API_KEY": "  \n"})
         self.assertIn("vLLM is NOT PROTECTED", logged)
 
+    def test_no_key_outside_start_sh_refuses_to_load(self):
+        for env in ({}, {"VLLM_API_KEY": "  "}, {"RUNPOD_VLLM_UNPROTECTED": "1"},
+                    {"RUNPOD_VLLM_UNPROTECTED": "TRUE"}):
+            with self.subTest(env=env), self.assertRaisesRegex(RuntimeError, "VLLM_API_KEY"):
+                self.load(env)
+
+    def test_a_key_wins_over_the_open_flag(self):
+        _, app, _, logged = self.load({**OPEN, "VLLM_API_KEY": KEY})
+        self.assertNotIn("NOT PROTECTED", logged)
+        status, _ = request(app, "/v1/models")
+        self.assertEqual(status, 401)
+
     def test_the_warning_repeats_while_in_use(self):
-        module, app, _, _ = self.load({})
+        module, app, _, _ = self.load(OPEN)
         start = time.monotonic()
         for elapsed, repeats in ((module.WARN_EVERY_SEC - 1, False),
                                  (module.WARN_EVERY_SEC + 1, True)):
@@ -211,6 +227,7 @@ FAKE_VLLM = """#!/bin/bash
 { printf 'ARG %s\\n' "$@"
   printf 'ENV_KEY %s\\n' "${VLLM_API_KEY-<unset>}"
   printf 'ENV_PYTHONPATH %s\\n' "${PYTHONPATH-<unset>}"
+  printf 'ENV_OPEN %s\\n' "${RUNPOD_VLLM_UNPROTECTED-<unset>}"
 } > "$RECORD"
 """
 
@@ -253,6 +270,12 @@ class StartScript(unittest.TestCase):
         self.assertEqual(args[args.index("--middleware") + 1], "runpod_vllm_auth.BearerAuth")
         self.assertTrue(env["ENV_PYTHONPATH"].startswith("/opt/runpod/vllm"))
         self.assertEqual(env["ENV_KEY"], KEY)
+        self.assertEqual(env["ENV_OPEN"], "<unset>")
+
+    def test_a_key_clears_the_open_flag(self):
+        self.start({"VLLM_API_KEY": KEY, "RUNPOD_VLLM_UNPROTECTED": "true"}, "m")
+        _, env = self.recorded()
+        self.assertEqual(env["ENV_OPEN"], "<unset>")
 
     def test_the_key_never_reaches_the_logs(self):
         out = self.start({"VLLM_API_KEY": KEY}, "m")
@@ -280,6 +303,7 @@ class StartScript(unittest.TestCase):
             self.assertIn("--middleware", args)
             # vLLM's own /v1 check must not take the blank value as a key.
             self.assertEqual(rec_env["ENV_KEY"], "<unset>")
+            self.assertEqual(rec_env["ENV_OPEN"], "true")
 
     def test_empty_start_command_does_not_start_vllm(self):
         """`vllm serve` with no model exits at once: a restart loop on Runpod."""
