@@ -1,13 +1,13 @@
 ### Runpod vLLM
 
-**An OpenAI-compatible LLM server powered by [vLLM](https://github.com/vllm-project/vllm), with an API key required on every route.**
+**An OpenAI-compatible LLM server powered by [vLLM](https://github.com/vllm-project/vllm), with an API key on every route.**
 
 The upstream [`vllm/vllm-openai`](https://hub.docker.com/r/vllm/vllm-openai) image, pinned to a release, plus an entrypoint and an authentication middleware.
 
 ### Getting started
 
 1. Deploy a Pod from this template. Port `8000/http` is exposed.
-2. Set **`VLLM_API_KEY`** in the Pod's environment variables to a long random secret. Without it, vLLM does not start. See [Authentication](#authentication).
+2. Set **`VLLM_API_KEY`** in the Pod's environment variables to a long random secret. Without it, the server is open to anyone with the Pod's URL. See [Authentication](#authentication).
 3. Pick the model and serving flags in **Container Start Command** (default: `Qwen/Qwen3-8B --dtype auto ...`). Startup downloads the model to `/workspace/.huggingface` and loads it, which takes several minutes. Follow it in the Pod's **Logs** tab.
 4. Call the server at `https://<pod-id>-8000.proxy.runpod.net`:
 
@@ -22,11 +22,13 @@ Any OpenAI SDK works, with `base_url="https://<pod-id>-8000.proxy.runpod.net/v1"
 
 ### Authentication
 
-`VLLM_API_KEY` is required. With it set, every request needs `Authorization: Bearer <VLLM_API_KEY>`, except the probes below. Without it, vLLM does **not** start: the Logs tab says why, and the Pod stays up so you can set the variable and restart it. There is no way to run this image without authentication.
+With `VLLM_API_KEY` set, every request needs `Authorization: Bearer <VLLM_API_KEY>`, except the probes below.
+
+Without it, vLLM starts **unprotected**: anyone with the Pod's URL can use every route and the Pod's GPU time. The Logs tab shows a `vLLM is NOT PROTECTED` warning at startup and repeats it at most every 10 minutes while requests arrive. Set the variable and restart the Pod to turn authentication on.
 
 Open without a key: `/health`, `/ping` and `/metrics` (exact paths). Everything else returns `401`, including routes vLLM's own `--api-key` leaves open, such as `/invocations`, `/tokenize` and `/scale_elastic_ep`. A route added in a future vLLM release is closed by default.
 
-The key is never printed to the Pod logs. Do not set `--api-key` in the container start command, in any spelling or in a `--config` file: vLLM's own `/v1` check would then use a second key, and it prints its arguments at startup. If you do, vLLM is not started and the Logs tab says why.
+The key is never printed to the Pod logs. Do not set `--api-key` in the container start command, in any spelling or in a `--config` file: vLLM's own `/v1` check would then use a second key, and it prints its arguments at startup. If you do, vLLM is not started and the Logs tab says why. This applies with or without `VLLM_API_KEY`: set the key there instead.
 
 ### Container start command
 
