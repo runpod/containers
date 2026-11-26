@@ -204,10 +204,11 @@ Shared pins (one each, across all ComfyUI versions), 12-char short SHAs:
 - `KJNODES_SHA`: latest default-branch commit of `kijai/ComfyUI-KJNodes`.
 - `CIVICOMFY_SHA`: latest default-branch commit of `MoonGoblinDev/Civicomfy`.
 - `RUNPODDIRECT_SHA`: the commit the latest release tag (`v.X.Y.Z`) of `Madiator2011Work/ComfyUI-RunpodDirect` points at, not the latest default-branch commit. Keep the `# ComfyUI-RunpodDirect v.X.Y.Z` comment above the variable in sync.
-- `FILEBROWSER_VERSION` / `FILEBROWSER_COMMIT`: leave both alone. Upstream
-  `filebrowser/filebrowser` is archived (2026-09-01) and `v2.63.23` is its last
-  release, so there is nothing to bump. The separate `filebrowser` family tracks
-  the maintained fork instead.
+- `FILEBROWSER_VERSION` / `FILEBROWSER_SHA256`: latest stable release of
+  FileBrowser Quantum, the same binary as the `filebrowser` family. Take
+  `version` and `sha256` exactly as that family's section describes. This pin
+  drives no image tag, so it is an in-place bump. The `filebrowser` run adds the
+  same release on its own side, which keeps the two images on one FileBrowser.
 
 If only some pins moved, bump just those.
 
