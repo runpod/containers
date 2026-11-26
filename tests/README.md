@@ -673,6 +673,11 @@ pytorch:
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `1800` | Maximum wait for each functional-test model download. |
 | `COMFYUI_GEN_TIMEOUT` | `600` | Maximum wait for workflow execution and its image output. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Directory where validated ComfyUI PNGs are retained for artifact upload. |
+| `COMFYUI_MANAGER_NODE_MANIFEST` | `tests/comfyui/manager_node.json` | Node pack `test_comfyui_manager` installs, with the class it verifies. |
+| `COMFYUI_MANAGER_READY_TIMEOUT` | `180` | Maximum wait for the ComfyUI-Manager API, which loads after ComfyUI. |
+| `COMFYUI_MANAGER_QUEUE_TIMEOUT` | `240` | Maximum wait for a `queue/task` or `queue/start` POST. The first task of a batch makes Manager snapshot the system inside the request handler (a git fetch of the ComfyUI remote and a `pip freeze` subprocess), so these POSTs can take minutes. |
+| `COMFYUI_MANAGER_INSTALL_TIMEOUT` | `900` | Maximum wait for the install task to drain the queue. |
+| `COMFYUI_MANAGER_VERIFY_TIMEOUT` | `300` | Maximum wait for the installed node class to appear in `/object_info` after the reboot. |
 
 Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`) and `FILEBROWSER_PASSWORD=smoke-filebrowser-password` (`config.FILEBROWSER_TEST_PASSWORD`), since the image starts neither ComfyUI nor FileBrowser (probed on 8080) without one.
 

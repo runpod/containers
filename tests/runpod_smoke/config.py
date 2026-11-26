@@ -244,6 +244,10 @@ COMFYUI_MANAGER_NODE_MANIFEST = os.environ.get(
 COMFYUI_MANAGER_READY_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_READY_TIMEOUT", "180"))
 COMFYUI_MANAGER_INSTALL_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_INSTALL_TIMEOUT", "900"))
 COMFYUI_MANAGER_VERIFY_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_VERIFY_TIMEOUT", "300"))
+# The first task of a batch makes Manager snapshot the system inside the POST
+# handler: a git fetch of the ComfyUI remote and a `pip freeze` subprocess.
+# 30s was not enough for it and killed the run.
+COMFYUI_MANAGER_QUEUE_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_QUEUE_TIMEOUT", "240"))
 
 # runpod/vllm-openai: `test_vllm` boots the image with VLLM_API_KEY and a
 # small model as the start command, exposes VLLM_PORT as <port>/http, and

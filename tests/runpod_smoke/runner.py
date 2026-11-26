@@ -57,6 +57,7 @@ from .comfyui import (
     probe_comfyui_alive,
     run_comfyui_check,
     run_comfyui_manager_check,
+    MANAGER_UNVERIFIED,
 )
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log, set_worker_context
@@ -548,6 +549,12 @@ def _run_comfyui_steps(
         )
         if ok:
             log("ComfyUI-Manager install check passed", indent=2)
+        elif detail.startswith(MANAGER_UNVERIFIED):
+            # The pod or the ComfyUI registry stopped answering. That is not a
+            # verdict on the image, so let the next instance try.
+            log(f"ComfyUI-Manager install check UNVERIFIED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "UNVERIFIED", f"ComfyUI-Manager install check: {detail[:160]}"
         else:
             log(f"ComfyUI-Manager install check FAILED -- {detail}", indent=2)
             dump_pod_logs(pod_id, image)

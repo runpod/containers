@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -348,6 +349,10 @@ def run_comfyui_check(
 # own install task instead of whatever else the pod is doing.
 _MANAGER_CLIENT_ID = "runpod-smoke-manager"
 
+# Prefix on a detail string that means "the pod or the registry stopped
+# answering", so the runner can report UNVERIFIED instead of blaming the image.
+MANAGER_UNVERIFIED = "manager check UNVERIFIED"
+
 
 def _wait_for_manager(base: str, emit: Callable[[str], None]) -> bool:
     """Wait for ComfyUI-Manager's HTTP API to answer (it loads after ComfyUI)."""
@@ -391,18 +396,46 @@ def _wait_for_object_info(
     return False
 
 
-def _dump_manager_history(base: str, emit: Callable[[str], None]) -> None:
-    """Best-effort: log the Manager task history for our client on failure."""
+def _manager_history(base: str) -> Optional[bytes]:
+    """Raw Manager task history for our client, or None if the ask failed."""
     try:
         code, body = _request(
             base + "/v2/manager/queue/history?client_id="
             + urllib.parse.quote(_MANAGER_CLIENT_ID),
             timeout=20,
         )
-        if code == 200:
-            emit(f"manager task history: {body.decode('utf-8', 'replace')[:1000]}")
+        return body if code == 200 else None
     except OSError:
-        pass
+        return None
+
+
+def _dump_manager_history(base: str, emit: Callable[[str], None]) -> Optional[bytes]:
+    """Best-effort: log the Manager task history for our client on failure."""
+    body = _manager_history(base)
+    if body is not None:
+        emit(f"manager task history: {body.decode('utf-8', 'replace')[:1000]}")
+    return body
+
+
+def _history_blames_the_registry(body: Optional[bytes]) -> bool:
+    """True when Manager recorded a network/registry failure rather than a
+    dependency problem. The install downloads from api.comfy.org, and an
+    outage there is not a verdict on our image."""
+    if not body:
+        return False
+    text = body.decode("utf-8", "replace").lower()
+    # Spacing depends on how the Manager serialized it, so do not match on it.
+    if not re.search(r'["\']status_str["\']\s*:\s*["\']error["\']', text):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "api.comfy.org", "connection", "timed out", "timeout",
+            "temporary failure in name resolution", "name or service not known",
+            "ssl", "502 bad gateway", "503 service", "504 gateway",
+            "remote end closed", "max retries exceeded",
+        )
+    )
 
 
 def _torch_fingerprint(base: str) -> Optional[tuple]:
@@ -425,10 +458,41 @@ def _torch_fingerprint(base: str) -> Optional[tuple]:
     return (version, types)
 
 
+def _manager_queue_status(base: str) -> Optional[dict]:
+    """Manager's queue counters for our client, or None if the ask failed."""
+    url = (
+        base + "/v2/manager/queue/status?client_id="
+        + urllib.parse.quote(_MANAGER_CLIENT_ID)
+    )
+    try:
+        code, body = _request(url, timeout=15)
+        return json.loads(body) if code == 200 else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _manager_task_landed(base: str) -> bool:
+    """Did our task reach the queue? Asked only after queue/task times out,
+    because the counters are filtered by our own client_id."""
+    deadline = time.monotonic() + config.COMFYUI_MANAGER_QUEUE_TIMEOUT
+    while time.monotonic() < deadline:
+        status = _manager_queue_status(base)
+        if status and (
+            status.get("total_count", 0) > 0
+            or status.get("done_count", 0) > 0
+            or status.get("is_processing", False)
+        ):
+            return True
+        time.sleep(5)
+    return False
+
+
 def _manager_install_node(
     base: str, node: dict, emit: Callable[[str], None],
-) -> bool:
-    """Queue a Manager install task, start the worker, and wait for it to drain."""
+) -> tuple[bool, str]:
+    """Queue a Manager install task, start the worker, and wait for it to drain.
+    Returns (ok, detail); detail starts with the UNVERIFIED marker when the
+    pod stopped answering rather than the install going wrong."""
     version = node.get("selected_version", "latest")
     task = {
         "ui_id": f"smoke-{int(time.time())}",
@@ -443,30 +507,49 @@ def _manager_install_node(
             "channel": "default",
         },
     }
-    code, body = _request(
-        base + "/v2/manager/queue/task", json.dumps(task).encode(), timeout=30
-    )
+    body = b""
+    try:
+        code, body = _request(
+            base + "/v2/manager/queue/task", json.dumps(task).encode(),
+            timeout=config.COMFYUI_MANAGER_QUEUE_TIMEOUT,
+        )
+    except OSError as exc:
+        # The handler queues the task after that snapshot, so a timeout here
+        # does not mean it was lost. Posting again would install twice.
+        emit(f"queue/task did not answer ({type(exc).__name__}), checking the queue")
+        if not _manager_task_landed(base):
+            return False, (
+                f"{MANAGER_UNVERIFIED}: queue/task never answered and no task "
+                f"reached the queue ({type(exc).__name__}: {exc})"
+            )
+        emit("the task reached the queue despite the timeout")
+        code = 200
     if code != 200:
-        emit(f"FAIL: queue/task returned HTTP {code}: {body[:300]!r}")
-        return False
-    # Empty JSON body so the CSRF guard sees a non-simple Content-Type.
-    code, _ = _request(base + "/v2/manager/queue/start", b"", timeout=30)
-    if code not in (200, 201):
-        emit(f"FAIL: queue/start returned HTTP {code}")
-        return False
+        return False, f"queue/task returned HTTP {code}: {body[:300]!r}"
 
-    status_url = (
-        base + "/v2/manager/queue/status?client_id="
-        + urllib.parse.quote(_MANAGER_CLIENT_ID)
-    )
+    # Empty JSON body so the CSRF guard sees a non-simple Content-Type.
+    # Idempotent (200 started, 201 already running), so retrying is safe.
+    last_error = ""
+    for attempt in range(1, 4):
+        try:
+            code, _ = _request(
+                base + "/v2/manager/queue/start", b"",
+                timeout=config.COMFYUI_MANAGER_QUEUE_TIMEOUT,
+            )
+            break
+        except OSError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            emit(f"queue/start did not answer ({last_error}), attempt {attempt}/3")
+            time.sleep(5)
+    else:
+        return False, f"{MANAGER_UNVERIFIED}: queue/start never answered ({last_error})"
+    if code not in (200, 201):
+        return False, f"queue/start returned HTTP {code}"
+
     deadline = time.monotonic() + config.COMFYUI_MANAGER_INSTALL_TIMEOUT
     status: dict = {}
     while time.monotonic() < deadline:
-        try:
-            code, body = _request(status_url, timeout=15)
-            status = json.loads(body) if code == 200 else {}
-        except (OSError, json.JSONDecodeError):
-            status = {}
+        status = _manager_queue_status(base) or {}
         # done_count only says the task left the queue, not that it succeeded;
         # the object_info check after reboot is the real pass/fail gate.
         if (
@@ -475,10 +558,12 @@ def _manager_install_node(
             and not status.get("is_processing", False)
         ):
             emit("install task finished")
-            return True
+            return True, ""
         time.sleep(3)
-    emit(f"FAIL: install task did not finish in {config.COMFYUI_MANAGER_INSTALL_TIMEOUT}s (last={status})")
-    return False
+    return False, (
+        f"install task did not finish in "
+        f"{config.COMFYUI_MANAGER_INSTALL_TIMEOUT}s (last={status})"
+    )
 
 
 def _manager_reboot(base: str, emit: Callable[[str], None]) -> None:
@@ -521,9 +606,17 @@ def run_comfyui_manager_check(
     emit(f"torch before install: {before[0]} on {','.join(before[1])}")
 
     emit(f"installing {node['id']}@{node.get('selected_version', 'latest')} via Manager...")
-    if not _manager_install_node(base, node, emit):
-        _dump_manager_history(base, emit)
-        return False, f"Manager install failed for {node['id']}"
+    ok, detail = _manager_install_node(base, node, emit)
+    if not ok:
+        history = _dump_manager_history(base, emit)
+        if detail.startswith(MANAGER_UNVERIFIED):
+            return False, detail
+        if _history_blames_the_registry(history):
+            return False, (
+                f"{MANAGER_UNVERIFIED}: the ComfyUI registry or the network "
+                f"failed the install, not a dependency problem ({detail})"
+            )
+        return False, f"Manager install failed for {node['id']}: {detail}"
 
     emit("rebooting ComfyUI to activate the node...")
     _manager_reboot(base, emit)
@@ -534,7 +627,12 @@ def run_comfyui_manager_check(
 
     emit(f"verifying node class {node_class} is importable...")
     if not _wait_for_object_info(base, node_class, emit):
-        _dump_manager_history(base, emit)
+        history = _dump_manager_history(base, emit)
+        if _history_blames_the_registry(history):
+            return False, (
+                f"{MANAGER_UNVERIFIED}: the ComfyUI registry or the network "
+                f"failed the install, so {node_class} never arrived"
+            )
         return False, f"node class {node_class} not available after install+reboot"
 
     # The point of the whole step: the dependency resolved against the baked
