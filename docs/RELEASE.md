@@ -138,6 +138,9 @@ Notes:
 - A family with **no tag yet** starts at exactly `1.0.0` on its first
   releasable change — the bump level is ignored, so a first `feat:` does not
   skip to `1.1.0`.
+- A revert is always a patch, a revert of a revert too. To re-land a reverted
+  feature, open a `feat: …` PR, don't press Revert on the revert: that ships
+  the feature as a patch.
 - **Breaking changes:** mark the PR title with `!` (`feat!: …`) and preferably
   add a `BREAKING CHANGE:` footer in the description. If the title has no `!`
   but the description has a proper `BREAKING CHANGE:` / `BREAKING-CHANGE:`
