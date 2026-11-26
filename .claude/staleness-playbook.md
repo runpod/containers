@@ -203,7 +203,7 @@ neighbouring entry's value.
 Shared pins (one each, across all ComfyUI versions), 12-char short SHAs:
 - `KJNODES_SHA`: latest default-branch commit of `kijai/ComfyUI-KJNodes`.
 - `CIVICOMFY_SHA`: latest default-branch commit of `MoonGoblinDev/Civicomfy`.
-- `RUNPODDIRECT_SHA`: latest default-branch commit of `MadiatorLabs/ComfyUI-RunpodDirect`.
+- `RUNPODDIRECT_SHA`: the commit the latest release tag (`v.X.Y.Z`) of `Madiator2011Work/ComfyUI-RunpodDirect` points at, not the latest default-branch commit. Keep the `# ComfyUI-RunpodDirect v.X.Y.Z` comment above the variable in sync.
 - `FILEBROWSER_VERSION` / `FILEBROWSER_SHA256`: latest stable release of
   FileBrowser Quantum, the same binary as the `filebrowser` family. Take
   `version` and `sha256` exactly as that family's section describes. This pin

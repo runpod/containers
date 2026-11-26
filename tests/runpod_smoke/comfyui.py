@@ -29,11 +29,13 @@ def auth_headers() -> dict:
 
 def _request(
     url: str, data: Optional[bytes] = None, timeout: int = 30,
-    authenticated: bool = True,
+    authenticated: bool = True, browser: bool = True,
 ) -> tuple[int, bytes]:
     headers = {"User-Agent": _UA}
     if authenticated:
         headers.update(auth_headers())
+        if browser:
+            headers["Sec-Fetch-Site"] = "same-origin"
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers)
@@ -195,6 +197,40 @@ def _wait_for_routes(base: str, emit: Callable[[str], None]) -> bool:
         time.sleep(3)
     emit(f"FAIL: RunpodDirect routes unavailable ({last_error})")
     return False
+
+
+# The URL does not exist, so a guard that regresses fails the check without
+# writing anything to the pod.
+_GUARD_URL = "https://huggingface.co/runpod/smoke-test-missing/resolve/main/none.bin"
+# (name, browser, save_path, filename, expected status, marker in the error)
+_DOWNLOAD_GUARDS = (
+    ("non-browser caller", False, "checkpoints", "smoke.safetensors", 403, b"browser ui"),
+    ("save outside models/", True, "custom_nodes", "smoke.safetensors", 400, b"models directory"),
+    ("executable filename", True, "checkpoints", "smoke.py", 400, b"executable"),
+)
+
+
+def _check_download_guards(base: str, emit: Callable[[str], None]) -> bool:
+    """RunpodDirect refuses downloads the UI would never make."""
+    for name, browser, save_path, filename, expected, marker in _DOWNLOAD_GUARDS:
+        payload = {"url": _GUARD_URL, "save_path": save_path, "filename": filename}
+        try:
+            code, body = _request(
+                base + "/server_download/start",
+                json.dumps(payload).encode(),
+                timeout=30, browser=browser,
+            )
+        except OSError as exc:
+            emit(f"FAIL: RunpodDirect guard '{name}' request errored: {exc}")
+            return False
+        if code != expected or marker not in body.lower():
+            emit(
+                f"FAIL: RunpodDirect guard '{name}' returned HTTP {code}, "
+                f"expected {expected}: {body[:300]!r}"
+            )
+            return False
+        emit(f"OK: RunpodDirect refuses {name} (HTTP {code})")
+    return True
 
 
 def _ensure_model(base: str, model: dict, emit: Callable[[str], None]) -> bool:
@@ -362,6 +398,8 @@ def run_comfyui_check(
         return False, f"could not read test assets: {exc}"
     if not _wait_for_routes(base, emit):
         return False, "ComfyUI-RunpodDirect routes unavailable"
+    if not _check_download_guards(base, emit):
+        return False, "ComfyUI-RunpodDirect accepted a download it must refuse"
     for model in models:
         if not _ensure_model(base, model, emit):
             return False, f"model provisioning failed: {model.get('filename')}"

@@ -207,6 +207,21 @@ shell.
 - Civicomfy
 - ComfyUI-RunpodDirect
 
+ComfyUI-RunpodDirect only takes download actions from the ComfyUI page in your
+browser. Its `POST` routes under `/server_download/` (`start`, `pause`, `resume`,
+`cancel`, `verify_model_integrity`, `check_missing_models`, `validate_hf_token`,
+`keepalive`, `cgroup_ram_patch`) answer `403` to a script unless it sends
+`Sec-Fetch-Site: same-origin`. The `GET` routes, such as `status` and
+`folder_paths`, are unchanged, so a script that only polls a download keeps
+working.
+
+It saves only into `ComfyUI/models`, checked after following symlinks. A model
+folder that `extra_model_paths.yaml` points elsewhere gets `400`, and so does a
+folder under `ComfyUI/models` that is a symlink to storage outside it, such as a
+shared `/workspace/models`. It also refuses files with executable extensions
+(`.py`, `.sh`, `.exe`, `.so` and similar). Existing pods get this version on their
+first boot with the new tag.
+
 ComfyUI-Manager is included too, but not as a custom node: it is the
 `comfyui_manager` pip package installed in the image, which ComfyUI loads itself.
 Pods created with an older template keep a copy under `custom_nodes`; ComfyUI

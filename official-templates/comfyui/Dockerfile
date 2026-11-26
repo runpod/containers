@@ -72,7 +72,7 @@ RUN curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.t
     mkdir -p ComfyUI-KJNodes && tar xzf kjnodes.tar.gz --strip-components=1 -C ComfyUI-KJNodes && rm kjnodes.tar.gz && \
     curl -fSL "https://github.com/MoonGoblinDev/Civicomfy/archive/${CIVICOMFY_SHA}.tar.gz" -o civicomfy.tar.gz && \
     mkdir -p Civicomfy && tar xzf civicomfy.tar.gz --strip-components=1 -C Civicomfy && rm civicomfy.tar.gz && \
-    curl -fSL "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
+    curl -fSL "https://github.com/Madiator2011Work/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
     mkdir -p ComfyUI-RunpodDirect && tar xzf runpoddirect.tar.gz --strip-components=1 -C ComfyUI-RunpodDirect && rm runpoddirect.tar.gz
 
 # Runpod fixes to the pinned sources: one patch per issue in patches/, paths
@@ -101,7 +101,7 @@ RUN git init && git add -A && \
     git -C custom_nodes/ComfyUI-RunpodDirect init && \
     git -C custom_nodes/ComfyUI-RunpodDirect add -A && \
     git -C custom_nodes/ComfyUI-RunpodDirect -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
-    git -C custom_nodes/ComfyUI-RunpodDirect remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
+    git -C custom_nodes/ComfyUI-RunpodDirect remote add origin https://github.com/Madiator2011Work/ComfyUI-RunpodDirect.git
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build

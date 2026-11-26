@@ -15,8 +15,9 @@ variable "KJNODES_SHA" {
 variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
 }
+# ComfyUI-RunpodDirect v.1.0.13
 variable "RUNPODDIRECT_SHA" {
-  default = "9e32b1a09577"
+  default = "1c0dd562dc3f"
 }
 # FileBrowser Quantum (gtsteffaniak/filebrowser) release tag and the sha256 of
 # its linux-amd64-filebrowser asset. Same pin as the filebrowser family.
