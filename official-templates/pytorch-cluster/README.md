@@ -16,6 +16,15 @@ Published to its own repository, with the pytorch tag scheme, e.g.
 `runpod/pytorch-cluster:<version>-cu1281-torch280-ubuntu2404`. Its version
 series is its own, so it need not match the `runpod/pytorch` it builds on.
 
+**Default image:** `runpod/pytorch-cluster:<version>-cu1300-torch2150-ubuntu2404`
+(PyTorch 2.15, CUDA 13 driver 580+). PyTorch 2.15 makes the rewritten NCCL
+backend the default for `init_process_group("nccl")`, and it adds the NIXL
+backend of `torch.distributed._transport` for one-sided transfers, for example
+KV-cache movement in disaggregated inference. The base `runpod/pytorch` 2.15
+image ships the `nixl` package, and the RDMA stack here lets its bundled UCX
+use InfiniBand/RoCE. See [../pytorch/README.md](../pytorch/README.md#recommended-image-pytorch-215)
+for the NCCL migration notes (`nccl-legacy`, `TORCH_DIST_USE_NCCL2=0`).
+
 ## How it works at startup
 
 The image reuses the shared `/start.sh`, which invokes the `/post_start.sh` hook
@@ -88,7 +97,8 @@ Jupyter takes a shared secret from `$JUPYTER_PASSWORD` and the console opens
 Setup (nothing new — same secret as Jupyter):
 1. The pod already has **`JUPYTER_PASSWORD`** (the Jupyter secret). Omit it → no
    auto-login, Grafana shows its login form. Set `GRAFANA_PASSWORD` only if you
-   want a Grafana-specific token instead.
+   want a Grafana-specific token instead. `GRAFANA_CLUSTER_TOKEN` is a second
+   token the proxy also accepts (`ray-cluster` sets it to the Ray cluster token).
 2. The console opens `https://<pod>-8889.<proxy-base>/?token=<JUPYTER_PASSWORD>`.
 
 Notes:

@@ -1,0 +1,111 @@
+#!/bin/bash
+# Never `set -x` here: VLLM_API_KEY is in the environment.
+set -euo pipefail
+
+AUTH_MODULE_DIR="/opt/runpod/vllm"
+AUTH_MIDDLEWARE="runpod_vllm_auth.BearerAuth"
+LISTEN_HOST="0.0.0.0"
+LISTEN_PORT="8000"
+
+# Stay up instead of exiting, so Runpod doesn't restart into the same refusal.
+hold_without_vllm() {
+    local pid=""
+    trap 'kill "$pid" 2>/dev/null; exit 0' SIGTERM SIGINT
+    while true; do
+        sleep 86400 &
+        pid=$!
+        wait "$pid" || true
+    done
+}
+
+refuse() {
+    echo "============================================================"
+    echo "  vLLM was NOT started: $1"
+    echo ""
+    shift
+    printf '  %s\n' "$@"
+    echo "============================================================"
+    hold_without_vllm
+    exit 0
+}
+
+# sshd daemonizes, so vLLM below stays PID 1 and gets SIGTERM. The container
+# environment is deliberately not exported to SSH sessions: it holds the key.
+# A failure here only costs SSH, never the model server.
+setup_ssh() {
+    mkdir -p /run/sshd ~/.ssh && chmod 700 ~/.ssh || return 1
+    if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+        ssh-keygen -A -q || return 1
+    fi
+    if [ -n "${PUBLIC_KEY:-}" ]; then
+        printf '%s\n' "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+    else
+        echo "PUBLIC_KEY is not set: direct SSH to port 22 is refused."
+    fi
+    /usr/sbin/sshd
+}
+
+if [ "$(id -u)" -eq 0 ] && [ -x /usr/sbin/sshd ]; then
+    setup_ssh || echo "WARNING: sshd did not start; continuing without SSH."
+fi
+
+# Trim pasted whitespace; vLLM's own /v1 check reads the exported value too.
+key="${VLLM_API_KEY:-}"
+key="${key#"${key%%[![:space:]]*}"}"
+key="${key%"${key##*[![:space:]]}"}"
+
+# vLLM's own /v1 check would use this key and the middleware VLLM_API_KEY, so
+# with two different keys no key opens /v1. vLLM also logs its CLI args.
+refuse_api_key() {
+    refuse "--api-key is set in the container start command." \
+        "Remove it (and any api-key in a --config file) and set the" \
+        "VLLM_API_KEY environment variable instead. If it held a real key," \
+        "rotate it: the start command is visible in the Pod settings."
+}
+
+# Fast path for the usual spellings; vLLM's parser below covers the rest.
+for arg in "$@"; do
+    name="${arg%%=*}"
+    case "${name//_/-}" in
+        --api-k | --api-ke | --api-key) refuse_api_key ;;
+    esac
+done
+
+# Without a model, `vllm serve` exits at once and Runpod restarts it in a loop.
+if [ "$#" -eq 0 ]; then
+    refuse "the container start command is empty." \
+        "Set it to the model and serving flags, for example" \
+        "  Qwen/Qwen3-8B --max-model-len 16384"
+fi
+
+# Last, so they override any --host/--port in CMD.
+serve_args=("$@" --middleware "$AUTH_MIDDLEWARE" --host "$LISTEN_HOST" --port "$LISTEN_PORT")
+
+# vLLM's own parser on the exact serve args: abbreviations, --config files.
+# Only exit 3 means a key; anything vLLM rejects is left for it to report.
+rc=0
+python3 "${AUTH_MODULE_DIR}/runpod_vllm_cmdcheck.py" "${serve_args[@]}" || rc=$?
+if [ "$rc" -eq 3 ]; then
+    refuse_api_key
+fi
+
+if [ -n "$key" ]; then
+    unset RUNPOD_VLLM_UNPROTECTED
+    export VLLM_API_KEY="$key"
+    echo "Authentication on: every route except /health, /ping and /metrics"
+    echo "requires the header 'Authorization: Bearer <VLLM_API_KEY>'."
+else
+    # A whitespace-only value would otherwise become vLLM's own /v1 key.
+    unset VLLM_API_KEY
+    # Without it the middleware refuses to load with no key.
+    export RUNPOD_VLLM_UNPROTECTED=true
+    # The middleware repeats this once vLLM is up and while it is in use.
+    PYTHONPATH="$AUTH_MODULE_DIR" python3 -c \
+        'import runpod_vllm_auth as m; print(m.UNPROTECTED_WARNING)' 2>/dev/null \
+        || echo "WARNING: vLLM is NOT PROTECTED: VLLM_API_KEY is not set."
+fi
+export PYTHONPATH="${AUTH_MODULE_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+
+echo "Starting vLLM on ${LISTEN_HOST}:${LISTEN_PORT}"
+exec vllm serve "${serve_args[@]}"

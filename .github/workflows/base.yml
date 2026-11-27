@@ -1,9 +1,9 @@
 name: Base Images Build
 
 # Reusable building block invoked by the release orchestrator (release.yml),
-# which passes in the families it planned. Covers the
-# base -> pytorch -> {autoresearch, pytorch-cluster -> ray-cluster} dependency
-# chain; each family has its own version series and only the planned ones are
+# which passes in the families it planned. Covers the dependency chain
+#   base -> {autoresearch, burn, filebrowser, pytorch -> pytorch-cluster -> ray-cluster}
+# Each family has its own version series and only the planned ones are
 # built. Not triggered on its own (no push/pull_request/concurrency here) — the
 # orchestrator owns triggers, gating, concurrency and the final release.
 on:
@@ -26,9 +26,25 @@ jobs:
   # family is not rebuilt in this run.
   versions:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    # pull-requests: compute-version names a develop push's dev image after
+    # the PR it merged.
+    permissions:
+      contents: read
+      pull-requests: read
+      # Listing a parent's private dev repo needs a registry token, which only
+      # the OIDC connection can mint.
+      id-token: write
     outputs:
       suffix: ${{ steps.base.outputs.suffix }}
+      env: ${{ steps.base.outputs.env }}
+      repo-suffix: ${{ steps.base.outputs.repo-suffix }}
       base: ${{ steps.base.outputs.version }}
+      base-parent: ${{ steps.base-parent.outputs.version }}
+      base-parent-suffix: ${{ steps.base-parent.outputs.repo-suffix }}
+      pytorch-parent: ${{ steps.pytorch-parent.outputs.version }}
+      pytorch-parent-suffix: ${{ steps.pytorch-parent.outputs.repo-suffix }}
+      cluster-parent: ${{ steps.cluster-parent.outputs.version }}
+      cluster-parent-suffix: ${{ steps.cluster-parent.outputs.repo-suffix }}
       base-published: ${{ steps.base.outputs.previous-version }}
       base-build: ${{ steps.base.outputs.should-build }}
       pytorch: ${{ steps.pytorch.outputs.version }}
@@ -41,6 +57,8 @@ jobs:
       ray-cluster-build: ${{ steps.ray-cluster.outputs.should-build }}
       autoresearch: ${{ steps.autoresearch.outputs.version }}
       autoresearch-build: ${{ steps.autoresearch.outputs.should-build }}
+      burn: ${{ steps.burn.outputs.version }}
+      burn-build: ${{ steps.burn.outputs.should-build }}
       filebrowser: ${{ steps.filebrowser.outputs.version }}
       filebrowser-build: ${{ steps.filebrowser.outputs.should-build }}
     steps:
@@ -80,11 +98,50 @@ jobs:
         with:
           family: autoresearch
 
+      - name: burn
+        id: burn
+        uses: ./.github/actions/compute-version
+        with:
+          family: burn
+
       - name: filebrowser
         id: filebrowser
         uses: ./.github/actions/compute-version
         with:
           family: filebrowser
+
+      # Which published parent a family layers on when that parent is NOT
+      # rebuilt in this run. On dev that is develop's newest -dev.<N>, not the
+      # public release, which can predate fixes develop already carries.
+      - name: base parent
+        id: base-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: base
+          env: ${{ steps.base.outputs.env }}
+          published-version: ${{ steps.base.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
+
+      - name: pytorch parent
+        id: pytorch-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: pytorch
+          env: ${{ steps.base.outputs.env }}
+          published-version: ${{ steps.pytorch.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
+
+      - name: pytorch-cluster parent
+        id: cluster-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: pytorch-cluster
+          env: ${{ steps.base.outputs.env }}
+          published-version: ${{ steps.cluster.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
 
   build-base:
     needs: versions
@@ -106,7 +163,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/base
 
       - name: Build base images
@@ -116,6 +173,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.base }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -135,6 +193,7 @@ jobs:
         uses: ./.github/actions/sbom
         with:
           ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-base
 
       - name: Grype scan
         uses: ./.github/actions/grype
@@ -160,16 +219,6 @@ jobs:
           image-digests: ${{ steps.refs.outputs.digests }}
           sbom-index: ${{ steps.sbom.outputs.index }}
 
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: sbom-base
-          path: |
-            ${{ steps.sbom.outputs.dir }}/*.spdx.json
-            ${{ steps.sbom.outputs.dir }}/*.cdx.json
-          retention-days: 14
-          if-no-files-found: error
-
       - name: Save refs artifact
         shell: bash
         env:
@@ -179,7 +228,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/base-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: base-refs
           path: /tmp/base-refs/refs.json
@@ -188,7 +237,7 @@ jobs:
 
   test-base:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-base
+    needs: [versions, build-base]
     if: "!cancelled() && needs.build-base.result == 'success'"
     steps:
       - name: Checkout
@@ -197,7 +246,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: base-refs
           path: /tmp/base-refs
@@ -220,6 +269,7 @@ jobs:
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           test-jupyter: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"
@@ -251,6 +301,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -262,7 +321,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/autoresearch-${{ matrix.cuda }}
 
       # BuildKit's own pull of multi-GB base layers from Docker Hub
@@ -273,9 +332,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/base to pull.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -289,9 +345,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.autoresearch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          # Which published runpod/base to build FROM: the in-run base tag
-          # when base is part of this build, else the last released base.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -316,10 +370,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-autoresearch.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -333,10 +395,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -347,7 +410,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/autoresearch-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs/refs.json
@@ -356,7 +419,7 @@ jobs:
 
   test-autoresearch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-autoresearch
+    needs: [versions, build-autoresearch]
     if: "!cancelled() && needs.build-autoresearch.result == 'success'"
     strategy:
       fail-fast: false
@@ -369,7 +432,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs for ${{ matrix.cuda }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs
@@ -392,6 +455,7 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           test-jupyter: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"
@@ -413,6 +477,201 @@ jobs:
             PRO 6000 MIG *
             RTX 2000 Ada
 
+  build-burn:
+    needs: [versions, build-base]
+    # Skipped base means base was not planned, so we layer on the published
+    # one; failed base means we must not build on it at all.
+    if: >-
+      !cancelled() && contains(fromJSON(inputs.families), 'burn')
+      && needs.versions.outputs.burn-build == 'true'
+      && (needs.build-base.result == 'success'
+          || needs.build-base.result == 'skipped')
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      id-token: write
+    # Each image is a CUDA-devel base plus the Rust toolchain and a compiled
+    # Burn starter project. Shard by CUDA version like autoresearch, so one
+    # runner never holds the whole matrix.
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker
+        uses: ./.github/actions/docker-setup
+        id: setup
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          cache-key: ${{ github.repository }}/burn-${{ matrix.cuda }}
+
+      # BuildKit's own pull of multi-GB base layers from Docker Hub
+      # intermittently fails with "unexpected commit digest" on a different
+      # layer each time. Fetch the bases instead (digests verified,
+      # retries) and let bake read them from disk via the override file.
+      - name: Pre-pull base images (${{ matrix.cuda }})
+        id: prepull
+        uses: ./.github/actions/prepull-base-images
+        timeout-minutes: 90
+        with:
+          bake-files: |
+            official-templates/shared/versions.hcl
+            official-templates/burn/docker-bake.hcl
+          targets: ${{ matrix.cuda }}
+
+      - name: Build burn images (${{ matrix.cuda }})
+        id: build
+        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        env:
+          BUILDX_BAKE_ENTITLEMENTS_FS: 0
+          RELEASE_VERSION: ${{ needs.versions.outputs.burn }}
+          RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+        with:
+          source: .
+          files: |
+            official-templates/shared/versions.hcl
+            official-templates/burn/docker-bake.hcl
+            ${{ steps.prepull.outputs.bake-file }}
+          targets: ${{ matrix.cuda }}
+          load: true
+          push: false
+
+      # The layout is only needed by bake; free the disk before scan/push.
+      - name: Remove pre-pulled base images
+        if: always() && steps.prepull.outputs.layout != ''
+        shell: bash
+        env:
+          LAYOUT: ${{ steps.prepull.outputs.layout }}
+        run: rm -rf "${LAYOUT}"
+
+      - name: Extract image refs
+        id: refs
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build.outputs.metadata }}
+
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-burn.${{ matrix.cuda }}
+
+      - name: Grype scan
+        uses: ./.github/actions/grype
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
+          fail-on-findings: "true"
+
+      - name: Push images
+        uses: ./.github/actions/docker-push
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v2.6.0
+
+      - name: Cosign sign, attest SBOM and verify
+        uses: ./.github/actions/cosign
+        with:
+          image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
+
+      - name: Save refs artifact
+        shell: bash
+        env:
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          mkdir -p /tmp/burn-refs
+          printf '%s\n' "$REFS" > /tmp/burn-refs/refs.json
+
+      - name: Upload refs artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: burn-refs-${{ matrix.cuda }}
+          path: /tmp/burn-refs/refs.json
+          retention-days: 3
+          if-no-files-found: error
+
+  test-burn:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: [versions, build-burn]
+    if: "!cancelled() && needs.build-burn.result == 'success'"
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cuda1281, cuda1290, cuda1300, cuda1320]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Download refs for ${{ matrix.cuda }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: burn-refs-${{ matrix.cuda }}
+          path: /tmp/burn-refs
+
+      - name: Read refs
+        id: refs
+        shell: bash
+        run: |
+          REFS=$(cat /tmp/burn-refs/refs.json)
+          {
+            echo "refs<<EOF"
+            echo "$REFS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (${{ matrix.cuda }})
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: gpu
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
+          test-jupyter: true
+          test-ca-certs: true
+          min-ca-certs-version: "20260816"
+          test-python-tls: true
+          # Run the prebuilt starter: a matmul on the CUDA and Vulkan
+          # backends, each checked against the CPU.
+          test-burn: true
+          # A 1024x1024 matmul needs well under 1 GB; the floor only keeps out
+          # tiny slices. A low one widens the GPU pool and shortens the queue.
+          min-vram-gb: "8"
+          create-timeout: "1200"
+          # Blackwell stays in: Burn's CUDA backend JIT-compiles through
+          # nvrtc and every CUDA column here (12.8+) targets sm_100/sm_120.
+          # MIG slices are out because they do not support graphics APIs, so
+          # the Vulkan backend cannot run there. Match every MIG slice
+          # ('B300 MIG 34GB', 'PRO 6000 MIG ...'), not one card's.
+          exclude-instances: |
+            * MIG *
+            RTX 2000 Ada
+
   build-filebrowser:
     needs: [versions, build-base]
     # Skipped base means base was not planned, so we layer on the published
@@ -426,6 +685,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
     # Ubuntu 24.04 only: a CPU image plus one CUDA image (FileBrowser does not
     # use the GPU; the CUDA variant is for pods that want GPU tooling alongside).
     steps:
@@ -439,7 +707,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/filebrowser
 
       # BuildKit's own pull of multi-GB base layers from Docker Hub
@@ -450,9 +718,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/base to pull.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -465,9 +730,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.filebrowser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          # Which published runpod/base to build FROM: the in-run base tag
-          # when base is part of this build, else the last released base.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -491,10 +754,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-filebrowser
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -508,10 +779,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -522,7 +794,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/filebrowser-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: filebrowser-refs
           path: /tmp/filebrowser-refs/refs.json
@@ -531,7 +803,7 @@ jobs:
 
   test-filebrowser:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-filebrowser
+    needs: [versions, build-filebrowser]
     if: "!cancelled() && needs.build-filebrowser.result == 'success'"
     steps:
       - name: Checkout
@@ -540,7 +812,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: filebrowser-refs
           path: /tmp/filebrowser-refs
@@ -565,6 +837,7 @@ jobs:
           profile: base
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           test-jupyter: true
           test-ca-certs: true
           min-ca-certs-version: "20260816"
@@ -597,6 +870,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    # Which published runpod/base this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      BASE_VERSION: ${{ needs.build-base.result == 'success' && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-parent }}
+      BASE_REPO_SUFFIX: ${{ needs.build-base.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.base-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -608,7 +890,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           max-parallelism: 6
           cache-key: ${{ github.repository }}/pytorch-${{ matrix.cuda }}-v2
 
@@ -620,9 +902,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/base to pull.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -636,9 +915,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.pytorch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          # Which published runpod/base to build FROM: the in-run base tag
-          # when base is part of this build, else the last released base.
-          BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'base') && format('{0}{1}', needs.versions.outputs.base, needs.versions.outputs.suffix) || needs.versions.outputs.base-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -663,10 +940,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-pytorch.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -680,10 +965,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       # Persist this shard's refs so the corresponding test-pytorch matrix
       # entry can pick them up. Artifact name is unique per shard, so the
@@ -706,7 +992,7 @@ jobs:
 
   test-pytorch:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-pytorch
+    needs: [versions, build-pytorch]
     if: "!cancelled() && needs.build-pytorch.result == 'success'"
     strategy:
       fail-fast: false
@@ -742,6 +1028,7 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           budget-usd-per-hour: "3.0"
           test-jupyter: true
           test-torch-packages: true
@@ -751,8 +1038,13 @@ jobs:
           test-pip-check: true
           # Inherited from the CUDA base on 22.04: python3-gi ships without
           # python3-gi-cairo, and nothing in our images uses it.
+          # The torch 2.15 images install the `nixl` meta package with only its
+          # CUDA 13 backend (--no-deps): the meta package requires nixl-cu12
+          # too, unconditionally, but it picks the backend that matches
+          # torch's CUDA major at import time (see pytorch/Dockerfile).
           pip-check-allow: |
             pygobject 3.42.1 requires pycairo
+            nixl 1.5.2 requires nixl-cu12, which is not installed
           exclude-instances: |
             RTX 2000 Ada
           # Blackwell is blocked only for the images that can't run there:
@@ -798,12 +1090,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    # Which published runpod/pytorch this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
     env:
-      # Which published runpod/pytorch to build FROM: the in-run pytorch
-      # tag when pytorch is part of this build, else the last released
-      # pytorch — the only one that exists for a cluster-only change.
-      # Job-level so the pre-pull and the build resolve the same refs.
-      PYTORCH_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch') && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-published }}
+      PYTORCH_BASE_VERSION: ${{ needs.build-pytorch.result == 'success' && format('{0}{1}', needs.versions.outputs.pytorch, needs.versions.outputs.suffix) || needs.versions.outputs.pytorch-parent }}
+      PYTORCH_BASE_REPO_SUFFIX: ${{ needs.build-pytorch.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.pytorch-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -815,7 +1110,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/cluster-${{ matrix.cuda }}-v2
 
       # BuildKit's own pull of multi-GB base layers from Docker Hub
@@ -840,6 +1135,7 @@ jobs:
           # The cluster's OWN tag: its version + suffix (RC/-dev/release).
           RELEASE_VERSION: ${{ needs.versions.outputs.cluster }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -864,10 +1160,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-pytorch-cluster.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -880,10 +1184,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -903,13 +1208,32 @@ jobs:
 
   test-pytorch-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-pytorch-cluster
+    needs: [versions, build-pytorch-cluster]
     if: "!cancelled() && needs.build-pytorch-cluster.result == 'success'"
     strategy:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+        mode: [pod]
+        include:
+          - cuda: cu1281
+            mode: cluster
     steps:
+      - name: Check prod credentials
+        if: matrix.mode == 'cluster'
+        id: creds
+        shell: bash
+        env:
+          KEY: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          SSH: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${KEY}" && -n "${SSH}" ]]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Instant Cluster smoke test skipped: set TESTING_RUNPOD_API_KEY and TESTING_RUNPOD_SSH_PRIVATE_KEY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -933,12 +1257,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Smoke test (${{ matrix.cuda }})
+        if: matrix.mode == 'pod'
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           budget-usd-per-hour: "3.0"
           test-torch-packages: true
           test-ca-certs: true
@@ -955,6 +1281,39 @@ jobs:
             *-cu1281-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
             *-cu1290-torch21[23]*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
             *-cu1290-torch280-*: B200*, B300*, RTX 5090, RTX PRO *, PRO 6000 MIG *
+
+      - name: Instant Cluster smoke test
+        if: matrix.mode == 'cluster' && steps.creds.outputs.ok == 'true'
+        env:
+          # The harness refuses cluster groups on prod unless this is set, so a
+          # local run can't create a prod cluster by accident.
+          ALLOW_PROD_CLUSTERS: "1"
+          # No cluster capacity -> test the image on a single pod instead.
+          CLUSTER_POD_FALLBACK: "1"
+          CLUSTER_MAX_NODE_PRICE: "25"
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: cluster
+          runpod-env: prod
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
+          cluster-nodes: "2"
+          # The image ships the Slurm that slurm-init.sh runs, and only a
+          # SLURM cluster starts it; TRAINING is the fallback when there is
+          # no SLURM capacity (the Slurm check is then skipped, not passed).
+          cluster-types: "SLURM,TRAINING"
+          # Cluster capacity comes and goes; don't block a release on it.
+          on-skip: "warn"
+          # 5 retries 300 s apart (~25 min of trying for a cluster, nothing
+          # billed), then the single-pod fallback.
+          skip-retries: "5"
+          skip-retry-delay: "300"
+          skip-retry-backoff: "fixed"
+          # GB10 nodes are arm64; the image is amd64-only.
+          exclude-instances: |
+            *GB10*
 
   # ray-cluster layers Ray onto a PUBLISHED runpod/pytorch-cluster, so it runs
   # after build-pytorch-cluster in the same run, with the same base-selection
@@ -977,6 +1336,15 @@ jobs:
       fail-fast: false
       matrix:
         cuda: [cu1281, cu1290, cu1300, cu1320]
+    # Which published runpod/pytorch-cluster this job builds FROM: the in-run
+    # tag when that family was built in this run, else the last released
+    # (public) one. Keyed on the build's result, not the plan: a planned
+    # family with nothing releasable is skipped and has no in-run tag.
+    # Job-level on purpose: the pre-pull step resolves the same bake
+    # files, and a second copy would be free to drift from this one.
+    env:
+      CLUSTER_BASE_VERSION: ${{ needs.build-pytorch-cluster.result == 'success' && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-parent }}
+      CLUSTER_BASE_REPO_SUFFIX: ${{ needs.build-pytorch-cluster.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.cluster-parent-suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -988,7 +1356,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/ray-cluster-${{ matrix.cuda }}
 
       # BuildKit's own pull of multi-GB base layers from Docker Hub
@@ -999,9 +1367,6 @@ jobs:
         id: prepull
         uses: ./.github/actions/prepull-base-images
         timeout-minutes: 90
-        env:
-          # Must match the bake step: it decides which runpod/pytorch-cluster to pull.
-          CLUSTER_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch-cluster') && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
         with:
           bake-files: |
             official-templates/shared/versions.hcl
@@ -1016,10 +1381,7 @@ jobs:
           # The Ray image's OWN tag: its version + suffix (RC/-dev/release).
           RELEASE_VERSION: ${{ needs.versions.outputs.ray-cluster }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          # Which published runpod/pytorch-cluster to build FROM: the in-run
-          # cluster tag when pytorch-cluster is part of this build, else the
-          # last released cluster.
-          CLUSTER_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'pytorch-cluster') && format('{0}{1}', needs.versions.outputs.cluster, needs.versions.outputs.suffix) || needs.versions.outputs.cluster-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -1045,9 +1407,9 @@ jobs:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
       # CPU-only: runs the loaded images under plain Docker with fixture
-      # topology env and checks what runpod/host depends on (ports, label,
-      # 2-node formation). Gates the push. Also captures the /nodes and
-      # /metrics payloads the host pins as test fixtures.
+      # topology env and checks the image contract (ports, label, 2-node
+      # formation). Gates the push. Also captures the /nodes and /metrics
+      # payloads as fixtures.
       - name: Image contract test
         shell: bash
         env:
@@ -1066,10 +1428,18 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-ray-cluster.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -1082,10 +1452,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -1109,7 +1480,7 @@ jobs:
   # covered by the contract test above.
   test-ray-cluster:
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    needs: build-ray-cluster
+    needs: [versions, build-ray-cluster]
     if: "!cancelled() && needs.build-ray-cluster.result == 'success'"
     strategy:
       fail-fast: false
@@ -1145,8 +1516,12 @@ jobs:
           profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          registry-auth-name: ${{ needs.versions.outputs.env == 'dev' && vars.TESTING_REGISTRY_AUTH_NAME || '' }}
           test-ray: true
           test-pip-check: true
+          # As test-pytorch: the torch 2.15 base ships only nixl's CUDA 13 backend.
+          pip-check-allow: |
+            nixl 1.5.2 requires nixl-cu12, which is not installed
           test-torch-packages: true
           test-jupyter: true
           test-ca-certs: true

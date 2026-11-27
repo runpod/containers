@@ -1,15 +1,27 @@
 name: Smoke test
 description: |
   Generate a test manifest from bake image refs, then smoke-test each image
-  on a real RunPod pod via tests/test_images.py:
+  on a real Runpod pod via tests/test_images.py:
     - boots the image on the cheapest available eligible instance,
     - runs the per-group CUDA / GPU functional check over SSH,
     - terminates the pod (always — even on Ctrl-C / job timeout).
 
 inputs:
   image-refs:
-    description: "JSON array of image refs to smoke-test"
+    description: |
+      JSON array of image refs to smoke-test. Ignored when `manifest` is set
+      (pass "[]").
     required: true
+  manifest:
+    description: |
+      Path to a ready-made test manifest. Skips manifest generation, so
+      `profile`, `image-refs` and every selection / test-* input that feeds
+      the generator are ignored — the manifest says it all. For callers
+      that need more than one group per run, e.g. the release GPU sweep
+      (.github/scripts/gpu_sweep.py), which gives each family its own floor.
+      Empty (default) generates the manifest from the inputs.
+    required: false
+    default: ""
   profile:
     description: |
       Manifest grouping strategy passed to generate_test_manifest.py.
@@ -19,17 +31,47 @@ inputs:
         gpu   Put every ref into a single base_gpu group with the
               budget / vRAM / manufacturer filter applied. Use for every
               pure-GPU workflow (autoresearch, pytorch, nvidia-pytorch, rocm).
+        cluster
+              One Instant Cluster per image (node-0 head + workers) instead
+              of a pod: SSH, Jupyter and CUDA on every node, the monitoring
+              stack and Grafana on node-0. For runpod/pytorch-cluster. Needs
+              runpod-env: dev (prod clusters are refused).
       The functional check (nvidia-smi / torch.cuda / rocm-smi / skip) is
       always derived from the IMAGE REF, never from the profile, so the
       same `gpu` profile works regardless of what the image actually is.
     required: true
+  runpod-env:
+    description: |
+      RunPod environment to provision in: 'prod' (default) or 'dev'. Picks
+      the API and proxy hosts; the API key and the registered SSH key must
+      belong to the same environment.
+    required: false
+    default: "prod"
+  cluster-nodes:
+    description: "Pods per Instant Cluster (profile: cluster)"
+    required: false
+    default: "2"
+  cluster-gpus-per-node:
+    description: |
+      GPUs per cluster node (profile: cluster). Empty picks the smallest
+      node size each GPU type offers.
+    required: false
+    default: ""
+  cluster-types:
+    description: |
+      createCluster types to try, in order, for each GPU (profile: cluster),
+      csv: TRAINING, SLURM, APPLICATION, RAY. Set it to the type the image
+      is built for, e.g. "SLURM,TRAINING" for runpod/pytorch-cluster. Empty
+      keeps the harness default (TRAINING,SLURM).
+    required: false
+    default: ""
   runpod-api-key:
-    description: "RunPod API key (pod-management permissions required)"
+    description: "Runpod API key (pod-management permissions required)"
     required: true
   ssh-private-key:
     description: |
       PEM-formatted private key matching a public SSH key registered on the
-      RunPod account this API key belongs to. test_images.py uses it to ssh
+      Runpod account this API key belongs to. test_images.py uses it to ssh
       into the pod for the GPU/CUDA functional check and log capture.
     required: true
   budget-usd-per-hour:
@@ -158,6 +200,13 @@ inputs:
       For runpod/autoresearch only.
     required: false
     default: "false"
+  test-burn:
+    description: |
+      'true' to emit `test_burn: true`: run the Burn starter's matmul on the
+      CUDA and Vulkan backends and compare it with the CPU. For runpod/burn
+      only.
+    required: false
+    default: "false"
   test-dcgm-exporter:
     description: |
       'true' to emit `test_dcgm_exporter: true`: scrape the in-pod
@@ -181,6 +230,14 @@ inputs:
     description: |
       Emit `test_comfyui_functional: true` for the end-to-end ComfyUI
       generation check (model provisioning, workflow execution, PNG validation).
+    required: false
+    default: "false"
+  test-vllm:
+    description: |
+      Emit `test_vllm: true` for runpod/vllm-openai. Boots the Pod with
+      VLLM_API_KEY and a small model as the start command, exposes :8000 as
+      8000/http, then through the public proxy checks /health 200, the key
+      required on /v1/models, /invocations and /tokenize, and one completion.
     required: false
     default: "false"
   save-comfyui-images:
@@ -324,7 +381,7 @@ inputs:
   on-skip:
     description: |
       What to do when at least one image ends up SKIPped (the smoke
-      test never actually ran on it — RunPod had no capacity on every
+      test never actually ran on it — Runpod had no capacity on every
       candidate, or every candidate landed on a stuck host). Real
       FAILs (broken container, CUDA check failed) are always fatal
       regardless of this knob.
@@ -354,12 +411,18 @@ inputs:
   skip-retry-delay:
     description: |
       Base wait in seconds before a retry round; round N waits N times this
-      (default 300 → 5, 10, 15, 20, 25 min) to give RunPod capacity time to free up.
+      (default 300 → 5, 10, 15, 20, 25 min) to give Runpod capacity time to free up.
     required: false
     default: "300"
+  skip-retry-backoff:
+    description: |
+      'linear' (default): retry round N waits N x skip-retry-delay. 'fixed':
+      every round waits skip-retry-delay.
+    required: false
+    default: "linear"
   registry-auth-name:
     description: |
-      Display name of the registry credential in the RunPod account
+      Display name of the registry credential in the Runpod account
       (the `name` shown by `GET /v2/registries`) to attach to every pod.
 
       Empty (default) pulls anonymously — fine for our public images,
@@ -373,7 +436,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Configure RunPod credentials
+    - name: Configure Runpod credentials
       shell: bash
       env:
         # tests/test_images.py reads RUNPOD_API_KEY out of the env, so the
@@ -454,7 +517,24 @@ runs:
 
         echo "RUNPOD_SSH_KEY=${KEY_PATH}" >> "${GITHUB_ENV}"
 
+    - name: Use provided manifest
+      if: ${{ inputs.manifest != '' }}
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+      run: |
+        set -euo pipefail
+        if [[ ! -s "${MANIFEST}" ]]; then
+          echo "::error::manifest '${MANIFEST}' does not exist or is empty"
+          exit 1
+        fi
+        echo "MANIFEST_PATH=$(realpath "${MANIFEST}")" >> "${GITHUB_ENV}"
+        echo "::group::test manifest"
+        cat "${MANIFEST}"
+        echo "::endgroup::"
+
     - name: Generate test manifest
+      if: ${{ inputs.manifest == '' }}
       shell: bash
       env:
         REFS: ${{ inputs.image-refs }}
@@ -467,6 +547,7 @@ runs:
         TEST_PORTS: ${{ inputs.test-ports }}
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
+        TEST_VLLM: ${{ inputs.test-vllm }}
         TEST_PIP_CHECK: ${{ inputs.test-pip-check }}
         PIP_CHECK_ALLOW: ${{ inputs.pip-check-allow }}
         TEST_CA_CERTS: ${{ inputs.test-ca-certs }}
@@ -478,6 +559,7 @@ runs:
         TEST_VIRTUALENV: ${{ inputs.test-virtualenv }}
         TEST_PYTHON_PATH: ${{ inputs.test-python-path }}
         TEST_AUTORESEARCH: ${{ inputs.test-autoresearch }}
+        TEST_BURN: ${{ inputs.test-burn }}
         TEST_DCGM_EXPORTER: ${{ inputs.test-dcgm-exporter }}
         TEST_RAY: ${{ inputs.test-ray }}
         CHECK_ALL_GPU: ${{ inputs.check-all-gpu }}
@@ -486,6 +568,9 @@ runs:
         EXCLUDE_INSTANCES_FOR: ${{ inputs.exclude-instances-for }}
         MIN_CUDA_VERSION: ${{ inputs.min-cuda-version }}
         CUDA_VERSIONS: ${{ inputs.cuda-versions }}
+        CLUSTER_NODES: ${{ inputs.cluster-nodes }}
+        CLUSTER_GPUS_PER_NODE: ${{ inputs.cluster-gpus-per-node }}
+        CLUSTER_TYPES: ${{ inputs.cluster-types }}
       run: |
         set -euo pipefail
         # Only the literal string "true" turns the flag on; anything else
@@ -503,6 +588,9 @@ runs:
         fi
         if [[ "${TEST_COMFYUI_FUNCTIONAL,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-comfyui-functional)
+        fi
+        if [[ "${TEST_VLLM,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-vllm)
         fi
         if [[ "${CHECK_ALL_GPU,,}" == "true" ]]; then
           EXTRA_ARGS+=(--check-all-gpu)
@@ -533,6 +621,18 @@ runs:
         fi
         if [[ "${TEST_AUTORESEARCH,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-autoresearch)
+        fi
+        if [[ "${PROFILE}" == "cluster" ]]; then
+          EXTRA_ARGS+=(--cluster-nodes "${CLUSTER_NODES:-2}")
+          if [[ -n "${CLUSTER_GPUS_PER_NODE}" ]]; then
+            EXTRA_ARGS+=(--cluster-gpus-per-node "${CLUSTER_GPUS_PER_NODE}")
+          fi
+          if [[ -n "${CLUSTER_TYPES}" ]]; then
+            EXTRA_ARGS+=(--cluster-types "${CLUSTER_TYPES}")
+          fi
+        fi
+        if [[ "${TEST_BURN,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-burn)
         fi
         if [[ "${TEST_DCGM_EXPORTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-dcgm-exporter)
@@ -631,8 +731,11 @@ runs:
       shell: bash
       env:
         # RUNPOD_API_KEY and RUNPOD_SSH_KEY come in via $GITHUB_ENV from the
-        # 'Configure RunPod credentials' and 'Write SSH private key' steps.
+        # 'Configure Runpod credentials' and 'Write SSH private key' steps.
         MAX_PARALLEL: ${{ inputs.max-parallel }}
+        # Validated by test_images.py (prod / dev); cluster groups refuse
+        # anything but dev.
+        RUNPOD_ENV: ${{ inputs.runpod-env }}
         # Unknown tier names are dropped by config._parse_cloud_types, which
         # falls back to SECURE, so the raw input is safe to propagate.
         CLOUD_TYPE: ${{ inputs.cloud-type }}
@@ -643,6 +746,7 @@ runs:
         # the exit code — replaces the manual "re-run failed jobs".
         SKIP_RETRIES: ${{ inputs.skip-retries }}
         SKIP_RETRY_DELAY: ${{ inputs.skip-retry-delay }}
+        SKIP_RETRY_BACKOFF: ${{ inputs.skip-retry-backoff }}
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
@@ -666,7 +770,7 @@ runs:
     # want to diff runs, passing a distinct results-artifact-name per job.
     - name: Upload results JSON
       if: ${{ always() && inputs.upload-results-json == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.results-artifact-name }}
         path: ${{ runner.temp }}/smoke-results/results.json
@@ -675,7 +779,7 @@ runs:
 
     - name: Upload generated ComfyUI images
       if: ${{ always() && inputs.save-comfyui-images == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.comfyui-images-artifact-name }}
         path: ${{ runner.temp }}/comfy-out

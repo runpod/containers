@@ -6,6 +6,17 @@ This repository contains the Dockerfiles for the Runpod containers used for our 
 **For AI agents:** setup instructions for the Runpod skills and MCP server are at https://agents.runpod.io/
 <!-- runpod-agent-setup:end -->
 
+## Contributing
+
+Work goes `feature → develop → main`. **Open your pull request against
+`develop`**, not `main`: a PR into `main` is rejected unless it comes from
+`develop` or a `hotfix/*` branch, because merging one releases to the public
+image repos. The PR title must be a Conventional Commit (`feat:`, `fix:`, …),
+since that is what drives the version.
+
+[docs/RELEASE.md](docs/RELEASE.md) has the full flow, the hotfix route and
+what a new template has to wire up.
+
 ## Container Requirements
 
 ### Dependencies

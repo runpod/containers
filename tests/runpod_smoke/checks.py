@@ -14,6 +14,7 @@ group name: new groups added in the future won't silently skip the check.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -125,12 +126,117 @@ def _strip_cr(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+# RunPod's SSH proxy only hands out an interactive shell: a command given on
+# the ssh command line is ignored and the session sits at a prompt until it
+# is killed. So on a PTY endpoint the command is *typed* into that shell
+# instead, base64-encoded so no quoting or heredoc can be mangled by the
+# line editor, between two markers that carry the exit status back. Each
+# marker is written split by quotes, so the terminal's echo of what we typed
+# can never be mistaken for the marker itself.
+_PTY_BEGIN = "__SMOKE_BEGIN__"
+_PTY_RC_RE = re.compile(r"^__SMOKE_RC=(\d+)__$", re.MULTILINE)
+
+
+def _pty_script(remote_cmd: str) -> str:
+    """The keystrokes that run `remote_cmd` in an interactive shell."""
+    b64 = base64.b64encode(remote_cmd.encode()).decode()
+    return (
+        f'echo "__SMOKE_""BEGIN__"; '
+        f'bash -c "$(echo {b64} | base64 -d)" </dev/null 2>&1; '
+        f'echo "__SMOKE_""RC=$?__"; exit\n'
+    )
+
+
+def _pty_result(stdout: str) -> tuple[Optional[int], str]:
+    """(exit status, output) from a PTY session; status is None when the
+    command never finished (no RC marker), output is what it printed."""
+    text = _strip_cr(stdout)
+    begin = text.rfind(_PTY_BEGIN + "\n")
+    body = text[begin + len(_PTY_BEGIN) + 1:] if begin >= 0 else text
+    m = _PTY_RC_RE.search(body)
+    if m is None:
+        return None, body
+    return int(m.group(1)), body[:m.start()]
+
+
+def _run_pty(argv: list[str], keys: str, timeout: float) -> tuple[int, str, str]:
+    """Type `keys` into an interactive session and wait for it to end.
+
+    stdin stays open until the session closes itself (our script ends with
+    `exit`): an EOF can reach the remote terminal as ^D, and an interactive
+    shell that sees ^D before it has read the line logs out without running
+    it. Raises TimeoutExpired / FileNotFoundError like subprocess.run.
+    """
+    proc = subprocess.Popen(
+        argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+    )
+    out: list[str] = []
+    err: list[str] = []
+    readers = [
+        threading.Thread(target=lambda: out.append(proc.stdout.read()), daemon=True),
+        threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True),
+    ]
+    for t in readers:
+        t.start()
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(keys)
+        proc.stdin.flush()
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    except BrokenPipeError:
+        proc.wait(timeout=timeout)   # the session ended before reading
+    finally:
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+    for t in readers:
+        t.join(timeout=5)
+    return proc.returncode, "".join(out), "".join(err)
+
+
+def run_ssh(
+    endpoint: SshEndpoint, remote_cmd: str, timeout: float,
+) -> subprocess.CompletedProcess:
+    """Run `remote_cmd` on the pod; same contract as `subprocess.run`
+    (raises TimeoutExpired / FileNotFoundError), with stdout already CR-free.
+
+    stdin is never inherited: an `ssh -tt` holding the caller's terminal
+    switches it to raw mode and, when killed by the timeout, leaves it there.
+    """
+    prefix = _ssh_command_prefix(endpoint)
+    if not endpoint.pty:
+        r = subprocess.run(
+            [*prefix, remote_cmd], stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return subprocess.CompletedProcess(
+            r.args, r.returncode, _strip_cr(r.stdout), r.stderr,
+        )
+    ssh_rc, stdout, stderr = _run_pty(prefix, _pty_script(remote_cmd), timeout)
+    rc, out = _pty_result(stdout)
+    if rc is None:
+        # The session ended without the command finishing: a refused or
+        # dropped connection. Keep ssh's own status and words for the log,
+        # minus the terminal's echo of what we typed.
+        said = "\n".join(
+            line for line in (stderr or out).splitlines()
+            if "__SMOKE_" not in line
+        )
+        return subprocess.CompletedProcess(prefix, ssh_rc or 255, "", said.strip())
+    return subprocess.CompletedProcess(prefix, rc, out, stderr if rc else "")
+
+
 def ssh_probe(endpoint: SshEndpoint, timeout: int = 8) -> tuple[bool, str]:
     """One-shot SSH connection attempt. Returns (success, stderr_excerpt).
     Used as the real container-readiness signal."""
-    cmd = [*_ssh_command_prefix(endpoint), "echo", "ready"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = run_ssh(endpoint, "echo ready", timeout)
     except subprocess.TimeoutExpired:
         return False, "ssh probe timed out"
     except FileNotFoundError:
@@ -173,6 +279,11 @@ _TORCH_TAG_RE = re.compile(
     re.IGNORECASE,
 )
 
+# runpod/comfyui variants that bake a prebuilt SageAttention wheel (see the
+# template's docker-bake.hcl). A new CUDA variant with a wheel belongs here too,
+# so a missing install fails instead of passing unnoticed.
+_SAGEATTENTION_IMAGE_RE = re.compile(r"\bcomfyui:\S*-cuda(?:12\.8|13\.0|13\.2)$")
+
 # Image-tag markers for AMD ROCm runtimes. Matched BEFORE the torch regex
 # so that ROCm-pytorch images (which inherit from rocm/pytorch:* and keep
 # torch in a conda env not visible to the system `python`) take the
@@ -211,7 +322,68 @@ _TORCH_PACKAGES_PROGRAM = (
     "    assert samples.sample_rate == 16000, f'decoded at {samples.sample_rate} Hz'\n"
     "    assert samples.data.shape == (1, 16000), f'decoded {tuple(samples.data.shape)}'\n"
     "    print(f'torchcodec={torchcodec.__version__} wav round trip ok')\n"
+    # torch 2.15's NIXL transport imports the optional `nixl` package, which
+    # the images ship from 2.15 on. Creating an agent loads the CUDA backend
+    # wheel and its UCX plugin, which an import alone does not.
+    "if (major, minor) < (2, 15):\n"
+    "    print(f'nixl: not shipped for torch {torch.__version__}')\n"
+    "else:\n"
+    "    import importlib.metadata, nixl\n"
+    "    from torch.distributed import _transport\n"
+    "    assert 'nixl' in _transport.available_transports(), _transport.available_transports()\n"
+    "    agent = nixl.nixl_agent('smoke')\n"
+    "    assert 'UCX' in agent.backends, f'nixl backends: {agent.backends}'\n"
+    "    print(f'nixl={importlib.metadata.version(\"nixl\")} ({nixl.nixl_agent.__module__}) UCX agent ok')\n"
 )
+
+
+# Run on the ComfyUI images that ship SageAttention. The import is required on
+# every GPU — it is what breaks when the wheel and torch drift apart. The kernel
+# only runs where the wheel has one; elsewhere ComfyUI falls back by design.
+# Its quantisation step is a Triton kernel compiled on first call, hence the
+# longer timeout in run_cuda_check.
+_SAGEATTENTION_PROGRAM = (
+    "import torch, torch.nn.functional as F\n"
+    "import importlib.metadata, sageattention\n"
+    "from sageattention import sageattn\n"
+    "print(f'sageattention={importlib.metadata.version(\"sageattention\")}')\n"
+    "cap = torch.cuda.get_device_capability(0)\n"
+    "if cap not in {(8, 0), (8, 6), (8, 9), (9, 0), (12, 0)}:\n"
+    "    print(f'sageattn: no kernel for compute {cap[0]}.{cap[1]}, import only')\n"
+    "else:\n"
+    "    torch.manual_seed(0)\n"
+    "    q, k, v = (torch.randn(1, 8, 512, 64, device='cuda', dtype=torch.float16)\n"
+    "               for _ in range(3))\n"
+    "    out = sageattn(q, k, v, tensor_layout='HND', is_causal=False)\n"
+    "    ref = F.scaled_dot_product_attention(q, k, v)\n"
+    "    cos = F.cosine_similarity(out.flatten().float(), ref.flatten().float(), dim=0).item()\n"
+    "    assert cos > 0.99, f'sageattn vs SDPA cosine {cos:.4f}'\n"
+    "    print(f'sageattn ok (cosine vs SDPA {cos:.4f})')\n"
+)
+
+
+# Shared by the torch-image and ComfyUI paths of cuda_check_command.
+_TORCH_PROGRAM = (
+    "import sys, torch\n"
+    "assert torch.cuda.is_available(), 'torch.cuda.is_available() returned False'\n"
+    "n = torch.cuda.device_count()\n"
+    "assert n > 0, 'torch.cuda.device_count() == 0'\n"
+    "name = torch.cuda.get_device_name(0)\n"
+    "cap = torch.cuda.get_device_capability(0)\n"
+    "print(f'torch={torch.__version__} cuda={torch.version.cuda} '\n"
+    "      f'gpus={n} dev0={name!r} compute={cap[0]}.{cap[1]}')\n"
+    "# Tiny tensor-on-GPU sanity check: catches driver bugs that pass\n"
+    "# is_available() but fail on actual memory ops.\n"
+    "x = torch.ones(64, 64, device='cuda')\n"
+    "y = (x @ x).sum().item()\n"
+    "assert y == 64*64*64, f'matmul gave {y}, expected {64*64*64}'\n"
+    "print('matmul ok')\n"
+)
+
+
+def _image_ships_sageattention(image: str) -> bool:
+    """True if the image ref is a ComfyUI variant with SageAttention baked in."""
+    return bool(_SAGEATTENTION_IMAGE_RE.search(image))
 
 
 def _image_expects_gpu(image: str) -> bool:
@@ -266,6 +438,9 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
           rocm/pytorch:* where torch lives in a conda env not visible to
           the system `python`, so the torch.cuda path would falsely fail
           with ModuleNotFoundError)
+        - runpod/comfyui -cuda12.8 / -cuda13.0       -> torch.cuda check plus
+          SageAttention import, and a sageattn-vs-SDPA comparison on GPUs
+          the wheel has kernels for
         - has 'pytorch' / 'torch\\d' in ref          -> run torch.cuda check
           (covers runpod/pytorch, runpod/nvidia-pytorch — NVIDIA stack),
           plus torchvision, torchaudio and torchcodec when
@@ -293,6 +468,11 @@ def cuda_check_command(image: str, torch_packages: bool = False) -> str:
             "  echo 'hipcc not in PATH (HIP toolkit may be runtime-only)'; "
             "fi"
         )
+
+    if _image_ships_sageattention(image):
+        # ComfyUI's torch is in the system python3.12. start.sh exports PATH to
+        # SSH sessions before activating its venv, so there is no `python`.
+        return f"python3.12 - <<'PY'\n{_TORCH_PROGRAM}{_SAGEATTENTION_PROGRAM}PY"
 
     if _image_expects_torch(image):
         # Use `python` (the runpod/base symlink /usr/local/bin/python ->
@@ -353,11 +533,14 @@ def run_cuda_check(
     cmd = cuda_check_command(image, torch_packages)
     if not cmd:
         return True, "(no GPU check for this image)"
-    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
+    # First sageattn call JIT-compiles its Triton quantisation kernel.
+    timeout = 180 if _image_ships_sageattention(image) else 90
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=90)
+        # run_ssh, not a command on the ssh line: the proxy endpoint ignores
+        # that and the check would sit in an idle shell until the timeout.
+        r = run_ssh(endpoint, cmd, timeout)
     except subprocess.TimeoutExpired:
-        return False, "cuda check timed out after 90s"
+        return False, f"cuda check timed out after {timeout}s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
     combined = _strip_cr(r.stdout + r.stderr).strip()
@@ -727,6 +910,42 @@ def autoresearch_check_command(
     )
 
 
+def burn_check_command() -> str:
+    """Check what the Burn image adds on top of runpod/base, none of which the
+    pod needs to boot:
+
+    - `vulkaninfo --summary` lists an NVIDIA device, i.e. the Vulkan loader
+      finds the driver through the EGL ICD the image adds;
+    - the prebuilt starter prints `cuda: OK` and `vulkan: OK`: the same matmul
+      on each backend matches the CPU result. The output is grepped rather
+      than trusting the exit code alone, so a run that skipped a backend
+      still fails;
+    - `jupyter kernelspec list` has the evcxr `rust` kernel.
+
+    vulkaninfo and the starter run with VK_ICD_FILENAMES pinned to the EGL
+    ICD. The loader would otherwise also read the GLX ICD the toolkit mounts,
+    and on a host where that one works, a broken EGL ICD would go unnoticed.
+
+    The binary runs directly instead of through `cargo run`, so a stale build
+    fingerprint cannot turn the check into a multi-minute rebuild."""
+    return (
+        "set -eo pipefail; "
+        "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_egl_icd.json; "
+        "vulkaninfo --summary | tee /tmp/vulkaninfo.txt; "
+        "grep -qi 'deviceName.*nvidia' /tmp/vulkaninfo.txt "
+        "|| { echo 'vulkaninfo lists no NVIDIA device' >&2; exit 1; }; "
+        "/opt/burn-starter/target/release/burn-starter | tee /tmp/burn.txt; "
+        "grep -q '^cuda: OK' /tmp/burn.txt "
+        "|| { echo 'no cuda: OK from the starter' >&2; exit 1; }; "
+        "grep -q '^vulkan: OK' /tmp/burn.txt "
+        "|| { echo 'no vulkan: OK from the starter' >&2; exit 1; }; "
+        "jupyter kernelspec list | tee /tmp/kernels.txt; "
+        "grep -qE '^[[:space:]]*rust[[:space:]]' /tmp/kernels.txt "
+        "|| { echo 'no rust kernel in jupyter kernelspec list' >&2; exit 1; }; "
+        "echo 'burn starter ok'"
+    )
+
+
 # Series the Grafana dashboards resolve their template variables from
 # (`label_values(<series>, hostname)` in official-templates/pytorch-cluster/
 # config/dashboards). If one of these stops carrying a `hostname` label, the
@@ -853,11 +1072,8 @@ def run_simple_check(
     endpoint: SshEndpoint, command: str, timeout: int = 180,
 ) -> tuple[bool, str]:
     """Run one opt-in hygiene check over SSH. Returns (ok, output)."""
-    ssh_cmd = [*_ssh_command_prefix(endpoint), command]
     try:
-        r = subprocess.run(
-            ssh_cmd, capture_output=True, text=True, timeout=timeout,
-        )
+        r = run_ssh(endpoint, command, timeout)
     except subprocess.TimeoutExpired:
         return False, f"check timed out after {timeout}s"
     except FileNotFoundError:
@@ -926,14 +1142,11 @@ def run_jupyter_check(endpoint: SshEndpoint) -> tuple[bool, str]:
     when jupyter probe exited non-zero (server not running / wrong token
     / API not healthy)."""
     cmd = jupyter_check_command(config.JUPYTER_WAIT_TIMEOUT)
-    ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     # SSH command has its own grace loop (JUPYTER_WAIT_TIMEOUT) plus a 10s
     # curl; pad the outer timeout to leave room for SSH handshake.
     outer_timeout = config.JUPYTER_WAIT_TIMEOUT + 30
     try:
-        r = subprocess.run(
-            ssh_cmd, capture_output=True, text=True, timeout=outer_timeout
-        )
+        r = run_ssh(endpoint, cmd, outer_timeout)
     except subprocess.TimeoutExpired:
         return False, f"jupyter check timed out after {outer_timeout}s"
     except FileNotFoundError:
@@ -986,14 +1199,15 @@ def run_port_check(
     path: str = "/",
 ) -> tuple[bool, str]:
     """Run the in-pod fallback probe with live progress and a hard timeout."""
-    ssh_cmd = [
-        *_ssh_command_prefix(endpoint),
-        port_check_command(test_port, config.PORT_WAIT_TIMEOUT, path),
-    ]
+    remote_cmd = port_check_command(test_port, config.PORT_WAIT_TIMEOUT, path)
+    ssh_cmd = _ssh_command_prefix(endpoint)
+    if not endpoint.pty:
+        ssh_cmd.append(remote_cmd)
     outer_timeout = config.PORT_WAIT_TIMEOUT + 60
     try:
         proc = subprocess.Popen(
             ssh_cmd,
+            stdin=subprocess.PIPE if endpoint.pty else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1002,6 +1216,16 @@ def run_port_check(
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
     assert proc.stdout is not None
+    if endpoint.pty:
+        # See _pty_script: the proxy ignores a command argument.
+        assert proc.stdin is not None
+        # Left open until the session ends — see _run_pty.
+        proc.stdin.write(_pty_script(remote_cmd))
+        proc.stdin.flush()
+    # On a PTY the prompt and our own typing come first; stream only what
+    # the command printed, between the markers.
+    in_body = not endpoint.pty
+    pty_rc: Optional[int] = None
 
     timed_out = [False]
 
@@ -1018,8 +1242,16 @@ def run_port_check(
     last_line = ""
     try:
         for raw in iter(proc.stdout.readline, ""):
-            line = raw.rstrip("\n")
-            if line:
+            line = raw.rstrip("\r\n")
+            if endpoint.pty:
+                if line == _PTY_BEGIN:
+                    in_body = True
+                    continue
+                m = _PTY_RC_RE.match(line) if in_body else None
+                if m:
+                    pty_rc, in_body = int(m.group(1)), False
+                    continue
+            if line and in_body:
                 if on_line:
                     on_line(line)
                 last_line = line
@@ -1034,11 +1266,18 @@ def run_port_check(
         return False, f"port {test_port} check errored: {exc}"
     finally:
         watchdog.cancel()
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
 
     if timed_out[0]:
         return False, (
             f"port {test_port} check wall-clock timeout after {outer_timeout}s"
         )
+    if endpoint.pty:
+        return pty_rc == 0, last_line
     return proc.returncode == 0, last_line
 
 
@@ -1048,10 +1287,14 @@ def _proxy_status_ok(code: int) -> bool:
 
 
 def run_port_proxy_check(
-    pod_id: str, test_port: int, path: str = "/"
+    pod_id: str, test_port: int, path: str = "/",
+    headers: Optional[dict] = None,
 ) -> tuple[bool, str]:
-    """Probe a generic HTTP service through RunPod's public proxy."""
-    url = f"https://{pod_id}-{test_port}.proxy.runpod.net{path}"
+    """Probe a generic HTTP service through Runpod's public proxy.
+
+    `headers` are added to the request, e.g. the password a service behind
+    an auth proxy needs before it answers 200."""
+    url = f"{config.proxy_url(pod_id, test_port)}{path}"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
     lines = [f"GET {url}"]
     last_error = ""
@@ -1060,7 +1303,8 @@ def run_port_proxy_check(
         attempt += 1
         try:
             req = urllib.request.Request(
-                url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+                url,
+                headers={"User-Agent": "runpod-smoke-test/1.0", **(headers or {})},
             )
             with urllib.request.urlopen(req, timeout=10) as response:
                 code = response.status
@@ -1086,10 +1330,10 @@ def run_port_proxy_check(
 
 
 def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
-    """Hit `https://<pod-id>-8888.proxy.runpod.net/api/status?token=admin`
+    """Hit `https://<pod-id>-8888.<proxy domain>/api/status?token=admin`
     from the test machine. Verifies that:
 
-      1. RunPod's public proxy has the pod registered for port 8888.
+      1. Runpod's public proxy has the pod registered for port 8888.
          If the port was exposed as `8888/tcp` instead of `8888/http`, the
          proxy never wires it up and this fails. The SSH-side check would
          still pass — that's exactly the kind of misconfiguration the
@@ -1101,14 +1345,14 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     table for ~10–30s. Returns (ok, multi-line log).
     """
     url = (
-        f"https://{pod_id}-8888.proxy.runpod.net/api/status"
+        f"{config.proxy_url(pod_id, 8888)}/api/status"
         f"?token={config.JUPYTER_TEST_PASSWORD}"
     )
     # Same URL with the token stripped — used in log lines so we never
     # write the bearer token to stdout / CI logs. The real `url` (with
     # token) only ever goes to urlopen.
     redacted_url = (
-        f"https://{pod_id}-8888.proxy.runpod.net/api/status?token=<redacted>"
+        f"{config.proxy_url(pod_id, 8888)}/api/status?token=<redacted>"
     )
     deadline = time.monotonic() + config.JUPYTER_PROXY_TIMEOUT
     lines = [f"GET {redacted_url}"]
@@ -1156,7 +1400,7 @@ def run_jupyter_static_check(pod_id: str) -> tuple[bool, str]:
     jupyter_server (tornadoweb/tornado#3724) and what makes the Lab UI render
     as a blank page. Only a static fetch covers that. Returns (ok, log).
     """
-    url = f"https://{pod_id}-8888.proxy.runpod.net/static/favicons/favicon.ico"
+    url = f"{config.proxy_url(pod_id, 8888)}/static/favicons/favicon.ico"
     lines = [f"GET {url}"]
     err = ""
     try:
@@ -1203,7 +1447,7 @@ def fetch_pod_logs_api(
         return None
     tail = tail or config.LOG_API_TAIL
     req = urllib.request.Request(
-        f"https://api.runpod.io/v2/pods/{pod_id}/logs?source={source}&tail={tail}",
+        f"{config.REST_URL}/pods/{pod_id}/logs?source={source}&tail={tail}",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Accept": "text/event-stream",
@@ -1246,7 +1490,7 @@ def fetch_pod_logs_api(
 
 # The container announced that its SSH server is up. `sshd` is started by
 # the entrypoint, so this is the container saying the thing we are waiting
-# for already happened — anything still unreachable after it is RunPod's
+# for already happened — anything still unreachable after it is Runpod's
 # network path, not the image.
 _SSHD_UP_RE = re.compile(
     # Debian/Ubuntu service script, used by container-template/start.sh
@@ -1262,14 +1506,14 @@ _SSHD_UP_RE = re.compile(
 class ContainerProgress(NamedTuple):
     """How far the container got, read from its own log stream.
 
-    `status` cannot answer either question: RunPod reports `RUNNING` from the
+    `status` cannot answer either question: Runpod reports `RUNNING` from the
     moment the pod is scheduled, while the image may still be downloading for
     another ten minutes — a 50GB ROCm base routinely is.
 
     `started` is False while the image is still being pulled, because the
     container does not exist yet and its log stream is empty. `sshd_up` means
     the entrypoint got as far as bringing SSH up, which is what separates
-    "the image never opened a door" from "RunPod never built a road to it".
+    "the image never opened a door" from "Runpod never built a road to it".
     """
 
     started: bool
@@ -1304,7 +1548,7 @@ def container_progress(
 #   create container runpod/comfyui:1.4.6-cuda12.8
 #   start container for runpod/comfyui:1.4.6-cuda12.8: begin
 #
-# RunPod re-checks the image after creating the container, so these markers
+# Runpod re-checks the image after creating the container, so these markers
 # are not strictly ordered — the furthest stage seen is what counts.
 _SYS_PULLING_RE = re.compile(
     r"\bExtracting\b|\bDownloading\b|\bPull complete\b|\bPulling from\b",
@@ -1320,7 +1564,7 @@ _SYS_CONTAINER_START_RE = re.compile(
 
 
 class PodStage(NamedTuple):
-    """How far RunPod got with the pod, per its own system log."""
+    """How far Runpod got with the pod, per its own system log."""
 
     pulling: bool
     pull_done: bool
@@ -1341,7 +1585,7 @@ def pod_stage(pod_id: str, deadline_sec: int = 8) -> Optional[PodStage]:
     """Read the pod's stage from the system log, or None if unreachable.
 
     Preferred over guessing from the container's log, which only says
-    "something ran"; this says whether RunPod has even finished downloading.
+    "something ran"; this says whether Runpod has even finished downloading.
     `status` says `RUNNING` throughout and cannot distinguish any of it.
     """
     lines = fetch_pod_logs_api(
@@ -1469,11 +1713,23 @@ def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
         )
 
     pattern = re.compile(config.LOG_ERROR_PATTERN, re.IGNORECASE)
-    matches = [line for line in lines if pattern.search(line)]
+    ignore = (
+        re.compile(config.LOG_ERROR_IGNORE, re.IGNORECASE)
+        if config.LOG_ERROR_IGNORE else None
+    )
+    ignored = sum(1 for line in lines if ignore and ignore.search(line))
+    matches = [
+        line for line in lines
+        if pattern.search(line) and not (ignore and ignore.search(line))
+    ]
+    skipped = (
+        f" ({ignored} expected line(s) ignored per LOG_ERROR_IGNORE)"
+        if ignored else ""
+    )
     if not matches:
-        return True, f"scanned {len(lines)} log lines — no error markers"
+        return True, f"scanned {len(lines)} log lines — no error markers{skipped}"
     report = [
-        f"scanned {len(lines)} log lines — "
+        f"scanned {len(lines)} log lines{skipped} — "
         f"{len(matches)} matched /{config.LOG_ERROR_PATTERN}/i:"
     ]
     report.extend(f"  {line}" for line in matches[:40])
@@ -1525,15 +1781,14 @@ def fetch_logs_via_ssh(
     if not smi_block:
         return None
     remote_cmd = "set +e; " + smi_block
-    cmd = [*_ssh_command_prefix(endpoint), remote_cmd]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        r = run_ssh(endpoint, remote_cmd, 45)
     except subprocess.TimeoutExpired:
         return None
     except FileNotFoundError:
         return None
     if r.returncode == 0 and r.stdout.strip():
-        return _strip_cr(r.stdout)
+        return r.stdout
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 

@@ -26,13 +26,29 @@ jobs:
   # is not rebuilt here.
   versions:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    # pull-requests: compute-version names a develop push's dev image after
+    # the PR it merged.
+    permissions:
+      contents: read
+      pull-requests: read
+      # Listing a parent's private dev repo needs a registry token, which only
+      # the OIDC connection can mint.
+      id-token: write
     outputs:
       suffix: ${{ steps.ubuntu.outputs.suffix }}
+      env: ${{ steps.ubuntu.outputs.env }}
+      repo-suffix: ${{ steps.ubuntu.outputs.repo-suffix }}
       ubuntu: ${{ steps.ubuntu.outputs.version }}
+      ubuntu-build: ${{ steps.ubuntu.outputs.should-build }}
       ubuntu-published: ${{ steps.ubuntu.outputs.previous-version }}
+      ubuntu-parent: ${{ steps.ubuntu-parent.outputs.version }}
+      ubuntu-parent-suffix: ${{ steps.ubuntu-parent.outputs.repo-suffix }}
       openclaw: ${{ steps.openclaw.outputs.version }}
+      openclaw-build: ${{ steps.openclaw.outputs.should-build }}
       harbor: ${{ steps.harbor.outputs.version }}
+      harbor-build: ${{ steps.harbor.outputs.should-build }}
       browser: ${{ steps.browser.outputs.version }}
+      browser-build: ${{ steps.browser.outputs.should-build }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -58,6 +74,18 @@ jobs:
         with:
           family: sandbox-harbor
 
+      # Which published sandbox-ubuntu harbor and browser layer on when it is
+      # NOT rebuilt in this run. On dev that is develop's newest -dev.<N>.
+      - name: sandbox-ubuntu parent
+        id: ubuntu-parent
+        uses: ./.github/actions/resolve-parent-image
+        with:
+          family: sandbox-ubuntu
+          env: ${{ steps.ubuntu.outputs.env }}
+          published-version: ${{ steps.ubuntu.outputs.previous-version }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-oidc: ${{ secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID }}
+
       - name: sandbox-browser
         id: browser
         uses: ./.github/actions/compute-version
@@ -66,7 +94,9 @@ jobs:
 
   build-sandbox-ubuntu:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'sandbox-ubuntu')
+    if: >-
+      contains(fromJSON(inputs.families), 'sandbox-ubuntu')
+      && needs.versions.outputs.ubuntu-build == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -82,7 +112,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-ubuntu
 
       - name: Build sandbox-ubuntu image
@@ -92,6 +122,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.ubuntu }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -189,10 +220,18 @@ jobs:
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-ubuntu
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -205,14 +244,17 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
   build-sandbox-openclaw:
     needs: versions
-    if: contains(fromJSON(inputs.families), 'sandbox-openclaw')
+    if: >-
+      contains(fromJSON(inputs.families), 'sandbox-openclaw')
+      && needs.versions.outputs.openclaw-build == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -228,7 +270,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-openclaw
 
       - name: Build sandbox-openclaw image
@@ -238,6 +280,7 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.openclaw }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
           source: .
           files: |
@@ -359,10 +402,18 @@ jobs:
 
       # Report-only: this layers on a third-party image, so upstream CVEs
       # would otherwise block our releases.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-openclaw
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -375,10 +426,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
   # Layers on runpod/ubuntu: the image this run pushed when sandbox-ubuntu is
   # part of the build, else the last released one.
@@ -387,6 +439,7 @@ jobs:
     needs: [versions, build-sandbox-ubuntu]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'sandbox-harbor')
+      && needs.versions.outputs.harbor-build == 'true'
       && (needs.build-sandbox-ubuntu.result == 'success'
           || needs.build-sandbox-ubuntu.result == 'skipped')
     permissions:
@@ -403,7 +456,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-harbor
 
       - name: Build sandbox-harbor image
@@ -413,7 +466,9 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.harbor }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-parent }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.ubuntu-parent-suffix }}
         with:
           source: .
           files: |
@@ -480,10 +535,18 @@ jobs:
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-harbor
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -496,10 +559,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
   # Layers on runpod/ubuntu: the image this run pushed when sandbox-ubuntu is
   # part of the build, else the last released one.
@@ -508,6 +572,7 @@ jobs:
     needs: [versions, build-sandbox-ubuntu]
     if: >-
       !cancelled() && contains(fromJSON(inputs.families), 'sandbox-browser')
+      && needs.versions.outputs.browser-build == 'true'
       && (needs.build-sandbox-ubuntu.result == 'success'
           || needs.build-sandbox-ubuntu.result == 'skipped')
     permissions:
@@ -524,7 +589,7 @@ jobs:
         id: setup
         with:
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-oidc: ${{ secrets.DOCKERHUB_OIDC_CONNECTIONID }}
+          dockerhub-oidc: ${{ needs.versions.outputs.env == 'dev' && secrets.DOCKERHUB_DEV_OIDC_CONNECTIONID || secrets.DOCKERHUB_OIDC_CONNECTIONID }}
           cache-key: ${{ github.repository }}/sandbox-browser
 
       - name: Build sandbox-browser image
@@ -534,7 +599,9 @@ jobs:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
-          UBUNTU_BASE_VERSION: ${{ contains(fromJSON(inputs.families), 'sandbox-ubuntu') && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-published }}
+          REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
+          UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-parent }}
+          UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.ubuntu-parent-suffix }}
         with:
           source: .
           files: |
@@ -600,10 +667,18 @@ jobs:
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-browser
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -616,7 +691,8 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}

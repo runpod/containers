@@ -16,6 +16,36 @@ _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _TESTS_DIR = os.path.dirname(_PKG_DIR)
 
 # ---------------------------------------------------------------------------
+# Target environment
+# ---------------------------------------------------------------------------
+
+# Which RunPod environment to provision in. Prod is the default; cluster
+# groups additionally need ALLOW_PROD_CLUSTERS=1 there (CI sets it). The
+# API key must belong to the same environment — a prod key is rejected by dev and vice
+# versa.
+VALID_ENVS = ("prod", "dev")
+_ENV_DEFAULTS = {
+    # (API origin, pod HTTP proxy domain)
+    "prod": ("https://api.runpod.io", "proxy.runpod.net"),
+    "dev": ("https://api.runpod.dev", "dev-proxy.runpod.net"),
+}
+RUNPOD_ENV = os.environ.get("RUNPOD_ENV", "prod").strip().lower() or "prod"
+_api_default, _proxy_default = _ENV_DEFAULTS.get(RUNPOD_ENV, _ENV_DEFAULTS["prod"])
+# Overrides for a one-off host (staging, a local API). REST v2 lives under
+# `<origin>/v2`, GraphQL under `<origin>/graphql`.
+API_ORIGIN = os.environ.get("RUNPOD_API_ORIGIN", _api_default).rstrip("/")
+REST_URL = f"{API_ORIGIN}/v2"
+GRAPHQL_URL = f"{API_ORIGIN}/graphql"
+# `<pod-id>-<port>.<PROXY_DOMAIN>` serves every `<port>/http` the pod exposes.
+PROXY_DOMAIN = os.environ.get("RUNPOD_PROXY_DOMAIN", _proxy_default).strip(".")
+
+
+def proxy_url(pod_id: str, port: int) -> str:
+    """Public HTTPS origin for one of the pod's `<port>/http` ports."""
+    return f"https://{pod_id}-{port}.{PROXY_DOMAIN}"
+
+
+# ---------------------------------------------------------------------------
 # Pod / scheduling
 # ---------------------------------------------------------------------------
 
@@ -37,7 +67,7 @@ def _parse_cloud_types(raw: str) -> list[str]:
 CLOUD_TYPES = _parse_cloud_types(os.environ.get("CLOUD_TYPE", "SECURE"))
 CLOUD_TYPE = CLOUD_TYPES[0]
 DISK_GB = int(os.environ.get("DISK_GB", "100"))
-# CPU pods on RunPod cap container disk by flavor: the cheapest flavors
+# CPU pods on Runpod cap container disk by flavor: the cheapest flavors
 # (cpu3c-2-4 and similar) reject >20 GB outright; larger ones cap at 30 GB.
 # 20 GB is the universal safe value — and plenty for a smoke-test that
 # only boots start.sh and dwells for a minute. Overridable for the rare
@@ -50,12 +80,12 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 
 # Number of images to smoke-test concurrently. Each worker holds at most one
 # pod at a time, so MAX_PARALLEL=3 means up to 3 pods alive simultaneously.
-# Keep modest: RunPod has per-account rate limits, and your wallet has limits
+# Keep modest: Runpod has per-account rate limits, and your wallet has limits
 # too (DISK_GB * pods * hours can add up).
 MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 
 # What to do when at least one image ended up SKIPped. SKIPs mean the
-# test never actually ran against the image — RunPod had no capacity
+# test never actually ran against the image — Runpod had no capacity
 # on every candidate, or every candidate landed on a stuck host. In CI
 # that's effectively zero validation, so the default is strict ('fail').
 # Modes:
@@ -65,7 +95,7 @@ MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 #   'warn' — exit 0 + GitHub `::warning::` annotation. Job stays green
 #            but the run shows a yellow warning bubble in the PR check
 #            tab. Use when capacity-shortage is expected (tight DCs)
-#            and you'd rather not block PRs on RunPod's free capacity,
+#            and you'd rather not block PRs on Runpod's free capacity,
 #            but you still want a visible signal.
 #   'pass' — exit 0, no annotation. Legacy lenient behaviour, no signal
 #            at all. Avoid unless you have downstream tooling that
@@ -83,7 +113,7 @@ def _coerce_on_skip(raw: str) -> str:
 
 ON_SKIP: str = _coerce_on_skip(os.environ.get("ON_SKIP", "fail"))
 
-# How many times to retry pod-create when RunPod returns a transient
+# How many times to retry pod-create when Runpod returns a transient
 # orchestrator error ("Something went wrong", 502/503, etc.). Capacity-
 # shortage errors are NOT retried (we move on to the next instance instead).
 CREATE_RETRIES = int(os.environ.get("CREATE_RETRIES", "3"))
@@ -92,20 +122,35 @@ CREATE_RETRY_BACKOFF = int(os.environ.get("CREATE_RETRY_BACKOFF", "10"))
 # Whole-job retries for SKIP / UNVERIFIED (every candidate had no capacity,
 # or the host never answered). After the first pass, those jobs — and only
 # those — are re-run up to SKIP_RETRIES more times, waiting
-# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15, 20, 25 min by
-# default). FAIL is never retried. Disabled under ON_SKIP=pass. Set
-# SKIP_RETRIES=0 to turn it off.
+# SKIP_RETRY_DELAY * attempt seconds before each round (5, 10, 15, 20, 25 min
+# by default; see SKIP_RETRY_BACKOFF). FAIL is never retried. Disabled under
+# ON_SKIP=pass. Set SKIP_RETRIES=0 to turn it off.
 SKIP_RETRIES = max(0, int(os.environ.get("SKIP_RETRIES") or "5"))
 SKIP_RETRY_DELAY = max(0, int(os.environ.get("SKIP_RETRY_DELAY") or "300"))
+# `linear` (default): round N waits N x SKIP_RETRY_DELAY. `fixed`: every round
+# waits SKIP_RETRY_DELAY, e.g. the cluster job's 5 rounds 300 s apart before
+# its single-pod fallback.
+SKIP_RETRY_BACKOFF = (
+    (os.environ.get("SKIP_RETRY_BACKOFF") or "linear").strip().lower()
+)
+if SKIP_RETRY_BACKOFF not in ("linear", "fixed"):
+    raise ValueError(
+        "SKIP_RETRY_BACKOFF must be 'linear' or 'fixed', "
+        f"got {SKIP_RETRY_BACKOFF!r}"
+    )
 
 # How long a pod can sit in "no SSH endpoint yet" before we surface a hint
 # about slow pulls / possible Docker Hub rate limit. Doesn't fail the pod
 # — just an informational note in the logs.
 STALL_HINT_AFTER = int(os.environ.get("STALL_HINT_AFTER", "180"))
+# While SSH probes keep failing identically the probe line is printed once,
+# so a long image pull looks like a hang. Print a progress line this often
+# (seconds) instead; 0 disables it.
+PROBE_HEARTBEAT_SEC = int(os.environ.get("PROBE_HEARTBEAT_SEC", "60"))
 
 
 # Docker Hub authenticated pulls. Unset means anonymous pulls: fine for
-# public images, but RunPod datacenters share an IP pool that hits Docker
+# public images, but Runpod datacenters share an IP pool that hits Docker
 # Hub's `toomanyrequests` rate limit fast. Name the credential with
 # REGISTRY_AUTH_NAME (looked up in `GET /v2/registries`) or pass its
 # REGISTRY_AUTH_ID directly. A name that doesn't resolve is fatal —
@@ -143,7 +188,7 @@ SSH_OPTS = [
     "-o", "BatchMode=yes",
     "-o", "LogLevel=ERROR",
     # OpenSSH 8.7+ disables ssh-rsa (SHA-1) by default. The sshd inside
-    # RunPod base images can still want legacy ssh-rsa for RSA client keys
+    # Runpod base images can still want legacy ssh-rsa for RSA client keys
     # (which is what runpodctl auto-generates), so we re-enable it
     # explicitly.
     "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
@@ -166,6 +211,25 @@ LOG_ERROR_PATTERN = os.environ.get(
 )
 LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
 
+# Lines dropped before LOG_ERROR_PATTERN is applied. Kept to messages that
+# are expected by construction, never to a whole daemon: the image ships the
+# Slurm a SLURM cluster runs, so every other slurmctld/slurmd error (PMIx
+# included) is a finding. A brand-new slurmctld has no saved state, so it
+# always logs "Could not open <x> state file" and "NOTE: Trying backup state
+# save file" once per state file. slurmd 26.05 logs "Cannot find slurmd
+# cpu/memory cgroup" because the platform's slurm.conf enables the cgroup
+# plugin and the pod is a cgroup v1 container with no slurmd cgroup to find;
+# jobs still run, just without cgroup limits. That is the platform config,
+# not the image, so only those two exact lines are dropped. Empty disables
+# the filter.
+LOG_ERROR_IGNORE = os.environ.get(
+    "LOG_ERROR_IGNORE",
+    r"^\s*slurmctld: error: (?:Could not open \w+ state file"
+    r"|NOTE: Trying backup state save file)"
+    r"|^\s*(?:\[[^\]]+\]\s*)?(?:slurmd:\s*)?"
+    r"error: Cannot find slurmd (?:cpu|memory) cgroup\s*$",
+)
+
 # System logs contain host-side failures that never reach container stdout:
 # image-pull errors and `runc` container-init aborts, for example.
 SYS_LOG_ERROR_PATTERN = os.environ.get(
@@ -180,7 +244,7 @@ SYS_LOG_ERROR_PATTERN = os.environ.get(
 
 # Password we hand to start.sh via env. Not a secret — every pod we spin
 # up is short-lived (reaped within the hour) and is only reachable through
-# RunPod's authenticated proxy. We just need ANY non-empty value so start.sh
+# Runpod's authenticated proxy. We just need ANY non-empty value so start.sh
 # decides to launch Jupyter (see start.sh: `if [[ $JUPYTER_PASSWORD ]]`).
 JUPYTER_TEST_PASSWORD = "admin"
 
@@ -188,7 +252,7 @@ JUPYTER_TEST_PASSWORD = "admin"
 # ready", so a brief startup grace is needed before we probe.
 JUPYTER_WAIT_TIMEOUT = int(os.environ.get("JUPYTER_WAIT_TIMEOUT", "30"))
 
-# RunPod exposes any port declared as `<port>/http` through its public
+# Runpod exposes any port declared as `<port>/http` through its public
 # proxy at `https://<pod-id>-<port>.proxy.runpod.net`. The proxy takes a
 # few seconds to register newly-exposed ports — we retry up to this many
 # seconds before giving up.
@@ -206,6 +270,16 @@ PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
 # ComfyUI listens on this HTTP port. `test_comfyui` exposes it as
 # `<port>/http` and runs a labelled proxy-first reachability check.
 COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
+
+# COMFYUI_PASSWORD for test pods; ComfyUI does not start without one, and
+# every request through :8188 has to carry it. Not a secret, for the same
+# reasons as JUPYTER_TEST_PASSWORD.
+COMFYUI_TEST_PASSWORD = "smoke-comfyui-password"
+# FILEBROWSER_PASSWORD for the same pods: the image does not start FileBrowser
+# without one, or with one under 12 characters.
+FILEBROWSER_TEST_PASSWORD = "smoke-filebrowser-password"
+# The ComfyUI image's FileBrowser; comfyui.yml exposes it through test_ports.
+FILEBROWSER_PORT = 8080
 COMFYUI_WORKFLOW = os.environ.get(
     "COMFYUI_WORKFLOW",
     os.path.join(_TESTS_DIR, "comfyui", "workflows", "gsl_starter_1_1.api.json"),
@@ -219,6 +293,106 @@ COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
 COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900"))
 COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
 COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
+
+# runpod/vllm-openai: `test_vllm` boots the image with VLLM_API_KEY and a
+# small model as the start command, exposes VLLM_PORT as <port>/http, and
+# checks the auth gate and one completion through the public proxy. The key
+# is not a secret: it guards a throwaway pod for a few minutes.
+VLLM_PORT = int(os.environ.get("VLLM_PORT", "8000"))
+VLLM_TEST_API_KEY = "smoke-vllm-api-key"
+VLLM_TEST_MODEL = os.environ.get("VLLM_TEST_MODEL", "Qwen/Qwen3-0.6B")
+VLLM_TEST_CMD = [VLLM_TEST_MODEL, "--max-model-len", "4096"]
+# Model download plus load and CUDA-graph capture, after SSH is up.
+VLLM_WAIT_TIMEOUT = int(os.environ.get("VLLM_WAIT_TIMEOUT", "900"))
+
+
+# ---------------------------------------------------------------------------
+# Instant Clusters (`cluster: true` groups)
+# ---------------------------------------------------------------------------
+
+# Clusters bill every node at a premium, so a cluster group refuses to run
+# outside RUNPOD_ENV=dev unless this is set: a manifest copied from a dev run
+# must not quietly buy prod nodes. CI (base.yml test-pytorch-cluster-instant)
+# sets it and runs on prod; local runs opt in the same way.
+ALLOW_PROD_CLUSTERS = os.environ.get("ALLOW_PROD_CLUSTERS", "0") == "1"
+
+# When a cluster group finds no Instant Cluster capacity anywhere (it ends
+# SKIP after its retries), run the same image as an ordinary one-GPU pod
+# group instead, so the image still gets a real test. The pod cannot show
+# the multi-node behaviour (head node, Prometheus across nodes, Slurm), and
+# the result says so. Candidates come from the per-pod catalog with these
+# filters; the cluster group's own `instances:` are cluster GPU ids and are
+# not reused. CI sets CLUSTER_POD_FALLBACK=1.
+CLUSTER_POD_FALLBACK = os.environ.get("CLUSTER_POD_FALLBACK", "0") == "1"
+CLUSTER_POD_FALLBACK_MAX_PRICE = float(
+    os.environ.get("CLUSTER_POD_FALLBACK_MAX_PRICE", "1.0") or 1.0
+)
+CLUSTER_POD_FALLBACK_MIN_VRAM_GB = int(
+    os.environ.get("CLUSTER_POD_FALLBACK_MIN_VRAM_GB", "16") or 16
+)
+
+DEFAULT_CLUSTER_NODES = 2
+
+# createCluster `type` values, tried in order for each GPU until one is
+# created. TRAINING is the console's "Standard cluster": our image on every
+# node and nothing else. SLURM ("Slurm cluster") runs the same image with a
+# Slurm controller/compute role layered on top; it is the fallback because
+# dev has refused TRAINING clusters that it deploys as SLURM. Per group:
+# `cluster_types:`; CLUSTER_TYPES (csv) overrides every group.
+VALID_CLUSTER_TYPES = ("TRAINING", "SLURM", "APPLICATION", "RAY")
+DEFAULT_CLUSTER_TYPES = ("TRAINING", "SLURM")
+CLUSTER_TYPES_OVERRIDE = os.environ.get("CLUSTER_TYPES", "")
+
+# Optional csv pinning cluster placement, e.g. `MFS-1`. Empty lets RunPod
+# pick any data center with a free node group.
+CLUSTER_DATA_CENTER_IDS = os.environ.get("CLUSTER_DATA_CENTER_IDS", "")
+
+# Data centers whose placements are never usable: a cluster that lands there
+# is deleted at once and the attempt counts as no capacity. K3S-POC is a dev
+# proof-of-concept whose EC2 host is stopped, yet createCluster still places
+# L4 clusters on it; the pods report RUNNING and never start.
+CLUSTER_EXCLUDE_DATA_CENTERS = os.environ.get(
+    "CLUSTER_EXCLUDE_DATA_CENTERS", "K3S-POC",
+)
+
+# Per-node hourly price; createCluster's `deployCost` is this times the node
+# count. 0 (default) reads the current price from the API; set it only to
+# override a price lookup that is wrong or failing.
+CLUSTER_DEPLOY_COST = float(os.environ.get("CLUSTER_DEPLOY_COST", "0") or 0)
+
+# Highest per-node hourly price a cluster may cost; 0 (default) means no cap.
+# The catalog walk is cheapest first but has no other stop, so without a cap
+# a day when only B300 has room buys 2x8 B300 (~$173/hr). A GPU type over the
+# cap, or whose price cannot be read, counts as no capacity, so with
+# CLUSTER_POD_FALLBACK=1 the run falls back to a pod instead of buying a
+# pricier cluster.
+CLUSTER_MAX_NODE_PRICE = float(
+    os.environ.get("CLUSTER_MAX_NODE_PRICE", "0") or 0
+)
+
+# How long createCluster may take to materialise every member pod in the
+# cluster record. Booting them is then bounded by CLUSTER_BOOT_TIMEOUT.
+CLUSTER_PODS_TIMEOUT = int(os.environ.get("CLUSTER_PODS_TIMEOUT", "300"))
+
+# How long a member pod may take to answer SSH (image pull included). Longer
+# than CREATE_TIMEOUT because pytorch-cluster is a large image, cluster hosts
+# on dev often start with a cold cache, and the cluster has already been paid
+# for by the time we wait — giving up early wastes more than waiting does.
+CLUSTER_BOOT_TIMEOUT = int(os.environ.get("CLUSTER_BOOT_TIMEOUT", "1500"))
+
+# Grafana's public port on the head node (the auth proxy in front of it —
+# see official-templates/pytorch-cluster/config/grafana-proxy).
+GRAFANA_PORT = int(os.environ.get("GRAFANA_PORT", "8889"))
+
+# Budget for the head node's monitoring stack to come up and for Prometheus
+# to have scraped every node at least once (scrape_interval is 15s).
+MONITORING_WAIT_TIMEOUT = int(os.environ.get("MONITORING_WAIT_TIMEOUT", "240"))
+
+# dcgm-exporter needs DCGM support from the GPU and driver; GeForce cards
+# (common on dev) may not give it. 0 drops dcgm from the required programs
+# and Prometheus jobs — node_exporter still proves the cross-node wiring.
+CLUSTER_REQUIRE_DCGM = os.environ.get("CLUSTER_REQUIRE_DCGM", "1") == "1"
+GRAFANA_PROXY_TIMEOUT = int(os.environ.get("GRAFANA_PROXY_TIMEOUT", "180"))
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +442,7 @@ CPU_GROUP_NAMES: frozenset[str] = frozenset({"base_cpu"})
 
 # CPU flavors from GET /v2/catalog/cpus, populated at startup. v2 requires
 # an explicit `cpu.id` + `vcpuCount` on pod create, unlike the old CLI which
-# let RunPod pick — so we choose the cheapest fitting flavor ourselves.
+# let Runpod pick — so we choose the cheapest fitting flavor ourselves.
 CPU_CATALOG: list[dict] = []
 
 # vCPU count requested for CPU pods. Must be a power of two and inside the
@@ -352,7 +526,7 @@ def cpu_candidate_for(instance: str) -> CpuCandidate:
 
 # Display-name -> gpu id mapping, populated at startup from
 # `GET /v2/catalog/gpus`. Keeps the YAML manifest free
-# of RunPod-internal gpuId strings — users only put display names there.
+# of Runpod-internal gpuId strings — users only put display names there.
 GPU_ID_MAP: dict[str, str] = {}
 
 # GPU catalog with pricing. Populated at startup via GraphQL since
@@ -388,6 +562,60 @@ GROUP_MIN_CUDA: dict[str, str] = {}
 GROUP_CUDA_VERSIONS: dict[str, list[str]] = {}
 GROUP_CUDA_ALL: dict[str, bool] = {}
 
+# `cuda_versions: allowed` — like `all`, but only versions at or above the
+# image's own CUDA floor: the tag marker (`cu1290` -> 12.9), else the group's
+# `min_cuda_version`. Those are the hosts the image can actually be scheduled
+# on, so they are the ones a compatibility claim is about. GROUP_CUDA_ALL is
+# set too; GROUP_CUDA_FLOOR keeps the group floor that the axis would
+# otherwise pop from GROUP_MIN_CUDA.
+GROUP_CUDA_ALLOWED: dict[str, bool] = {}
+GROUP_CUDA_FLOOR: dict[str, str] = {}
+
+# With CLOUD_TYPE=ALL every (image, GPU, CUDA) job is planned once per tier.
+# For a compatibility sweep the tier says nothing about the image, so this
+# keeps only the first tier's job (SECURE before COMMUNITY): a GPU offered in
+# both is tested once, a community-only card still gets its community job.
+DEDUPE_CLOUD_TIERS = (os.environ.get("DEDUPE_CLOUD_TIERS") or "").strip().lower() in (
+    "1", "true", "yes",
+)
+
+
+# ---------------------------------------------------------------------------
+# Spend cap (runpod_smoke/spend.py)
+# ---------------------------------------------------------------------------
+
+def _non_negative_float(raw: str, default: float) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+# Total USD a run may spend on pods, from catalog $/hr x pod lifetime. 0 (the
+# default) disables the cap. Every pod reserves SPEND_RESERVE_MINUTES of its
+# hourly price before it is created; a pod that would push spent + reserved
+# past the cap is never created and its job is recorded as SKIP. Size the
+# reservation to the longest a pod lives (CREATE_TIMEOUT plus the checks),
+# or a slow pod can overrun its hold.
+SPEND_CAP_USD = _non_negative_float(os.environ.get("SPEND_CAP_USD", ""), 0.0)
+SPEND_RESERVE_MINUTES = _non_negative_float(
+    os.environ.get("SPEND_RESERVE_MINUTES", ""), 30.0
+)
+
+# Appended to every pod name (`smoketest-<epoch>-<tid>-<attempt>-<suffix>`)
+# so one run can find and delete exactly its own pods. reap-pods.yml reads
+# the epoch from field 2, which a suffix doesn't move. Alphanumerics only;
+# anything else is ignored rather than put into a pod name.
+_POD_NAME_SUFFIX_RAW = (os.environ.get("POD_NAME_SUFFIX") or "").strip()
+POD_NAME_SUFFIX = (
+    _POD_NAME_SUFFIX_RAW
+    if _POD_NAME_SUFFIX_RAW.isascii()
+    and _POD_NAME_SUFFIX_RAW.isalnum()
+    and len(_POD_NAME_SUFFIX_RAW) <= 32
+    else ""
+)
+
 # Safety cap on the GPU x CUDA fan-out. A catalog-wide `all` sweep is ~34
 # jobs today, but the fleet grows and a stray run shouldn't turn into a
 # day of GPU time. Jobs past the cap are dropped with a warning.
@@ -417,9 +645,27 @@ GROUP_TEST_COMFYUI: dict[str, bool] = {}
 # public reachability check always runs before model provisioning.
 GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
 
+# runpod/vllm-openai auth gate and completion, through the public proxy.
+GROUP_TEST_VLLM: dict[str, bool] = {}
+
 # Compatibility-matrix opt-in. Each selected GPU becomes an independent job,
 # rather than stopping after the first passing candidate.
 GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
+
+# Instant Cluster opt-in, from the `cluster:` manifest field. A cluster group
+# provisions a whole cluster per attempt instead of one pod — head node
+# (`node-0`) plus workers — and runs the cluster checks (SSH + Jupyter on
+# every node, the monitoring stack on the head). Its `instances:` are the
+# GPU types to try, in order.
+#
+#   GROUP_CLUSTER                — the group runs as an Instant Cluster
+#   GROUP_CLUSTER_NODES          — pods per cluster (`cluster_nodes`, ≥ 2)
+#   GROUP_CLUSTER_GPUS_PER_NODE  — `cluster_gpus_per_node`; 0 picks the
+#                                  smallest size the GPU type offers
+GROUP_CLUSTER: dict[str, bool] = {}
+GROUP_CLUSTER_NODES: dict[str, int] = {}
+GROUP_CLUSTER_GPUS_PER_NODE: dict[str, int] = {}
+GROUP_CLUSTER_TYPES: dict[str, tuple[str, ...]] = {}
 
 # Image hygiene opt-ins, from the manifest fields of the same name. They
 # catch regressions a boot check cannot see: a dependency pin that conflicts
@@ -438,6 +684,7 @@ GROUP_CHECK_ALL_GPU: dict[str, bool] = {}
 #   GROUP_TEST_PYTHON_PATH  — only the system python3 sees apt's modules;
 #                             python3 is the same interpreter as python
 #   GROUP_TEST_AUTORESEARCH — autoresearch train.py runs end to end
+#   GROUP_TEST_BURN         — Burn starter runs on the CUDA and Vulkan backends
 #   GROUP_TEST_DCGM_EXPORTER — in-pod dcgm-exporter serves the dashboard labels
 #   GROUP_TEST_RAY          — a one-node Ray head runs a GPU task, serves metrics
 GROUP_TEST_PIP_CHECK: dict[str, bool] = {}
@@ -451,5 +698,6 @@ GROUP_TEST_UV: dict[str, bool] = {}
 GROUP_TEST_VIRTUALENV: dict[str, bool] = {}
 GROUP_TEST_PYTHON_PATH: dict[str, bool] = {}
 GROUP_TEST_AUTORESEARCH: dict[str, bool] = {}
+GROUP_TEST_BURN: dict[str, bool] = {}
 GROUP_TEST_DCGM_EXPORTER: dict[str, bool] = {}
 GROUP_TEST_RAY: dict[str, bool] = {}

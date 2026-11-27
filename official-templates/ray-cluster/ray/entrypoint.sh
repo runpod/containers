@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Ray cluster image entrypoint (contract v1). The only Ray launch logic on a
-# Runpod Ray cluster: the host daemon injects topology env and observes from
-# outside the container, and this script turns that env into a running Ray
-# node before handing off to the container's CMD.
+# Runpod Ray cluster: Runpod provides the topology env, and this script turns
+# that env into a running Ray node before handing off to the container's CMD.
 #
 # It does exactly this, in order:
 #   1. enforce the contract ports (dashboard 8265, metrics 20217), and turn on
@@ -18,19 +17,16 @@
 #      once, with the Jupyter env cleared so /start.sh leaves Jupyter to the
 #      head.
 #
-# The topology it reads is only what the host alone knows: NODE_RANK, NUM_NODES
+# The topology it reads is only: NODE_RANK, NUM_NODES
 # and the cluster membership in /etc/hosts (node-0 ... node-N). The other
-# cluster env the host sets (PRIMARY_ADDR, NODE_ADDR, NODE_ROLE, ...) is fixed
+# cluster env (PRIMARY_ADDR, NODE_ADDR, NODE_ROLE, ...) is fixed
 # at create and goes stale, or is left unset, when the head isn't running then.
-# /etc/hosts doesn't: the host rewrites it to the running members on every
-# sync, so node-0 is absent while the head is stopped and returns at the
+# /etc/hosts doesn't: it is kept current with the running members, so node-0 is absent while the head is stopped and returns at the
 # head's current address once it runs again.
 #
-# It does not install packages, write readiness markers, or probe the fabric:
-# the host pins the fabric NIC and polls readiness itself. The ports are a
-# contract with runpod/host (pkg/rayready, pkg/raymetrics), which reads nothing
-# from the pod, so an override would make the node invisible to the host. That
-# is why an override fails the boot instead of being honoured.
+# It does not install packages, write readiness markers, or probe the fabric.
+# The ports are fixed by the contract, so an override fails the boot instead
+# of being honoured.
 set -uo pipefail
 
 readonly CONTRACT_DASHBOARD_PORT=8265
@@ -129,8 +125,8 @@ fi
 
 # --- 2. Role and node address ----------------------------------------------- #
 # hosts_ip <name>: the IPv4 address /etc/hosts maps <name> to, read from the
-# file itself on every call (not the resolver), since the host rewrites it
-# while the pod runs.
+# file itself on every call (not the resolver), since it changes while the
+# pod runs.
 hosts_ip() {
     awk -v name="$1" '
         $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
@@ -142,19 +138,18 @@ hosts_ip() {
 if [[ "$NODE_RANK" == 0 ]]; then role="head"; else role="worker"; fi
 self="node-$NODE_RANK"
 
-# This pod is running, so the host listed it at create. The short wait only
-# covers a write still in flight; a pod missing from its own membership is a
-# host bug, and failing loudly beats binding Ray to a guessed address.
+# The short wait only covers a write still in flight; failing loudly beats
+# binding Ray to a guessed address.
 node_ip=""
 for _ in $(seq 1 30); do
     node_ip=$(hosts_ip "$self")
     [[ -n "$node_ip" ]] && break
     sleep 2
 done
-[[ -n "$node_ip" ]] || die "$self is not in /etc/hosts; the host lists every cluster member there"
+[[ -n "$node_ip" ]] || die "$self is not in /etc/hosts, which should list every cluster member"
 log "role=$role node=$self node_ip=$node_ip num_nodes=${NUM_NODES:-?}"
 
-# A derived image that upgraded Ray drifts from the host's pinned parsers.
+# A derived image that upgraded Ray drifts from the version the image was tested with.
 if [[ -n "${RAY_CLUSTER_RAY_VERSION:-}" ]]; then
     installed=$(ray --version 2> /dev/null | awk '{print $NF}')
     [[ "$installed" == "$RAY_CLUSTER_RAY_VERSION" ]] ||
@@ -184,8 +179,25 @@ if [[ "$role" == head ]]; then
     if [[ "${RAY_CLUSTER_METRICS:-1}" != "0" ]]; then
         export RAY_PROMETHEUS_HOST=${RAY_PROMETHEUS_HOST:-http://127.0.0.1:9090}
         export RAY_GRAFANA_HOST=${RAY_GRAFANA_HOST:-http://127.0.0.1:3300}
-        if [[ -n "${RUNPOD_POD_ID:-}" ]]; then
-            export RAY_GRAFANA_IFRAME_HOST=${RAY_GRAFANA_IFRAME_HOST:-https://${RUNPOD_POD_ID}-8889.${RUNPOD_PROXY_BASE:-proxy.runpod.net}}
+        # Grafana's token proxy also accepts the cluster token, so one ?token=
+        # link signs in both, while its own token (GRAFANA_PASSWORD, else
+        # JUPYTER_PASSWORD, which the console's Grafana link carries) still works.
+        if [[ "$RAY_AUTH_MODE" == token ]]; then
+            GRAFANA_CLUSTER_TOKEN=${RAY_AUTH_TOKEN:-$(< "$RAY_AUTH_TOKEN_PATH")}
+            export GRAFANA_CLUSTER_TOKEN
+        fi
+        if [[ -n "${RUNPOD_POD_ID:-}" && -z "${RAY_GRAFANA_IFRAME_HOST:-}" ]]; then
+            proxy_base=${RUNPOD_PROXY_BASE:-proxy.runpod.net}
+            export RAY_GRAFANA_IFRAME_HOST=https://${RUNPOD_POD_ID}-8889.$proxy_base
+            # The panels are on Grafana's origin, so they need its cookie too:
+            # the front door's ?token= login at / (the console's link) bounces
+            # through the proxy's /runpod-login, which sets it and returns to
+            # the dashboard. A deep link keeps its path and skips the bounce.
+            export LOGIN_RETURN_URL=https://${RUNPOD_POD_ID}-8266.$proxy_base/
+            # shellcheck disable=SC2016 # $uri, $after_login and $arg_token are nginx's
+            printf '%s\n' 'set $after_login $uri;' 'if ($uri = /) {' \
+                "    set \$after_login \"$RAY_GRAFANA_IFRAME_HOST/runpod-login?token=\$arg_token\";" '}' \
+                > /etc/nginx/ray-dashboard-login.conf
         fi
     fi
 
@@ -211,14 +223,13 @@ fi
 # wait_for_head returns once the head GCS accepts a connection, with head_ip
 # set. No deadline: a missing head is a reason to wait, not to exit. node-0 is
 # re-resolved on every attempt, because it is absent from /etc/hosts while the
-# head is stopped, and the host adds it back (with its overlay peer) once the
-# head runs again. Until then the host reports this rank as not alive.
+# head is stopped, and is added back once the head runs again.
 wait_for_head() {
     local started=$SECONDS next_log=$((SECONDS + 60))
     log "waiting for the Ray head GCS at node-0:$gcs_port"
     while :; do
         head_ip=$(hosts_ip node-0)
-        # Bounded per attempt: a connect to a silent overlay peer can hang for minutes.
+        # Bounded per attempt: a connect to a silent peer can hang for minutes.
         if [[ -n "$head_ip" ]] && timeout 5 bash -c "echo > /dev/tcp/$head_ip/$gcs_port" 2> /dev/null; then
             return 0
         fi

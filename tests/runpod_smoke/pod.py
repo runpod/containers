@@ -3,7 +3,7 @@
 Everything here talks to REST API v2 (see api.py) — no runpodctl.
 
 Owns the `ACTIVE_POD_IDS` set + lock — the source of truth for "what's
-still alive on RunPod" across all workers. atexit + SIGINT/SIGTERM
+still alive on Runpod" across all workers. atexit + SIGINT/SIGTERM
 handlers are installed at import time so anything we leak on crash
 gets terminated.
 """
@@ -15,7 +15,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from . import api, config
 from .checks import (
@@ -73,8 +73,24 @@ def cleanup_pod(pod_id: str) -> None:
     unregister_pod(pod_id)
 
 
+# Extra teardown run by cleanup_all before the pod sweep — cluster.py
+# registers its cluster deletion here, so one atexit/signal path covers both
+# without pod.py importing cluster.py (which imports pod.py).
+_CLEANUP_HOOKS: list[Callable[[], None]] = []
+
+
+def register_cleanup_hook(hook: Callable[[], None]) -> None:
+    _CLEANUP_HOOKS.append(hook)
+
+
 def cleanup_all() -> None:
-    """Delete every pod still tracked as active. Used at exit / on signal."""
+    """Delete every cluster and pod still tracked as active. Used at exit /
+    on signal."""
+    for hook in _CLEANUP_HOOKS:
+        try:
+            hook()
+        except Exception as exc:  # noqa: BLE001
+            log(f"  cleanup hook failed: {exc}")
     with _active_pods_lock:
         leftover = list(ACTIVE_POD_IDS)
     if not leftover:
@@ -180,7 +196,7 @@ def create_pod(
 
     compute_type='GPU' targets `gpu_id`; 'CPU' picks a flavor from the CPU
     catalog (v2 requires an explicit `cpu.id` + `vcpuCount`, unlike the old
-    CLI which let RunPod choose).
+    CLI which let Runpod choose).
 
     `cloud_type` overrides `config.CLOUD_TYPE` for this call only — used by
     the CPU-candidate loop to try SECURE then COMMUNITY. `data_center_ids`
@@ -216,8 +232,21 @@ def create_pod(
         body["dataCenterIds"] = [
             d.strip() for d in data_center_ids.split(",") if d.strip()
         ]
+    env = {}
     if test_jupyter:
-        body["env"] = {"JUPYTER_PASSWORD": config.JUPYTER_TEST_PASSWORD}
+        env["JUPYTER_PASSWORD"] = config.JUPYTER_TEST_PASSWORD
+    # The ComfyUI image starts neither ComfyUI nor FileBrowser without a
+    # password, and its workflow probes FileBrowser on 8080. FileBrowser's
+    # login page answers 200, so the port check needs no sign-in.
+    if group and config.GROUP_TEST_COMFYUI.get(group, False):
+        env["COMFYUI_PASSWORD"] = config.COMFYUI_TEST_PASSWORD
+        env["FILEBROWSER_PASSWORD"] = config.FILEBROWSER_TEST_PASSWORD
+    # runpod/vllm-openai does not start vLLM without a key or a model.
+    if group and config.GROUP_TEST_VLLM.get(group, False):
+        env["VLLM_API_KEY"] = config.VLLM_TEST_API_KEY
+        body["cmd"] = list(config.VLLM_TEST_CMD)
+    if env:
+        body["env"] = env
     if config.REGISTRY_AUTH_ID:
         body["registry"] = config.REGISTRY_AUTH_ID
 
@@ -262,7 +291,7 @@ def pod_state(pod_id: str) -> dict:
     terminal states.
 
     `ssh.direct` is null until the pod has a machine assignment and a public
-    port for `22/tcp`. RunPod does not always allocate that port — the pod
+    port for `22/tcp`. Runpod does not always allocate that port — the pod
     then shows only `ssh.proxy` in the console — so both endpoints are
     returned and the readiness poll accepts whichever answers.
     """
@@ -319,7 +348,7 @@ def _print_stall_hint(pod_id: str, elapsed: int) -> None:
     anonymous pull.
     """
     stage = pod_stage(pod_id)
-    where = f" RunPod's system log says: {stage.label}." if stage else ""
+    where = f" Runpod's system log says: {stage.label}." if stage else ""
     log(
         f"pod still has no SSH endpoint after {elapsed}s.{where} "
         "Most common cause is a slow or throttled image pull. "
@@ -366,9 +395,9 @@ def _probe_ssh_endpoint(
     elapsed: int,
     ssh_attempts: int,
     last_summary: Optional[tuple],
-) -> tuple[Optional[tuple[str, str, SshEndpoint]], tuple]:
+) -> tuple[Optional[tuple[str, str, SshEndpoint]], tuple, str]:
     """One SSH probe against an assigned endpoint. Returns:
-        (outcome | None, summary_for_dedup)
+        (outcome | None, summary_for_dedup, error)
 
     `outcome` is `("RUNNING", detail, endpoint)` when the probe succeeds;
     otherwise None — caller keeps polling. `summary_for_dedup` is the value
@@ -389,11 +418,29 @@ def _probe_ssh_endpoint(
             f"ssh probe succeeded after {elapsed}s "
             f"({ssh_attempts} attempts, {kind} endpoint {endpoint.label})",
             endpoint,
-        ), summary
-    return None, summary
+        ), summary, ""
+    return None, summary, err
 
 
-def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
+def _log_heartbeat(pod_id: str, elapsed: int, timeout: int, err: str) -> None:
+    """Periodic proof of life while probes keep failing the same way.
+
+    Probe lines are deduplicated, so a pod still pulling a large image would
+    otherwise print nothing for many minutes and look hung. The stage comes
+    from the system log because `status` reads RUNNING the whole time.
+    """
+    stage = pod_stage(pod_id)
+    where = stage.label if stage is not None else "stage unknown"
+    log(
+        f"t+{elapsed}s still waiting for sshd ({where}; giving up at "
+        f"t+{timeout}s)" + (f" — last probe: {err}" if err else ""),
+        indent=2,
+    )
+
+
+def wait_for_running(
+    pod_id: str, timeout: Optional[int] = None,
+) -> tuple[str, str, Optional[SshEndpoint]]:
     """Returns (outcome, detail, endpoint). `endpoint` is the one that
     answered — direct or proxy — and None when nothing did. Outcome is one
     of:
@@ -419,15 +466,18 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
     started — a much stronger signal than any status field.
 
     `status` in particular is NOT a readiness signal and not a progress one:
-    RunPod reports `RUNNING` from the moment the pod is scheduled, while the
+    Runpod reports `RUNNING` from the moment the pod is scheduled, while the
     image may still be downloading for another ten minutes. The container's
     own log stream is what separates "still pulling" from "running but
     unreachable", so it is consulted before any timeout is attributed.
     """
+    timeout = timeout or config.CREATE_TIMEOUT
     start = time.time()
-    deadline = start + config.CREATE_TIMEOUT
+    deadline = start + timeout
+    next_heartbeat = config.PROBE_HEARTBEAT_SEC
     last_summary: Optional[tuple] = None      # the "no endpoint yet" line
     last_summaries: dict[SshEndpoint, tuple] = {}       # one per endpoint
+    last_err = ""
     last_status: Optional[str] = None
     ssh_attempts = 0
     endpoint_seen = False  # an endpoint was offered at least once
@@ -446,7 +496,7 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
 
         if pod_status_value != last_status:
             # Spelled out because RUNNING here does not mean "ready", and
-            # reading it that way makes every later line confusing: RunPod
+            # reading it that way makes every later line confusing: Runpod
             # sets it at scheduling time, before the image is pulled.
             note = (
                 " (scheduled; says nothing about the pull or sshd)"
@@ -470,12 +520,16 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
                 # Dedup per endpoint: two endpoints alternating would each
                 # look like a change to a single shared `last_summary`, so a
                 # stuck pod would log every probe instead of just the first.
-                outcome, last_summaries[endpoint] = _probe_ssh_endpoint(
+                outcome, last_summaries[endpoint], err = _probe_ssh_endpoint(
                     kind, endpoint, pod_status_value, elapsed,
                     ssh_attempts, last_summaries.get(endpoint),
                 )
                 if outcome is not None:
                     return outcome
+                last_err = err or last_err
+            if config.PROBE_HEARTBEAT_SEC and elapsed >= next_heartbeat:
+                _log_heartbeat(pod_id, elapsed, timeout, last_err)
+                next_heartbeat = elapsed + config.PROBE_HEARTBEAT_SEC
         else:
             summary = (pod_status_value, host, port, False)
             if summary != last_summary:
@@ -492,17 +546,18 @@ def wait_for_running(pod_id: str) -> tuple[str, str, Optional[SshEndpoint]]:
 
         time.sleep(config.POLL_INTERVAL)
 
-    _log_system_errors(pod_id, f"timeout after {config.CREATE_TIMEOUT}s")
-    return _classify_timeout(pod_id, endpoint_seen, ssh_attempts)
+    _log_system_errors(pod_id, f"timeout after {timeout}s")
+    return _classify_timeout(pod_id, endpoint_seen, ssh_attempts, timeout)
 
 
 def _classify_timeout(
     pod_id: str, endpoint_seen: bool, ssh_attempts: int,
+    timeout: Optional[int] = None,
 ) -> tuple[str, str, Optional[SshEndpoint]]:
     """Decide who a readiness timeout belongs to, worst-evidence-first.
 
     Two independent sources, because either can be unavailable and because
-    they answer different questions. RunPod's system log says whether the
+    they answer different questions. Runpod's system log says whether the
     image even finished downloading; the container's own log says whether the
     entrypoint got as far as starting sshd. `status` answers neither — it
     reads `RUNNING` from scheduling time onward.
@@ -510,10 +565,11 @@ def _classify_timeout(
     Anything that is provably not the image's doing becomes TIMEOUT_INFRA, so
     it retries elsewhere instead of failing a release.
     """
+    timeout = timeout or config.CREATE_TIMEOUT
     if not endpoint_seen:
         return "TIMEOUT_INFRA", (
             f"RunPod never offered an SSH endpoint in "
-            f"{config.CREATE_TIMEOUT}s — the pod never became addressable. "
+            f"{timeout}s — the pod never became addressable. "
             "Likely causes: (1) slow/throttled image pull, (2) Docker Hub "
             "rate limit if many parallel pulls of the same image, (3) host "
             "scheduling delay on a saturated DC — see system-log error "
@@ -523,7 +579,7 @@ def _classify_timeout(
     stage = pod_stage(pod_id)
     if stage is not None and not stage.container_started:
         return "TIMEOUT_INFRA", (
-            f"after {config.CREATE_TIMEOUT}s RunPod's system log still says "
+            f"after {timeout}s RunPod's system log still says "
             f"'{stage.label}', so the container was never handed the image. "
             "Not a verdict on the image: raise CREATE_TIMEOUT (a 30-50GB "
             "base can need 15 minutes) or add registry auth to avoid Docker "
@@ -534,7 +590,7 @@ def _classify_timeout(
     if progress is not None and progress.sshd_up:
         return "TIMEOUT_INFRA", (
             f"the container's own log says it brought sshd up, yet no "
-            f"endpoint answered in {config.CREATE_TIMEOUT}s ({ssh_attempts} "
+            f"endpoint answered in {timeout}s ({ssh_attempts} "
             "probes, direct and proxy) — the image did its part and RunPod "
             "never provided a working path to it (no public port for 22/tcp, "
             "or a proxy route that stayed broken). A host verdict"
@@ -542,19 +598,19 @@ def _classify_timeout(
     if progress is not None and not progress.started:
         return "TIMEOUT_INFRA", (
             f"an SSH endpoint was assigned but the container had still not "
-            f"logged a single line after {config.CREATE_TIMEOUT}s, so it had "
+            f"logged a single line after {timeout}s, so it had "
             "not started — almost certainly still being pulled"
         ), None
     if progress is None and stage is None:
         return "TIMEOUT_UNREACHABLE", (
             f"an SSH endpoint was assigned but never answered in "
-            f"{config.CREATE_TIMEOUT}s ({ssh_attempts} probes), and neither "
+            f"{timeout}s ({ssh_attempts} probes), and neither "
             "log stream could be reached to tell how far the pod got — "
             "nothing about this image was verified"
         ), None
     return "TIMEOUT_UNREACHABLE", (
         f"the container started but never announced sshd, and no endpoint "
-        f"answered in {config.CREATE_TIMEOUT}s ({ssh_attempts} probes, "
+        f"answered in {timeout}s ({ssh_attempts} probes, "
         "direct and proxy) — either the host is wedged or the entrypoint "
         "never got as far as starting SSH"
     ), None

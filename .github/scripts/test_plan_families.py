@@ -100,6 +100,27 @@ class BuildOrder(unittest.TestCase):
             P.plan(cyclic, [], True)
 
 
+class Ancestors(unittest.TestCase):
+    """The release gate holds a family back when what it builds FROM failed
+    in the same run."""
+
+    def test_ancestors_are_transitive_nearest_first(self):
+        self.assertEqual(P.ancestors(GRAPH, "cluster"), ["pytorch", "base"])
+
+    def test_a_root_family_has_none(self):
+        self.assertEqual(P.ancestors(GRAPH, "base"), [])
+
+    def test_sharing_paths_is_not_building_from(self):
+        """rocm builds base's sources, not FROM runpod/base."""
+        self.assertEqual(P.ancestors(GRAPH, "rocm"), [])
+
+    def test_the_real_graph_gives_ray_cluster_the_whole_chain(self):
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        self.assertEqual(
+            P.ancestors(graph, "ray-cluster"), ["pytorch-cluster", "pytorch", "base"]
+        )
+
+
 class Pathspecs(unittest.TestCase):
     """`git log -- <spec>` is how the bump and the notes find a family's
     commits — a dependency's commits have to be among them."""
@@ -174,7 +195,7 @@ class GraphFile(unittest.TestCase):
                 self.assertLess(order.index(dep), order.index(name), name)
 
     def test_each_family_has_a_build_job_named_after_it(self):
-        """manual-release looks up '<workflow> / build-<family>' by name."""
+        """release and manual-release look up '<workflow> / build-<family>' by name."""
         import yaml
 
         graph = P.load_graph(P.DEFAULT_GRAPH)
@@ -183,10 +204,46 @@ class GraphFile(unittest.TestCase):
             jobs = yaml.safe_load(path.read_text())["jobs"]
             self.assertIn(f"build-{name}", jobs)
 
+    def test_every_build_workflow_job_belongs_to_a_family(self):
+        """The release gate sees only build-<family> and test-<family>; any
+        other per-family job would ship an image without gating it."""
+        import yaml
+
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        for workflow in {spec["workflow"] for spec in graph.values()}:
+            path = P.REPO_ROOT / f".github/workflows/{workflow}.yml"
+            jobs = yaml.safe_load(path.read_text())["jobs"]
+            gated = {"versions"} | {
+                f"{kind}-{name}"
+                for name, spec in graph.items()
+                if spec["workflow"] == workflow
+                for kind in ("build", "test")
+            }
+            for job in jobs:
+                self.assertIn(job, gated, f"{workflow}.yml: {job}")
+
+    def test_build_result_waits_on_every_build_workflow(self):
+        """build-result is the one required check; a build job missing from
+        its needs could fail and still leave the PR mergeable."""
+        import yaml
+
+        path = P.REPO_ROOT / ".github/workflows/release.yml"
+        jobs = yaml.safe_load(path.read_text())["jobs"]
+        builds = {
+            name
+            for name, job in jobs.items()
+            if job.get("uses", "").startswith("./.github/workflows/")
+            and "families" in job.get("with", {})
+        }
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        self.assertEqual(builds, {spec["workflow"] for spec in graph.values()})
+        needs = set(jobs["build-result"]["needs"])
+        self.assertLessEqual(builds | {"pr-source-gate", "plan"}, needs)
+
     def test_every_family_is_covered_by_a_build_workflow(self):
         """release.yml calls a workflow only if the plan names it."""
         graph = P.load_graph(P.DEFAULT_GRAPH)
-        known = {"base", "nvidia", "rocm", "comfyui", "sandbox", "k3s-node"}
+        known = {"base", "nvidia", "rocm", "comfyui", "vllm", "sandbox", "k3s-node"}
         for name, spec in graph.items():
             self.assertIn(spec["workflow"], known, f"{name} has no build workflow")
 
@@ -198,6 +255,15 @@ class GraphFile(unittest.TestCase):
                 spec["image_repo"].startswith("runpod/"),
                 f"{name} has no image_repo",
             )
+
+    def test_dev_repos_are_the_public_ones_with_a_suffix(self):
+        """cleanup sweeps both; the -dev names must match what bake pushes."""
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        public = P.image_repos(graph)
+        both = P.image_repos(graph, include_dev=True)
+        self.assertEqual(both[: len(public)], public)
+        self.assertEqual(both[len(public):], [r + "-dev" for r in public])
+        self.assertIn("runpod/ubuntu-dev", both)
 
     def test_every_template_is_in_the_graph(self):
         graph = P.load_graph(P.DEFAULT_GRAPH)
@@ -216,6 +282,7 @@ class GraphFile(unittest.TestCase):
             [
                 "autoresearch",
                 "base",
+                "burn",
                 "filebrowser",
                 "nvidia-pytorch",
                 "pytorch",

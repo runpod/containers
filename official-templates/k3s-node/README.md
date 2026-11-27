@@ -13,8 +13,10 @@
 The entrypoint, `k3s-node`, wraps `k3s agent`:
 - It sets the kubelet's `system-reserved` to the part of the host the Runpod pod does not rent, read from the pod's cgroup limits.
 - It works on cgroup v1 and v2 hosts. On v1 it adds the kubelet flags `fail-cgroupv1=false` and `cpu-cfs-quota=false`: under sysbox the node cannot see its CPU quota, so k8s CPU limits are not enforced per pod there.
-- Without `K3S_TOKEN` and `WG_ENDPOINT` it waits: a cluster's pods start before its control plane exists.
-- It derives the WireGuard keys and the node password from `K3S_TOKEN` and `NODE_RANK`, so a recreated node pod joins as the same node.
+- Without `K3S_TOKEN`, `WG_ENDPOINT`, `WG_PRIVATE_KEY` and `WG_SERVER_KEYS` it waits: a cluster's pods start before its control plane exists and before Runpod sets their values.
+- `K3S_TOKEN` is this pod's own bootstrap token in k3s's secure form, `K10<CA hash>::<id>.<secret>`, so the agent checks the control plane's CA.
+- It derives the node password from the part of `K3S_TOKEN` after the last colon and `NODE_RANK`, so a recreated node pod joins as the same node.
+- `WG_PRIVATE_KEY` is this pod's own WireGuard private key, and `WG_SERVER_KEYS` the servers' public keys (base64, comma-separated, slot 0 first). No key derives from a shared value, so a cluster still on the shared-token env must stay on an older image tag.
 
 ### What's deliberately absent
 No SSH server, no nginx and no Jupyter. Reach the cluster with `kubectl` through its kubeconfig.

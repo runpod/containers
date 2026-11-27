@@ -3,12 +3,27 @@ description: >-
   Generate an SBOM for each built image with Syft, from the local Docker daemon
   (before push). Writes syft-json (consumed by the grype action), SPDX JSON
   (attested by the cosign action) and CycloneDX JSON, plus an index that maps
-  each registry/image@sha256 digest ref to its files.
+  each registry/image@sha256 digest ref to its files, adds a job summary and
+  optionally uploads the SPDX/CycloneDX files as an artifact.
 
 inputs:
   ref-digests:
     description: "JSON object mapping each image reference to its sha256 digest (image-name output `ref-digests`)"
     required: true
+  platforms:
+    description: >-
+      Comma-separated platforms of a multi-platform image, e.g.
+      "linux/amd64,linux/arm64": one SBOM per platform, which the cosign
+      action attests to that platform's manifest. Empty: one SBOM per image.
+    required: false
+    default: ""
+  artifact-name:
+    description: >-
+      Upload the SPDX and CycloneDX files under this artifact name:
+      sbom-<family>, or sbom-<family>.<shard> for a matrix job (the release
+      jobs download sbom-<family>{,.*}). Empty: no upload.
+    required: false
+    default: ""
   max-parallel:
     description: "Maximum number of Syft runs to execute concurrently"
     required: false
@@ -20,8 +35,9 @@ outputs:
     value: ${{ steps.gen.outputs.dir }}
   index:
     description: >-
-      Path to index.json: {"<registry/image@sha256:...>": {"ref", "name",
-      "syft", "spdx", "cdx"}}. Keys use the same form as image-name `digests`.
+      Path to index.json: {"<registry/image@sha256:...>": {"ref", "sboms":
+      [{"platform", "name", "syft", "spdx", "cdx"}]}}. Keys use the same form
+      as image-name `digests`; platform is null for a single-platform image.
     value: ${{ steps.gen.outputs.index }}
 
 runs:
@@ -49,6 +65,7 @@ runs:
       shell: bash
       env:
         REF_DIGESTS: ${{ inputs.ref-digests }}
+        PLATFORMS: ${{ inputs.platforms }}
         MAX_PARALLEL: ${{ inputs.max-parallel }}
         # Package-level SBOM only: no per-file metadata/digests and no
         # package->file "contains" relationships (every file dpkg/pip lists).
@@ -64,31 +81,41 @@ runs:
         out="${RUNNER_TEMP}/sbom"
         mkdir -p "${out}"
 
-        # One SBOM per unique image digest (several tags can share one).
-        # Key = tag stripped from the ref + "@" + digest, mirroring how the
-        # image-name action builds `digests`, so the cosign action can look
-        # each signed digest up directly.
-        index="$(echo "${REF_DIGESTS}" | jq -c --arg out "${out}" '
+        # One SBOM per unique image digest (several tags can share one) and
+        # platform. Key = tag stripped from the ref + "@" + digest, mirroring
+        # how the image-name action builds `digests`, so the cosign action
+        # can look each signed digest up directly.
+        index="$(echo "${REF_DIGESTS}" | jq -c --arg out "${out}" --arg platforms "${PLATFORMS}" '
           def without_tag:
             split("/")[-1] as $name
             | if ($name | contains(":")) then sub(":[^:]*$"; "") else . end;
-          to_entries
+          ($platforms | split(",") | map(gsub("\\s"; "")) | map(select(. != ""))) as $p
+          | (if ($p | length) == 0 then [null] else $p end) as $plats
+          | to_entries
           | map({key: ((.key | without_tag) + "@" + .value), ref: .key})
           | group_by(.key)
           | map(.[0])
           | map(
-              (.ref | sub("^docker\\.io/"; "") | gsub("/"; "-") | gsub(":"; "_")) as $name
+              (.ref | sub("^docker\\.io/"; "") | gsub("/"; "-") | gsub(":"; "_")) as $base
               | {key: .key, value: {
                   ref: .ref,
-                  name: $name,
-                  syft: "\($out)/\($name).syft.json",
-                  spdx: "\($out)/\($name).spdx.json",
-                  cdx:  "\($out)/\($name).cdx.json"
+                  sboms: [$plats[] as $plat
+                    | ($base + (if $plat then "_" + ($plat | gsub("/"; "-")) else "" end)) as $name
+                    | {
+                        platform: $plat,
+                        name: $name,
+                        syft: "\($out)/\($name).syft.json",
+                        spdx: "\($out)/\($name).spdx.json",
+                        cdx:  "\($out)/\($name).cdx.json"
+                      }]
                 }})
           | from_entries')"
 
+        # Flat list of (image, platform) jobs.
+        mapfile -t jobs < <(echo "${index}" | jq -c 'to_entries[] | .key as $key | .value.ref as $ref
+          | .value.sboms[] | . + {key: $key, ref: $ref}')
         count="$(echo "${index}" | jq 'length')"
-        if [ "${count}" -eq 0 ]; then
+        if [ "${#jobs[@]}" -eq 0 ]; then
           echo "No image digests to generate SBOMs for"
           exit 1
         fi
@@ -100,32 +127,44 @@ runs:
           max_parallel=2
         fi
 
-        mapfile -t keys < <(echo "${index}" | jq -r 'keys[]')
-        echo "Generating ${count} SBOM(s), up to ${max_parallel} in parallel"
+        echo "Generating ${#jobs[@]} SBOM(s) for ${count} image(s), up to ${max_parallel} in parallel"
 
         tmpdir="$(mktemp -d)"
         gen_one() {
-          local idx="$1" key="$2" entry ref
-          entry="$(echo "${index}" | jq -c --arg k "${key}" '.[$k]')"
-          ref="$(echo "${entry}" | jq -r .ref)"
+          local idx="$1" job="$2" ref platform syft_json want got
+          ref="$(echo "${job}" | jq -r .ref)"
+          platform="$(echo "${job}" | jq -r '.platform // empty')"
+          syft_json="$(echo "${job}" | jq -r .syft)"
           # --scope squashed matches the grype action: packages present in
           # the final filesystem, not ones deleted in a later layer.
           if syft "docker:${ref}" \
+              ${platform:+--platform "${platform}"} \
               --scope squashed \
               -q \
-              -o "syft-json=$(echo "${entry}" | jq -r .syft)" \
-              -o "spdx-json=$(echo "${entry}" | jq -r .spdx)" \
-              -o "cyclonedx-json=$(echo "${entry}" | jq -r .cdx)" \
+              -o "syft-json=${syft_json}" \
+              -o "spdx-json=$(echo "${job}" | jq -r .spdx)" \
+              -o "cyclonedx-json=$(echo "${job}" | jq -r .cdx)" \
               > "${tmpdir}/${idx}.log" 2>&1; then
             echo 0 > "${tmpdir}/${idx}.rc"
           else
             echo 1 > "${tmpdir}/${idx}.rc"
+            return
+          fi
+          # Syft falls back to a plain `docker save` when the daemon rejects
+          # the platform option, which can catalog the wrong platform.
+          if [ -n "${platform}" ]; then
+            want="$(cut -d/ -f2 <<< "${platform}")"
+            got="$(jq -r '.source.metadata.architecture // empty' "${syft_json}")"
+            if [ "${got}" != "${want}" ]; then
+              echo "Asked for ${platform}, Syft cataloged architecture '${got}'" >> "${tmpdir}/${idx}.log"
+              echo 1 > "${tmpdir}/${idx}.rc"
+            fi
           fi
         }
 
         running=0
-        for idx in "${!keys[@]}"; do
-          gen_one "${idx}" "${keys[$idx]}" &
+        for idx in "${!jobs[@]}"; do
+          gen_one "${idx}" "${jobs[$idx]}" &
           running=$((running + 1))
           if [ "${running}" -ge "${max_parallel}" ]; then
             wait -n
@@ -135,19 +174,19 @@ runs:
         wait
 
         failed=()
-        for idx in "${!keys[@]}"; do
-          key="${keys[$idx]}"
-          echo "::group::Syft — ${key}"
+        for idx in "${!jobs[@]}"; do
+          job="${jobs[$idx]}"
+          label="$(echo "${job}" | jq -r '.key + (if .platform then " (\(.platform))" else "" end)')"
+          echo "::group::Syft — ${label}"
           cat "${tmpdir}/${idx}.log" 2>/dev/null
           if [ "$(cat "${tmpdir}/${idx}.rc" 2>/dev/null)" = "0" ]; then
-            echo "${index}" | jq -r --arg k "${key}" '.[$k] | .syft, .spdx, .cdx' \
+            echo "${job}" | jq -r '.syft, .spdx, .cdx' \
               | while read -r f; do
                   printf '  %-90s %s\n' "$(basename "${f}")" "$(du -h "${f}" | cut -f1)"
                 done
-            jq -r '"  packages: \(.artifacts | length)"' \
-              "$(echo "${index}" | jq -r --arg k "${key}" '.[$k].syft')"
+            jq -r '"  packages: \(.artifacts | length)"' "$(echo "${job}" | jq -r .syft)"
           else
-            failed+=("${key}")
+            failed+=("${label}")
           fi
           echo "::endgroup::"
         done
@@ -162,7 +201,7 @@ runs:
         # image's package list. A step summary is capped at 1 MiB, so a list
         # that would not fit is left out (the artifact has them all).
         summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
-        mapfile -t syft_files < <(echo "${index}" | jq -r '.[].syft')
+        mapfile -t syft_files < <(printf '%s\n' "${jobs[@]}" | jq -r .syft)
         types="$(jq -cs '[.[].artifacts[].type] | unique' "${syft_files[@]}")"
         {
           echo "### SBOM"
@@ -171,33 +210,31 @@ runs:
           echo
           echo "| Image | Digest | Packages | $(echo "${types}" | jq -r 'join(" | ")') | SPDX | CycloneDX |"
           echo "|---|---|--:|$(echo "${types}" | jq -r 'map("--:") | join("|")')|--:|--:|"
-          for key in "${keys[@]}"; do
-            entry="$(echo "${index}" | jq -c --arg k "${key}" '.[$k]')"
+          for job in "${jobs[@]}"; do
             jq -r --argjson types "${types}" \
-                  --arg ref "$(echo "${entry}" | jq -r .ref)" \
-                  --arg digest "${key##*@sha256:}" \
-                  --arg spdx "$(du -h "$(echo "${entry}" | jq -r .spdx)" | cut -f1)" \
-                  --arg cdx "$(du -h "$(echo "${entry}" | jq -r .cdx)" | cut -f1)" '
+                  --arg label "$(echo "${job}" | jq -r '(.ref | split("/")[-1]) + (if .platform then " (\(.platform))" else "" end)')" \
+                  --arg digest "$(echo "${job}" | jq -r '.key | split("@sha256:")[1]')" \
+                  --arg spdx "$(du -h "$(echo "${job}" | jq -r .spdx)" | cut -f1)" \
+                  --arg cdx "$(du -h "$(echo "${job}" | jq -r .cdx)" | cut -f1)" '
               (.artifacts | group_by(.type) | map({(.[0].type): length}) | add // {}) as $by
-              | "| `\($ref | split("/")[-1])` | `\($digest[0:12])` | \(.artifacts | length) | "
+              | "| `\($label)` | `\($digest[0:12])` | \(.artifacts | length) | "
                 + ($types | map(($by[.] // 0) | tostring) | join(" | "))
-                + " | \($spdx) | \($cdx) |"' "$(echo "${entry}" | jq -r .syft)"
+                + " | \($spdx) | \($cdx) |"' "$(echo "${job}" | jq -r .syft)"
           done
           echo
         } >> "${summary}"
 
         limit=1000000
         omitted=0
-        for key in "${keys[@]}"; do
-          entry="$(echo "${index}" | jq -c --arg k "${key}" '.[$k]')"
-          jq -r --arg ref "$(echo "${entry}" | jq -r .ref)" '
+        for job in "${jobs[@]}"; do
+          jq -r --arg label "$(echo "${job}" | jq -r '(.ref | split("/")[-1]) + (if .platform then " (\(.platform))" else "" end)')" '
             def cell: tostring | gsub("\\|"; "\\|");
-            "<details><summary><code>\($ref | split("/")[-1])</code>: \(.artifacts | length) packages</summary>\n",
+            "<details><summary><code>\($label)</code>: \(.artifacts | length) packages</summary>\n",
             "| Type | Package | Version |",
             "|---|---|---|",
             (.artifacts | sort_by(.type, (.name | ascii_downcase)) | .[]
               | "| \(.type) | \(.name | cell) | \(.version | cell) |"),
-            "\n</details>\n"' "$(echo "${entry}" | jq -r .syft)" > "${tmpdir}/list.md"
+            "\n</details>\n"' "$(echo "${job}" | jq -r .syft)" > "${tmpdir}/list.md"
           used="$(wc -c < "${summary}" 2>/dev/null || echo 0)"
           if [ $((used + $(wc -c < "${tmpdir}/list.md") + 200)) -le "${limit}" ]; then
             cat "${tmpdir}/list.md" >> "${summary}"
@@ -206,8 +243,19 @@ runs:
           fi
         done
         if [ "${omitted}" -gt 0 ]; then
-          echo "Package lists for ${omitted} image(s) did not fit the job summary; they are in the SBOM artifact." >> "${summary}"
+          echo "Package lists for ${omitted} SBOM(s) did not fit the job summary; they are in the SBOM artifact." >> "${summary}"
         fi
 
         echo "dir=${out}" >> "${GITHUB_OUTPUT}"
         echo "index=${out}/index.json" >> "${GITHUB_OUTPUT}"
+
+    - name: Upload SBOM artifact
+      if: inputs.artifact-name != ''
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ steps.gen.outputs.dir }}/*.spdx.json
+          ${{ steps.gen.outputs.dir }}/*.cdx.json
+        retention-days: 14
+        if-no-files-found: error

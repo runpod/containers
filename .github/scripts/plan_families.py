@@ -12,10 +12,12 @@ lives in .github/families.yml.
     plan_families.py --all                 # workflow_dispatch: no diff to read
     plan_families.py --workflows           # build workflows to call, not families
     plan_families.py --workflow comfyui    # which workflow builds this family
+    plan_families.py --ancestors pytorch   # what it builds FROM, transitively
     plan_families.py --paths comfyui       # pathspecs feeding it, deps included,
                                            # ignored files excluded
     plan_families.py --image-repo comfyui  # just read one field of the graph
     plan_families.py --image-repos         # every repo we publish to, one per line
+    plan_families.py --image-repos --include-dev   # ... plus each one's -dev twin
 
 Prints a JSON array in build order on stdout and a human summary on stderr.
 """
@@ -34,6 +36,11 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GRAPH = REPO_ROOT / ".github" / "families.yml"
+
+# The dev env publishes every family to `<image_repo>` + this, a
+# private twin of the public repo (runpod/base -> runpod/base-dev). Must match
+# the compute-version action's repo-suffix.
+DEV_REPO_SUFFIX = "-dev"
 
 
 class GraphError(Exception):
@@ -196,6 +203,25 @@ def paths_with_deps(graph: dict[str, dict], name: str) -> list[str]:
     return seen
 
 
+def ancestors(graph: dict[str, dict], name: str) -> list[str]:
+    """Every family this one builds FROM, nearest first."""
+    seen: list[str] = []
+    pending = list(graph[name]["depends_on"])
+    while pending:
+        current = pending.pop(0)
+        if current not in seen:
+            seen.append(current)
+            pending.extend(graph[current]["depends_on"])
+    return seen
+
+
+def image_repos(graph: dict[str, dict], include_dev: bool = False) -> list[str]:
+    """Every repo the families publish to, deduplicated, in graph order; with
+    `include_dev`, each one's private -dev twin follows the public ones."""
+    public = list(dict.fromkeys(s["image_repo"] for s in graph.values()))
+    return public + ([r + DEV_REPO_SUFFIX for r in public] if include_dev else [])
+
+
 def git_pathspecs(paths: list[str]) -> list[str]:
     """Graph patterns as git pathspecs, for `git log -- …`. A trailing /**
     becomes a plain directory, which git already reads as "and below"."""
@@ -284,9 +310,19 @@ def main() -> int:
         help="print the build workflow covering this family, then exit",
     )
     ap.add_argument(
+        "--ancestors",
+        metavar="FAMILY",
+        help="print every family this one builds FROM, one per line, then exit",
+    )
+    ap.add_argument(
         "--image-repos",
         action="store_true",
         help="print every Docker Hub repo the families publish to, one per line",
+    )
+    ap.add_argument(
+        "--include-dev",
+        action="store_true",
+        help="with --image-repos: also print each repo's private -dev twin",
     )
     ap.add_argument(
         "--image-repo",
@@ -296,15 +332,16 @@ def main() -> int:
     args = ap.parse_args()
 
     if not (args.all or args.changed_files or args.since_release
-            or args.image_repo or args.image_repos or args.workflow or args.paths):
+            or args.image_repo or args.image_repos or args.workflow or args.paths
+            or args.ancestors):
         ap.error("pass --changed-files, --since-release, --all, --workflow, "
-                 "--image-repo or --image-repos")
+                 "--ancestors, --image-repo or --image-repos")
 
     try:
         graph = load_graph(args.graph)
         ignore = load_ignore(args.graph)
         if args.image_repos:
-            for repo in dict.fromkeys(s["image_repo"] for s in graph.values()):
+            for repo in image_repos(graph, args.include_dev):
                 print(repo)
             return 0
         if args.image_repo:
@@ -316,6 +353,12 @@ def main() -> int:
             if args.workflow not in graph:
                 raise GraphError(f"unknown family '{args.workflow}'")
             print(graph[args.workflow]["workflow"])
+            return 0
+        if args.ancestors:
+            if args.ancestors not in graph:
+                raise GraphError(f"unknown family '{args.ancestors}'")
+            for name in ancestors(graph, args.ancestors):
+                print(name)
             return 0
         if args.paths:
             if args.paths not in graph:

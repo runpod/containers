@@ -10,7 +10,9 @@ inputs:
       Optional path to the sbom action's index.json. When set, each signed
       digest also gets its SPDX SBOM attached as a keyless in-toto attestation
       (cosign attest --type spdxjson), stored as sha256-<digest>.att, and the
-      attestation is verified. A digest with no SBOM in the index fails the step.
+      attestation is verified. A multi-platform image gets one attestation
+      per platform, on that platform's manifest digest. A digest with no SBOM
+      in the index fails the step.
     required: false
     default: ""
 
@@ -29,6 +31,60 @@ runs:
         IDENTITY_REGEX="^${SERVER_URL}/${REPOSITORY}/\.github/workflows/.+"
         OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
+        attest_sbom() {
+          local target="$1" sbom="$2" label="$3" size attest_log log_index want got
+          local attestations attempt max_attempts delay rekor
+          size="$(du -h "${sbom}" | cut -f1)"
+          echo "::group::Attest SBOM ${target} (${size})"
+          if ! attest_log="$(cosign attest --yes --type spdxjson --predicate "${sbom}" "${target}" 2>&1)"; then
+            printf '%s\n' "${attest_log}"
+            exit 1
+          fi
+          printf '%s\n' "${attest_log}"
+          log_index="$(sed -n 's/.*tlog entry created with index: \([0-9]*\).*/\1/p' <<< "${attest_log}" | tail -1)"
+          echo "::endgroup::"
+
+          # Smoke test, like `verify` above: also checks the attested
+          # predicate is the SBOM we generated, not just that one exists. A
+          # re-run can rebuild the same digest from cache, so the digest may
+          # carry several attestations (one JSON line each); ours must be
+          # among them. Retried for the same Docker Hub lag as `verify`.
+          echo "::group::Verify SBOM attestation ${target}"
+          want="$(jq -cS . "${sbom}" | sha256sum | cut -d' ' -f1)"
+          attestations="$(mktemp)"
+          attempt=1
+          max_attempts=5
+          while :; do
+            got=""
+            if cosign verify-attestation \
+                --type spdxjson \
+                --certificate-identity-regexp "${IDENTITY_REGEX}" \
+                --certificate-oidc-issuer "${OIDC_ISSUER}" \
+                "${target}" > "${attestations}"; then
+              got="$(jq -r '.payload' "${attestations}" | while IFS= read -r payload; do
+                  printf '%s' "${payload}" | base64 -d | jq -cS '.predicate' \
+                    | sha256sum | cut -d' ' -f1
+                done)"
+            fi
+            grep -qxF "${want}" <<< "${got}" && break
+            if (( attempt >= max_attempts )); then
+              echo "::error::No attested SBOM matching ${sbom} on ${target} after ${attempt} attempts"
+              exit 1
+            fi
+            delay=$(( 5 * 2 ** (attempt - 1) ))
+            echo "verify-attestation attempt ${attempt}/${max_attempts} found no matching SBOM; retrying in ${delay}s"
+            sleep "${delay}"
+            attempt=$(( attempt + 1 ))
+          done
+          rm -f "${attestations}"
+          echo "Attested SBOM matches ${sbom}"
+          echo "::endgroup::"
+
+          rekor="${log_index:+[${log_index}](https://search.sigstore.dev/?logIndex=${log_index})}"
+          echo "| \`${label}\` | \`$(cut -c1-12 <<< "${target##*@sha256:}")\` | ${size} | ✅ | ${rekor:-n/a} |" \
+            >> "${GITHUB_STEP_SUMMARY}"
+        }
+
         if [ -n "${SBOM_INDEX}" ]; then
           {
             echo "### SBOM attestations"
@@ -44,58 +100,61 @@ runs:
           cosign sign --yes "${ref}"
           echo "::endgroup::"
 
+          # Docker Hub is eventually consistent: right after `cosign sign`
+          # pushes the .sig tag, a read can still miss it ("no signatures
+          # found"). Retry with backoff; a real signature or identity problem
+          # still fails after the last attempt.
           echo "::group::Verify ${ref}"
-          cosign verify \
-            --certificate-identity-regexp "${IDENTITY_REGEX}" \
-            --certificate-oidc-issuer "${OIDC_ISSUER}" \
-            "${ref}"
+          attempt=1
+          max_attempts=5
+          until cosign verify \
+              --certificate-identity-regexp "${IDENTITY_REGEX}" \
+              --certificate-oidc-issuer "${OIDC_ISSUER}" \
+              "${ref}"; do
+            if (( attempt >= max_attempts )); then
+              echo "::error::cosign verify failed for ${ref} after ${attempt} attempts"
+              exit 1
+            fi
+            delay=$(( 5 * 2 ** (attempt - 1) ))
+            echo "verify attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s"
+            sleep "${delay}"
+            attempt=$(( attempt + 1 ))
+          done
           echo "::endgroup::"
 
           if [ -n "${SBOM_INDEX}" ]; then
-            sbom="$(jq -r --arg k "${ref}" '.[$k].spdx // empty' "${SBOM_INDEX}")"
-            if [ -z "${sbom}" ] || [ ! -s "${sbom}" ]; then
-              echo "::error::No SPDX SBOM in ${SBOM_INDEX} for ${ref}"
+            entry="$(jq -c --arg k "${ref}" '.[$k] // empty' "${SBOM_INDEX}")"
+            if [ -z "${entry}" ]; then
+              echo "::error::No SBOM in ${SBOM_INDEX} for ${ref}"
               exit 1
             fi
-
-            size="$(du -h "${sbom}" | cut -f1)"
-            echo "::group::Attest SBOM ${ref} (${size})"
-            if ! attest_log="$(cosign attest --yes --type spdxjson --predicate "${sbom}" "${ref}" 2>&1)"; then
-              printf '%s\n' "${attest_log}"
-              exit 1
-            fi
-            printf '%s\n' "${attest_log}"
-            log_index="$(sed -n 's/.*tlog entry created with index: \([0-9]*\).*/\1/p' <<< "${attest_log}" | tail -1)"
-            echo "::endgroup::"
-
-            # Smoke test, like `verify` above: also checks the attested
-            # predicate is the SBOM we generated, not just that one exists.
-            # A re-run can rebuild the same digest from cache, so the digest
-            # may carry several attestations (one JSON line each); ours must
-            # be among them.
-            echo "::group::Verify SBOM attestation ${ref}"
-            want="$(jq -cS . "${sbom}" | sha256sum | cut -d' ' -f1)"
-            attestations="$(mktemp)"
-            cosign verify-attestation \
-              --type spdxjson \
-              --certificate-identity-regexp "${IDENTITY_REGEX}" \
-              --certificate-oidc-issuer "${OIDC_ISSUER}" \
-              "${ref}" > "${attestations}"
-            got="$(jq -r '.payload' "${attestations}" | while IFS= read -r payload; do
-                printf '%s' "${payload}" | base64 -d | jq -cS '.predicate' \
-                  | sha256sum | cut -d' ' -f1
-              done)"
-            rm -f "${attestations}"
-            if ! grep -qxF "${want}" <<< "${got}"; then
-              echo "::error::Attested SBOM for ${ref} does not match ${sbom}"
-              exit 1
-            fi
-            echo "Attested SBOM matches ${sbom}"
-            echo "::endgroup::"
-
-            tag="$(jq -r --arg k "${ref}" '.[$k].ref | split("/")[-1]' "${SBOM_INDEX}")"
-            rekor="${log_index:+[${log_index}](https://search.sigstore.dev/?logIndex=${log_index})}"
-            echo "| \`${tag}\` | \`$(cut -c1-12 <<< "${ref##*@sha256:}")\` | ${size} | ✅ | ${rekor:-n/a} |" \
-              >> "${GITHUB_STEP_SUMMARY}"
+            tag="$(jq -r '.ref | split("/")[-1]' <<< "${entry}")"
+            raw=""
+            while IFS= read -r sbom_entry; do
+              sbom="$(jq -r .spdx <<< "${sbom_entry}")"
+              platform="$(jq -r '.platform // empty' <<< "${sbom_entry}")"
+              if [ ! -s "${sbom}" ]; then
+                echo "::error::SPDX SBOM ${sbom} for ${ref} is missing or empty"
+                exit 1
+              fi
+              if [ -z "${platform}" ]; then
+                attest_sbom "${ref}" "${sbom}" "${tag}"
+                continue
+              fi
+              # A multi-platform ref is an index; each platform's SBOM goes
+              # on that platform's manifest, the digest a pull resolves to.
+              [ -n "${raw}" ] || raw="$(docker buildx imagetools inspect --raw "${ref}")"
+              child="$(jq -r --arg os "${platform%%/*}" --arg arch "$(cut -d/ -f2 <<< "${platform}")" \
+                  --arg variant "$(cut -d/ -f3 -s <<< "${platform}")" '
+                [.manifests[]?
+                  | select(.platform.os == $os and .platform.architecture == $arch
+                      and ($variant == "" or .platform.variant == $variant))
+                  | .digest][0] // empty' <<< "${raw}")"
+              if [ -z "${child}" ]; then
+                echo "::error::${ref} has no ${platform} manifest to attest"
+                exit 1
+              fi
+              attest_sbom "${ref%@*}@${child}" "${sbom}" "${tag} (${platform})"
+            done < <(jq -c '.sboms[]' <<< "${entry}")
           fi
         done

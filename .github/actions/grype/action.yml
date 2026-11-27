@@ -15,10 +15,11 @@ inputs:
     default: "false"
   sbom-index:
     description: >-
-      Optional path to the sbom action's index.json. When set, each image is
-      scanned from its syft-json SBOM (sbom:<file>) instead of being cataloged
-      again from the Docker daemon, so what is scanned is exactly what is
-      attested. image-refs is then unused.
+      Optional path to the sbom action's index.json. When set, each image (each
+      platform of a multi-platform one) is scanned from its syft-json SBOM
+      (sbom:<file>) instead of being cataloged again from the Docker daemon,
+      so what is scanned is exactly what is attested. image-refs is then
+      unused.
     required: false
     default: ""
 
@@ -61,8 +62,9 @@ runs:
         ignore_file="${GITHUB_ACTION_PATH}/ignore.yaml"
         # refs: labels for the log; sources: what grype is pointed at.
         if [ -n "${SBOM_INDEX}" ]; then
-          mapfile -t refs < <(jq -r 'to_entries[] | .value.ref' "${SBOM_INDEX}")
-          mapfile -t sources < <(jq -r 'to_entries[] | "sbom:\(.value.syft)"' "${SBOM_INDEX}")
+          mapfile -t refs < <(jq -r 'to_entries[] | .value.ref as $ref | .value.sboms[]
+            | $ref + (if .platform then " (\(.platform))" else "" end)' "${SBOM_INDEX}")
+          mapfile -t sources < <(jq -r 'to_entries[] | .value.sboms[] | "sbom:\(.syft)"' "${SBOM_INDEX}")
         else
           mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
           sources=()
