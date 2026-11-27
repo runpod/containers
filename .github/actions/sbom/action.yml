@@ -131,35 +131,44 @@ runs:
 
         tmpdir="$(mktemp -d)"
         gen_one() {
-          local idx="$1" job="$2" ref platform syft_json want got
+          local idx="$1" job="$2" ref platform source archive config got
+          local log="${tmpdir}/${idx}.log"
           ref="$(echo "${job}" | jq -r .ref)"
           platform="$(echo "${job}" | jq -r '.platform // empty')"
-          syft_json="$(echo "${job}" | jq -r .syft)"
+          source="docker:${ref}"
+          echo 1 > "${tmpdir}/${idx}.rc"
+          if [ -n "${platform}" ]; then
+            # Not `syft --platform docker:<ref>`: on a daemon without the
+            # platform-aware inspect API (< 1.49; the runners have 1.48) Syft
+            # sees the host platform, then pulls <ref> from the registry,
+            # which before our push is missing or an older image, and
+            # re-tags it locally. Export exactly this platform instead.
+            archive="${tmpdir}/${idx}.tar"
+            if ! docker save --platform "${platform}" -o "${archive}" "${ref}" >> "${log}" 2>&1; then
+              return
+            fi
+            config="$(tar -xOf "${archive}" manifest.json | jq -r '.[0].Config')"
+            got="$(tar -xOf "${archive}" "${config}" \
+              | jq -r '[.os, .architecture, .variant // empty] | join("/")')"
+            if [ "${got}" != "${platform}" ] && [ "${got%/*}" != "${platform}" ]; then
+              echo "Asked for ${platform}, docker save exported ${got}" >> "${log}"
+              rm -f "${archive}"
+              return
+            fi
+            source="docker-archive:${archive}"
+          fi
           # --scope squashed matches the grype action: packages present in
           # the final filesystem, not ones deleted in a later layer.
-          if syft "docker:${ref}" \
-              ${platform:+--platform "${platform}"} \
+          if syft "${source}" \
+              --source-name "${ref}" \
               --scope squashed \
-              -q \
-              -o "syft-json=${syft_json}" \
+              -o "syft-json=$(echo "${job}" | jq -r .syft)" \
               -o "spdx-json=$(echo "${job}" | jq -r .spdx)" \
               -o "cyclonedx-json=$(echo "${job}" | jq -r .cdx)" \
-              > "${tmpdir}/${idx}.log" 2>&1; then
+              >> "${log}" 2>&1; then
             echo 0 > "${tmpdir}/${idx}.rc"
-          else
-            echo 1 > "${tmpdir}/${idx}.rc"
-            return
           fi
-          # Syft falls back to a plain `docker save` when the daemon rejects
-          # the platform option, which can catalog the wrong platform.
-          if [ -n "${platform}" ]; then
-            want="$(cut -d/ -f2 <<< "${platform}")"
-            got="$(jq -r '.source.metadata.architecture // empty' "${syft_json}")"
-            if [ "${got}" != "${want}" ]; then
-              echo "Asked for ${platform}, Syft cataloged architecture '${got}'" >> "${tmpdir}/${idx}.log"
-              echo 1 > "${tmpdir}/${idx}.rc"
-            fi
-          fi
+          [ -z "${archive:-}" ] || rm -f "${archive}"
         }
 
         running=0
@@ -259,3 +268,6 @@ runs:
           ${{ steps.gen.outputs.dir }}/*.cdx.json
         retention-days: 14
         if-no-files-found: error
+        # Uploaded before push and cosign: "Re-run failed jobs" after a later
+        # failure uploads the same name again.
+        overwrite: true
