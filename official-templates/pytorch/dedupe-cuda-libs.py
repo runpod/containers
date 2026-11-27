@@ -19,7 +19,6 @@ import sys
 
 SYSTEM_DIRS = (
     "/usr/local/cuda/lib64",
-    "/usr/local/cuda/extras/CUPTI/lib64",
     "/usr/lib/x86_64-linux-gnu",
 )
 # Must all be replaceable for the toolkit group to switch.

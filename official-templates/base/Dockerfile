@@ -40,7 +40,7 @@ RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 # ── CUDA dev toolchain ───
 # The CUDA bases start from nvidia/cuda:*-cudnn-runtime, not -cudnn-devel, and
 # add the dev packages here. They are the exact packages and versions the
-# devel image adds (cuda-dev/<CUDA_VERSION>.txt, from
+# devel image adds (cuda-dev/<CUDA_VERSION>-ubuntu<UBUNTU_VERSION>.txt, from
 # scripts/gen-cuda-dev-lock.sh), so nvcc, headers, every shared library, the
 # cuDNN/NCCL dev files, Nsight Compute and LIBRARY_PATH match the devel image.
 # The static libraries (*_static*.a, ~1.3-2.4 GB compressed) are not unpacked.
@@ -52,13 +52,14 @@ RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 # The -dev holds mirror the devel image, which holds cuBLAS-dev and NCCL-dev.
 # pkgs and holds are split on purpose: they are lists of package specs.
 FROM parent AS cuda-dev
+ARG UBUNTU_VERSION
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 # hadolint ignore=SC2086
 RUN --mount=type=bind,source=cuda-dev,target=/tmp/cuda-dev \
-    lock="/tmp/cuda-dev/${CUDA_VERSION}.txt" && \
+    lock="/tmp/cuda-dev/${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}.txt" && \
     if [[ ! -f "${lock}" ]]; then \
-      echo "no ${lock}: run scripts/gen-cuda-dev-lock.sh ${CUDA_VERSION}" >&2; exit 1; \
+      echo "no ${lock}: run scripts/gen-cuda-dev-lock.sh ${CUDA_VERSION} ${UBUNTU_VERSION}" >&2; exit 1; \
     fi && \
     printf '%s\n' \
       'path-exclude=/usr/local/cuda-*/targets/*/lib/*_static*.a' \
