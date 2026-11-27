@@ -56,6 +56,21 @@ variable "TORCH_META" {
       torchaudio  = "2.11.0"
       torchcodec  = "0.16.0"
     }
+    # 2.14 keeps torchaudio 2.11.0 (same as 2.12/2.13): the 2.11.0 cu130 wheel
+    # serves the 13.0.0 rows, and the 13.2.0 rows fall back to audio_index=cpu
+    # since there is no 2.11.0 cu132 wheel (2.11.1, the first with one, arrived
+    # with 2.15 and is used only there). torchvision 0.29.0/0.29.1 are the builds
+    # paired with 2.14.0/2.14.1, and torchcodec 0.17.0 declares torch >= 2.11.
+    "2.14.0" = {
+      torchvision = "0.29.0"
+      torchaudio  = "2.11.0"
+      torchcodec  = "0.17.0"
+    }
+    "2.14.1" = {
+      torchvision = "0.29.1"
+      torchaudio  = "2.11.0"
+      torchcodec  = "0.17.0"
+    }
     # 2.15 is cu132/cu134 only (cu126 and cu130 were dropped). torchvision
     # 0.29.2 is the build released with it (py3-none, torch >= 2.14), and
     # torchaudio 2.11.1 is the first torchaudio with a cu132 wheel, so the
@@ -109,6 +124,10 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "12.9.0", torch = "2.9.1", whl_src = "128" },
     { cuda_version = "12.9.0", torch = "2.12.1", whl_src = "129" },
     { cuda_version = "12.9.0", torch = "2.13.0", whl_src = "129" },
+    # 2.14 and 2.15 have no 12.x row on either base: cu129 was dropped after
+    # 2.13 and cu128 after 2.11, and the only remaining 12.x index, cu126, stops
+    # at sm_90 with no PTX (cannot run on Blackwell). 2.14 ships cu126/cu130/cu132
+    # and 2.15 ships cu132/cu134, so both go on the CUDA 13 bases only.
 
     { cuda_version = "13.0.0", torch = "2.6.0", whl_src = "126" },
     { cuda_version = "13.0.0", torch = "2.7.1", whl_src = "128" },
@@ -118,6 +137,8 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.0.0", torch = "2.12.0", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.12.1", whl_src = "130" },
     { cuda_version = "13.0.0", torch = "2.13.0", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.14.0", whl_src = "130" },
+    { cuda_version = "13.0.0", torch = "2.14.1", whl_src = "130" },
     # 2.15 publishes no cu130 wheels. The cu132 wheels run on any CUDA 13
     # driver (>= 580) through minor version compatibility — torch brings its
     # own CUDA 13.2.2 runtime from pip — so this image runs on the same hosts
@@ -136,6 +157,8 @@ variable "CUDA_TORCH_COMBINATIONS" {
     { cuda_version = "13.2.0", torch = "2.12.0", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.12.1", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.13.0", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.14.0", whl_src = "132", audio_index = "cpu" },
+    { cuda_version = "13.2.0", torch = "2.14.1", whl_src = "132", audio_index = "cpu" },
     { cuda_version = "13.2.0", torch = "2.15.0", whl_src = "132" },
   ]
 }
