@@ -31,6 +31,7 @@ from .checks import (
     dump_pod_logs,
     fetch_pod_cuda_version,
     host_incompatibility,
+    host_start_failure,
     pip_check_command,
     python_path_check_command,
     python_tls_check_command,
@@ -283,8 +284,22 @@ def _classify_non_running(
         what let a broken image read as a capacity gap and keep CI green.
 
     Anything else (EXITED, TERMINATED, FAILED, RUNNING-then-died) is a
-    container problem — the image is broken and another GPU won't help."""
+    container problem — the image is broken and another GPU won't help.
+
+    Checked before all of that: a start failure the host caused (registry
+    token refused for the image, host out of kernel keyrings) is UNVERIFIED,
+    whatever the state, so it reaches another host or a retry round."""
     diagnostics = dump_pod_logs(pod_id, image)
+    host_side = host_start_failure(
+        diagnostics.sys_lines + diagnostics.container_lines
+    )
+    if host_side:
+        log(
+            f"{state.lower()} -- host could not start the container "
+            f"({host_side}) -- UNVERIFIED (trying next instance type)",
+            indent=2,
+        )
+        return "UNVERIFIED", f"host could not start the container: {host_side}"
     blocker = host_incompatibility(diagnostics.sys_errors)
     if blocker:
         log(
@@ -642,11 +657,12 @@ def _run_log_scan_step(
         log("log scan passed", indent=2)
         return None
 
-    detail = (
-        "log scan unverified — log API returned no container logs"
-        if report.startswith("log scan UNVERIFIED")
-        else "error markers found in container logs"
-    )
+    if report.startswith("log scan UNVERIFIED"):
+        # The log API being down says nothing about the image.
+        detail = "log scan unverified — log API returned no container logs"
+        log(f"{detail} -- UNVERIFIED", indent=2)
+        return "UNVERIFIED", detail
+    detail = "error markers found in container logs"
     log(f"log scan FAILED -- {detail}", indent=2)
     dump_pod_logs(pod_id, image)
     return "FAIL", detail
@@ -667,11 +683,20 @@ def _run_dwell_step(
         return None
     log(f"dwelling {config.DWELL_SEC}s and re-probing SSH...", indent=2)
     time.sleep(config.DWELL_SEC)
-    ok, err = ssh_probe(endpoint, timeout=8)
-    if ok:
-        return None
+    attempts = config.DWELL_PROBE_ATTEMPTS
+    for attempt in range(1, attempts + 1):
+        ok, err = ssh_probe(endpoint, timeout=8)
+        if ok:
+            return None
+        if attempt < attempts:
+            log(
+                f"ssh re-probe failed ({err}), attempt {attempt}/{attempts}, "
+                f"retrying in {config.DWELL_PROBE_SLEEP}s",
+                indent=2,
+            )
+            time.sleep(config.DWELL_PROBE_SLEEP)
     log(
-        f"ssh probe failed after dwell ({err}) -- "
+        f"ssh probe failed after dwell ({err}, {attempts} attempt(s)) -- "
         "container crashed -- FAIL",
         indent=2,
     )

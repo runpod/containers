@@ -53,7 +53,7 @@ runs:
           crane version
           exit 0
         fi
-        curl -fsSL \
+        curl -fsSL --retry 5 --retry-all-errors \
           "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
           -o /tmp/crane.tar.gz
         echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
@@ -71,6 +71,8 @@ runs:
         ATTEMPTS: ${{ inputs.attempts }}
       run: |
         set -euo pipefail
+        # shellcheck source=../../scripts/retry.sh
+        source "${GITHUB_ACTION_PATH}/../../scripts/retry.sh"
 
         LAYOUT="${RUNNER_TEMP}/base-images-oci"
         BAKE_FILE="${RUNNER_TEMP}/base-images.bake.json"
@@ -109,7 +111,8 @@ runs:
 
           # Pin the tag to one manifest digest so every attempt fetches the
           # same image, even if the tag moves mid-pull.
-          digest=$(crane digest --platform "${PLATFORM}" "${ref}")
+          digest=$(retry "${ATTEMPTS}" 15 "crane digest ${ref}" \
+            crane digest --platform "${PLATFORM}" "${ref}")
           # Repository without tag/digest. Handles name:tag@sha256:…, and a
           # registry port (host:5000/name) whose ':' is not a tag separator.
           repo="${ref%%@*}"

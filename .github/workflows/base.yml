@@ -168,14 +168,13 @@ jobs:
 
       - name: Build base images
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.base }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
@@ -331,14 +330,13 @@ jobs:
 
       - name: Build autoresearch images (${{ matrix.cuda }})
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.autoresearch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/autoresearch/docker-bake.hcl
@@ -518,14 +516,13 @@ jobs:
 
       - name: Build burn images (${{ matrix.cuda }})
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.burn }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/burn/docker-bake.hcl
@@ -698,14 +695,13 @@ jobs:
 
       - name: Build filebrowser images
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.filebrowser }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/filebrowser/docker-bake.hcl
@@ -874,14 +870,13 @@ jobs:
 
       - name: Build pytorch images (${{ matrix.cuda }})
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.pytorch }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch/docker-bake.hcl
@@ -1084,7 +1079,7 @@ jobs:
 
       - name: Build cluster images (${{ matrix.cuda }})
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           # The cluster's OWN tag: its version + suffix (RC/-dev/release).
@@ -1092,7 +1087,6 @@ jobs:
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/pytorch-cluster/docker-bake.hcl
@@ -1321,7 +1315,7 @@ jobs:
 
       - name: Build ray-cluster images (${{ matrix.cuda }})
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           # The Ray image's OWN tag: its version + suffix (RC/-dev/release).
@@ -1329,7 +1323,6 @@ jobs:
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/ray-cluster/docker-bake.hcl

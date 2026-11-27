@@ -125,13 +125,24 @@ def check_vllm_completion(
     return True, ""
 
 
-def probe_vllm_alive(pod_id: str) -> tuple[bool, str]:
-    """Post-dwell re-probe: still serving, gate still closed."""
+def probe_vllm_alive(
+    pod_id: str, attempts: int = 3, retry_sleep: int = 5,
+) -> tuple[bool, str]:
+    """Post-dwell re-probe: still serving, gate still closed.
+
+    A proxy read timeout is retried — CI saw one on a pod that was serving
+    fine. A wrong status code is the image's answer and is not."""
     base = _base_url(pod_id)
-    try:
-        health, _ = _request(base + "/health", timeout=15)
-        models, _ = _request(base + "/v1/models", timeout=15)
-    except OSError as exc:
-        return False, f"{type(exc).__name__}: {exc}"
+    for attempt in range(1, attempts + 1):
+        try:
+            health, _ = _request(base + "/health", timeout=15)
+            models, _ = _request(base + "/v1/models", timeout=15)
+            break
+        except OSError as exc:
+            if attempt == attempts:
+                return False, (
+                    f"{type(exc).__name__}: {exc} ({attempts} attempt(s))"
+                )
+            time.sleep(retry_sleep)
     detail = f"/health {health}, /v1/models without key {models}"
     return health == 200 and models == 401, detail

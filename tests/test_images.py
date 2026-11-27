@@ -1135,8 +1135,9 @@ def _print_summary(results: list[Result]) -> int:
     FAIL is ALWAYS fatal (exit 1) — a broken container is never something
     we want to slip past CI.
 
-    UNVERIFIED (an SSH endpoint was assigned but never answered, so we could
-    not tell a wedged host from an image that never starts sshd) is fatal
+    UNVERIFIED (the host stopped the check — an SSH endpoint that never
+    answered, an image pull the host was refused, no container logs — so we
+    could not tell a host problem from a broken image) is fatal
     too, EXCEPT under `ON_SKIP=pass`. Only the catalog sweep sets that, and
     it deliberately accepts dozens of flaky hosts per run; every release
     gate uses 'warn' or 'fail', where an image we could not verify must not
@@ -1205,11 +1206,12 @@ def _print_summary(results: list[Result]) -> int:
     if counts["UNVERIFIED"] > 0 and config.ON_SKIP != "pass":
         print()
         print(
-            f"::error::{counts['UNVERIFIED']} image(s) UNVERIFIED — an SSH "
-            "endpoint was assigned but never answered, so a wedged host and "
-            "an image that never starts sshd cannot be told apart. Re-run to "
-            "find out; set ON_SKIP=pass to accept unverified rows, as the "
-            "catalog sweep does."
+            f"::error::{counts['UNVERIFIED']} image(s) UNVERIFIED — after "
+            "every retry round the host still could not run the check (SSH "
+            "endpoint never answered, image pull refused, or no container "
+            "logs), so a host problem and a broken image cannot be told "
+            "apart. Re-run to find out; set ON_SKIP=pass to accept "
+            "unverified rows, as the catalog sweep does."
         )
         return 1
     if counts["SKIP"] == 0 or config.ON_SKIP == "pass":
