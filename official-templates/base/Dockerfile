@@ -277,8 +277,8 @@ RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     done;
 
 # Install pip via verified get-pip.py
-ARG GET_PIP_COMMIT=0d4515b4d114f9cd820446a4bd4bd0986393d454
-ARG GET_PIP_SHA256=66904bccb878e363db6236ea900e6935e507dcb887e9f178f6212edfe7f46a76
+ARG GET_PIP_COMMIT=03f582d4710047617da50bd36a871b596e651363 # 26.3
+ARG GET_PIP_SHA256=f7654c5589318e1d0789575b2586ce76937eb9943602adda8b15b3be3aa0dac3
 RUN [[ -n "$RP_SKIP_PYTHON" ]] && exit 0; \
     curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/get-pip.py \
         "https://raw.githubusercontent.com/pypa/get-pip/${GET_PIP_COMMIT}/public/get-pip.py" && \
