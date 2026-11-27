@@ -103,21 +103,17 @@ jobs:
             'ssh-keygen -A -q && /usr/sbin/sshd -t && test "$HF_HOME" = /workspace/.huggingface'
           say sshd "installed, config valid; HF_HOME on /workspace"
 
-          # No key: vLLM must not start.
           cid=$(docker run -d "$IMAGE" Qwen/Qwen3-0.6B)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 20); do
-            docker logs "$cid" 2>&1 | grep -q 'vLLM was NOT started' && break
+          for _ in $(seq 1 30); do
+            docker logs "$cid" 2>&1 | grep -q 'Starting vLLM' && break
             sleep 1
           done
           logs=$(docker logs "$cid" 2>&1)
-          grep -q 'vLLM was NOT started: VLLM_API_KEY is not set' <<< "$logs"
-          if grep -q 'Starting vLLM' <<< "$logs"; then
-            echo "::error::vLLM started without VLLM_API_KEY"
-            exit 1
-          fi
-          test "$(docker inspect -f '{{.State.Running}}' "$cid")" = true
-          say gate "no key: held, vLLM not started"
+          grep -q 'WARNING: vLLM is NOT PROTECTED: VLLM_API_KEY is not set' <<< "$logs"
+          grep -q 'Authorization: Bearer <VLLM_API_KEY>' <<< "$logs"
+          grep -q 'Starting vLLM' <<< "$logs"
+          say gate "no key: vLLM starts with the NOT PROTECTED warning"
           docker rm -f "$cid" >/dev/null
 
           # vLLM's real app, built through its own --middleware hook: every
@@ -125,7 +121,7 @@ jobs:
           docker run --rm -e PYTHONPATH=/opt/runpod/vllm \
             -v "$PWD/.github/scripts/vllm_route_sweep.py:/tmp/vllm_route_sweep.py:ro" \
             --entrypoint python3 "$IMAGE" -W ignore /tmp/vllm_route_sweep.py
-          say routes "every route of vLLM's app needs the key; probes open"
+          say routes "every route of vLLM's app needs the key; probes open; no key outside start.sh fails"
 
           # start.sh asks vLLM's own parser whether the start command sets
           # --api-key; 3 means yes, 0 means no.

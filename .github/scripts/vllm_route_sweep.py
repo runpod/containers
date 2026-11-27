@@ -44,6 +44,19 @@ def ours(response) -> bool:
     )
 
 
+def no_key_fails_closed(args) -> list[str]:
+    """Loaded without a key and not through start.sh, it must not serve."""
+    del os.environ["VLLM_API_KEY"]
+    os.environ.pop("RUNPOD_VLLM_UNPROTECTED", None)
+    try:
+        TestClient(build_app(args, supported_tasks=GENERATION_TASKS)).get("/v1/models")
+    except RuntimeError as exc:
+        if "VLLM_API_KEY" in str(exc):
+            return []
+        return [f"no key outside start.sh: unexpected {exc!r}"]
+    return ["no key outside start.sh: vLLM's app served a request"]
+
+
 def main() -> int:
     parser = FrontendArgs.add_cli_args(FlexibleArgumentParser())
     args = parser.parse_args(["--middleware", MIDDLEWARE])
@@ -93,6 +106,8 @@ def main() -> int:
     keyed = client.post("/tokenize", headers={"Authorization": f"Bearer {KEY}"})
     if keyed.status_code == 401:
         failures.append("POST /tokenize: 401 even with the right key")
+
+    failures += no_key_fails_closed(args)
 
     print(f"swept {checked} route/method pairs of vLLM's app")
     for line in failures:

@@ -3,12 +3,11 @@
 # user-space stack and the monitoring stack (DCGM + node_exporter on every node;
 # Prometheus + Grafana on the head), with Ray's metrics wired into it.
 #
-# Contract v1 with runpod/host: the host injects only topology env and observes
-# Ray from outside the container (dashboard 8265 for readiness/liveness, Ray
-# metrics on 20217). The image owns launch: the ENTRYPOINT starts Ray, then
-# execs the CMD. Customers extend it with `FROM runpod/ray-cluster:<tag>`,
-# keeping the ENTRYPOINT, the Ray version and the contract ports. See
-# README.md and runpod/host docs/ray-init-refactor.md.
+# Contract v1: Runpod provides only the topology env (dashboard 8265 and Ray
+# metrics on 20217 are fixed ports). The image owns launch: the ENTRYPOINT
+# starts Ray, then execs the CMD. Customers extend it with
+# `FROM runpod/ray-cluster:<tag>`, keeping the ENTRYPOINT, the Ray version and
+# the contract ports. See README.md.
 #
 # BASE_IMAGE is a published runpod/pytorch-cluster tag (see docker-bake.hcl).
 
@@ -18,9 +17,8 @@ FROM ${BASE_IMAGE}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Pinned Ray: head and workers share this image, so versions always match, and
-# the host's version-sensitive parsers (pkg/rayready, pkg/raymetrics) are
-# validated against it. >= 2.54 so token authentication (RAY_AUTH_MODE) also
+# Pinned Ray: head and workers share this image, so versions always match.
+# >= 2.54 so token authentication (RAY_AUTH_MODE) also
 # covers the dashboard agent's HTTP server (52365), which serves job submission.
 ARG RAY_VERSION=2.59.0
 # Ray's own dependencies are pinned in requirements.txt; hf_transfer comes
@@ -81,19 +79,17 @@ RUN sed -i 's|^http {$|&\n    include /etc/nginx/ray-dashboard.conf;|' /etc/ngin
 #   8266  Ray dashboard for the cluster owner's browser: nginx turns the
 #         console's `?token=` into Ray's session cookie, then proxies to 8265.
 #         Map this one in the Runpod template.
-#   8265  Ray dashboard: host readiness/liveness poll (host-internal; browsers
-#         and API clients use 8266). Token-authenticated by Ray itself (the
+#   8265  Ray dashboard (internal; browsers and API clients use 8266). Token-authenticated by Ray itself (the
 #         entrypoint sets RAY_AUTH_MODE=token).
-#   20217 Ray metrics: host scrape and the head's Prometheus (host-internal)
+#   20217 Ray metrics: the head's Prometheus (internal)
 #   52365 Ray dashboard agent: the head's dashboard reaches each node's agent
-#         for jobs and logs (host-internal; token-authenticated by Ray, except
+#         for jobs and logs (internal; token-authenticated by Ray, except
 #         its /api/healthz and /api/local_raylet_healthz)
-#   6379  Ray GCS: workers register here (host-internal; token-gated gRPC)
+#   6379  Ray GCS: workers register here (internal; token-gated gRPC)
 # 8889 Grafana (token-authenticated) is inherited from the -cluster base.
 EXPOSE 8266 8265 20217 52365 6379
 
-# No HEALTHCHECK: readiness and liveness are the host's (pkg/rayready polls the
-# head dashboard), and nothing acts on Docker's health status.
+# No HEALTHCHECK: nothing acts on Docker's health status.
 
 LABEL com.runpod.template.variant="ray-cluster" \
       com.runpod.ray-cluster.contract="v1"

@@ -64,7 +64,7 @@ class SshTransportRetry(unittest.TestCase):
     def _run(self, results):
         with mock.patch("subprocess.run", side_effect=results) as run, \
                 mock.patch("runpod_smoke.checks.time.sleep"):
-            out = checks._run_over_ssh(["ssh", "host", "true"], timeout=30)
+            out = checks._run_over_ssh(checks.SshEndpoint("1.2.3.4", 22), "true", timeout=30)
         return out, run.call_count
 
     def test_connect_timeout_is_retried(self):
@@ -108,6 +108,23 @@ class SshTransportRetry(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("ssh failed to connect", output)
         self.assertIn("CA trust store ok", output)
+
+    def test_proxy_session_refused_is_retried(self):
+        """The proxy endpoint runs through a PTY session; a refused session
+        comes back as ssh's own status and words, not a command result."""
+        endpoint = checks.SshEndpoint(
+            "ssh.runpod.io", 22, user="pod-64411b6e", pty=True,
+        )
+        with mock.patch.object(checks, "_run_pty", side_effect=[
+            (255, "", "pod-64411b6e@ssh.runpod.io: Permission denied (publickey)."),
+            (0, "ok\n__SMOKE_RC=0__\n", ""),
+        ]) as pty, mock.patch.object(checks, "_pty_result",
+                                     side_effect=[(None, ""), (0, "ok")]), \
+                mock.patch("runpod_smoke.checks.time.sleep"):
+            ok, output = checks.run_simple_check(endpoint, "true")
+        self.assertTrue(ok)
+        self.assertEqual(pty.call_count, 2)
+        self.assertIn("Permission denied", output)
 
 
 class DwellReProbe(unittest.TestCase):

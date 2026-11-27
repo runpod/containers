@@ -3,17 +3,41 @@
 vLLM's own --api-key only guards /v1, /v2, /inference and /cohere. This is an
 allowlist instead, so routes added upstream are guarded by default. Loaded via
 `vllm serve --middleware`, which passes no arguments, hence the env read.
+
+Without a key it refuses to load, unless start.sh has set OPEN_ENV to say the
+Pod runs unprotected on purpose. Then every request passes, and the warning
+is repeated in the logs while the server is in use.
 """
 
 import hashlib
 import hmac
 import json
 import os
+import sys
+import time
 
 # Exact matches only.
 PUBLIC_PATHS = frozenset({"/health", "/ping", "/metrics"})
 
 KEY_ENV = "VLLM_API_KEY"
+# Set by start.sh only; any other way of loading this without a key fails.
+OPEN_ENV = "RUNPOD_VLLM_UNPROTECTED"
+
+# Repeated on traffic, at most this often, so it stays near the latest logs.
+WARN_EVERY_SEC = 600
+
+UNPROTECTED_WARNING = f"""\
+############################################################
+  WARNING: vLLM is NOT PROTECTED: {KEY_ENV} is not set.
+
+  Anyone with this Pod's URL can use every route on :8000,
+  run the model and spend this Pod's GPU time.
+
+  Set the environment variable
+    {KEY_ENV}=<a long random secret>
+  and restart the Pod. Every request will then need the header
+    Authorization: Bearer <{KEY_ENV}>
+############################################################"""
 
 _UNAUTHORIZED = json.dumps({"error": "Unauthorized"}).encode()
 
@@ -32,13 +56,20 @@ def _is_preflight(scope) -> bool:
 class BearerAuth:
     def __init__(self, app):
         self.app = app
-        key = os.environ.get(KEY_ENV, "")
-        if not key:
-            raise RuntimeError(
-                f"runpod_vllm_auth loaded but {KEY_ENV} is empty; refusing to "
-                "start vLLM without authentication"
-            )
-        self._key_digest = _digest(key)
+        key = os.environ.get(KEY_ENV, "").strip()
+        self._key_digest = _digest(key) if key else None
+        self._warned_at = None
+        if self._key_digest is None:
+            if os.environ.get(OPEN_ENV) != "true":
+                raise RuntimeError(
+                    f"{KEY_ENV} is not set: refusing to serve vLLM without "
+                    f"authentication outside /start.sh. Set {KEY_ENV}."
+                )
+            self._warn_unprotected()
+
+    def _warn_unprotected(self) -> None:
+        self._warned_at = time.monotonic()
+        print(UNPROTECTED_WARNING, file=sys.stderr, flush=True)
 
     def _authorized(self, scope) -> bool:
         for name, value in scope.get("headers") or ():
@@ -53,6 +84,11 @@ class BearerAuth:
     async def __call__(self, scope, receive, send):
         kind = scope["type"]
         if kind not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+
+        if self._key_digest is None:
+            if time.monotonic() - self._warned_at >= WARN_EVERY_SEC:
+                self._warn_unprotected()
             return await self.app(scope, receive, send)
 
         # A CORS preflight carries no credentials. Anything else sent as

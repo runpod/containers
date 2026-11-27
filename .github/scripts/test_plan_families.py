@@ -222,6 +222,24 @@ class GraphFile(unittest.TestCase):
             for job in jobs:
                 self.assertIn(job, gated, f"{workflow}.yml: {job}")
 
+    def test_build_result_waits_on_every_build_workflow(self):
+        """build-result is the one required check; a build job missing from
+        its needs could fail and still leave the PR mergeable."""
+        import yaml
+
+        path = P.REPO_ROOT / ".github/workflows/release.yml"
+        jobs = yaml.safe_load(path.read_text())["jobs"]
+        builds = {
+            name
+            for name, job in jobs.items()
+            if job.get("uses", "").startswith("./.github/workflows/")
+            and "families" in job.get("with", {})
+        }
+        graph = P.load_graph(P.DEFAULT_GRAPH)
+        self.assertEqual(builds, {spec["workflow"] for spec in graph.values()})
+        needs = set(jobs["build-result"]["needs"])
+        self.assertLessEqual(builds | {"pr-source-gate", "plan"}, needs)
+
     def test_every_family_is_covered_by_a_build_workflow(self):
         """release.yml calls a workflow only if the plan names it."""
         graph = P.load_graph(P.DEFAULT_GRAPH)
