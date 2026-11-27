@@ -32,6 +32,7 @@ runs:
         # A fork can carry a branch named `develop`, so the name alone is not
         # enough to tell this repository's develop from someone else's.
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        SUBJECTS_SH: ${{ github.action_path }}/commit-subjects.sh
       run: |
         set -euo pipefail
 
@@ -96,5 +97,30 @@ runs:
           reject "it carries $(( pending - outside )) commit(s) that are on ${INTEGRATION} but not on ${BASE_REF}, so it was cut off ${INTEGRATION} rather than ${BASE_REF}"
         fi
         echo "carries none of ${INTEGRATION}'s ${pending} pending commit(s)"
+
+        # Merged with a merge commit, this PR is released from its own commit
+        # subjects, and they cannot be reworded at merge time.
+        # shellcheck disable=SC1090
+        source "${SUBJECTS_SH}"
+        bad="$(unconventional_subjects "origin/${BASE_REF}..HEAD")"
+        if [ -n "${bad}" ]; then
+          {
+            echo "### A commit subject has no Conventional Commit type"
+            echo
+            echo "\`${BASE_REF}\` takes merge commits, so the version bump and the"
+            echo "release notes come from these commits, not from the PR title."
+            echo "Without a type the merge releases nothing:"
+            echo
+            echo '```'
+            echo "${bad}"
+            echo '```'
+            echo
+            echo "Reword them (\`fix: …\`, \`feat: …\`), or squash the branch into one"
+            echo "\`fix: …\` commit, and force-push."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "::error::Commit subject(s) without a Conventional Commit type, so merging would release nothing: $(echo "${bad}" | paste -sd ';' -). Reword them as fix: … and force-push."
+          exit 1
+        fi
+        echo "every commit subject has a Conventional Commit type"
 
 

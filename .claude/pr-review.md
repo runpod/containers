@@ -93,6 +93,20 @@ repeat lint-level findings they catch; spend the effort on what they cannot see.
 - A new template needs everything in docs/RELEASE.md "Add a new template":
   `families.yml` entry, build job, parent `*_REPO_SUFFIX`, dev OIDC connection,
   smoke-test `registry-auth-name`. None of these fail loudly; check each one.
+- A new family (a new `.github/families.yml` entry) must also settle how it is
+  tracked for upstream releases: either `.claude/staleness-playbook.md` gains a
+  section naming the pins the weekly scraper should watch and how to verify
+  each one, or the playbook's "ignore the other two" sentence names the family
+  and why it is not tracked. A family that gets a section needs a matching entry in the
+  `.github/workflows/staleness-scraper.yml` matrix too, or the section never
+  runs. Nothing fails when this is missed: the family just quietly stops being
+  watched, and its pins rot. The playbook in the working tree is the BASE
+  branch's copy, so read the PR's at
+  `.claude-pr/.claude/staleness-playbook.md` before reporting it missing.
+- Renaming, splitting or removing a pin the playbook names (`FILEBROWSER_SHA256`
+  becoming `FILEBROWSER_COMMIT`, a dropped `GET_PIP_39_SHA256`) silently
+  invalidates its section: the scraper is then told to edit a variable that no
+  longer exists. The playbook section has to move with the code.
 - Workflows: third-party actions pinned to a full SHA, least `permissions:`, no
   `pull_request_target` with a PR checkout, no github.event values (titles,
   branch names, bodies) interpolated directly into `run:`. A check meant to be

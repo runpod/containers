@@ -4,7 +4,7 @@
 # LITELLM_MASTER_KEY, MAX_MODEL_LENGTH, VLLM_EXTRA_ARGS). See README.md.
 #
 # Built FROM the ray-cluster target of the same bake run (the `ray-cluster`
-# context, see docker-bake.hcl), so it keeps contract v1 with runpod/host
+# context, see docker-bake.hcl), so it keeps contract v1
 # unchanged: the inherited ENTRYPOINT starts Ray, then runs this image's CMD.
 
 # A bake target context, not a registry image: no tag to pin.
@@ -16,7 +16,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # vLLM pins torch exactly, so its version must be the one the base was built
 # with: 0.32.0 is the last release on torch 2.13.0 (0.33.0 moved to 2.14.0).
 # The install is refused if it would replace torch or Ray: torch is the CUDA
-# build the base chose, and the host's parsers are pinned to the base's Ray.
+# build the base chose, and the image contract is tested on the base's Ray.
 # vLLM needs a newer PyJWT than the base's, which is Debian's python3-jwt and
 # has no RECORD for pip to uninstall: install the pinned one beside it first
 # (pip's copy shadows Debian's on sys.path). vLLM's ranged dependencies are

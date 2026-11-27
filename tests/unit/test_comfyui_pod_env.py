@@ -35,8 +35,8 @@ class ComfyUIPodEnv(unittest.TestCase):
         self.assertNotIn("FILEBROWSER_PASSWORD", env)
 
     def test_passwords_meet_the_image_minimum(self):
-        """start.sh and FileBrowser both refuse passwords under 12 characters
-        and then leave the service off."""
+        """start.sh refuses ComfyUI and FileBrowser passwords under 12
+        characters and then leaves the service off."""
         for value in (config.COMFYUI_TEST_PASSWORD, config.FILEBROWSER_TEST_PASSWORD):
             self.assertGreaterEqual(len(value), 12)
 

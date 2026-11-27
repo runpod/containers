@@ -22,6 +22,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "official-templates/comfyui/scripts/start.sh"
 SECRET = "pod-secret-value-1234"
+CONFIG = REPO_ROOT / "official-templates/comfyui/filebrowser/config.yaml"
 
 
 def function(name: str) -> str:
@@ -345,15 +346,15 @@ class ManagerSecurity(Sandbox):
         self.assertFalse((self.work / "ComfyUI/user/__manager/config.ini").exists())
 
 
+# Records the config FileBrowser was started with and whether it got the
+# admin password, never the password itself.
 FAKE_FILEBROWSER = """#!/bin/bash
-printf '%s\\n' "$*" >> "$RECORD"
-case "$*" in
-  *"users find admin"*) [ -n "$FB_HAS_ADMIN" ] || { echo "user not found"; exit 1; } ;;
-esac
-if [ -n "$FB_FAIL" ] && [[ "$*" == *"$FB_FAIL"* ]]; then
-  echo "Error: refused: $*"
-  exit 1
-fi
+{
+  echo "ARGS=$*"
+  echo "CONFIG=$FILEBROWSER_CONFIG"
+  [ "$FILEBROWSER_ADMIN_PASSWORD" = "$EXPECT_PASSWORD" ] && echo "ADMIN_PASSWORD=match"
+} >> "$RECORD"
+cp "$FILEBROWSER_CONFIG" "$RECORD.config"
 """
 
 
@@ -444,79 +445,154 @@ exit 0
 
 
 class FileBrowser(Sandbox):
-    def start(self, env: dict, db_exists: bool = False, **fake) -> tuple[list, str]:
+    """start_filebrowser against a copy of the shipped config, with the
+    volume paths moved into the sandbox."""
+
+    def start(self, env: dict, quantum_db: bool = False, classic_db: str | None = None,
+              config: str | None = None) -> tuple[dict, str]:
         fake_bin = self.bin / "filebrowser"
         fake_bin.write_text(FAKE_FILEBROWSER)
         fake_bin.chmod(0o755)
-        record = self.work / "argv"
-        db = self.work / "filebrowser.db"
-        if db_exists:
-            db.write_text("")
-        funcs = (function("filebrowser_cli") + "\n" + function("start_filebrowser")
-                 ).replace("/filebrowser.log", str(self.work / "filebrowser.log"))
-        result = self.run_bash(
-            funcs + "\nstart_filebrowser\nwait",
-            {"RECORD": str(record), "DB_FILE": str(db), **fake, **env})
-        calls = record.read_text().splitlines() if record.exists() else []
-        return calls, result.stdout + result.stderr
+        base = self.work / f"run{len(list(self.work.glob('run*')))}"
+        slim = base / "runpod-slim"
+        slim.mkdir(parents=True)
+        record = base / "record"
+        db, classic = slim / "filebrowser.sqlite", slim / "filebrowser.db"
+        if quantum_db:
+            db.write_text("sqlite")
+        if classic_db is not None:
+            classic.write_text(classic_db)
+        baked = base / "config.yaml"
+        baked.write_text((config if config is not None else CONFIG.read_text())
+                         .replace("/workspace/runpod-slim", str(slim)))
+        funcs = (function("filebrowser_not_started") + "\n" + function("start_filebrowser")
+                 ).replace("/filebrowser.log", str(base / "filebrowser.log")
+                 ).replace("/tmp/filebrowser-migrate.yaml", str(base / "migrate.yaml"))
+        script = (constants("FILEBROWSER_DB", "CLASSIC_FILEBROWSER_DB",
+                            "FILEBROWSER_PASSWORD_MIN_LENGTH").replace("/workspace/runpod-slim", str(slim))
+                  + funcs + "\nstart_filebrowser\nwait")
+        result = self.run_bash(script, {
+            "RECORD": str(record), "FILEBROWSER_CONFIG": str(baked),
+            "EXPECT_PASSWORD": env.get("FILEBROWSER_PASSWORD", "-"), **env})
+        run = {}
+        if record.exists():
+            for line in record.read_text().splitlines():
+                key, _, value = line.partition("=")
+                run[key] = value
+            run["config_text"] = Path(f"{record}.config").read_text()
+        run["baked"], run["classic"] = baked, classic
+        return run, result.stdout + result.stderr
 
-    @staticmethod
-    def served(calls: list) -> bool:
-        return any(re.fullmatch(r"-d \S+", c) for c in calls)
-
-    def test_no_password_does_not_start_filebrowser(self) -> None:
-        calls, out = self.start({}, db_exists=True)
-        self.assertEqual(calls, [], "not even the CLI may run")
-        self.assertIn("FILEBROWSER_PASSWORD is not set, so FileBrowser was not started.", out)
+    def assert_not_started(self, run: dict, out: str, reason: str) -> None:
+        self.assertNotIn("CONFIG", run, "FileBrowser must not run")
+        self.assertIn(f"FILEBROWSER_PASSWORD {reason}, so FileBrowser was not started.", out)
         # Boxed like the ComfyUI banner, so it is not lost above ComfyUI's
         # startup output.
         box = out.split("=============================================")
         self.assertEqual(len(box), 3, out)
         self.assertIn("FileBrowser was not started", box[1])
 
+    def test_no_password_does_not_start_filebrowser(self) -> None:
+        run, out = self.start({}, quantum_db=True)
+        self.assert_not_started(run, out, "is not set")
+        run, out = self.start({"FILEBROWSER_PASSWORD": ""})
+        self.assert_not_started(run, out, "is not set")
+
+    def test_short_password_does_not_start_filebrowser(self) -> None:
+        for password in ("a", "x" * 11, "adminadmin1"):
+            with self.subTest(length=len(password)):
+                run, out = self.start({"FILEBROWSER_PASSWORD": password})
+                self.assert_not_started(run, out, "is shorter than 12 characters")
+        run, _ = self.start({"FILEBROWSER_PASSWORD": "x" * 12})
+        self.assertEqual(run.get("ADMIN_PASSWORD"), "match")
+
     def test_no_default_password_anywhere(self) -> None:
-        self.assertNotIn("adminadmin12", function("start_filebrowser"))
+        for text in (function("start_filebrowser"), CONFIG.read_text()):
+            self.assertNotIn("adminadmin12", text)
+            self.assertNotIn("adminPassword", text)
 
     def test_password_on_a_new_volume(self) -> None:
-        calls, out = self.start({"FILEBROWSER_PASSWORD": SECRET})
-        self.assertTrue(any("config init" in c for c in calls))
-        self.assertTrue(any("--auth.method=json" in c for c in calls))
-        self.assertTrue(any(f"users add admin {SECRET} --perm.admin" in c for c in calls))
-        self.assertTrue(self.served(calls))
+        run, out = self.start({"FILEBROWSER_PASSWORD": SECRET})
+        self.assertEqual(run["CONFIG"], str(run["baked"]))
+        self.assertEqual(run.get("ADMIN_PASSWORD"), "match")
+        self.assertNotIn("migrateFrom:", run["config_text"])
         self.assertNotIn(SECRET, out)
 
-    def test_password_replaces_an_existing_admin_password(self) -> None:
-        """A volume from an older image holds admin/adminadmin12."""
-        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET},
-                              db_exists=True, FB_HAS_ADMIN="1")
-        self.assertFalse(any("config init" in c for c in calls))
-        self.assertTrue(any(f"users update admin --password {SECRET}" in c for c in calls))
-        self.assertTrue(self.served(calls))
+    def test_existing_quantum_database_is_not_migrated_again(self) -> None:
+        """migrateFrom must not stay in the config: FileBrowser refuses to
+        start once the classic file it names is deleted."""
+        run, _ = self.start({"FILEBROWSER_PASSWORD": SECRET}, quantum_db=True, classic_db="bolt")
+        self.assertEqual(run["CONFIG"], str(run["baked"]))
+        self.assertNotIn("migrateFrom:", run["config_text"])
 
-    def test_rejected_password_does_not_start_and_is_masked(self) -> None:
-        calls, out = self.start({"FILEBROWSER_PASSWORD": SECRET},
-                                db_exists=True, FB_HAS_ADMIN="1", FB_FAIL="users update")
-        self.assertFalse(self.served(calls))
-        self.assertIn("was not started", out)
-        self.assertIn("<FILEBROWSER_PASSWORD>", out)
+    def test_classic_database_is_migrated_and_kept(self) -> None:
+        run, out = self.start({"FILEBROWSER_PASSWORD": SECRET}, classic_db="bolt")
+        self.assertNotEqual(run["CONFIG"], str(run["baked"]))
+        self.assertEqual(run.get("ADMIN_PASSWORD"), "match")
+        baked = run["baked"].read_text().splitlines()
+        migrate = run["config_text"].splitlines()
+        added = [line for line in migrate if line not in baked]
+        self.assertEqual(added, [f'    migrateFrom: "{run["classic"]}"'])
+        self.assertEqual(migrate.index(added[0]) - 1,
+                         migrate.index(f'    path: "{run["classic"].parent / "filebrowser.sqlite"}"'))
+        self.assertEqual(run["classic"].read_text(), "bolt")
+        self.assertIn("you can delete it", out)
         self.assertNotIn(SECRET, out)
+
+    def test_empty_classic_database_is_not_migrated(self) -> None:
+        run, _ = self.start({"FILEBROWSER_PASSWORD": SECRET}, classic_db="")
+        self.assertEqual(run["CONFIG"], str(run["baked"]))
+
+    def test_unmatched_config_does_not_start(self) -> None:
+        """If the database path in config.yaml and start.sh drift apart, the
+        migration cannot be wired in; say so instead of starting on an empty
+        database."""
+        config = CONFIG.read_text().replace("filebrowser.sqlite", "other.sqlite")
+        run, out = self.start({"FILEBROWSER_PASSWORD": SECRET}, classic_db="bolt", config=config)
+        self.assertNotIn("CONFIG", run)
+        self.assertIn("FileBrowser was not started", out)
 
     def test_there_is_no_opt_out(self) -> None:
         """FILEBROWSER_DISABLE_AUTH, which an earlier rc honoured, changes
         nothing: without a password FileBrowser stays off."""
-        calls, out = self.start({"FILEBROWSER_DISABLE_AUTH": "true"},
-                                db_exists=True, FB_HAS_ADMIN="1")
-        self.assertEqual(calls, [])
-        self.assertIn("FileBrowser was not started", out)
+        run, out = self.start({"FILEBROWSER_DISABLE_AUTH": "true"}, quantum_db=True)
+        self.assert_not_started(run, out, "is not set")
 
-    def test_login_is_forced_back_on(self) -> None:
-        """A database left on noauth, by hand or by an earlier rc, is switched
-        back to a login on the next start."""
-        calls, _ = self.start({"FILEBROWSER_PASSWORD": SECRET, "FILEBROWSER_DISABLE_AUTH": "true"},
-                              db_exists=True, FB_HAS_ADMIN="1")
-        self.assertTrue(any("--auth.method=json" in c for c in calls))
-        self.assertFalse(any("noauth" in c for c in calls))
-        self.assertTrue(self.served(calls))
+
+class FileBrowserConfig(unittest.TestCase):
+    """Keys of the shipped config that make FileBrowser fail or misbehave
+    when wrong. Read as text: the unit job has no YAML parser."""
+
+    text = CONFIG.read_text()
+
+    def key(self, *path: str) -> str:
+        indent, block = 0, self.text
+        for name in path:
+            match = re.search(rf"^{' ' * indent}{name}:(.*)$", block, re.M)
+            self.assertIsNotNone(match, f"{'.'.join(path)} missing from {CONFIG}")
+            block = block[match.end():]
+            indent += 2
+        return match.group(1).split("#")[0].strip().strip('"')
+
+    def test_listen_port_is_http_port_8080(self) -> None:
+        self.assertEqual(self.key("http", "port"), "8080")
+        self.assertNotRegex(self.text, r"(?m)^  port:.*\n(?:.*\n)*?^http:")
+
+    def test_trusts_the_runpod_proxy(self) -> None:
+        self.assertEqual(self.key("http", "trustProxyHeaders"), "true")
+
+    def test_serves_workspace_with_password_login(self) -> None:
+        self.assertIn('    - path: "/workspace"', self.text)
+        self.assertEqual(self.key("auth", "adminUsername"), "admin")
+        self.assertEqual(self.key("auth", "methods", "password", "enabled"), "true")
+        self.assertNotIn("noauth", self.text)
+
+    def test_database_path(self) -> None:
+        path = self.key("server", "database", "path")
+        self.assertNotEqual(Path(path).name, "database.db")
+        self.assertEqual(f'FILEBROWSER_DB="{path}"',
+                         constants("FILEBROWSER_DB").strip())
+        self.assertNotIn("migrateFrom:", self.text)
 
 
 if __name__ == "__main__":

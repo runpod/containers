@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Image contract test for the ray-cluster image (contract v1). CPU-only, no
 # Runpod credentials: runs the built image under plain Docker with fixture
-# topology env, the way the host daemon would, and checks the parts runpod/host
-# depends on.
+# topology env and checks the image contract.
 #
 #   1. the contract label and ENTRYPOINT are present;
 #   2. a port override (env or RAY_START_EXTRA_ARGS) fails the boot with an
@@ -12,12 +11,11 @@
 #      (NODE_RANK, NUM_NODES and the node-N entries in /etc/hosts; none of the
 #      passed-through PRIMARY_ADDR/NODE_ADDR/NODE_ROLE). The worker starts
 #      first, while node-0 is missing from its /etc/hosts (head not running),
-#      must run its CMD meanwhile, and must join once node-0 is added, as the
-#      host's sync does. Then: the head dashboard's /api/gcs_healthz reports
-#      success and its State API node list ($NODES_PATH) has both nodes ALIVE
-#      at their addresses (what pkg/rayready polls and parses), and both serve
-#      Ray metrics on 20217. The dashboard and metrics checks run from the
-#      worker, over the docker bridge, as the host does.
+#      must run its CMD meanwhile, and must join once node-0 is added. Then:
+#      the head dashboard's /api/gcs_healthz reports success and its State
+#      API node list ($NODES_PATH) has both nodes ALIVE at their addresses,
+#      and both serve Ray metrics on 20217. The dashboard and metrics checks
+#      run from the worker.
 #   5. Ray token auth: the dashboard reports token mode; its API answers 401
 #      with no token and 403 with a wrong one (the head's JUPYTER_PASSWORD,
 #      which RAY_DASHBOARD_PASSWORD outranks), and 200 with the bearer token;
@@ -33,8 +31,7 @@
 #      raylet exited and rejoin the new head by itself.
 #
 # Usage: contract.sh <image-ref> [<image-ref>...]
-# Set RAY_CONTRACT_FIXTURE_DIR to save the head's /nodes and /metrics payloads
-# (host-test fixtures for pkg/rayready and pkg/raymetrics).
+# Set RAY_CONTRACT_FIXTURE_DIR to save the head's /nodes and /metrics payloads.
 set -euo pipefail
 
 readonly CONTRACT=v1
@@ -50,7 +47,7 @@ readonly HEAD_JUPYTER_PASSWORD=contract-test-jupyter
 readonly SUBNET=172.31.250.0/24
 readonly HEAD_IP=172.31.250.10
 readonly WORKER_IP=172.31.250.11
-# The node query pkg/rayready makes: the State API's ALIVE nodes, read from the
+# The State API's ALIVE nodes, read from the
 # GCS. Not /nodes?view=summary, whose cache can trail the GCS.
 readonly NODES_PATH='/api/v0/nodes?filter_keys=state&filter_predicates=%3D&filter_values=ALIVE&limit=10000'
 
@@ -137,7 +134,7 @@ dash_code() {
     "${in_worker[@]}" curl -s -o /dev/null -w '%{http_code}' "$@" "http://$HEAD_IP:$DASHBOARD_PORT$path"
 }
 
-# The head dashboard's health endpoint, as pkg/rayready polls it. Public under
+# The head dashboard's health endpoint. Public under
 # token auth, like Ray's other health checks.
 head_healthy() {
     "${in_worker[@]}" curl -fsS "http://$HEAD_IP:$DASHBOARD_PORT/api/gcs_healthz" | grep -q success
@@ -157,8 +154,7 @@ serves_ray_metrics() { # <ip>
     body=$("${in_worker[@]}" curl -fsS "http://$1:$METRICS_PORT/metrics") && grep -q '^ray_' <<< "$body"
 }
 
-# Both nodes ALIVE at the addresses they were started with, the match
-# pkg/rayready makes against each member's PeerIp.
+# Both nodes ALIVE at the addresses they were started with.
 both_alive() {
     local alive
     alive=$("${in_worker[@]}" curl -fsS -H "Authorization: Bearer $TOKEN" "http://$HEAD_IP:$DASHBOARD_PORT$NODES_PATH" |
@@ -276,7 +272,7 @@ check_image() {
     wait_for "head /api/gcs_healthz success" 180 head_healthy
     pass "head /api/gcs_healthz reports success over the bridge"
 
-    # The host's sync adds the now-running head to the worker's membership.
+    # Add the now-running head to the worker's membership.
     "${in_worker[@]}" sh -c "echo '$HEAD_IP node-0' >> /etc/hosts"
 
     wait_for "both nodes ALIVE" 180 both_alive
