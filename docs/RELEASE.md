@@ -97,6 +97,10 @@ A PR into `main` is rejected unless it comes from `develop`, `hotfix/*` or
   Commit, as before). **Merge `develop → main` with a merge commit, not
   squash**: the release bump and notes are computed from the individual
   commits, and a squash would fold every `feat:` into the release PR's title.
+  Both are enforced, not a convention: the repository rulesets
+  `develop: squash only` and `main: merge commit only` leave the merge button
+  exactly one method on each branch (see
+  [Repository requirements](#repository-requirements)).
 - Releases are tagged on main's merge commits, which develop never contains.
   The dev env therefore takes a family's newest tag by version, not the
   newest reachable one, and a push to develop plans from
@@ -118,7 +122,8 @@ themselves:
 | `feat:`                                   | `feat: add comfyui template`     | minor  | `1.1.0`         |
 | `fix:` / `perf:`                          | `fix: correct cuda path`         | patch  | `1.0.8`         |
 | `feat!:` / any type with `!` in the title, or a `BREAKING CHANGE:` footer | `feat!: drop ubuntu 20.04` | major  | `2.0.0`         |
-| `ci:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build`   | none   | no release      |
+| `ci:` / `build:` / `chore:` / `docs:` / `refactor:` / `test:` | `ci: speed up build` | none | no release |
+| `Revert "…"` (GitHub's Revert button, `git revert`), whatever it reverts, a release included | `Revert "chore: release 2026-11-24 (#265)"` | patch | `1.0.8` |
 
 Notes:
 
@@ -133,6 +138,9 @@ Notes:
 - A family with **no tag yet** starts at exactly `1.0.0` on its first
   releasable change — the bump level is ignored, so a first `feat:` does not
   skip to `1.1.0`.
+- A revert is always a patch, a revert of a revert too. To re-land a reverted
+  feature, open a `feat: …` PR, don't press Revert on the revert: that ships
+  the feature as a patch.
 - **Breaking changes:** mark the PR title with `!` (`feat!: …`) and preferably
   add a `BREAKING CHANGE:` footer in the description. If the title has no `!`
   but the description has a proper `BREAKING CHANGE:` / `BREAKING-CHANGE:`
@@ -266,12 +274,12 @@ Image repositories: one per template family, listed in `.github/families.yml`
 | `.github/scripts/plan_families.py`               | Turns a diff (or each family's last tag) into the families to build, in dependency order. Also answers which workflows to call and which repos we publish to. |
 | `.github/workflows/release.yml`                  | **Orchestrator** ("Build and Release"). Owns all triggers, plans the families (`plan` job), calls only the build workflows it needs, and creates one `<family>-vX.Y.Z` tag + Release per family. |
 | `.github/actions/compute-version/action.yml`     | For one family: its next version, suffix, `previous-version`, and the `should-build` / `should-release` flags, from its own tag series + the commit type. |
-| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, filebrowser; builds the ones in the plan. |
+| `.github/workflows/base.yml`                     | **Reusable** (`workflow_call`). Covers base, pytorch, pytorch-cluster, ray-cluster, autoresearch, burn, filebrowser; builds the ones in the plan. |
 | `.github/workflows/sandbox.yml`                  | **Reusable**. Covers sandbox-ubuntu, sandbox-openclaw, sandbox-harbor, sandbox-browser. |
 | `.github/workflows/nvidia.yml`, `rocm.yml`, `comfyui.yml`, `k3s-node.yml` | **Reusable**. One family each. |
 | `.github/actions/prepull-base-images/action.yml` | Pulls each target's `BASE_IMAGE` with crane into an OCI layout and hands bake an override file, because BuildKit's own pull of multi-GB bases intermittently fails mid-layer. Resolves the same bake files as the build step, so the parent variables live on the **job**, not on either step. |
 | `.github/workflows/branch-policy.yml`            | Fails a PR into `main` from anything but `develop`, `hotfix/*` or `revert-*`. No `paths:` filter, so it is the check to require. |
-| `.github/actions/check-pr-source/action.yml`     | The rule itself: allowed source branches, the fork check, and the proof that a `hotfix/*` branch really was cut off `main`. Called by `branch-policy.yml` and by the orchestrator's `pr-source-gate` job. |
+| `.github/actions/check-pr-source/action.yml`     | The rule itself: allowed source branches, the fork check, the proof that a `hotfix/*` branch really was cut off `main`, and Conventional subjects on `hotfix/*` / `revert-*` commits (`commit-subjects.sh`, tested by `check-pr-source.yml`). Called by `branch-policy.yml` and by the orchestrator's `pr-source-gate` job. |
 | `.github/workflows/cleanup.yml`, `cleanup-closed-pr.yml` | Sweep aged-out `-rc.`/`-dev.` tags from the public and the `-dev` repos. |
 | `.github/scripts/latest_dev_version.py`          | Newest `-dev.<N>` among the tag names on stdin (`crane ls`), ordered by version then `<N>`: what a dev build layers on when that family is not rebuilt in the same run. |
 | `.github/actions/resolve-parent-image/action.yml` | Picks a parent image for the not-rebuilt case: the dev tag above, the public release on prod, and the public release as the dev fallback. |
@@ -348,10 +356,40 @@ Key behaviours:
    is where you validate the set on a pod.
 4. When the batch is ready, open `develop → main` and **merge it with a merge
    commit**. Its own title is not read for versioning, so `chore: release …`
-   is fine. The release is fully automatic from here.
+   is fine. Usually the PR is already open: see
+   [Scheduled release PR](#scheduled-release-pr). The release is fully
+   automatic from here.
 5. Verify: a `<family>-vX.Y.Z` tag and Release appear for each family the
    batch touched, and those families publish `X.Y.Z` images. Families nobody
    touched stay where they were.
+
+### Scheduled release PR
+
+`scheduled-release.yml` opens the `develop → main` PR every **Sunday and
+Wednesday at 18:00 UTC** (GitHub may start it up to an hour late), so its rc
+builds and checks finish overnight and the PR is ready to review on Monday and
+Thursday morning. If a release PR is already open, it only refreshes the body;
+the checks already follow every push to `develop`.
+
+- **Cut-off:** whatever is on `develop` at 18:00 goes in. A later push to
+  `develop` restarts the PR's rc builds, so merge late work after the release
+  or expect the PR to be green later.
+- **The body** lists the commits, and for each planned family its last release,
+  bump and next version, read the same way `compute-version` reads them. It
+  warns when `develop` no longer merges cleanly into `main` (merge `main` back
+  after a hotfix) and when the last `release.yml` run on `develop` was not green.
+- **Nothing to release:** when `develop` has no commits that `main` lacks, no
+  PR is opened.
+- **Merging stays manual.** Check the rc builds and tests on the PR, approve
+  it, and **merge with a merge commit**. The PR is opened as the owner of
+  `RELEASE_PAT`, who therefore cannot approve it: someone else has to.
+- **Pause:** set the repository variable `SCHEDULED_RELEASE_ENABLED` to
+  anything other than `true` (or delete it). Scheduled runs then skip.
+- **Run by hand:** Actions → *Scheduled Release PR* → *Run workflow*.
+  `dry_run` (the default) only writes the plan into the job summary;
+  unticked, it opens or updates the PR just like the cron does.
+- `schedule` only fires from the default branch (`main`), so changes to the
+  workflow take effect after the next release.
 
 ### Ship a hotfix / patch
 
@@ -363,14 +401,22 @@ When it cannot wait:
 
 1. Branch `hotfix/<thing>` **off `main`**, not off `develop`, so the release
    carries only the fix.
-2. Open it as a PR into `main`, titled `fix: …`. It builds RC images into the
-   **public** repos, since a PR into `main` is prod.
-3. Merge it. Only the families the fix touched are rebuilt and released;
-   the rest keep their versions.
-4. Afterwards merge `main` back into `develop`. CI does not require it: the
+2. Commit the fix as `fix: …`. `main` only takes merge commits, so the bump
+   and the notes are read from the hotfix branch's own commits, not from the
+   PR title: every commit on it needs a Conventional subject, and `pr-source`
+   fails on any that has none. One commit is simplest; squash locally before
+   opening the PR if you made several.
+3. Open it as a PR into `main`. It builds RC images into the **public** repos,
+   since a PR into `main` is prod.
+4. Merge it with a merge commit. Only the families the fix touched are
+   rebuilt and released; the rest keep their versions.
+5. Afterwards merge `main` back into `develop`. CI does not require it: the
    dev env reads a family's newest tag by version rather than a reachable one.
    Do it anyway so `develop` contains the fix and nobody reverts it by
-   accident.
+   accident. `develop` only offers squash, which would cut the link to
+   `main`'s history, so open a PR from `main` and have a repository admin merge
+   it with a merge commit: admins can bypass `develop: squash only` on a pull
+   request.
 
 A hotfix and a batch waiting in `develop` converge cleanly. If the hotfix
 takes `pytorch` to `1.4.1`, a later `develop → main` that also touched
@@ -443,7 +489,14 @@ either.
    - the smoke test passes `registry-auth-name`, or its pod cannot pull the
      private image;
    - a private `runpod/<name>-dev` repo exists on Docker Hub.
-3. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
+3. Decide how the family is watched for upstream releases. The weekly staleness
+   scraper only looks at families named in `.claude/staleness-playbook.md`, so
+   either add a section describing which pins it should track and how to verify
+   each one, plus an entry in the `.github/workflows/staleness-scraper.yml`
+   matrix, or add it to the playbook's "ignore the other two" sentence, with
+   the reason. Skipping this does not fail anything; the family's pins simply
+   stop being watched.
+4. Do **not** create a seed tag: a family with no tag is released as `1.0.0`.
 
 ### Seed a family that already has published images
 
@@ -473,7 +526,33 @@ either.
   `DOCKERHUB_OIDC_CONNECTIONID`, `DOCKERHUB_DEV_OIDC_CONNECTIONID`,
   `TESTING_RUNPOD_API_KEY`, `TESTING_RUNPOD_SSH_PRIVATE_KEY`.
   `DOCKERHUB_TOKEN` needs delete rights on the `-dev` repos too (cleanup).
-- **Variables:** `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
+  The staleness scraper needs no *GitHub* credential of its own: it runs on the
+  workflow's own `GITHUB_TOKEN`, split across two jobs so the half that reads untrusted
+  upstream text holds a read-only one. `research` runs the agent with
+  `contents: read`, and the `Edit` rules it is given confine every tool of its
+  that writes to `official-templates/` and three handover files. `publish`
+  holds the write token, runs no model, and applies the agent's patch only if
+  every path in it is under `official-templates/`. GitHub starts
+  no workflow from an event that token creates, so the draft PRs the scraper
+  opens arrive with **no checks** at all.
+  Pushing to such a PR, or closing and reopening it, raises a real event and runs
+  the full CI. Start it that way after reading the diff, rather than giving the
+  job a long-lived token. Merging is gated on `shellcheck`, `sonarqube` and
+  `build-result`, the checks `develop` requires, so a bump whose image build
+  or smoke test failed cannot be merged. It does use
+  `ANTHROPIC_API_KEY`, which is now the scraper's alone: the PR reviewer moved to
+  `PR_REVIEW_ANTHROPIC_API_KEY`. Keep a spend limit on it, since this job runs
+  unattended every week across every family.
+- **`RELEASE_PAT`:** `scheduled-release.yml` opens the release PR with this
+  token. A PR opened with `GITHUB_TOKEN` would start no workflows: no rc
+  builds, and the required `shellcheck`/`sonarqube` would sit on "Expected".
+  Use a fine-grained PAT limited to this repository with **Contents: read** and
+  **Pull requests: read and write**, nothing more. It needs no ruleset bypass,
+  because it never merges. It expires: renew it before then, or the scheduled
+  run fails with an authentication error and no PR is opened.
+- **Variables:** `SCHEDULED_RELEASE_ENABLED` — `true` turns on the scheduled
+  release PR; anything else pauses it.
+  `TESTING_REGISTRY_AUTH_NAME` — name of the RunPod registry
   credential on the testing account (`TESTING_RUNPOD_API_KEY`) that can pull
   `runpod/*-dev`; today `runpod_dev_private_readonly`. Unset, dev smoke tests
   pull anonymously and fail with `unauthorized`; set to a name the account
@@ -497,15 +576,33 @@ either.
 - **Required status checks:** builds run under the orchestrator, so checks
   appear as `Build and Release / <workflow> / <job>` (e.g.
   `Build and Release / base / build-base`). A family not in the plan reports
-  as skipped, and the `release` job is a matrix (`release (comfyui)`), so only
-  require checks that run on **every** PR. `plan` is not one of them:
-  `release.yml` is filtered to `official-templates/**` and
-  `container-template/**`, so a docs-only PR never starts it and a required
-  `plan` would sit on "Expected" forever. `pr-source` from `branch-policy.yml`
-  has no such filter, and so do the lint/test workflows.
+  as skipped, and the set fans out per family and CUDA version, so no single
+  build job can be required. Require `build-result` instead: it waits on
+  `pr-source-gate`, `plan` and every build job, and fails if any of them
+  failed or was cancelled (skipped is fine). It runs with `if: always()`,
+  even in a cancelled run, because GitHub counts a skipped required check as
+  passed. `release.yml` has no `paths:`
+  filter, so it starts on every PR and the check is never left "Expected";
+  `plan` does the path gating, and a PR that touches no family builds nothing
+  and passes in under a minute. Required on both branches: `shellcheck`,
+  `sonarqube`, `build-result`; on `main` also `pr-source`. A new build job
+  in `release.yml` must be added to `build-result`'s `needs`, or its failure
+  will not block a merge.
 - **Merge strategy:** **squash merge** into `develop` — the PR title is what
   drives the version, so keep it Conventional-Commit compliant. `develop` →
   `main` is a **merge commit** (see [Branches and environments](#branches-and-environments)).
+  Enforced by two repository rulesets, which only narrow what the repository
+  settings allow (keep both merge commits and squash enabled under
+  Settings → General, or a branch is left with no method at all).
+  `main: merge commit only` (`~DEFAULT_BRANCH`) allows merge commits and
+  requires `pr-source` and `build-result`. `develop: squash only`
+  (`refs/heads/develop`) allows squash and requires `build-result`; repository
+  admins may bypass it on a pull request, for the merge of
+  `main` back into `develop` after a hotfix. Rulesets on the same branch
+  stack and the strictest value wins, so these two set no approvals of their
+  own. A `revert-*` PR into `main` is merged with a merge commit too, so it
+  cannot be retitled: its `Revert "…"` commit is read as a patch, and the
+  revert is released.
 - **Who may target `main`:** `branch-policy.yml` fails any PR into `main` whose
   source branch is not `develop`, `hotfix/*` or `revert-*` (GitHub's Revert
   button), or that comes from a fork. A branch that only *looks* like a hotfix
@@ -514,10 +611,20 @@ either.
   the pending batch in. `branch-policy.yml` has no `paths:` filter, so it runs
   on every such PR and is the one to require. `release.yml` repeats the check
   in its `pr-source-gate` job (both call `.github/actions/check-pr-source`)
-  and gates `plan` on it, so a rejected PR builds no images at all. Add
-  `pr-source` to the required checks on `main`: until then the PR only goes
-  red, it is not blocked.
-- **Branch protection:** `develop` needs the same required checks as `main`.
+  and gates `plan` on it, so a rejected PR builds no images at all.
+  `pr-source` is a required check on `main`, so such a PR cannot be merged.
+  For a `hotfix/*` or `revert-*` PR it also fails on any commit whose subject
+  has none of the types in [Versioning rules](#versioning-rules) or
+  `Revert "` (`Fix cuda path`, `Hotfix: …`): merged with a merge commit, the
+  PR is released from those subjects, and one without a type releases
+  nothing. `develop` is not checked; its commits are squashed PR titles.
+- **Branch protection:** the repository ruleset `protect develop and main`
+  covers both branches: no deletion, no force-push, a pull request with one
+  approving review, and `shellcheck` and `sonarqube`. The two merge-method
+  rulesets add `build-result` on their branch, and `pr-source` on `main`.
+  The organization ruleset
+  `formal code review on main` also applies to `main`; it is owned by the org,
+  so leave it alone.
 - **Blacksmith sticky disks:** PR builds write a separate `/pr` cache lineage
   (`docker-setup`) so they cannot poison the keys used by main/release; pushes
   to develop write their own `/dev` lineage. Also
@@ -540,8 +647,11 @@ either.
 | A family released at a higher bump than the merge  | Expected: the bump covers everything the family still had unreleased, so an older `feat:` outranks today's `fix:`. |
 | Dev smoke test fails with `CREATE_FAIL` / `unauthorized` | The pod could not pull the private `-dev` image: the `TESTING_REGISTRY_AUTH_NAME` variable is unset, or its credential cannot read `runpod/*-dev`. |
 | A release merged from develop got a lower bump than expected | `develop → main` was squash-merged, so only the release PR's title counted. Use a merge commit. |
-| PR checks are stuck "Expected"/pending             | A required check that does not run on this PR. `release.yml` is filtered to `official-templates/**` and `container-template/**`, so none of its jobs can be required; require `pr-source` and the lint/test workflows instead. |
+| PR checks are stuck "Expected"/pending             | A required check that does not run on this PR. Only require checks from workflows without a `paths:` filter (`build-result`, `pr-source`, `shellcheck`, `sonarqube`); never an individual build job, which is skipped when its family is not in the plan. |
+| `build-result` is red but every build looks green  | Its log lists each dependency's result. Usually `pr-source-gate` failed (the PR into `main` comes from the wrong branch) or a run was cancelled; re-run the workflow. |
+| Merge button offers only one method                | Expected: `develop` takes squash only, `main` merge commits only (rulesets `develop: squash only` / `main: merge commit only`). |
 | PR into `main` fails on "does not follow the release process" | Its source branch is not `develop`, `hotfix/*` or `revert-*`. Retarget it to `develop`, or cut `hotfix/<name>` off `main` if it cannot wait. |
+| Hotfix PR fails `pr-source` on "no Conventional Commit type" | A commit on the branch has a subject like `Fix cuda path` or `Hotfix: …`. Reword it to `fix: …` (or squash the branch into one `fix: …` commit) and force-push; a merge into `main` would otherwise release nothing. |
 | A develop build pushed to the **public** repo      | That family's `docker-bake.hcl` is missing `${REPO_SUFFIX}` in a tag, or its job does not pass it. See *Add a new template*. |
 | A dev build fails pulling its parent with `401 … insufficient scopes` | The parent has no `-dev.<N>` tag yet, so the build fell back to its last public release, and the dev OIDC connection has no read on the public repos. Grant it; this is not a suffix bug. |
 | A dev build layered on an older parent than expected | It takes the newest `-dev.<N>`, which is the last push to `develop` that built that family. A change sitting in an open PR is deliberately not a parent. |

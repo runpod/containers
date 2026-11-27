@@ -8,7 +8,8 @@ VENV_NAME="${COMFYUI_VENV_NAME:-.venv-cu128}"
 VENV_DIR="$COMFYUI_DIR/$VENV_NAME"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 MIGRATION_MARKER=".runpod-migration-incomplete"
-DB_FILE="/workspace/runpod-slim/filebrowser.db"
+FILEBROWSER_DB="/workspace/runpod-slim/filebrowser.sqlite"
+CLASSIC_FILEBROWSER_DB="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
 BAKED_NODES=("ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
 # ComfyUI-Manager now ships as the comfyui_manager pip package in the image, and
@@ -30,8 +31,9 @@ SYSTEM_PYTHON="/usr/bin/python3.12"
 AUTH_PROXY_RESTART_DELAY=5
 AUTH_PROXY_MAX_FAST_FAILURES=5
 AUTH_PROXY_FAST_FAILURE_SECONDS=30
-# Same floor as FileBrowser's: the :8188 URL is public and guessable.
+# The :8188 and :8080 URLs are public and guessable.
 COMFYUI_PASSWORD_MIN_LENGTH=12
+FILEBROWSER_PASSWORD_MIN_LENGTH=12
 
 # ---------------------------------------------------------------------------- #
 #                          Function Definitions                                  #
@@ -151,65 +153,48 @@ start_jupyter() {
     echo "Jupyter Lab started"
 }
 
-# A filebrowser CLI call against the pod's database. Quiet on success; on
-# failure its output is printed with FILEBROWSER_PASSWORD masked out.
-filebrowser_cli() {
-    local out
-    if out=$(filebrowser -d "$DB_FILE" "$@" 2>&1); then
-        return 0
-    fi
-    if [ -n "${FILEBROWSER_PASSWORD:-}" ]; then
-        out=${out//"$FILEBROWSER_PASSWORD"/<FILEBROWSER_PASSWORD>}
-    fi
-    echo "$out"
-    return 1
+# Prints a boxed notice that FileBrowser was not started, so it is not lost
+# above ComfyUI's startup output.
+filebrowser_not_started() {
+    echo "============================================="
+    echo "  FILEBROWSER_PASSWORD $1, so FileBrowser was not started."
+    echo "  Set FILEBROWSER_PASSWORD, at least $FILEBROWSER_PASSWORD_MIN_LENGTH characters, on the pod"
+    echo "  and restart it; sign in as admin with it."
+    echo "============================================="
 }
 
-# FileBrowser always requires a login: a set FILEBROWSER_PASSWORD is the admin
-# password, and without one FileBrowser is not started. There is no opt-out.
-# Images before this one created admin with the published default
-# adminadmin12 whenever FILEBROWSER_PASSWORD was unset, so admin's password is
-# set from the env on every start rather than only when the database is first
-# created, and the login method is forced back to json in case a database was
-# switched to noauth.
+# FileBrowser always requires a login: FILEBROWSER_PASSWORD is the admin
+# password, and without one, or with one shorter than
+# FILEBROWSER_PASSWORD_MIN_LENGTH, FileBrowser is not started.
 start_filebrowser() {
     if [ -z "${FILEBROWSER_PASSWORD:-}" ]; then
-        echo "============================================="
-        echo "  FILEBROWSER_PASSWORD is not set, so FileBrowser was not started."
-        echo "  Set FILEBROWSER_PASSWORD, at least 12 characters, on the pod"
-        echo "  and restart it; sign in as admin with it."
-        echo "============================================="
+        filebrowser_not_started "is not set"
+        return 0
+    fi
+    if [ "${#FILEBROWSER_PASSWORD}" -lt "$FILEBROWSER_PASSWORD_MIN_LENGTH" ]; then
+        filebrowser_not_started "is shorter than $FILEBROWSER_PASSWORD_MIN_LENGTH characters"
         return 0
     fi
 
-    if [ ! -f "$DB_FILE" ]; then
-        echo "Initializing FileBrowser..."
-        if ! { filebrowser_cli config init \
-            && filebrowser_cli config set --address 0.0.0.0 --port 8080 --root /workspace; }; then
-            echo "ERROR: could not initialize FileBrowser (see above); it was not started."
+    local config="$FILEBROWSER_CONFIG"
+    if [ ! -s "$FILEBROWSER_DB" ] && [ -s "$CLASSIC_FILEBROWSER_DB" ]; then
+        config=/tmp/filebrowser-migrate.yaml
+        if ! awk -v db="$FILEBROWSER_DB" -v from="$CLASSIC_FILEBROWSER_DB" '
+            { print }
+            $0 == "    path: \"" db "\"" { print "    migrateFrom: \"" from "\""; added = 1 }
+            END { exit !added }
+        ' "$FILEBROWSER_CONFIG" > "$config"; then
+            echo "ERROR: could not prepare the FileBrowser migration config; FileBrowser was not started."
             return 0
         fi
-    fi
-
-    if ! filebrowser_cli config set --auth.method=json; then
-        echo "ERROR: could not set FileBrowser's login method (see above); it was not started."
-        return 0
-    fi
-
-    local ok=1
-    if filebrowser_cli users find admin > /dev/null; then
-        filebrowser_cli users update admin --password "$FILEBROWSER_PASSWORD" || ok=0
-    else
-        filebrowser_cli users add admin "$FILEBROWSER_PASSWORD" --perm.admin || ok=0
-    fi
-    if [ "$ok" = 0 ]; then
-        echo "ERROR: could not set the FileBrowser admin password (see above), so FileBrowser"
-        echo "was not started. It must be 12 or more characters and not a common password."
-        return 0
+        echo "Importing FileBrowser users from $CLASSIC_FILEBROWSER_DB (classic FileBrowser)."
+        echo "It is left in place. Once FileBrowser works, you can delete it, and"
+        echo "/workspace/runpod-slim/.filebrowser.json if present, to reclaim the space."
     fi
 
     echo "Starting FileBrowser on port 8080..."
-    nohup filebrowser -d "$DB_FILE" &> /filebrowser.log &
+    FILEBROWSER_CONFIG="$config" FILEBROWSER_ADMIN_PASSWORD="$FILEBROWSER_PASSWORD" \
+        nohup filebrowser &> /filebrowser.log &
 }
 
 # Decides whether ComfyUI is served. It always requires a password; there is

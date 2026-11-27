@@ -83,6 +83,7 @@ def render_yaml(groups: dict) -> str:
             "check_all_gpu",
             "test_comfyui",
             "test_comfyui_functional",
+            "test_comfyui_manager",
             "test_vllm",
             "test_pip_check",
             "test_ca_certs",
@@ -93,6 +94,10 @@ def render_yaml(groups: dict) -> str:
             "test_virtualenv",
             "test_python_path",
             "test_autoresearch",
+            "cluster",
+            "cluster_nodes",
+            "cluster_gpus_per_node",
+            "test_burn",
             "test_dcgm_exporter",
             "test_ray",
         ):
@@ -107,7 +112,7 @@ def render_yaml(groups: dict) -> str:
                 # Quote `<port>/<path>` entries so YAML keeps them as strings.
                 value = f'"{port}"' if "/" in str(port) else port
                 lines.append(f"    - {value}")
-        for list_key in ("pip_check_allow", "revoked_ca_names"):
+        for list_key in ("pip_check_allow", "revoked_ca_names", "cluster_types"):
             if body.get(list_key):
                 lines.append(f"    {list_key}:")
                 for entry in body[list_key]:
@@ -164,6 +169,7 @@ def build_groups(
     test_ports: list[str] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
+    test_comfyui_manager: bool = False,
     test_vllm: bool = False,
     test_pip_check: bool = False,
     pip_check_allow: list[str] | None = None,
@@ -176,6 +182,7 @@ def build_groups(
     test_virtualenv: bool = False,
     test_python_path: bool = False,
     test_autoresearch: bool = False,
+    test_burn: bool = False,
     test_dcgm_exporter: bool = False,
     test_ray: bool = False,
     check_all_gpu: bool = False,
@@ -185,6 +192,9 @@ def build_groups(
     min_cuda_version: str | None = None,
     cuda_versions: list[str] | None = None,
     explicit_budget: bool = False,
+    cluster_nodes: int = 2,
+    cluster_gpus_per_node: int = 0,
+    cluster_types: list[str] | None = None,
 ) -> dict:
     """Build the manifest dict for `profile`.
 
@@ -275,6 +285,8 @@ def build_groups(
             body["test_comfyui"] = True
         if test_comfyui_functional:
             body["test_comfyui_functional"] = True
+        if test_comfyui_manager:
+            body["test_comfyui_manager"] = True
         if test_vllm:
             body["test_vllm"] = True
         if test_pip_check:
@@ -299,6 +311,8 @@ def build_groups(
             body["test_python_path"] = True
         if test_autoresearch:
             body["test_autoresearch"] = True
+        if test_burn:
+            body["test_burn"] = True
         if test_dcgm_exporter:
             body["test_dcgm_exporter"] = True
         if test_ray:
@@ -364,6 +378,20 @@ def build_groups(
         # name 'base_gpu' is purely conventional here.
         return _gpu_groups(refs)
 
+    if profile == "cluster":
+        # Instant Cluster: one cluster per image (head node-0 + workers),
+        # run by tests/runpod_smoke/cluster_runner.py. Candidates are the
+        # explicit instances, else every GPU type the cluster catalog
+        # offers — the per-pod budget / vRAM filters don't apply.
+        body: dict = {"images": refs, "cluster": True, "cluster_nodes": cluster_nodes}
+        if cluster_gpus_per_node:
+            body["cluster_gpus_per_node"] = cluster_gpus_per_node
+        if cluster_types:
+            body["cluster_types"] = list(cluster_types)
+        if instances:
+            body["instances"] = list(instances)
+        return {"pytorch_cluster": _decorate(body, gpu_group=False)}
+
     raise ValueError(f"unknown profile: {profile!r}")
 
 
@@ -406,7 +434,7 @@ def main() -> int:
     ap.add_argument(
         "--profile",
         required=True,
-        choices=["base", "gpu"],
+        choices=["base", "gpu", "cluster"],
     )
     ap.add_argument(
         "--refs",
@@ -467,6 +495,7 @@ def main() -> int:
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument("--test-comfyui-manager", action="store_true")
     ap.add_argument(
         "--test-vllm", action="store_true",
         help="runpod/vllm-openai: auth gate and one completion via the proxy",
@@ -582,6 +611,15 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--test-burn",
+        action="store_true",
+        help=(
+            "Emit `test_burn: true`: run the Burn starter's matmul on the "
+            "CUDA and Vulkan backends and compare it with the CPU. For "
+            "runpod/burn only."
+        ),
+    )
+    ap.add_argument(
         "--test-dcgm-exporter",
         action="store_true",
         help=(
@@ -667,6 +705,30 @@ def main() -> int:
             "vRAM / vendor filters no longer apply."
         ),
     )
+    ap.add_argument(
+        "--cluster-nodes",
+        type=int,
+        default=2,
+        help="Pods per Instant Cluster for --profile cluster (default: 2)",
+    )
+    ap.add_argument(
+        "--cluster-gpus-per-node",
+        type=int,
+        default=0,
+        help=(
+            "GPUs per cluster node for --profile cluster. 0 (default) picks "
+            "the smallest node size the GPU type offers."
+        ),
+    )
+    ap.add_argument(
+        "--cluster-types",
+        type=lambda raw: [t.strip().upper() for t in raw.split(",") if t.strip()],
+        default=None,
+        help=(
+            "createCluster types to try in order for --profile cluster, csv "
+            "(e.g. SLURM,TRAINING). Empty keeps tests/runpod_smoke's default."
+        ),
+    )
     ap.add_argument("--output", required=True, type=Path)
     args = ap.parse_args()
 
@@ -704,6 +766,7 @@ def main() -> int:
         test_ports=args.test_port,
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
+        test_comfyui_manager=args.test_comfyui_manager,
         test_vllm=args.test_vllm,
         test_pip_check=args.test_pip_check,
         pip_check_allow=args.pip_check_allow,
@@ -716,6 +779,7 @@ def main() -> int:
         test_virtualenv=args.test_virtualenv,
         test_python_path=args.test_python_path,
         test_autoresearch=args.test_autoresearch,
+        test_burn=args.test_burn,
         test_dcgm_exporter=args.test_dcgm_exporter,
         test_ray=args.test_ray,
         check_all_gpu=args.check_all_gpu,
@@ -724,6 +788,9 @@ def main() -> int:
         scoped_excludes=args.scoped_excludes,
         min_cuda_version=(args.min_cuda_version or None),
         cuda_versions=args.cuda_versions,
+        cluster_nodes=args.cluster_nodes,
+        cluster_gpus_per_node=args.cluster_gpus_per_node,
+        cluster_types=args.cluster_types,
     )
 
     if not groups:

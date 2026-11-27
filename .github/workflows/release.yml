@@ -14,13 +14,11 @@ name: Build and Release
 # main tags and releases. Everything else — develop, a PR between two feature
 # branches, a manual run off main — goes to the private runpod/<repo>-dev.
 on:
-  # Directory globs (not individual files) so no build-relevant input — e.g.
-  # requirements.txt, pre_start.sh, start.sh — is missed. Pipeline-only (ci:)
-  # changes to the workflow/action files intentionally do NOT trigger a build.
+  # No `paths:` filter: `build-result` is a required check, and a required
+  # check that never starts pins the merge button at "Expected". `plan` does
+  # the path gating instead, so a PR that touches no family's paths (docs,
+  # pipeline-only ci: changes) builds nothing and still passes.
   pull_request:
-    paths:
-      - "official-templates/**"
-      - "container-template/**"
   push:
     branches: [main, develop]
   workflow_dispatch:
@@ -379,3 +377,23 @@ jobs:
       && needs.release.result == 'success'
     uses: ./.github/workflows/cleanup.yml
     secrets: inherit
+
+  # The one check branch rules require from this workflow. The build jobs fan
+  # out per family and CUDA version, so their names differ from run to run and
+  # none of them can be required on its own. A skipped dependency (a family
+  # outside the plan, the gate on a PR into develop) is not a failure.
+  # always(), not !cancelled(): a skipped required check counts as passed, so
+  # in a cancelled run this job must still run and fail.
+  build-result:
+    needs: [pr-source-gate, plan, base, nvidia, rocm, comfyui, vllm, sandbox, k3s-node]
+    if: always()
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Fail if any dependency failed or was cancelled
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "${NEEDS}"
+          jq -e '[.[] | select(.result == "failure" or .result == "cancelled")] | length == 0' \
+            <<< "${NEEDS}" > /dev/null
