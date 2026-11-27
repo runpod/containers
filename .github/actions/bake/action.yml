@@ -1,0 +1,79 @@
+name: Bake with retry
+description: >-
+  Run `docker buildx bake` up to `attempts` times. A failed job can only be
+  re-run after the whole workflow run finishes, so a mirror 502 or a broken
+  layer pull would otherwise hold the job for the full run. The buildx cache
+  makes each retry resume at the failed layer. Env set on the calling step
+  (RELEASE_VERSION, BUILDX_BAKE_ENTITLEMENTS_FS, ...) reaches every attempt.
+
+inputs:
+  files:
+    description: "Bake definition files, one per line"
+    required: true
+  targets:
+    description: "Bake targets, one per line (empty = default group)"
+    required: false
+    default: ""
+  load:
+    description: "Load the built images into the local Docker daemon"
+    required: false
+    default: "false"
+  push:
+    description: "Push the built images"
+    required: false
+    default: "false"
+  attempts:
+    description: "Total bake attempts"
+    required: false
+    default: "3"
+  retry-delay:
+    description: "Seconds to wait before retry N, multiplied by N"
+    required: false
+    default: "30"
+
+outputs:
+  metadata:
+    description: "Bake metadata JSON from the attempt that succeeded"
+    value: ${{ steps.bake.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    - name: Bake
+      id: bake
+      shell: bash
+      env:
+        FILES: ${{ inputs.files }}
+        TARGETS: ${{ inputs.targets }}
+        LOAD: ${{ inputs.load }}
+        PUSH: ${{ inputs.push }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        RETRY_DELAY: ${{ inputs.retry-delay }}
+      run: |
+        set -euo pipefail
+        # shellcheck source=../../scripts/retry.sh
+        source "${GITHUB_ACTION_PATH}/../../scripts/retry.sh"
+        metadata="$(mktemp -p "${RUNNER_TEMP}" bake-metadata-XXXXXX)"
+
+        args=(--allow 'fs=*' --metadata-file "${metadata}")
+        while IFS= read -r f; do
+          [ -n "${f}" ] && args+=(--file "${f}")
+        done <<< "${FILES}"
+        [ "${LOAD}" = "true" ] && args+=(--load)
+        [ "${PUSH}" = "true" ] && args+=(--push)
+        mapfile -t bake_targets < <(grep -v '^[[:space:]]*$' <<< "${TARGETS}" || true)
+
+        echo "::group::Bake definition"
+        docker buildx bake "${args[@]}" "${bake_targets[@]}" --print
+        echo "::endgroup::"
+
+        retry "${ATTEMPTS}" "${RETRY_DELAY}" "docker buildx bake" \
+          docker buildx bake "${args[@]}" "${bake_targets[@]}"
+
+        eof="EOF_$(openssl rand -hex 8)"
+        {
+          echo "metadata<<${eof}"
+          cat "${metadata}"
+          echo
+          echo "${eof}"
+        } >> "${GITHUB_OUTPUT}"

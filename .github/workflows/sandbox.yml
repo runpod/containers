@@ -117,14 +117,13 @@ jobs:
 
       - name: Build sandbox-ubuntu image
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.ubuntu }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/sandbox-ubuntu/docker-bake.hcl
@@ -266,14 +265,13 @@ jobs:
 
       - name: Build sandbox-openclaw image
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.openclaw }}
           RELEASE_SUFFIX: ${{ needs.versions.outputs.suffix }}
           REPO_SUFFIX: ${{ needs.versions.outputs.repo-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/sandbox-openclaw/docker-bake.hcl
@@ -443,7 +441,7 @@ jobs:
 
       - name: Build sandbox-harbor image
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.harbor }}
@@ -452,7 +450,6 @@ jobs:
           UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-parent }}
           UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.ubuntu-parent-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/sandbox-harbor/docker-bake.hcl
@@ -567,7 +564,7 @@ jobs:
 
       - name: Build sandbox-browser image
         id: build
-        uses: docker/bake-action@6614cfa25eff9a0b2b2697efb0b6159e7680d584
+        uses: ./.github/actions/bake
         env:
           BUILDX_BAKE_ENTITLEMENTS_FS: 0
           RELEASE_VERSION: ${{ needs.versions.outputs.browser }}
@@ -576,7 +573,6 @@ jobs:
           UBUNTU_BASE_VERSION: ${{ needs.build-sandbox-ubuntu.result == 'success' && format('{0}{1}', needs.versions.outputs.ubuntu, needs.versions.outputs.suffix) || needs.versions.outputs.ubuntu-parent }}
           UBUNTU_BASE_REPO_SUFFIX: ${{ needs.build-sandbox-ubuntu.result == 'success' && needs.versions.outputs.repo-suffix || needs.versions.outputs.ubuntu-parent-suffix }}
         with:
-          source: .
           files: |
             official-templates/shared/versions.hcl
             official-templates/sandbox-browser/docker-bake.hcl

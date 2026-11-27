@@ -8,6 +8,10 @@ inputs:
   ref-digests:
     description: "JSON object mapping each image reference to its expected sha256 digest"
     required: true
+  attempts:
+    description: "Attempts per push and per digest lookup; blobs already uploaded are skipped on retry"
+    required: false
+    default: "3"
 
 runs:
   using: composite
@@ -17,8 +21,11 @@ runs:
       env:
         IMAGE_REFS: ${{ inputs.image-refs }}
         REF_DIGESTS: ${{ inputs.ref-digests }}
+        ATTEMPTS: ${{ inputs.attempts }}
       run: |
         set -euo pipefail
+        # shellcheck source=../../scripts/retry.sh
+        source "${GITHUB_ACTION_PATH}/../../scripts/retry.sh"
         mapfile -t refs < <(echo "${IMAGE_REFS}" | jq -r '.[]')
         if [ ${#refs[@]} -eq 0 ]; then
           echo "No image refs to push"
@@ -27,7 +34,7 @@ runs:
 
         for ref in "${refs[@]}"; do
           echo "::group::docker push — ${ref}"
-          docker push "${ref}"
+          retry "${ATTEMPTS}" 15 "docker push ${ref}" docker push "${ref}"
 
           expected_digest=$(printf '%s\n' "${REF_DIGESTS}" \
             | jq -r --arg ref "${ref}" '.[$ref] // empty')
@@ -36,8 +43,9 @@ runs:
             exit 1
           fi
 
-          registry_digest=$(docker buildx imagetools inspect "${ref}" \
-            | awk '/^Digest:/ {print $2; exit}')
+          inspect_out=$(retry "${ATTEMPTS}" 15 "imagetools inspect ${ref}" \
+            docker buildx imagetools inspect "${ref}") || exit 1
+          registry_digest=$(awk '/^Digest:/ {print $2; exit}' <<< "${inspect_out}")
           if [ -z "${registry_digest}" ]; then
             echo "Unable to resolve registry digest for ${ref}"
             exit 1

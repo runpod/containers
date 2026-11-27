@@ -140,6 +140,41 @@ def ssh_probe(endpoint: SshEndpoint, timeout: int = 8) -> tuple[bool, str]:
     return False, (r.stderr or r.stdout).strip()[:200]
 
 
+# ssh exits 255 on its own errors. Matching the message too keeps a remote
+# command that happens to exit 255 from being re-run as if it never started.
+_SSH_TRANSPORT_ERROR_RE = re.compile(
+    r"^ssh: |Permission denied \(publickey|Connection (?:timed out|refused"
+    r"|reset|closed)|kex_exchange_identification|Could not resolve hostname",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _run_over_ssh(
+    ssh_cmd: list[str], timeout: int, attempts: int = 3, retry_sleep: int = 10,
+) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run a check over SSH, re-running it while ssh itself failed to connect.
+
+    CI saw `Connection timed out` and the SSH proxy's `Permission denied
+    (publickey)` on pods whose previous check had just passed over the same
+    endpoint; the check never ran, so its FAIL said nothing about the image.
+    Returns the last result plus one note per retried attempt, for the log.
+    Timeouts are not retried: the command did run."""
+    notes: list[str] = []
+    for attempt in range(1, attempts + 1):
+        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        transport_error = (
+            r.returncode == 255 and _SSH_TRANSPORT_ERROR_RE.search(r.stderr or "")
+        )
+        if not transport_error or attempt == attempts:
+            return r, notes
+        notes.append(
+            f"ssh failed to connect (attempt {attempt}/{attempts}), retrying: "
+            f"{_strip_cr(r.stderr).strip()[:160]}"
+        )
+        time.sleep(retry_sleep)
+    return r, notes
+
+
 # ---------------------------------------------------------------------------
 # CUDA / GPU functional check
 # ---------------------------------------------------------------------------
@@ -431,13 +466,13 @@ def run_cuda_check(
     timeout = 180 if _image_ships_sageattention(image) else 90
     ssh_cmd = [*_ssh_command_prefix(endpoint), cmd]
     try:
-        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        r, notes = _run_over_ssh(ssh_cmd, timeout)
     except subprocess.TimeoutExpired:
         return False, f"cuda check timed out after {timeout}s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
-    combined = _strip_cr(r.stdout + r.stderr).strip()
-    return (r.returncode == 0), combined
+    combined = "\n".join([*notes, _strip_cr(r.stdout + r.stderr).strip()])
+    return (r.returncode == 0), combined.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -967,14 +1002,13 @@ def run_simple_check(
     """Run one opt-in hygiene check over SSH. Returns (ok, output)."""
     ssh_cmd = [*_ssh_command_prefix(endpoint), command]
     try:
-        r = subprocess.run(
-            ssh_cmd, capture_output=True, text=True, timeout=timeout,
-        )
+        r, notes = _run_over_ssh(ssh_cmd, timeout)
     except subprocess.TimeoutExpired:
         return False, f"check timed out after {timeout}s"
     except FileNotFoundError:
         return False, _SSH_BINARY_NOT_FOUND
-    return (r.returncode == 0), _strip_cr(r.stdout + r.stderr).strip()
+    output = "\n".join([*notes, _strip_cr(r.stdout + r.stderr).strip()])
+    return (r.returncode == 0), output.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -1265,32 +1299,43 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
     return False, "\n".join(lines)
 
 
-def run_jupyter_static_check(pod_id: str) -> tuple[bool, str]:
+def run_jupyter_static_check(
+    pod_id: str, retries: int = 3, retry_sleep: int = 5,
+) -> tuple[bool, str]:
     """Hit a static asset through the public proxy.
 
     `/api/status` is served by a plain handler and stays 200 even when every
     StaticFileHandler route 500s — which is what tornado 6.5.9 did to
     jupyter_server (tornadoweb/tornado#3724) and what makes the Lab UI render
-    as a blank page. Only a static fetch covers that. Returns (ok, log).
+    as a blank page. Only a static fetch covers that. Retried because a single
+    proxy timeout is not that bug; the bug answers 500 on every attempt.
+    Returns (ok, log).
     """
     url = f"https://{pod_id}-8888.proxy.runpod.net/static/favicons/favicon.ico"
     lines = [f"GET {url}"]
     err = ""
-    try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "runpod-smoke-test/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            ctype = resp.headers.get("Content-Type", "")
-            lines.append(f"HTTP {resp.status} content-type={ctype}")
-            # A redirect to the login page would also be a 200, so reject HTML.
-            if resp.status == 200 and not ctype.startswith("text/html"):
-                return True, "\n".join(lines)
-            err = f"HTTP {resp.status} content-type={ctype}"
-    except urllib.error.HTTPError as e:
-        err = f"HTTP {e.code} {e.reason}"
-    except OSError as exc:
-        err = f"{type(exc).__name__}: {exc}"
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "runpod-smoke-test/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                ctype = resp.headers.get("Content-Type", "")
+                lines.append(
+                    f"attempt #{attempt}: HTTP {resp.status} content-type={ctype}"
+                )
+                # A redirect to the login page would also be a 200, so reject HTML.
+                if resp.status == 200 and not ctype.startswith("text/html"):
+                    return True, "\n".join(lines)
+                err = f"HTTP {resp.status} content-type={ctype}"
+        except urllib.error.HTTPError as e:
+            err = f"HTTP {e.code} {e.reason}"
+            lines.append(f"attempt #{attempt}: {err}")
+        except OSError as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            lines.append(f"attempt #{attempt}: {err}")
+        if attempt < retries:
+            time.sleep(retry_sleep)
     lines.append(f"FAIL: static asset not served ({err}) -- Lab UI renders blank")
     return False, "\n".join(lines)
 
@@ -1525,6 +1570,31 @@ _STARTUP_FAILURE_RE = re.compile(
     r"|out of memory: killed process|oom-kill",
     re.IGNORECASE,
 )
+
+
+# Start failures caused by the host, not the image. Each was seen in CI with
+# the same image passing on re-run: Runpod's registry token for the private
+# -dev repos briefly lacking pull scope, and a host out of kernel keyrings
+# (which runc reports as an OCI error, so this is checked before that rule).
+_HOST_START_FAILURE_RE = re.compile(
+    r"unauthorized to use image|access token has insufficient scopes"
+    r"|unable to create session key: disk quota exceeded",
+    re.IGNORECASE,
+)
+
+
+def host_start_failure(log_lines: Optional[list[str]]) -> str:
+    """Summarize a host-side container start failure, or '' if none.
+
+    Another host or a later retry round is the fix, so the caller reports
+    UNVERIFIED instead of FAIL. A registry problem that never clears still
+    fails the run once the retry rounds are used up."""
+    for line in log_lines or []:
+        match = _HOST_START_FAILURE_RE.search(line)
+        if match:
+            # Keep the matched cause: it sits past 200 chars in runc's errors.
+            return line[max(0, match.start() - 120):match.end()].strip()
+    return ""
 
 
 def container_startup_failure(log_lines: Optional[list[str]]) -> str:

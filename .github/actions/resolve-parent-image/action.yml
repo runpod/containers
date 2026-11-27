@@ -63,7 +63,7 @@ runs:
           crane version
           exit 0
         fi
-        curl -fsSL \
+        curl -fsSL --retry 5 --retry-all-errors \
           "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
           -o /tmp/crane.tar.gz
         echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -

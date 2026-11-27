@@ -27,15 +27,16 @@ def _response(status, content_type):
     return resp
 
 
+@mock.patch("runpod_smoke.checks.time.sleep")
 class JupyterStaticCheck(unittest.TestCase):
-    def test_served_asset_passes(self):
+    def test_served_asset_passes(self, _sleep):
         with mock.patch("urllib.request.urlopen",
                         return_value=_response(200, "image/x-icon")):
             ok, log = run_jupyter_static_check(POD)
         self.assertTrue(ok)
         self.assertIn("HTTP 200", log)
 
-    def test_500_from_the_tornado_659_regression_fails(self):
+    def test_500_from_the_tornado_659_regression_fails(self, _sleep):
         err = urllib.error.HTTPError(
             "url", 500, "Internal Server Error", {}, io.BytesIO(b"")
         )
@@ -44,7 +45,7 @@ class JupyterStaticCheck(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("500", log)
 
-    def test_login_page_redirect_is_not_a_pass(self):
+    def test_login_page_redirect_is_not_a_pass(self, _sleep):
         """A 200 carrying HTML means we were bounced to the login page, not
         handed the asset."""
         with mock.patch("urllib.request.urlopen",
@@ -52,11 +53,32 @@ class JupyterStaticCheck(unittest.TestCase):
             ok, _ = run_jupyter_static_check(POD)
         self.assertFalse(ok)
 
-    def test_unreachable_proxy_fails(self):
+    def test_unreachable_proxy_fails(self, _sleep):
         with mock.patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             ok, log = run_jupyter_static_check(POD)
         self.assertFalse(ok)
         self.assertIn("TimeoutError", log)
+
+    def test_one_proxy_timeout_is_retried(self, _sleep):
+        """CI run 45393212265: one 10s proxy read timeout failed a healthy pod."""
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=[TimeoutError("The read operation timed out"),
+                         _response(200, "image/x-icon")],
+        ):
+            ok, log = run_jupyter_static_check(POD)
+        self.assertTrue(ok)
+        self.assertIn("attempt #1: TimeoutError", log)
+        self.assertIn("attempt #2: HTTP 200", log)
+
+    def test_persistent_500_still_fails_after_retries(self, _sleep):
+        err = urllib.error.HTTPError(
+            "url", 500, "Internal Server Error", {}, io.BytesIO(b"")
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=err) as urlopen:
+            ok, _ = run_jupyter_static_check(POD, retries=3)
+        self.assertFalse(ok)
+        self.assertEqual(urlopen.call_count, 3)
 
 
 if __name__ == "__main__":

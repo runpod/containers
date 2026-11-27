@@ -45,6 +45,10 @@ DISK_GB = int(os.environ.get("DISK_GB", "100"))
 CPU_DISK_GB = int(os.environ.get("CPU_DISK_GB", "20"))
 
 DWELL_SEC = int(os.environ.get("DWELL_SEC", "60"))
+# The post-dwell SSH re-probe goes through Runpod's SSH proxy, which drops a
+# single connection now and then. A crashed container fails every attempt.
+DWELL_PROBE_ATTEMPTS = max(1, int(os.environ.get("DWELL_PROBE_ATTEMPTS", "3")))
+DWELL_PROBE_SLEEP = int(os.environ.get("DWELL_PROBE_SLEEP", "10"))
 CREATE_TIMEOUT = int(os.environ.get("CREATE_TIMEOUT", "600"))
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 
@@ -191,8 +195,9 @@ JUPYTER_WAIT_TIMEOUT = int(os.environ.get("JUPYTER_WAIT_TIMEOUT", "30"))
 # Runpod exposes any port declared as `<port>/http` through its public
 # proxy at `https://<pod-id>-<port>.proxy.runpod.net`. The proxy takes a
 # few seconds to register newly-exposed ports — we retry up to this many
-# seconds before giving up.
-JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "60"))
+# seconds before giving up. 60s ran out on a healthy pod whose in-pod check
+# then passed; generic ports already get PORT_PROXY_TIMEOUT (300s).
+JUPYTER_PROXY_TIMEOUT = int(os.environ.get("JUPYTER_PROXY_TIMEOUT", "180"))
 
 # ---------------------------------------------------------------------------
 # Generic per-port checks (test_ports manifest field)
