@@ -1003,18 +1003,20 @@ def test_image(
         return "FAIL", last_create_error, last_create_inst, ""
     if unverified:
         insts = [inst for inst, _d in unverified]
+        # An unresponsive SSH endpoint is only one of the ways a check can
+        # come back unverified, so the reason has to come from the attempt.
+        reason = unverified[0][1] or "no reason recorded"
         log(
             f"{len(unverified)} instance(s) left the image unverified "
-            f"({insts}) — an SSH endpoint was assigned but never answered",
+            f"({insts}) — {reason}",
             indent=1,
         )
         return (
             "UNVERIFIED",
             (
-                "could not determine whether the image works: an SSH "
-                "endpoint was assigned but never answered"
+                "could not determine whether the image works"
                 + _over_candidates(len(unverified))
-                + f" — {unverified[0][1]}"
+                + f" — {reason}"
             ),
             ", ".join(insts),
             "",

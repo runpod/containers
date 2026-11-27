@@ -673,14 +673,17 @@ def _manager_install_node(
     )
 
 
-def _manager_reboot(base: str, emit: Callable[[str], None]) -> None:
-    """Request a ComfyUI restart. The server execs itself, so a dropped
-    connection here is the expected outcome, not a failure."""
+def _manager_reboot(base: str, emit: Callable[[str], None]) -> Optional[int]:
+    """Request a ComfyUI restart, returning the status it answered with, or
+    None when the connection dropped. Manager execv's itself on success, so
+    only a refusal ever gets to answer with a status of its own."""
     try:
         code, _ = _request(base + "/v2/manager/reboot", b"", timeout=15)
         emit(f"reboot requested (HTTP {code})")
+        return code
     except OSError as exc:
         emit(f"reboot requested (connection closed: {type(exc).__name__})")
+        return None
 
 
 def run_comfyui_manager_check(
@@ -740,7 +743,11 @@ def run_comfyui_manager_check(
         return False, f"Manager reported the install of {node['id']} as {status}"
 
     emit("rebooting ComfyUI to activate the node...")
-    _manager_reboot(base, emit)
+    code = _manager_reboot(base, emit)
+    if code is not None and 400 <= code < 500:
+        # Manager answered instead of exec'ing itself: 400 is its CSRF guard,
+        # 403 its security level. Waiting for the node would just time out.
+        return False, f"ComfyUI-Manager refused the reboot (HTTP {code})"
     # Give the server a moment to drop before we start polling for it to return.
     time.sleep(10)
     if not _wait_for_system_stats(base, emit):

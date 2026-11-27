@@ -203,7 +203,7 @@ class InstallResultBeforeReboot(unittest.TestCase):
     the history in memory only. The reboot execv's the server, so the result
     has to be read before it, not after."""
 
-    def _run(self, history, class_after_reboot=True):
+    def _run(self, history, class_after_reboot=True, reboot_code=None):
         calls: list[str] = []
         stats = json.dumps({
             "system": {"pytorch_version": "2.9.1+cu128"},
@@ -228,7 +228,11 @@ class InstallResultBeforeReboot(unittest.TestCase):
                     return 200, b'{"history": {}}'
                 return 200, history
             if "/v2/manager/reboot" in url:
-                return 200, b"{}"
+                # Manager execv's on success, so the client normally just
+                # loses the connection; a status means it refused.
+                if reboot_code is None:
+                    raise OSError("connection reset by peer")
+                return reboot_code, b""
             if "/object_info/" in url:
                 if rebooted() and class_after_reboot:
                     return 200, json.dumps({NODE["verify_class"]: {}}).encode()
@@ -269,6 +273,18 @@ class InstallResultBeforeReboot(unittest.TestCase):
     def test_successful_install_still_reboots_and_verifies(self):
         ok, detail, rebooted = self._run(_history("success", "success"))
         self.assertTrue(ok, detail)
+        self.assertTrue(rebooted)
+
+    def test_a_refused_reboot_is_reported_as_such(self):
+        """403 is Manager's security level, 400 its CSRF guard. Either way
+        the node will never appear, so waiting the verify timeout is waste."""
+        ok, detail, rebooted = self._run(
+            _history("success", "success"),
+            class_after_reboot=False, reboot_code=403,
+        )
+        self.assertFalse(ok)
+        self.assertIn("refused the reboot", detail)
+        self.assertIn("403", detail)
         self.assertTrue(rebooted)
 
     def test_empty_history_is_not_a_verdict(self):

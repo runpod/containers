@@ -383,6 +383,17 @@ class Aggregation(unittest.TestCase):
         self.assertIn("RTX 5080", insts)
         self.assertIn("never answered", note)
 
+    def test_the_verdict_carries_the_reason_it_was_given(self):
+        """UNVERIFIED is no longer only an unresponsive SSH endpoint: the
+        ComfyUI-Manager step raises it for a registry outage too."""
+        _, note, _, _ = self._run([
+            ("UNVERIFIED",
+             "ComfyUI-Manager install check: the ComfyUI registry failed"),
+            ("UNAVAILABLE", ""),
+        ])
+        self.assertIn("the ComfyUI registry failed", note)
+        self.assertNotIn("SSH endpoint", note)
+
     def test_unverified_outranks_stuck(self):
         status, _, _, _ = self._run([
             ("STUCK", ""),
