@@ -36,8 +36,14 @@ runs:
             exit 1
           fi
 
-          registry_digest=$(docker buildx imagetools inspect "${ref}" \
-            | awk '/^Digest:/ {print $2; exit}')
+          for attempt in 1 2 3 4 5 6; do
+            registry_digest=$(docker buildx imagetools inspect "${ref}" \
+              | awk '/^Digest:/ {print $2; exit}')
+            [ "${registry_digest}" = "${expected_digest}" ] && break
+            [ "${attempt}" -eq 6 ] && break
+            echo "Registry returned ${registry_digest:-nothing} for ${ref}, retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
           if [ -z "${registry_digest}" ]; then
             echo "Unable to resolve registry digest for ${ref}"
             exit 1

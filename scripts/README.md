@@ -4,6 +4,25 @@ This directory contains utility scripts for managing Runpod container templates.
 
 ## Scripts
 
+### gen-cuda-dev-lock.sh
+
+Regenerates `official-templates/base/cuda-dev/<cuda>-ubuntu<ubuntu>.txt`, the
+CUDA dev packages the CUDA base images install on top of
+`nvidia/cuda:*-cudnn-runtime`. Package versions differ between Ubuntu
+releases, so each CUDA and Ubuntu pair has its own list.
+The list is what NVIDIA's `-cudnn-devel` image adds over `-cudnn-runtime`, at
+the exact versions it ships. Run it whenever a CUDA
+version or an Ubuntu release for it is added to
+`official-templates/shared/versions.hcl`; the base build fails for a pair
+without a list.
+
+```bash
+./scripts/gen-cuda-dev-lock.sh 13.2.0        # Ubuntu 24.04 by default
+./scripts/gen-cuda-dev-lock.sh 13.3.0 26.04
+```
+
+Needs Docker with access to `nvidia/cuda` (it runs `dpkg-query` in both images).
+
 ### update-template-readme.sh
 
 This script updates a Runpod template's README content via the Runpod API.

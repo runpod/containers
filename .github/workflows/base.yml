@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # "gzip" or "zstd". zstd needs Docker 23+ / containerd 1.5+ on every host,
+  # and the runner's Docker must use the containerd image store: the classic
+  # store re-compresses to gzip on `docker push` and the digest check fails.
+  LAYER_COMPRESSION: ${{ vars.LAYER_COMPRESSION || 'gzip' }}
+
 jobs:
   # One version series per family (git tags `base-v1.3.1`, `pytorch-v1.4.0`),
   # all bumped by the same squash commit. The `*-published` outputs are the
@@ -179,7 +185,8 @@ jobs:
           files: |
             official-templates/shared/versions.hcl
             official-templates/base/docker-bake.hcl
-          load: true
+          load: ${{ env.LAYER_COMPRESSION == 'gzip' }}
+          set: ${{ env.LAYER_COMPRESSION != 'gzip' && format('*.output=type=docker,compression={0},force-compression=true,oci-mediatypes=true', env.LAYER_COMPRESSION) || '' }}
           push: false
 
       - name: Extract image refs
@@ -344,7 +351,8 @@ jobs:
             official-templates/autoresearch/docker-bake.hcl
             ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
-          load: true
+          load: ${{ env.LAYER_COMPRESSION == 'gzip' }}
+          set: ${{ env.LAYER_COMPRESSION != 'gzip' && format('*.output=type=docker,compression={0},force-compression=true,oci-mediatypes=true', env.LAYER_COMPRESSION) || '' }}
           push: false
 
       # The layout is only needed by bake; free the disk before scan/push.
@@ -710,7 +718,8 @@ jobs:
             official-templates/shared/versions.hcl
             official-templates/filebrowser/docker-bake.hcl
             ${{ steps.prepull.outputs.bake-file }}
-          load: true
+          load: ${{ env.LAYER_COMPRESSION == 'gzip' }}
+          set: ${{ env.LAYER_COMPRESSION != 'gzip' && format('*.output=type=docker,compression={0},force-compression=true,oci-mediatypes=true', env.LAYER_COMPRESSION) || '' }}
           push: false
 
       # The layout is only needed by bake; free the disk before scan/push.
@@ -887,7 +896,8 @@ jobs:
             official-templates/pytorch/docker-bake.hcl
             ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
-          load: true
+          load: ${{ env.LAYER_COMPRESSION == 'gzip' }}
+          set: ${{ env.LAYER_COMPRESSION != 'gzip' && format('*.output=type=docker,compression={0},force-compression=true,oci-mediatypes=true', env.LAYER_COMPRESSION) || '' }}
           push: false
 
       # The layout is only needed by bake; free the disk before scan/push.
@@ -1098,7 +1108,8 @@ jobs:
             official-templates/pytorch-cluster/docker-bake.hcl
             ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
-          load: true
+          load: ${{ env.LAYER_COMPRESSION == 'gzip' }}
+          set: ${{ env.LAYER_COMPRESSION != 'gzip' && format('*.output=type=docker,compression={0},force-compression=true,oci-mediatypes=true', env.LAYER_COMPRESSION) || '' }}
           push: false
 
       # The layout is only needed by bake; free the disk before scan/push.
@@ -1335,7 +1346,8 @@ jobs:
             official-templates/ray-cluster/docker-bake.hcl
             ${{ steps.prepull.outputs.bake-file }}
           targets: ${{ matrix.cuda }}
-          load: true
+          load: ${{ env.LAYER_COMPRESSION == 'gzip' }}
+          set: ${{ env.LAYER_COMPRESSION != 'gzip' && format('*.output=type=docker,compression={0},force-compression=true,oci-mediatypes=true', env.LAYER_COMPRESSION) || '' }}
           push: false
 
       # The layout is only needed by bake; free the disk before tests/scan/push.

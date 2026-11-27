@@ -50,6 +50,12 @@ What is lost is the three features backed by torchaudio's own CUDA kernels:
 
 If you need any of these, use a CUDA 13.0 image: there PyTorch and torchaudio are both cu130 and the CUDA kernels are present.
 
+### One copy of the CUDA libraries
+
+The PyTorch wheels bring their own CUDA libraries as pip packages (`nvidia-cublas`, `nvidia-cudnn`, `nvidia-nccl`, ...), next to the ones the image already has in `/usr/local/cuda`. Where the image's copy is the same minor release with the same or a newer patch (cuDNN 9.10.2 for pip's 9.10.1, not 9.8 for pip's 9.5), the pip files under `site-packages/nvidia/` are symlinks to it, so the image does not store the CUDA runtime twice. PyTorch keeps the library versions it was released with; a newer minor release can change kernel choice and speed, so it is not substituted. The CUDA toolkit libraries switch together or not at all; cuDNN and NCCL each switch on their own. Any other pip library stays a regular file.
+
+pip and uv still see every package as installed. `pip install --force-reinstall nvidia-cublas-cu12` (or any other of them) puts pip's own files back. The symlinks point at the image's library by its stable name, so they follow `apt-get upgrade`: if an upgrade inside the pod moves cuDNN or NCCL to a newer minor release (cuDNN 9.10 to 9.11), PyTorch uses that one. If a pod is slower than expected after an upgrade, check for this first; the `--force-reinstall` above restores the versions PyTorch shipped with.
+
 ### Blackwell (B200, B300, RTX 50-series, RTX PRO 6000)
 
 PyTorch 2.6.0 does not run on Blackwell in any image: it is built against CUDA 12.6, which predates the architecture, and the first tensor operation fails with `no kernel image is available for execution on the device`.

@@ -1,5 +1,8 @@
 ARG BASE_IMAGE=non-existing
 ARG UBUNTU_VERSION=non-existing
+# Stage the final image builds on: "parent" (BASE_IMAGE as is) or "cuda-dev"
+# (BASE_IMAGE plus the CUDA dev toolchain, for the nvidia/cuda runtime bases).
+ARG ROOT_STAGE=parent
 
 # ── Slurm builder ───
 # Built on plain Ubuntu, not BASE_IMAGE: Slurm only depends on the Ubuntu
@@ -13,6 +16,7 @@ ARG SLURM_VERSION
 ARG SLURM_SHA256
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 # mk-build-deps installs the build deps from debian/control; debuild --no-lintian builds the .debs into /usr/src.
 RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
@@ -29,7 +33,54 @@ RUN mk-build-deps --install \
     mkdir /slurm-debs && \
     cp /usr/src/*.deb /slurm-debs/
 
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS parent
+
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
+
+# ── CUDA dev toolchain ───
+# The CUDA bases start from nvidia/cuda:*-cudnn-runtime, not -cudnn-devel, and
+# add the dev packages here. They are the exact packages and versions the
+# devel image adds (cuda-dev/<CUDA_VERSION>-ubuntu<UBUNTU_VERSION>.txt, from
+# scripts/gen-cuda-dev-lock.sh), so nvcc, headers, every shared library, the
+# cuDNN/NCCL dev files, Nsight Compute and LIBRARY_PATH match the devel image.
+# The static libraries (*_static*.a, ~1.3-2.4 GB compressed) are not unpacked.
+# libcudart_static.a stays: nvcc links it by default. They return with
+# `apt-get install --reinstall <package>=<installed version>`; without the
+# version apt upgrades the library to the newest patch instead.
+# Also skipped: cuda-gdb TUIs for Python 3.8-3.10 (not installed) and CUPTI docs.
+# The dpkg filter is removed afterwards so it does not affect later installs.
+# The -dev holds mirror the devel image, which holds cuBLAS-dev and NCCL-dev.
+# pkgs and holds are split on purpose: they are lists of package specs.
+FROM parent AS cuda-dev
+ARG UBUNTU_VERSION
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+# hadolint ignore=SC2086
+RUN --mount=type=bind,source=cuda-dev,target=/tmp/cuda-dev \
+    lock="/tmp/cuda-dev/${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}.txt" && \
+    if [[ ! -f "${lock}" ]]; then \
+      echo "no ${lock}: run scripts/gen-cuda-dev-lock.sh ${CUDA_VERSION} ${UBUNTU_VERSION}" >&2; exit 1; \
+    fi && \
+    printf '%s\n' \
+      'path-exclude=/usr/local/cuda-*/targets/*/lib/*_static*.a' \
+      'path-include=/usr/local/cuda-*/targets/*/lib/libcudart_static.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libnccl_static.a' \
+      'path-exclude=/usr/local/cuda-*/bin/cuda-gdb-python3.8-tui' \
+      'path-exclude=/usr/local/cuda-*/bin/cuda-gdb-python3.9-tui' \
+      'path-exclude=/usr/local/cuda-*/bin/cuda-gdb-python3.10-tui' \
+      'path-exclude=/usr/local/cuda-*/extras/CUPTI/doc/*' \
+      > /etc/dpkg/dpkg.cfg.d/zz-runpod-no-cuda-static && \
+    pkgs="$(grep -v '^#' "${lock}")" && \
+    apt-get update --yes && \
+    apt-get install --yes --no-install-recommends ${pkgs} && \
+    holds="$(printf '%s\n' ${pkgs} | { grep -oE '^(libcublas-dev-[^=]+|libnccl-dev)=' || true; } | sed 's/=$//')" && \
+    if [[ -n "${holds}" ]]; then apt-mark hold ${holds}; fi && \
+    rm /etc/dpkg/dpkg.cfg.d/zz-runpod-no-cuda-static && \
+    rm -rf /var/lib/apt/lists/*
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+
+# ── Final image ───
+FROM ${ROOT_STAGE}
 
 ARG RP_SKIP_PYTHON
 
@@ -71,15 +122,57 @@ RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 # only, as a user-facing tool: on 26.04 it pulls in python3-setuptools, whose
 # vendored jaraco.context and wheel carry HIGH advisories with no fixed Ubuntu
 # build. The build itself does not need it (deadsnakes is added by hand below).
-# release_pkgs is split on purpose: it is a list of package names.
-# apt and apt-utils are named explicitly so a security bump to them edits this
-# line: `apt-get upgrade` alone is served from the cached layer (CVE-2026-109518).
+# release_pkgs and nvidia_holds are split on purpose: they are lists of
+# package names.
+# The builder cache persists between CI runs, so an unchanged line kept serving
+# packages Ubuntu had since patched (CVE-2026-109518 in apt, the nginx CVEs of
+# 2026-11-20). CI sets APT_REFRESH to the UTC date, so this layer and the ones
+# after it rebuild once a day; locally it stays empty.
+#
+# Every NVIDIA package is held for the upgrade. NVIDIA itself only holds
+# cuBLAS, NCCL and cuDNN, so a plain `apt-get upgrade` re-installed the rest of
+# the CUDA toolkit at its newest patch release. The parent image's copy stays
+# in the layers below, so the toolkit was stored twice (+1.8-2.9 GB compressed
+# on CUDA 12.9, 13.0 and 13.2), and the image shipped a newer toolkit than its
+# tag names. The holds added here are lifted again, so `apt-get upgrade` in a
+# pod behaves as before, and the build fails if an NVIDIA package still moved.
+# cuda-compat is held on purpose too: the upgraded forward-compat driver libs
+# broke CUDA init on GeForce hosts with a newer driver (seen on 580.178). Grype
+# reports Medium CVEs for the parent's cuda-compat; they are the parent's.
+#
+# Static archives of the media and BLAS -dev packages are skipped (~90 MB);
+# `apt-get install --reinstall <package>` restores one.
+ARG APT_REFRESH=
 # hadolint ignore=SC2086
-RUN . /etc/os-release && \
+RUN printf '%s\n' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libav*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libsw*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libpostproc.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libx264.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libxvidcore.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/liblapack*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libatlas.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libcblas.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/libf77blas.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/atlas/*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/lapack/*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/blas/*.a' \
+      'path-exclude=/usr/lib/x86_64-linux-gnu/openblas-pthread/*.a' \
+      > /etc/dpkg/dpkg.cfg.d/zz-runpod-no-static && \
+    . /etc/os-release && \
     case "${VERSION_ID}" in \
       24.04) release_pkgs="libatlas-base-dev libpostproc-dev software-properties-common" ;; \
       *) release_pkgs="libopenblas-dev" ;; \
     esac && \
+    nvidia_pkgs() { \
+      dpkg-query -W -f='${db:Status-Abbrev}\t${Package}=${Version}\t${Maintainer}\n' | \
+        awk -F'\t' '$1 ~ /^[ih]i/ && $3 ~ /@nvidia\.com/ { print $2 }' | sort; \
+    } && \
+    nvidia_before="$(nvidia_pkgs)" && \
+    nvidia_holds="$(comm -23 \
+      <(printf '%s\n' "${nvidia_before}" | sed -e 's/=.*//' -e '/^$/d' | sort) \
+      <(apt-mark showhold | sort))" && \
+    if [[ -n "${nvidia_holds}" ]]; then apt-mark hold ${nvidia_holds} >/dev/null; fi && \
     apt-get update --yes && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
@@ -90,6 +183,12 @@ RUN . /etc/os-release && \
     libsm6 libssl-dev libswscale-dev libtiff-dev libv4l-dev libx264-dev libxrender-dev \
     libxvidcore-dev lsof make mtr nano nfs-common nginx openssh-server rsync slurm-wlm \
     sudo tmux unzip vim wget zip zstd && \
+    if [[ -n "${nvidia_holds}" ]]; then apt-mark unhold ${nvidia_holds} >/dev/null; fi && \
+    if [[ "$(nvidia_pkgs)" != "${nvidia_before}" ]]; then \
+      echo "NVIDIA packages changed during the upgrade:" >&2; \
+      diff <(printf '%s\n' "${nvidia_before}") <(nvidia_pkgs) >&2; exit 1; \
+    fi && \
+    rm /etc/dpkg/dpkg.cfg.d/zz-runpod-no-static && \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
     rm -rf /var/lib/apt/lists/*
 
@@ -209,8 +308,10 @@ RUN . /etc/os-release && \
 # munge daemon and user that slurm-init.sh needs.
 # The slurm user/group get Debian's fixed UID/GID 64030, unless the parent
 # image already defines them (the NGC and ROCm bases ship a slurm group).
-COPY --from=slurm-builder /slurm-debs /tmp/slurm-debs
-RUN apt-get update --yes && \
+# The .debs are bind-mounted, not COPY'd: a COPY'd directory stays in its own
+# layer even once a later step deletes it (~30 MB in every image).
+RUN --mount=type=bind,from=slurm-builder,source=/slurm-debs,target=/tmp/slurm-debs \
+    apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         munge \
         /tmp/slurm-debs/slurm-smd_*.deb \
@@ -222,7 +323,7 @@ RUN apt-get update --yes && \
     { id -u slurm >/dev/null 2>&1 || useradd --system --uid 64030 --gid slurm \
         --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin slurm; } && \
     apt-get clean && \
-    rm -rf /tmp/slurm-debs /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*
 
 # Strip AWS EFA Nsight plugin — AWS-only hardware, not used on Runpod.
 # Its nic_sampler Go binary ships old Go stdlib that triggers HIGH Trivy CVEs.

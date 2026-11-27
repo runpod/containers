@@ -25,6 +25,7 @@ target "nvidia-base" {
   }
   args = {
     RP_SKIP_PYTHON = "1"
+    APT_REFRESH = APT_REFRESH
   }
 }
 

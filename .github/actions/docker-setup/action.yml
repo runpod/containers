@@ -65,6 +65,13 @@ runs:
       with:
         username: ${{ inputs.dockerhub-username }}
 
+    # Read by bake (shared/versions.hcl): rebuilds the cached apt layer of
+    # official-templates/base/Dockerfile once a day so it takes Ubuntu's
+    # security updates instead of serving patched-since packages from cache.
+    - name: Set daily apt refresh key
+      shell: bash
+      run: echo "APT_REFRESH=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
     - name: Resolve sticky-disk cache key
       id: cache
       shell: bash
