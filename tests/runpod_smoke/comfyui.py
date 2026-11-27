@@ -512,6 +512,18 @@ def _dump_manager_history(base: str, emit: Callable[[str], None]) -> Optional[by
     return body
 
 
+def _history_task_status(body: Optional[bytes]) -> str:
+    """status_str of our install task, or "" when the history has none.
+    Only our own client's tasks are in there and we post exactly one."""
+    if not body:
+        return ""
+    match = re.search(
+        r'["\']status_str["\']\s*:\s*["\'](\w+)["\']',
+        body.decode("utf-8", "replace").lower(),
+    )
+    return match.group(1) if match else ""
+
+
 def _history_blames_the_registry(body: Optional[bytes]) -> bool:
     """True when Manager recorded a network/registry failure rather than a
     dependency problem. The install downloads from api.comfy.org, and an
@@ -713,6 +725,20 @@ def run_comfyui_manager_check(
             )
         return False, f"Manager install failed for {node['id']}: {detail}"
 
+    # Manager keeps task history in memory only and the reboot below execv's
+    # the server, so read the install result while it still exists. The queue
+    # drains either way, so this is the only place a failed install is visible.
+    history = _manager_history(base)
+    status = _history_task_status(history)
+    if status and status != "success":
+        emit(f"manager task history: {history.decode('utf-8', 'replace')[:1000]}")
+        if _history_blames_the_registry(history):
+            return False, (
+                f"{MANAGER_UNVERIFIED}: the ComfyUI registry or the network "
+                f"failed the install of {node['id']}"
+            )
+        return False, f"Manager reported the install of {node['id']} as {status}"
+
     emit("rebooting ComfyUI to activate the node...")
     _manager_reboot(base, emit)
     # Give the server a moment to drop before we start polling for it to return.
@@ -722,12 +748,8 @@ def run_comfyui_manager_check(
 
     emit(f"verifying node class {node_class} is importable...")
     if not _wait_for_object_info(base, node_class, emit):
-        history = _dump_manager_history(base, emit)
-        if _history_blames_the_registry(history):
-            return False, (
-                f"{MANAGER_UNVERIFIED}: the ComfyUI registry or the network "
-                f"failed the install, so {node_class} never arrived"
-            )
+        # No history to consult here: the reboot cleared it. The Manager said
+        # the install succeeded, so a missing class is the image's problem.
         return False, f"node class {node_class} not available after install+reboot"
 
     # The point of the whole step: the dependency resolved against the baked

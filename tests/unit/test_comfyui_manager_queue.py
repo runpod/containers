@@ -188,5 +188,96 @@ class RunnerOutcome(unittest.TestCase):
         self.assertIsNone(self._steps((True, "installed")))
 
 
+
+def _history(status_str, result):
+    return json.dumps({"history": {"smoke-1": {
+        "ui_id": "smoke-1", "client_id": comfyui._MANAGER_CLIENT_ID,
+        "kind": "install", "result": result,
+        "status": {"status_str": status_str, "completed": True,
+                   "messages": [result]},
+    }}}).encode()
+
+
+class InstallResultBeforeReboot(unittest.TestCase):
+    """Manager drains the queue whether the install worked or not, and keeps
+    the history in memory only. The reboot execv's the server, so the result
+    has to be read before it, not after."""
+
+    def _run(self, history, class_after_reboot=True):
+        calls: list[str] = []
+        stats = json.dumps({
+            "system": {"pytorch_version": "2.9.1+cu128"},
+            "devices": [{"type": "cuda"}],
+        }).encode()
+
+        def rebooted():
+            return any("/v2/manager/reboot" in call for call in calls)
+
+        def fake_request(url, data=None, timeout=30, **kwargs):
+            calls.append(url)
+            if "/v2/manager/version" in url:
+                return 200, b"4.2.2"
+            if "/v2/manager/queue/task" in url or "/v2/manager/queue/start" in url:
+                return 200, b"{}"
+            if "/v2/manager/queue/status" in url:
+                return 200, _status(done=1)
+            if "/v2/manager/queue/history" in url:
+                # The reboot execv's the server and the history lives only in
+                # memory, so afterwards there is nothing left to read.
+                if rebooted():
+                    return 200, b'{"history": {}}'
+                return 200, history
+            if "/v2/manager/reboot" in url:
+                return 200, b"{}"
+            if "/object_info/" in url:
+                if rebooted() and class_after_reboot:
+                    return 200, json.dumps({NODE["verify_class"]: {}}).encode()
+                return 200, b"{}"
+            if "/system_stats" in url:
+                return 200, stats
+            raise AssertionError(f"unexpected request to {url}")
+
+        with mock.patch.object(comfyui, "_request", side_effect=fake_request), \
+                mock.patch.object(comfyui, "_load_json", return_value=NODE), \
+                mock.patch.object(comfyui, "time", _FakeClock()), \
+                mock.patch.object(config, "COMFYUI_MANAGER_INSTALL_TIMEOUT", 30):
+            ok, detail = comfyui.run_comfyui_manager_check("pod1")
+        return ok, detail, rebooted()
+
+    def test_registry_failure_is_unverified_and_skips_the_reboot(self):
+        """api.comfy.org blipping is not a verdict on the image."""
+        ok, detail, rebooted = self._run(_history(
+            "error",
+            "Failed to download: HTTPSConnectionPool(host='api.comfy.org') "
+            "Max retries exceeded",
+        ), class_after_reboot=False)
+        self.assertFalse(ok)
+        self.assertTrue(detail.startswith(comfyui.MANAGER_UNVERIFIED), detail)
+        self.assertFalse(rebooted, "a failed install must not cost a reboot")
+
+    def test_dependency_failure_stays_a_failure(self):
+        ok, detail, rebooted = self._run(_history(
+            "error",
+            "ERROR: Cannot install because these package versions have "
+            "conflicting dependencies.",
+        ), class_after_reboot=False)
+        self.assertFalse(ok)
+        self.assertFalse(detail.startswith(comfyui.MANAGER_UNVERIFIED), detail)
+        self.assertIn("as error", detail)
+        self.assertFalse(rebooted)
+
+    def test_successful_install_still_reboots_and_verifies(self):
+        ok, detail, rebooted = self._run(_history("success", "success"))
+        self.assertTrue(ok, detail)
+        self.assertTrue(rebooted)
+
+    def test_empty_history_is_not_a_verdict(self):
+        """What the old post-reboot read always saw. It must not be read as
+        a failed install."""
+        ok, detail, rebooted = self._run(json.dumps({"history": {}}).encode())
+        self.assertTrue(ok, detail)
+        self.assertTrue(rebooted)
+
+
 if __name__ == "__main__":
     unittest.main()
