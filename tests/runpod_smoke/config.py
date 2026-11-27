@@ -210,6 +210,10 @@ LOG_ERROR_PATTERN = os.environ.get(
     "LOG_ERROR_PATTERN", r"\berr(or)?s?\b|\bcrash(ed|es|ing)?\b"
 )
 LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
+# A ComfyUI-Manager install logs a full pip resolve and then a ComfyUI reboot,
+# thousands of lines, which would push the boot markers out of the default
+# window before the scan runs. 5000 is the log API's maximum.
+LOG_API_TAIL_VERBOSE = int(os.environ.get("LOG_API_TAIL_VERBOSE", "5000"))
 
 # Lines dropped before LOG_ERROR_PATTERN is applied. Kept to messages that
 # are expected by construction, never to a whole daemon: the image ships the
@@ -293,6 +297,22 @@ COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
 COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900"))
 COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
 COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
+
+# `test_comfyui_manager` installs a custom node through ComfyUI-Manager, reboots
+# ComfyUI to activate it, and verifies the node's class is importable. The node
+# is picked for torch-dependent deps so the install exercises pip resolving
+# against the baked torch stack. Install is generous: deps may be built/fetched.
+COMFYUI_MANAGER_NODE_MANIFEST = os.environ.get(
+    "COMFYUI_MANAGER_NODE_MANIFEST",
+    os.path.join(_TESTS_DIR, "comfyui", "manager_node.json"),
+)
+COMFYUI_MANAGER_READY_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_READY_TIMEOUT", "180"))
+COMFYUI_MANAGER_INSTALL_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_INSTALL_TIMEOUT", "900"))
+COMFYUI_MANAGER_VERIFY_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_VERIFY_TIMEOUT", "300"))
+# The first task of a batch makes Manager snapshot the system inside the POST
+# handler: a git fetch of the ComfyUI remote and a `pip freeze` subprocess.
+# 30s was not enough for it and killed the run.
+COMFYUI_MANAGER_QUEUE_TIMEOUT = int(os.environ.get("COMFYUI_MANAGER_QUEUE_TIMEOUT", "240"))
 
 # runpod/vllm-openai: `test_vllm` boots the image with VLLM_API_KEY and a
 # small model as the start command, exposes VLLM_PORT as <port>/http, and
@@ -644,6 +664,10 @@ GROUP_TEST_COMFYUI: dict[str, bool] = {}
 # End-to-end ComfyUI generation test. It implies GROUP_TEST_COMFYUI so the
 # public reachability check always runs before model provisioning.
 GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
+
+# ComfyUI-Manager install test: install a custom node through the Manager,
+# reboot, and verify it imports. Implies GROUP_TEST_COMFYUI for port exposure.
+GROUP_TEST_COMFYUI_MANAGER: dict[str, bool] = {}
 
 # runpod/vllm-openai auth gate and completion, through the public proxy.
 GROUP_TEST_VLLM: dict[str, bool] = {}

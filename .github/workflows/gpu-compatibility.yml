@@ -37,6 +37,11 @@ on:
         type: boolean
         required: false
         default: false
+      test-comfyui-manager:
+        description: "ComfyUI-Manager test — install a node pack through the Manager, reboot, verify it imports (forces the smoke test first)"
+        type: boolean
+        required: false
+        default: false
       exclude-instances:
         description: "GPUs to skip: comma-separated fnmatch patterns (e.g. *Blackwell*, RTX A4000)"
         type: string
@@ -198,8 +203,9 @@ jobs:
           CHECK_ALL: ${{ inputs.check-all-gpu }}
           MAX_PARALLEL: ${{ env.MAX_PARALLEL }}
           JUPYTER: ${{ inputs.test-jupyter }}
-          COMFY_SMOKE: ${{ inputs.test-comfyui || inputs.test-comfyui-functional }}
+          COMFY_SMOKE: ${{ inputs.test-comfyui || inputs.test-comfyui-functional || inputs.test-comfyui-manager }}
           COMFY_FUNC: ${{ inputs.test-comfyui-functional }}
+          COMFY_MANAGER: ${{ inputs.test-comfyui-manager }}
         run: |
           set -euo pipefail
           # Not `paste -sd', '` — -d takes a delimiter LIST and alternates
@@ -221,6 +227,7 @@ jobs:
             echo "| Jupyter | ${JUPYTER} |"
             echo "| ComfyUI smoke | ${COMFY_SMOKE} |"
             echo "| ComfyUI functional | ${COMFY_FUNC} |"
+            echo "| ComfyUI-Manager | ${COMFY_MANAGER} |"
             echo "| Parallel pods | ${MAX_PARALLEL} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -259,8 +266,9 @@ jobs:
 
           # test_images.py also forces this, but OR-ing keeps the generated
           # manifest self-explanatory.
-          test-comfyui: ${{ inputs.test-comfyui || inputs.test-comfyui-functional }}
+          test-comfyui: ${{ inputs.test-comfyui || inputs.test-comfyui-functional || inputs.test-comfyui-manager }}
           test-comfyui-functional: ${{ inputs.test-comfyui-functional }}
+          test-comfyui-manager: ${{ inputs.test-comfyui-manager }}
           save-comfyui-images: ${{ inputs.test-comfyui-functional }}
           comfyui-images-artifact-name: comfyui-images-gpu-matrix-${{ github.run_id }}
 

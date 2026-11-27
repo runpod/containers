@@ -8,6 +8,14 @@
 # `test_comfyui` checks public :8188 reachability. The functional flag also
 # provisions the models in models.json, runs the workflow, and validates the
 # PNG returned through the public proxy. It implies `test_comfyui`.
+#
+# `test_comfyui_manager` installs the custom node in manager_node.json through
+# ComfyUI-Manager, reboots ComfyUI, verifies the node's class imports, and that
+# the install left torch alone (same version and devices in /system_stats). The
+# default node has torch-dependent deps, so it exercises pip resolving against
+# the baked torch stack. It implies `test_comfyui` and needs a comfyui_manager
+# (4.x) image, where ComfyUI runs on loopback behind the password proxy and
+# Manager's loopback-gated installs are open.
 comfyui:
     images:
     # Swap for the tag you want to test. Shape is
@@ -18,3 +26,4 @@ comfyui:
     - "RTX 4090"
     - "RTX A4000"
     test_comfyui_functional: true
+    test_comfyui_manager: true

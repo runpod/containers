@@ -232,6 +232,12 @@ inputs:
       generation check (model provisioning, workflow execution, PNG validation).
     required: false
     default: "false"
+  test-comfyui-manager:
+    description: |
+      Emit `test_comfyui_manager: true` to install a custom node via
+      ComfyUI-Manager, reboot ComfyUI, and verify the node imports.
+    required: false
+    default: "false"
   test-vllm:
     description: |
       Emit `test_vllm: true` for runpod/vllm-openai. Boots the Pod with
@@ -547,6 +553,7 @@ runs:
         TEST_PORTS: ${{ inputs.test-ports }}
         TEST_COMFYUI: ${{ inputs.test-comfyui }}
         TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
+        TEST_COMFYUI_MANAGER: ${{ inputs.test-comfyui-manager }}
         TEST_VLLM: ${{ inputs.test-vllm }}
         TEST_PIP_CHECK: ${{ inputs.test-pip-check }}
         PIP_CHECK_ALLOW: ${{ inputs.pip-check-allow }}
@@ -588,6 +595,9 @@ runs:
         fi
         if [[ "${TEST_COMFYUI_FUNCTIONAL,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-comfyui-functional)
+        fi
+        if [[ "${TEST_COMFYUI_MANAGER,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-comfyui-manager)
         fi
         if [[ "${TEST_VLLM,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-vllm)

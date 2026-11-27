@@ -83,6 +83,7 @@ def render_yaml(groups: dict) -> str:
             "check_all_gpu",
             "test_comfyui",
             "test_comfyui_functional",
+            "test_comfyui_manager",
             "test_vllm",
             "test_pip_check",
             "test_ca_certs",
@@ -168,6 +169,7 @@ def build_groups(
     test_ports: list[str] | None = None,
     test_comfyui: bool = False,
     test_comfyui_functional: bool = False,
+    test_comfyui_manager: bool = False,
     test_vllm: bool = False,
     test_pip_check: bool = False,
     pip_check_allow: list[str] | None = None,
@@ -283,6 +285,8 @@ def build_groups(
             body["test_comfyui"] = True
         if test_comfyui_functional:
             body["test_comfyui_functional"] = True
+        if test_comfyui_manager:
+            body["test_comfyui_manager"] = True
         if test_vllm:
             body["test_vllm"] = True
         if test_pip_check:
@@ -491,6 +495,7 @@ def main() -> int:
     )
     ap.add_argument("--test-comfyui", action="store_true")
     ap.add_argument("--test-comfyui-functional", action="store_true")
+    ap.add_argument("--test-comfyui-manager", action="store_true")
     ap.add_argument(
         "--test-vllm", action="store_true",
         help="runpod/vllm-openai: auth gate and one completion via the proxy",
@@ -761,6 +766,7 @@ def main() -> int:
         test_ports=args.test_port,
         test_comfyui=args.test_comfyui,
         test_comfyui_functional=args.test_comfyui_functional,
+        test_comfyui_manager=args.test_comfyui_manager,
         test_vllm=args.test_vllm,
         test_pip_check=args.test_pip_check,
         pip_check_allow=args.pip_check_allow,

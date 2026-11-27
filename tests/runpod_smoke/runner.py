@@ -58,6 +58,8 @@ from .comfyui import (
     check_filebrowser_requires_password,
     probe_comfyui_alive,
     run_comfyui_check,
+    run_comfyui_manager_check,
+    MANAGER_UNVERIFIED,
 )
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log, set_worker_context
@@ -561,22 +563,44 @@ def _run_comfyui_steps(
     if not ok:
         dump_pod_logs(pod_id, image)
         return "FAIL", f"FileBrowser password check failed: {detail[:160]}"
-    if not config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
-        return None
 
-    log("running ComfyUI functional check (via proxy)...", indent=2)
-    ok, detail = run_comfyui_check(
-        pod_id,
-        on_line=lambda line: log(f"  {line}", indent=2),
-        save_dir=config.COMFYUI_SAVE_DIR,
-        tag=pod_id,
-    )
-    if ok:
-        log("ComfyUI functional check passed", indent=2)
-        return None
-    log(f"ComfyUI functional check FAILED -- {detail}", indent=2)
-    dump_pod_logs(pod_id, image)
-    return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
+    if config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
+        log("running ComfyUI functional check (via proxy)...", indent=2)
+        ok, detail = run_comfyui_check(
+            pod_id,
+            on_line=lambda line: log(f"  {line}", indent=2),
+            save_dir=config.COMFYUI_SAVE_DIR,
+            tag=pod_id,
+        )
+        if ok:
+            log("ComfyUI functional check passed", indent=2)
+        else:
+            log(f"ComfyUI functional check FAILED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"ComfyUI functional check failed: {detail[:160]}"
+
+    if config.GROUP_TEST_COMFYUI_MANAGER.get(group, False):
+        # Runs last: it reboots ComfyUI, so any functional check above must
+        # already have generated its image.
+        log("running ComfyUI-Manager install check (via proxy)...", indent=2)
+        ok, detail = run_comfyui_manager_check(
+            pod_id,
+            on_line=lambda line: log(f"  {line}", indent=2),
+        )
+        if ok:
+            log("ComfyUI-Manager install check passed", indent=2)
+        elif detail.startswith(MANAGER_UNVERIFIED):
+            # The pod or the ComfyUI registry stopped answering. That is not a
+            # verdict on the image, so let the next instance try.
+            log(f"ComfyUI-Manager install check UNVERIFIED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "UNVERIFIED", f"ComfyUI-Manager install check: {detail[:160]}"
+        else:
+            log(f"ComfyUI-Manager install check FAILED -- {detail}", indent=2)
+            dump_pod_logs(pod_id, image)
+            return "FAIL", f"ComfyUI-Manager install check failed: {detail[:160]}"
+
+    return None
 
 
 def _run_vllm_steps(
@@ -604,12 +628,14 @@ def _run_vllm_steps(
     return None
 
 
-def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
+def _run_log_scan_step(
+    pod_id: str, image: str, tail: int = 0,
+) -> Optional[_Outcome]:
     """Scan the REST API container-log backfill for boot error markers."""
     if not config.LOG_ERROR_SCAN:
         return None
     log("scanning container logs for error markers (via API)...", indent=2)
-    ok, report = scan_pod_logs_for_errors(pod_id)
+    ok, report = scan_pod_logs_for_errors(pod_id, tail=tail)
     for line in report.splitlines():
         log(f"  {line}", indent=2)
     if ok:
@@ -657,7 +683,7 @@ def _run_dwell_step(
 
 
 def _run_post_dwell_steps(
-    pod_id: str, image: str, group: str,
+    pod_id: str, image: str, group: str, log_tail: int = 0,
 ) -> Optional[_Outcome]:
     """Re-probe ComfyUI and scan logs after the dwell window."""
     if config.DWELL_SEC <= 0:
@@ -691,7 +717,7 @@ def _run_post_dwell_steps(
             )
         log(f"vLLM re-probe passed ({detail})", indent=2)
     log("re-scanning container logs after dwell...", indent=2)
-    return _run_log_scan_step(pod_id, image)
+    return _run_log_scan_step(pod_id, image, tail=log_tail)
 
 
 def test_pair(
@@ -873,14 +899,21 @@ def _check_pod(pod_id: str, image: str, group: str) -> _Outcome:
         _record_step("vLLM", outcome)
     if outcome is not None:
         return outcome
-    outcome = _run_log_scan_step(pod_id, image)
+    # The Manager step runs before this and logs a pip resolve plus a reboot,
+    # so the boot markers need a wider window to still be in the backfill.
+    log_tail = (
+        config.LOG_API_TAIL_VERBOSE
+        if config.GROUP_TEST_COMFYUI_MANAGER.get(group, False)
+        else 0
+    )
+    outcome = _run_log_scan_step(pod_id, image, tail=log_tail)
     if config.LOG_ERROR_SCAN:
         _record_step("log scan", outcome)
     if outcome is not None:
         return outcome
     outcome = _run_dwell_step(endpoint, pod_id, image)
     if outcome is None:
-        outcome = _run_post_dwell_steps(pod_id, image, group)
+        outcome = _run_post_dwell_steps(pod_id, image, group, log_tail=log_tail)
     if config.DWELL_SEC > 0:
         _record_step(f"alive after {config.DWELL_SEC}s", outcome)
     if outcome is not None:
@@ -970,18 +1003,20 @@ def test_image(
         return "FAIL", last_create_error, last_create_inst, ""
     if unverified:
         insts = [inst for inst, _d in unverified]
+        # An unresponsive SSH endpoint is only one of the ways a check can
+        # come back unverified, so the reason has to come from the attempt.
+        reason = unverified[0][1] or "no reason recorded"
         log(
             f"{len(unverified)} instance(s) left the image unverified "
-            f"({insts}) — an SSH endpoint was assigned but never answered",
+            f"({insts}) — {reason}",
             indent=1,
         )
         return (
             "UNVERIFIED",
             (
-                "could not determine whether the image works: an SSH "
-                "endpoint was assigned but never answered"
+                "could not determine whether the image works"
                 + _over_candidates(len(unverified))
-                + f" — {unverified[0][1]}"
+                + f" — {reason}"
             ),
             ", ".join(insts),
             "",

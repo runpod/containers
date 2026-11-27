@@ -137,11 +137,12 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 6 | **Generic proxy-first port checks** (optional `test_ports`) — each service must return HTTP 200 through `https://<pod-id>-<port>.proxy.runpod.net/`; SSH diagnoses failures | `FAIL` (service unavailable or incorrectly exposed) |
 | 7 | **ComfyUI proxy-first reachability** (only when `test_comfyui: true`) — public `:8188` first, sending the pod's `COMFYUI_PASSWORD`; SSH diagnoses a failed proxy check. Then, through the proxy, `POST /prompt`, `GET /` and `GET /system_stats` without the password, and with a wrong one, must all return `401`. Then FileBrowser on public `:8080`: `GET /api/resources` without a session and an `admin` login with a wrong password or `adminadmin12` must return `401`, and a login with `FILEBROWSER_PASSWORD` must return `200` and a session that lists `/workspace` | `FAIL` (ComfyUI unavailable, incorrectly exposed, or answering without its password; FileBrowser open without a session or not taking `FILEBROWSER_PASSWORD`) |
 | 8 | **ComfyUI functional generation** (only when `test_comfyui_functional: true`) — provision models via RunpodDirect, execute the workflow, then validate a real PNG through the public proxy | `FAIL` (model, workflow, node, GPU, or output failure) |
-| 9 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
-| 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 11 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
-| 12 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
-| 13 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
+| 9 | **ComfyUI-Manager install** (only when `test_comfyui_manager: true`) — install the node in `manager_node.json` via the Manager, reboot ComfyUI, then verify its class imports via `/object_info` and that torch is unchanged in `/system_stats` | `FAIL` (install, reboot, dep resolution, or the install replacing torch) |
+| 10 | **REST API v2 container-log scan** — backfill stdout and scan it for configured error/crash markers | `FAIL` on a matching marker or an unverified empty API response |
+| 11 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
+| 12 | Re-probe ComfyUI `/system_stats` after dwell, then re-scan REST API v2 logs | `FAIL` if ComfyUI died during dwell, or logs contain a new error marker |
+| 13 | `dump_pod_logs` — API container logs, API system-log error markers, and GPU SMI over SSH | _(diagnostic only)_ |
+| 14 | `DELETE /v2/pods/{id}` (always — even on Ctrl-C / exception via `atexit` + signal handlers). A 404 counts as success. | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
 result was `UNAVAILABLE`, `STUCK` or `UNVERIFIED`, and short-circuits on
@@ -392,6 +393,7 @@ Field reference:
 | `test_ports` | Optional list of HTTP ports. Each is exposed as `<port>/http` and must return HTTP 200 through the RunPod public proxy. An entry may be `<port>/<path>` (e.g. `80/health`) to probe a specific route instead of `/`. On a proxy failure, the test probes `127.0.0.1:<port>` over SSH to distinguish a service startup failure from an exposure/configuration error. |
 | `test_comfyui` | `true` / `false` — exposes `8188/http` and runs a labelled proxy-first ComfyUI reachability check. After dwell it verifies `/system_stats` again because the container can survive a ComfyUI crash. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — implies `test_comfyui`; downloads/verifies the configured model through ComfyUI-RunpodDirect, POSTs the workflow, waits for completion, then validates a non-empty PNG from `/view`. The ComfyUI workflow enables it for both PR and release runs. |
+| `test_comfyui_manager` | `true` / `false` — implies `test_comfyui`; installs the custom node in `comfyui/manager_node.json` through ComfyUI-Manager (`/v2/manager/queue`), reboots ComfyUI (`/v2/manager/reboot`), then verifies the node's class is importable via `/object_info` **and** that `/system_stats` reports the same torch version and device types as before the install. The venv is `--system-site-packages`, so a dependency that pulls its own torch into the venv shadows the baked one while the node still imports; the fingerprint is what catches that. Needs a `comfyui_manager` (4.x) image: ComfyUI listens on loopback behind the password proxy, so Manager's loopback-gated installs are open and `security_level = normal` decides the rest. |
 | `test_pip_check` | `true` / `false` — runs `pip check` in the pod and fails on any conflict not matched by `pip_check_allow`. Catches a bumped pin that no longer satisfies something already in the image, which a boot check cannot see. Default: `false`. |
 | `pip_check_allow` | List of substrings of `pip check` output to accept instead of failing on, for conflicts inherited from a vendor base image. Keep each entry narrow (`datasets 4.4.1 has requirement fsspec`, not `datasets`) so a *new* conflict in the same package still fails. Matched as plain substrings, not patterns. |
 | `test_ca_certs` | `true` / `false` — asserts no CA in `revoked_ca_names` is still trusted in the **system** store, and that HTTPS still validates against it. Shell-only, so it is safe for images with no Python. Worth enabling everywhere: `apt-get install --only-upgrade ca-certificates` exits 0 when the distro has not published the patched package yet, and this is what turns that silent non-fix into a red build. Default: `false`. |
@@ -683,6 +685,7 @@ pytorch:
 | `LOG_ERROR_SCAN` | `1` | `1`/`0` — scan REST API v2 container logs for error markers after the functional checks. |
 | `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex used by the container-log scan. |
 | `LOG_API_TAIL` | `1000` | Number of historical lines to fetch from the REST API v2 log stream. |
+| `LOG_API_TAIL_VERBOSE` | `5000` | Backfill window for a group running `test_comfyui_manager`. That step logs a full pip resolve and a ComfyUI reboot before the scan, which would push the boot markers out of the default window. 5000 is the API's maximum. |
 | `SYS_LOG_ERROR_PATTERN` | error/failure/crash regex | Case-insensitive regex for host-side REST API system-log diagnostics during a failed boot. |
 | `SSH_LOG_FETCH` | `1` | `1`/`0` — fetch only the GPU SMI diagnostic over SSH. Container logs use REST API v2. |
 | `RUNPOD_SSH_KEY` | _(empty)_ | Path to the private key matching a public key registered on the account (`startSsh` injects those as `PUBLIC_KEY`). Auto-discovered from `~/.runpod/ssh/` and `~/.ssh/` if unset. Must be mode `600`. |
@@ -698,6 +701,11 @@ pytorch:
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `1800` | Maximum wait for each functional-test model download. |
 | `COMFYUI_GEN_TIMEOUT` | `600` | Maximum wait for workflow execution and its image output. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Directory where validated ComfyUI PNGs are retained for artifact upload. |
+| `COMFYUI_MANAGER_NODE_MANIFEST` | `tests/comfyui/manager_node.json` | Node pack `test_comfyui_manager` installs, with the class it verifies. |
+| `COMFYUI_MANAGER_READY_TIMEOUT` | `180` | Maximum wait for the ComfyUI-Manager API, which loads after ComfyUI. |
+| `COMFYUI_MANAGER_QUEUE_TIMEOUT` | `240` | Maximum wait for a `queue/task` or `queue/start` POST. The first task of a batch makes Manager snapshot the system inside the request handler (a git fetch of the ComfyUI remote and a `pip freeze` subprocess), so these POSTs can take minutes. |
+| `COMFYUI_MANAGER_INSTALL_TIMEOUT` | `900` | Maximum wait for the install task to drain the queue. |
+| `COMFYUI_MANAGER_VERIFY_TIMEOUT` | `300` | Maximum wait for the installed node class to appear in `/object_info` after the reboot. |
 
 Pods created for `test_comfyui` get `COMFYUI_PASSWORD=smoke-comfyui-password` (`config.COMFYUI_TEST_PASSWORD`) and `FILEBROWSER_PASSWORD=smoke-filebrowser-password` (`config.FILEBROWSER_TEST_PASSWORD`), since the image starts neither ComfyUI nor FileBrowser (probed on 8080) without one.
 
