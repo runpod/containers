@@ -188,10 +188,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-base
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -205,10 +213,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -219,7 +228,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/base-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: base-refs
           path: /tmp/base-refs/refs.json
@@ -237,7 +246,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: base-refs
           path: /tmp/base-refs
@@ -361,10 +370,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-autoresearch.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -378,10 +395,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -392,7 +410,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/autoresearch-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs/refs.json
@@ -414,7 +432,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs for ${{ matrix.cuda }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: autoresearch-refs-${{ matrix.cuda }}
           path: /tmp/autoresearch-refs
@@ -548,10 +566,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-burn.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -565,10 +591,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -727,10 +754,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-filebrowser
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -744,10 +779,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -758,7 +794,7 @@ jobs:
           printf '%s\n' "$REFS" > /tmp/filebrowser-refs/refs.json
 
       - name: Upload refs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: filebrowser-refs
           path: /tmp/filebrowser-refs/refs.json
@@ -776,7 +812,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download refs artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: filebrowser-refs
           path: /tmp/filebrowser-refs
@@ -904,10 +940,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-pytorch.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -921,10 +965,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       # Persist this shard's refs so the corresponding test-pytorch matrix
       # entry can pick them up. Artifact name is unique per shard, so the
@@ -1115,10 +1160,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-pytorch-cluster.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -1131,10 +1184,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash
@@ -1374,10 +1428,18 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-ray-cluster.${{ matrix.cuda }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -1390,10 +1452,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash

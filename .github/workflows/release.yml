@@ -347,6 +347,17 @@ jobs:
           echo "::endgroup::"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
+      # SBOMs uploaded by this family's build job: `sbom-<family>`, or one
+      # `sbom-<family>.<shard>` per matrix leg. The dot keeps pytorch from
+      # matching pytorch-cluster's artifacts.
+      - name: Download SBOMs
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sbom-${{ matrix.family }}{,.*}
+          path: ${{ runner.temp }}/sbom
+          merge-multiple: true
+
       - name: Create tag and GitHub Release
         if: steps.gate.outputs.release == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
@@ -355,6 +366,9 @@ jobs:
           name: ${{ steps.v.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            ${{ runner.temp }}/sbom/*.spdx.json
+            ${{ runner.temp }}/sbom/*.cdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

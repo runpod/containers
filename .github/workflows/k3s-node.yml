@@ -171,10 +171,20 @@ jobs:
           done
           say binaries "k3s, runc, nvidia-container-runtime and bash are aarch64"
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          # Must match `platforms` in official-templates/k3s-node/docker-bake.hcl.
+          platforms: "linux/amd64,linux/arm64"
+          artifact-name: sbom-k3s-node
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -187,7 +197,8 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}

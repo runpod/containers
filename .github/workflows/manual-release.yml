@@ -234,6 +234,41 @@ jobs:
           cat "${BODY}"
           echo "path=${BODY}" >> "$GITHUB_OUTPUT"
 
+      # Same assets release.yml attaches: sbom-<family>, or one
+      # sbom-<family>.<shard> per matrix leg. download-artifact still lists an
+      # expired artifact and then fails on it, so pick the unexpired ones by
+      # id: a missing or expired SBOM must not block a break-glass release.
+      - name: Find SBOM artifacts
+        id: sbom
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FAMILY: ${{ inputs.family }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          ARTIFACTS="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" \
+            --jq '.artifacts[]
+              | select(.name == "sbom-\(env.FAMILY)" or (.name | startswith("sbom-\(env.FAMILY)."))) | [.id, .name, .expired] | @tsv')"
+          IDS="$(awk -F'\t' '$3 == "false" {print $1}' <<< "${ARTIFACTS}" | paste -sd, -)"
+          EXPIRED="$(awk -F'\t' '$3 == "true" {print $2}' <<< "${ARTIFACTS}" | paste -sd' ' -)"
+          if [ -n "${EXPIRED}" ]; then
+            echo "::warning::expired in run ${SOURCE_RUN_ID}, released without them: ${EXPIRED}"
+          fi
+          if [ -z "${ARTIFACTS}" ]; then
+            echo "No sbom-${FAMILY} artifacts in run ${SOURCE_RUN_ID}; releasing without SBOM assets"
+          fi
+          echo "ids=${IDS}" >> "$GITHUB_OUTPUT"
+
+      - name: Download SBOMs
+        if: steps.sbom.outputs.ids != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          artifact-ids: ${{ steps.sbom.outputs.ids }}
+          path: ${{ runner.temp }}/sbom
+          merge-multiple: true
+
       - name: Create tag and GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
@@ -241,6 +276,9 @@ jobs:
           name: ${{ inputs.tag }}
           target_commitish: ${{ steps.source.outputs.head_sha }}
           body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            ${{ runner.temp }}/sbom/*.spdx.json
+            ${{ runner.temp }}/sbom/*.cdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

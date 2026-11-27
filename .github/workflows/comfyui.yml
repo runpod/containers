@@ -99,10 +99,18 @@ jobs:
         with:
           bake-metadata: ${{ steps.build.outputs.metadata }}
 
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-comfyui.${{ matrix.comfyui }}
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
           fail-on-findings: "true"
 
       - name: Push images
@@ -116,10 +124,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Save refs artifact
         shell: bash

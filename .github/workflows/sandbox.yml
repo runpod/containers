@@ -220,10 +220,18 @@ jobs:
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-ubuntu
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -236,10 +244,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
   build-sandbox-openclaw:
     needs: versions
@@ -393,10 +402,18 @@ jobs:
 
       # Report-only: this layers on a third-party image, so upstream CVEs
       # would otherwise block our releases.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-openclaw
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -409,10 +426,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
   # Layers on runpod/ubuntu: the image this run pushed when sandbox-ubuntu is
   # part of the build, else the last released one.
@@ -517,10 +535,18 @@ jobs:
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-harbor
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -533,10 +559,11 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
   # Layers on runpod/ubuntu: the image this run pushed when sandbox-ubuntu is
   # part of the build, else the last released one.
@@ -640,10 +667,18 @@ jobs:
 
       # Report-only: npm's bundled dependency tree carries HIGH advisories in
       # every release published so far, and no Node build fixes that for us.
+      - name: Generate SBOMs
+        id: sbom
+        uses: ./.github/actions/sbom
+        with:
+          ref-digests: ${{ steps.refs.outputs.ref-digests }}
+          artifact-name: sbom-sandbox-browser
+
       - name: Grype scan
         uses: ./.github/actions/grype
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
+          sbom-index: ${{ steps.sbom.outputs.index }}
 
       - name: Push images
         uses: ./.github/actions/docker-push
@@ -656,7 +691,8 @@ jobs:
         with:
           cosign-release: v2.6.0
 
-      - name: Cosign sign and verify
+      - name: Cosign sign, attest SBOM and verify
         uses: ./.github/actions/cosign
         with:
           image-digests: ${{ steps.refs.outputs.digests }}
+          sbom-index: ${{ steps.sbom.outputs.index }}

@@ -770,7 +770,7 @@ runs:
     # want to diff runs, passing a distinct results-artifact-name per job.
     - name: Upload results JSON
       if: ${{ always() && inputs.upload-results-json == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.results-artifact-name }}
         path: ${{ runner.temp }}/smoke-results/results.json
@@ -779,7 +779,7 @@ runs:
 
     - name: Upload generated ComfyUI images
       if: ${{ always() && inputs.save-comfyui-images == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.comfyui-images-artifact-name }}
         path: ${{ runner.temp }}/comfy-out
