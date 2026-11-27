@@ -4,7 +4,7 @@
 # Python and Node Playwright share it; PyPI usually trails npm by a week or
 # two, so the newest version published on both is the one to pin.
 variable "PLAYWRIGHT_VERSION" {
-  default = "1.63.0"
+  default = "1.65.1"
 }
 
 # Which published runpod/ubuntu to build FROM — in-run sandbox-ubuntu tag when

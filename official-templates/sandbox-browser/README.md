@@ -5,7 +5,7 @@
 Use it to review a UI change, screenshot a deployed page, or run end-to-end tests. Nothing has to be downloaded first, so it works even when the sandbox has no outbound access beyond the site under test.
 
 ### What's included
-- **Playwright 1.63.0** for both **Python** (`from playwright.sync_api import sync_playwright`) and **Node** (`require('playwright')` or `import { chromium } from 'playwright'`), sharing one pinned **Chromium** in `/ms-playwright`.
+- **Playwright 1.65.1** for both **Python** (`from playwright.sync_api import sync_playwright`) and **Node** (`require('playwright')` or `import { chromium } from 'playwright'`), sharing one pinned **Chromium** in `/ms-playwright`.
 - **Fonts for real pages**: CJK (IPA Gothic, WenQuanYi Zen Hei), Noto Color Emoji, Liberation and FreeFont, so screenshots render without tofu boxes.
 - **`playwright screenshot <url> <out.png>`**, Playwright's own CLI, for the common case without writing a script. See `playwright screenshot --help` for `--full-page`, `--device`, `--color-scheme`, `--wait-for-selector` and more.
 - Everything from the Ubuntu sandbox image: Python 3.14, `uv`, Node.js 24, `git`, `tmux` and the usual build tooling.
